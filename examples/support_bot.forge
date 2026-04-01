@@ -1,0 +1,46 @@
+use
+  llm.reason
+  llm.classify
+
+event CustomerMessage
+  customer: Text
+  content: Text
+
+event Resolved
+  customer: Text
+  summary: Text
+
+states SupportPhase
+  greeting -> active when message_count > 0
+  active -> resolved
+  active -> escalated
+
+agent support_bot
+  lifecycle: SupportPhase
+  memory
+    topic: Text
+    message_count: Number
+    escalation_count: Number
+  timer session_timeout: 10m
+  subscribe CustomerMessage where customer == memory.customer
+
+  on message(customer: Text, content: Text)
+    memory.message_count = memory.message_count + 1
+    intent = classify content into ["question", "complaint", "feedback", "urgent"]
+    response = reason "Help this customer with their {intent} about: {content}"
+    when response.sure -> say response
+    when response.unsure -> say "Let me look into that for you."
+    else -> escalate to human
+
+  on resolve(customer: Text)
+    emit Resolved(customer: customer, summary: memory.topic)
+    transition to resolved
+
+  on session_timeout.expired
+    say "Session timed out"
+    escalate to human
+
+  if stuck for 3 turns
+    memory.escalation_count = memory.escalation_count + 1
+    say "Escalating after repeated stuck state"
+    escalate to human

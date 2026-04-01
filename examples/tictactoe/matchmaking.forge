@@ -1,0 +1,28 @@
+event MatchRequest
+  player: Text
+  rank: Number
+
+event MatchFound
+  player_a: Text
+  player_b: Text
+  room: Text
+
+flow matchmaking
+  needs request: MatchRequest
+  gives MatchFound
+
+  stage find_opponents
+    candidates = search "players near rank {request.rank}"
+    give candidates
+
+  stage select_best
+    needs find_opponents.candidates
+    pick = classify candidates into ["ideal", "good", "acceptable"]
+    when pick.sure -> give pick
+    when pick.unsure -> give pick
+    else -> give "random"
+
+  stage create_match
+    needs select_best.pick
+    emit MatchFound(player_a: request.player, player_b: pick, room: "lobby")
+    give MatchFound(player_a: request.player, player_b: pick, room: "lobby")

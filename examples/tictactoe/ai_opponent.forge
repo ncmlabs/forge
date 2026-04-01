@@ -1,0 +1,21 @@
+use
+  llm.reason
+
+agent ai_opponent
+  memory
+    board: Text[9]
+    difficulty: Text
+    wins: Number
+
+  on request_move(board: Text)
+    analysis = reason "Analyze this tic-tac-toe board and pick the best move for O: {board}"
+    when analysis.sure -> give analysis
+    when analysis.unsure -> give pick_random(board)
+    else -> give pick_random(board)
+
+  on game_over(result: Text)
+    if result == "win"
+      memory.wins = memory.wins + 1
+      say "AI wins! Total: {memory.wins}"
+    else
+      say "Game over: {result}"
