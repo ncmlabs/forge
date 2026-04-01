@@ -4,36 +4,79 @@
 use std::collections::HashMap;
 
 use crate::ast::{Expr, Program, Spanned, Stmt, TopLevel};
+use crate::diagnostic::Diagnostic;
 use crate::types::{is_compatible, CapabilitySignature, ForgeType};
 
 // ── Errors ───────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
-    #[error("{file}:{line}:{col}: unknown capability `{name}`")]
+    #[error("unknown capability `{name}`")]
     UnknownCapability {
         name: String,
-        file: String,
-        line: usize,
-        col: usize,
+        span_start: usize,
+        span_end: usize,
     },
 
-    #[error("{file}:{line}:{col}: composition type mismatch: `{left}` is not compatible with `{right}`")]
+    #[error("composition type mismatch: `{left}` is not compatible with `{right}`")]
     CompositionMismatch {
         left: String,
         right: String,
-        file: String,
-        line: usize,
-        col: usize,
+        span_start: usize,
+        span_end: usize,
     },
 
-    #[error("{file}:{line}:{col}: pure function `{name}` cannot use LLM operations (reason/classify/search)")]
+    #[error("pure function `{name}` cannot use LLM operations (reason/classify/search)")]
     PureUsesLlm {
         name: String,
-        file: String,
-        line: usize,
-        col: usize,
+        span_start: usize,
+        span_end: usize,
     },
+}
+
+impl ResolveError {
+    pub fn to_diagnostic(&self, file: &str, registry: &CapabilityRegistry) -> Diagnostic {
+        match self {
+            ResolveError::UnknownCapability { name, span_start, span_end } => {
+                let namespace = name.split('.').next().unwrap_or("");
+                let available: Vec<&str> = registry.capabilities.keys()
+                    .filter(|k| k.starts_with(namespace))
+                    .map(|k| k.as_str())
+                    .collect();
+                let help = if available.is_empty() {
+                    None
+                } else {
+                    Some(format!("available {} capabilities: {}", namespace, available.join(", ")))
+                };
+                let mut diag = Diagnostic::error(
+                    file,
+                    format!("unknown capability '{}'", name),
+                    *span_start..*span_end,
+                    "not found in capability registry",
+                );
+                if let Some(h) = help {
+                    diag = diag.with_help(h);
+                }
+                diag
+            }
+            ResolveError::CompositionMismatch { left, right, span_start, span_end } => {
+                Diagnostic::error(
+                    file,
+                    format!("composition type mismatch: `{}` → `{}`", left, right),
+                    *span_start..*span_end,
+                    format!("`{}` is not compatible with `{}`", left, right),
+                )
+            }
+            ResolveError::PureUsesLlm { name, span_start, span_end } => {
+                Diagnostic::error(
+                    file,
+                    format!("pure function `{}` cannot use LLM operations", name),
+                    *span_start..*span_end,
+                    "reason/classify/search not allowed in pure functions",
+                ).with_help("move this operation to a `task` instead")
+            }
+        }
+    }
 }
 
 // ── Capability registry ──────────────────────────────────────
@@ -78,18 +121,14 @@ impl CapabilityRegistry {
 
 // ── Check context ────────────────────────────────────────────
 
-pub struct CheckContext<'a> {
-    source: &'a str,
-    file: String,
-    registry: CapabilityRegistry,
+pub struct CheckContext {
+    pub registry: CapabilityRegistry,
     errors: Vec<ResolveError>,
 }
 
-impl<'a> CheckContext<'a> {
-    pub fn new(source: &'a str, file: &str) -> Self {
+impl CheckContext {
+    pub fn new(_file: &str) -> Self {
         Self {
-            source,
-            file: file.to_string(),
             registry: CapabilityRegistry::builtin(),
             errors: Vec::new(),
         }
@@ -102,12 +141,10 @@ impl<'a> CheckContext<'a> {
             if let TopLevel::Use(use_decl) = &item.node {
                 for cap in &use_decl.capabilities {
                     if self.registry.resolve(&cap.node).is_none() {
-                        let (line, col) = self.offset_to_line_col(cap.span.start);
                         self.errors.push(ResolveError::UnknownCapability {
                             name: cap.node.clone(),
-                            file: self.file.clone(),
-                            line,
-                            col,
+                            span_start: cap.span.start,
+                            span_end: cap.span.end,
                         });
                     }
                 }
@@ -217,12 +254,10 @@ impl<'a> CheckContext<'a> {
     fn check_pure_expr(&mut self, fn_name: &str, expr: &Spanned<Expr>) {
         match &expr.node {
             Expr::Reason(_) | Expr::Classify(_) | Expr::Search(_) => {
-                let (line, col) = self.offset_to_line_col(expr.span.start);
                 self.errors.push(ResolveError::PureUsesLlm {
                     name: fn_name.to_string(),
-                    file: self.file.clone(),
-                    line,
-                    col,
+                    span_start: expr.span.start,
+                    span_end: expr.span.end,
                 });
             }
             Expr::TryOr(a, b) => {
@@ -346,13 +381,11 @@ impl<'a> CheckContext<'a> {
                     let right = &window[1];
                     if let (Some(lt), Some(rt)) = (infer_type(left), infer_input_type(right)) {
                         if !is_compatible(&lt, &rt) {
-                            let (line, col) = self.offset_to_line_col(right.span.start);
                             self.errors.push(ResolveError::CompositionMismatch {
                                 left: lt.to_string(),
                                 right: rt.to_string(),
-                                file: self.file.clone(),
-                                line,
-                                col,
+                                span_start: right.span.start,
+                                span_end: right.span.end,
                             });
                         }
                     }
@@ -400,22 +433,6 @@ impl<'a> CheckContext<'a> {
         }
     }
 
-    fn offset_to_line_col(&self, offset: usize) -> (usize, usize) {
-        let mut line = 1;
-        let mut col = 1;
-        for (i, ch) in self.source.char_indices() {
-            if i == offset {
-                break;
-            }
-            if ch == '\n' {
-                line += 1;
-                col = 1;
-            } else {
-                col += 1;
-            }
-        }
-        (line, col)
-    }
 }
 
 // ── Type inference (partial, POC) ────────────────────────────
@@ -466,7 +483,7 @@ mod tests {
     fn resolve_valid_capabilities() {
         let source = "use\n  llm.reason\n  llm.classify\n\ntask foo\n  needs x: Text\n  gives Text\n  do\n    give x\n";
         let program = parse(source).unwrap();
-        let ctx = CheckContext::new(source, "<test>");
+        let ctx = CheckContext::new("<test>");
         assert!(ctx.check(&program).is_ok());
     }
 
@@ -474,7 +491,7 @@ mod tests {
     fn reject_unknown_capability() {
         let source = "use\n  llm.reason\n  magic.wand\n\ntask foo\n  needs x: Text\n  gives Text\n  do\n    give x\n";
         let program = parse(source).unwrap();
-        let ctx = CheckContext::new(source, "<test>");
+        let ctx = CheckContext::new("<test>");
         let errs = ctx.check(&program).unwrap_err();
         assert_eq!(errs.len(), 1);
         assert!(matches!(&errs[0], ResolveError::UnknownCapability { name, .. } if name == "magic.wand"));
@@ -484,7 +501,7 @@ mod tests {
     fn no_use_block_is_ok() {
         let source = "task greet\n  needs name: Text\n  gives Text\n  do\n    say \"Hello, {name}!\"\n";
         let program = parse(source).unwrap();
-        let ctx = CheckContext::new(source, "<test>");
+        let ctx = CheckContext::new("<test>");
         assert!(ctx.check(&program).is_ok());
     }
 
@@ -492,7 +509,7 @@ mod tests {
     fn pure_rejects_reason() {
         let source = "pure bad\n  needs x: Text\n  gives Text\n  do\n    result = reason x\n    give result\n";
         let program = parse(source).unwrap();
-        let ctx = CheckContext::new(source, "<test>");
+        let ctx = CheckContext::new("<test>");
         let errs = ctx.check(&program).unwrap_err();
         assert_eq!(errs.len(), 1);
         assert!(matches!(&errs[0], ResolveError::PureUsesLlm { name, .. } if name == "bad"));
@@ -502,7 +519,7 @@ mod tests {
     fn pure_allows_non_llm() {
         let source = "pure add\n  needs a: Number, b: Number\n  gives Number\n  do\n    give a + b\n";
         let program = parse(source).unwrap();
-        let ctx = CheckContext::new(source, "<test>");
+        let ctx = CheckContext::new("<test>");
         assert!(ctx.check(&program).is_ok());
     }
 

@@ -56,6 +56,13 @@ impl ForgeConfig {
     }
 
     pub fn load_or_default() -> Self {
+        let quiet = std::env::var("FORGE_LOG_LEVEL")
+            .map(|v| v == "quiet")
+            .unwrap_or(false);
+        let explicit_mock = std::env::var("FORGE_MOCK")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+
         // Check env override for config path
         if let Ok(path) = std::env::var("FORGE_CONFIG") {
             if let Ok(config) = Self::load(Path::new(&path)) {
@@ -74,6 +81,11 @@ impl ForgeConfig {
                     return Self::apply_env_overrides(config);
                 }
             }
+        }
+
+        if !quiet && !explicit_mock {
+            eprintln!("warning: no forge.config.toml found, using mock provider");
+            eprintln!("  hint: create forge.config.toml or set FORGE_CONFIG=/path/to/config.toml");
         }
 
         Self::apply_env_overrides(Self::default_mock_config())

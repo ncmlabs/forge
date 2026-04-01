@@ -888,12 +888,15 @@ fn parse_platform_forge_file() {
 fn parse_error_includes_line_col() {
     let result = parse("task\n");
     assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(
-        err.contains("-->"),
-        "error should contain line info: {}",
-        err
-    );
+    let err = result.unwrap_err();
+    // Verify it's a Syntax variant with span info
+    match &err {
+        forge::parser::ParseError::Syntax { span_start, span_end, message } => {
+            assert!(*span_start <= *span_end, "span should be valid");
+            assert!(!message.is_empty(), "should have a message");
+        }
+        other => panic!("expected Syntax error, got: {:?}", other),
+    }
 }
 
 #[test]

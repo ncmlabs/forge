@@ -9,7 +9,27 @@ use forge::runtime::agent::AgentProcess;
 use forge::runtime::confidence::{ConfidentValue, Value};
 
 #[derive(Parser)]
-#[command(name = "forge", about = "FORGE — an agent-native programming language")]
+#[command(
+    name = "forge",
+    about = "FORGE — an agent-native programming language",
+    long_about = "FORGE — an agent-native programming language\n\n\
+        Compiles declarative task/flow/agent definitions into LLM-powered programs.\n\
+        Configure providers in forge.config.toml or use FORGE_MOCK=1 for testing.",
+    version,
+    after_help = "\
+ENVIRONMENT VARIABLES:
+  FORGE_CONFIG         Path to config file (default: ./forge.config.toml)
+  FORGE_PROVIDER       Override default LLM provider
+  FORGE_MOCK=1         Use mock provider (no API key needed)
+  FORGE_BUDGET         Set max cost in USD (e.g., 0.50)
+  FORGE_TRACE=1        Enable JSON tracing to stderr
+  FORGE_LOG_LEVEL      Log level: quiet, info (default), debug
+  ANTHROPIC_API_KEY    API key for Anthropic provider
+  OPENAI_API_KEY       API key for OpenAI provider
+  GROQ_API_KEY         API key for Groq provider
+  TOGETHER_API_KEY     API key for Together provider
+  MISTRAL_API_KEY      API key for Mistral provider"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -17,18 +37,36 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Parse a .forge file and print the AST
-    Parse { file: PathBuf },
-    /// Type-check and resolve capabilities
-    Check { file: PathBuf },
-    /// Execute a .forge file
-    Run { file: PathBuf },
-    /// Execute with full JSON trace to stderr
-    Trace { file: PathBuf },
-    /// Run an agent interactively
-    Agent { file: PathBuf },
-    /// Estimate token cost (static analysis)
-    Cost { file: PathBuf },
+    /// Parse a .forge file and print the AST (useful for debugging grammar)
+    Parse {
+        /// Path to the .forge source file
+        file: PathBuf,
+    },
+    /// Type-check capabilities, composition types, and purity constraints
+    Check {
+        /// Path to the .forge source file
+        file: PathBuf,
+    },
+    /// Execute a .forge program
+    Run {
+        /// Path to the .forge source file
+        file: PathBuf,
+    },
+    /// Execute with full JSON trace output to stderr
+    Trace {
+        /// Path to the .forge source file
+        file: PathBuf,
+    },
+    /// Start an interactive agent REPL session
+    Agent {
+        /// Path to a .forge file containing an agent declaration
+        file: PathBuf,
+    },
+    /// Estimate token usage and cost via static analysis (no API calls)
+    Cost {
+        /// Path to the .forge source file
+        file: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -37,22 +75,27 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Parse { file } => {
-            let source = std::fs::read_to_string(&file)
-                .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))?;
-            let program = forge::parser::parse(&source)?;
-            println!("{:#?}", program);
+            let source = read_source(&file)?;
+            match forge::parser::parse(&source) {
+                Ok(program) => println!("{:#?}", program),
+                Err(e) => {
+                    e.to_diagnostic(&file.display().to_string()).render(&source);
+                    std::process::exit(1);
+                }
+            }
         }
         Command::Check { file } => {
-            let source = std::fs::read_to_string(&file)
-                .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))?;
-            let program = forge::parser::parse(&source)?;
-            let ctx = forge::resolver::CheckContext::new(&source, &file.display().to_string());
+            let source = read_source(&file)?;
+            let program = parse_or_exit(&source, &file);
+            let ctx = forge::resolver::CheckContext::new(&file.display().to_string());
             match ctx.check(&program) {
                 Ok(()) => println!("OK"),
                 Err(errors) => {
-                    for e in &errors {
-                        eprintln!("{e}");
-                    }
+                    let registry = forge::resolver::CapabilityRegistry::builtin();
+                    let diagnostics: Vec<_> = errors.iter()
+                        .map(|e| e.to_diagnostic(&file.display().to_string(), &registry))
+                        .collect();
+                    forge::diagnostic::render_diagnostics(&source, &diagnostics);
                     std::process::exit(1);
                 }
             }
@@ -66,18 +109,36 @@ async fn main() -> anyhow::Result<()> {
         Command::Agent { file } => {
             run_agent(&file).await?;
         }
-        Command::Cost { file: _ } => {
-            eprintln!("not yet implemented: cost");
+        Command::Cost { file } => {
+            let source = read_source(&file)?;
+            let program = parse_or_exit(&source, &file);
+            let config = forge::config::ForgeConfig::load_or_default();
+            let estimate = forge::cost_estimator::estimate(&program, &config);
+            print!("{}", estimate);
         }
     }
 
     Ok(())
 }
 
+fn read_source(file: &PathBuf) -> anyhow::Result<String> {
+    std::fs::read_to_string(file)
+        .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))
+}
+
+fn parse_or_exit(source: &str, file: &PathBuf) -> forge::ast::Program {
+    match forge::parser::parse(source) {
+        Ok(program) => program,
+        Err(e) => {
+            e.to_diagnostic(&file.display().to_string()).render(source);
+            std::process::exit(1);
+        }
+    }
+}
+
 async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
-    let source = std::fs::read_to_string(file)
-        .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))?;
-    let program = forge::parser::parse(&source)?;
+    let source = read_source(file)?;
+    let program = parse_or_exit(&source, file);
 
     let config = forge::config::ForgeConfig::load_or_default();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
@@ -107,9 +168,8 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
 }
 
 async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
-    let source = std::fs::read_to_string(file)
-        .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))?;
-    let program = forge::parser::parse(&source)?;
+    let source = read_source(file)?;
+    let program = parse_or_exit(&source, file);
 
     // Find the agent declaration and optional states
     let agent_decl = program.items.iter()

@@ -7,3 +7,5 @@ pub mod tracer;
 pub mod runtime;
 pub mod config;
 pub mod llm;
+pub mod diagnostic;
+pub mod cost_estimator;

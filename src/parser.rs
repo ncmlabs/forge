@@ -1839,9 +1839,74 @@ fn build_program(pairs: Pairs) -> anyhow::Result<Program> {
 
 // ── Public API ───────────────────────────────────────────────
 
-pub fn parse(source: &str) -> anyhow::Result<Program> {
-    let pairs = ForgeParser::parse(Rule::program, source)
-        .map_err(|e| anyhow::anyhow!("parse error:\n{}", e))?;
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("{message}")]
+    Syntax {
+        message: String,
+        span_start: usize,
+        span_end: usize,
+    },
+    #[error("{0}")]
+    Internal(String),
+}
 
-    build_program(pairs)
+impl ParseError {
+    pub fn to_diagnostic(&self, file: &str) -> crate::diagnostic::Diagnostic {
+        match self {
+            ParseError::Syntax { message, span_start, span_end } => {
+                crate::diagnostic::Diagnostic::error(
+                    file,
+                    message.clone(),
+                    *span_start..*span_end,
+                    "parse error here",
+                )
+            }
+            ParseError::Internal(msg) => {
+                crate::diagnostic::Diagnostic::error(
+                    file,
+                    msg.clone(),
+                    0..0,
+                    msg.clone(),
+                )
+            }
+        }
+    }
+}
+
+pub fn parse(source: &str) -> Result<Program, ParseError> {
+    let pairs = ForgeParser::parse(Rule::program, source)
+        .map_err(|e| {
+            let (start, end) = match e.location {
+                pest::error::InputLocation::Pos(p) => (p, (p + 1).min(source.len())),
+                pest::error::InputLocation::Span((s, e)) => (s, e),
+            };
+            // Extract just the variant description (e.g. "expected statement")
+            let message = match &e.variant {
+                pest::error::ErrorVariant::ParsingError { positives, negatives } => {
+                    let mut parts = Vec::new();
+                    if !positives.is_empty() {
+                        let names: Vec<String> = positives.iter()
+                            .map(|r| format!("{:?}", r).to_lowercase().replace('_', " "))
+                            .collect();
+                        parts.push(format!("expected {}", names.join(", ")));
+                    }
+                    if !negatives.is_empty() {
+                        let names: Vec<String> = negatives.iter()
+                            .map(|r| format!("{:?}", r).to_lowercase().replace('_', " "))
+                            .collect();
+                        parts.push(format!("unexpected {}", names.join(", ")));
+                    }
+                    if parts.is_empty() { "syntax error".to_string() } else { parts.join("; ") }
+                }
+                pest::error::ErrorVariant::CustomError { message } => message.clone(),
+            };
+            ParseError::Syntax {
+                message,
+                span_start: start,
+                span_end: end,
+            }
+        })?;
+
+    build_program(pairs).map_err(|e| ParseError::Internal(e.to_string()))
 }
