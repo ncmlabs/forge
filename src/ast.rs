@@ -1,4 +1,4 @@
-// FORGE AST node definitions (issue #3)
+// FORGE AST node definitions (v3)
 // All types derive Debug, Clone. Every node carries Span info via Spanned<T>.
 
 // ── Span ──────────────────────────────────────────────────────
@@ -27,6 +27,7 @@ impl<T> Spanned<T> {
 
 #[derive(Debug, Clone)]
 pub struct Program {
+    pub boundary: Option<Spanned<BoundaryDirective>>,
     pub items: Vec<Spanned<TopLevel>>,
 }
 
@@ -36,12 +37,32 @@ pub struct Program {
 pub enum TopLevel {
     Use(UseDecl),
     Task(TaskDecl),
+    Pure(PureDecl),
     Flow(FlowDecl),
     Agent(AgentDecl),
     Pool(PoolDecl),
     Contract(ContractDecl),
     System(SystemDecl),
+    Event(EventDecl),
+    States(StatesDecl),
+    Endpoint(EndpointDecl),
+    TypeDef(TypeDefDecl),
     FnMain(FnMainDecl),
+}
+
+// ── Boundary directive ────────────────────────────────────────
+
+/// File-level boundary: `#! boundary: server|client|shared`
+#[derive(Debug, Clone)]
+pub struct BoundaryDirective {
+    pub kind: Spanned<BoundaryKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundaryKind {
+    Server,
+    Client,
+    Shared,
 }
 
 // ── use ───────────────────────────────────────────────────────
@@ -67,6 +88,69 @@ pub struct TaskDecl {
 pub enum TaskBody {
     Do(Vec<Spanned<Stmt>>),
     Is(Box<Spanned<Expr>>),
+}
+
+// ── pure ──────────────────────────────────────────────────────
+
+/// Deterministic function — no LLM, no side effects, compile-enforced.
+#[derive(Debug, Clone)]
+pub struct PureDecl {
+    pub name: Spanned<String>,
+    pub needs: Vec<Spanned<Param>>,
+    pub gives: Option<Spanned<OutputType>>,
+    pub body: Vec<Spanned<Stmt>>,
+}
+
+// ── event ─────────────────────────────────────────────────────
+
+/// Typed broadcast stream declaration.
+#[derive(Debug, Clone)]
+pub struct EventDecl {
+    pub name: Spanned<String>,
+    pub fields: Vec<Spanned<FieldDef>>,
+}
+
+/// Named typed field — used in events, type defs, and memory blocks.
+#[derive(Debug, Clone)]
+pub struct FieldDef {
+    pub name: String,
+    pub type_name: Spanned<TypeName>,
+}
+
+// ── states ────────────────────────────────────────────────────
+
+/// Lifecycle state machine declaration.
+#[derive(Debug, Clone)]
+pub struct StatesDecl {
+    pub name: Spanned<String>,
+    pub transitions: Vec<Spanned<StateTransition>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StateTransition {
+    pub from: Spanned<String>,
+    pub to: Spanned<String>,
+    pub condition: Option<Spanned<Expr>>,
+}
+
+// ── type ──────────────────────────────────────────────────────
+
+/// Record type definition (for shared boundary types).
+#[derive(Debug, Clone)]
+pub struct TypeDefDecl {
+    pub name: Spanned<String>,
+    pub fields: Vec<Spanned<FieldDef>>,
+}
+
+// ── endpoint ──────────────────────────────────────────────────
+
+/// Server entry point declaration.
+#[derive(Debug, Clone)]
+pub struct EndpointDecl {
+    pub name: Spanned<String>,
+    pub params: Vec<Spanned<Param>>,
+    pub return_type: Option<Spanned<OutputType>>,
+    pub body: Vec<Spanned<Stmt>>,
 }
 
 // ── flow ──────────────────────────────────────────────────────
@@ -104,22 +188,51 @@ pub enum NeedsRefField {
 #[derive(Debug, Clone)]
 pub struct AgentDecl {
     pub name: Spanned<String>,
-    pub memory: Vec<Spanned<MemoryField>>,
+    pub lifecycle: Option<Spanned<String>>,
+    pub memory: Vec<Spanned<FieldDef>>,
+    pub timers: Vec<Spanned<TimerField>>,
+    pub subscriptions: Vec<Spanned<SubscribeDecl>>,
     pub handlers: Vec<Spanned<OnHandler>>,
     pub stuck_policy: Option<Spanned<StuckPolicy>>,
 }
 
+/// Timer declaration inside an agent.
 #[derive(Debug, Clone)]
-pub struct MemoryField {
-    pub name: String,
-    pub type_name: Spanned<TypeName>,
+pub struct TimerField {
+    pub name: Spanned<String>,
+    pub duration: Spanned<Duration>,
+}
+
+/// Event subscription inside an agent.
+#[derive(Debug, Clone)]
+pub struct SubscribeDecl {
+    pub event_name: Spanned<String>,
+    pub filter: Option<Spanned<Expr>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct OnHandler {
     pub event: Spanned<String>,
+    pub params: Vec<Spanned<Param>>,
     pub payload_type: Option<Spanned<TypeName>>,
+    pub requires: Vec<Spanned<RequiresClause>>,
     pub body: Vec<Spanned<Stmt>>,
+}
+
+/// Precondition guard on a handler.
+#[derive(Debug, Clone)]
+pub struct RequiresClause {
+    pub condition: Spanned<Expr>,
+    pub on_fail: Option<Spanned<FailPolicy>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FailPolicy {
+    Silent,
+    Give(Spanned<Expr>),
+    Log,
+    Escalate,
+    Crash,
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +341,8 @@ pub enum TypeName {
     Profile,
     SearchResults,
     Custom(String),
+    /// Array type: `Text[9]` = Array(Text, Some(9)), `Player[]` = Array(Custom("Player"), None)
+    Array(Box<TypeName>, Option<usize>),
 }
 
 // ── Expressions ───────────────────────────────────────────────
@@ -266,6 +381,16 @@ pub enum Expr {
     TypeAccess(Spanned<TypeName>, Spanned<String>),
     /// Parenthesized expression
     Paren(Box<Spanned<Expr>>),
+    /// Array literal: `[1, 2, 3]`
+    ArrayLit(Vec<Spanned<Expr>>),
+    /// Indexing: `board[cell]`
+    Index(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    /// Method call: `board.none(empty)`
+    MethodCall(Box<Spanned<Expr>>, Spanned<String>, Vec<Spanned<CallArg>>),
+    /// Binary operation: `x + y`, `x == y`, `x and y`
+    BinOp(Box<Spanned<Expr>>, Spanned<BinOp>, Box<Spanned<Expr>>),
+    /// Unary operation: `not x`, `-x`
+    UnaryOp(Spanned<UnaryOp>, Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, Clone)]
@@ -298,6 +423,28 @@ pub struct ClassifyExpr {
     pub labels: Vec<Spanned<String>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Not,
+    Neg,
+}
+
 // ── Statements ────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -308,14 +455,32 @@ pub enum Stmt {
     Give(Spanned<Expr>, Option<Spanned<Expr>>),
     /// `say expr`
     Say(Spanned<Expr>),
-    /// `when`/`else` block
+    /// `when`/`else` block (confidence-only branching)
     When(Box<WhenBlock>),
     /// `escalate to target`
     Escalate(Spanned<String>),
-    /// `memory.field = expr`
-    MemoryUpdate(Spanned<String>, Spanned<Expr>),
+    /// `memory.field = expr` or `memory.field[idx] = expr`
+    MemoryUpdate(Spanned<String>, Option<Spanned<Expr>>, Spanned<Expr>),
     /// Bare expression as statement
     ExprStmt(Spanned<Expr>),
+    /// `emit EventName(args)`
+    Emit(Spanned<String>, Vec<Spanned<CallArg>>),
+    /// `transition to state_name`
+    TransitionTo(Spanned<String>),
+    /// `start timer_name [for context]`
+    StartTimer { name: Spanned<String>, context: Option<Spanned<Expr>> },
+    /// `cancel timer_name [for context]`
+    CancelTimer { name: Spanned<String>, context: Option<Spanned<Expr>> },
+    /// `reset timer_name`
+    ResetTimer(Spanned<String>),
+    /// `forward expr to expr`
+    Forward(Spanned<Expr>, Spanned<Expr>),
+    /// `match expr` with pattern arms
+    Match(Box<MatchBlock>),
+    /// `if`/`else if`/`else` block
+    IfElse(Box<IfElseBlock>),
+    /// `for binding in iterable`
+    For(Box<ForLoop>),
 }
 
 #[derive(Debug, Clone)]
@@ -333,6 +498,46 @@ pub struct WhenClause {
 #[derive(Debug, Clone)]
 pub struct ElseClause {
     pub body: Spanned<Stmt>,
+}
+
+// ── Match (structural pattern matching) ───────────────────────
+
+#[derive(Debug, Clone)]
+pub struct MatchBlock {
+    pub subject: Spanned<Expr>,
+    pub arms: Vec<Spanned<MatchArm>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Spanned<Pattern>,
+    pub body: Spanned<Stmt>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    Wildcard,
+    Binding(String),
+    Constructor(String, Vec<Spanned<Pattern>>),
+}
+
+// ── If/Else ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct IfElseBlock {
+    pub condition: Spanned<Expr>,
+    pub then_body: Vec<Spanned<Stmt>>,
+    pub else_ifs: Vec<(Spanned<Expr>, Vec<Spanned<Stmt>>)>,
+    pub else_body: Option<Vec<Spanned<Stmt>>>,
+}
+
+// ── For loop ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct ForLoop {
+    pub binding: Spanned<String>,
+    pub iterable: Spanned<Expr>,
+    pub body: Vec<Spanned<Stmt>>,
 }
 
 // ── Confidence predicates ─────────────────────────────────────

@@ -15,5 +15,5 @@ pub fn parse(source: &str) -> anyhow::Result<Program> {
         .map_err(|e| anyhow::anyhow!("parse error:\n{}", e))?;
 
     // Grammar validated; AST construction is issue #3/#4
-    Ok(Program { items: vec![] })
+    Ok(Program { boundary: None, items: vec![] })
 }

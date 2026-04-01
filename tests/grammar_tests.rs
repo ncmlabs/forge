@@ -104,9 +104,10 @@ fn parse_call_with_named_args() {
 
 #[test]
 fn parse_field_access() {
-    ForgeParser::parse(Rule::field_access_expr, "memory.history").unwrap();
-    ForgeParser::parse(Rule::field_access_expr, "gather.*").unwrap();
-    ForgeParser::parse(Rule::field_access_expr, "synthesize.draft").unwrap();
+    // Field access is now a postfix operation
+    ForgeParser::parse(Rule::postfix_expr, "memory.history").unwrap();
+    ForgeParser::parse(Rule::postfix_expr, "gather.*").unwrap();
+    ForgeParser::parse(Rule::postfix_expr, "synthesize.draft").unwrap();
 }
 
 #[test]
@@ -310,4 +311,455 @@ fn parse_hello_forge() {
 fn parse_classify_forge() {
     let source = std::fs::read_to_string("examples/classify.forge").unwrap();
     ForgeParser::parse(Rule::program, &source).unwrap();
+}
+
+// ============================================================
+// v3 keyword tests
+// ============================================================
+
+#[test]
+fn v3_keywords_rejected_as_ident() {
+    assert!(ForgeParser::parse(Rule::ident, "pure").is_err());
+    assert!(ForgeParser::parse(Rule::ident, "event").is_err());
+    assert!(ForgeParser::parse(Rule::ident, "states").is_err());
+    assert!(ForgeParser::parse(Rule::ident, "timer").is_err());
+    assert!(ForgeParser::parse(Rule::ident, "match").is_err());
+    assert!(ForgeParser::parse(Rule::ident, "emit").is_err());
+    assert!(ForgeParser::parse(Rule::ident, "transition").is_err());
+    assert!(ForgeParser::parse(Rule::ident, "requires").is_err());
+    assert!(ForgeParser::parse(Rule::ident, "forward").is_err());
+    assert!(ForgeParser::parse(Rule::ident, "subscribe").is_err());
+}
+
+#[test]
+fn v3_keyword_prefixes_allowed_as_ident() {
+    ForgeParser::parse(Rule::ident, "purely").unwrap();
+    ForgeParser::parse(Rule::ident, "events").unwrap();
+    ForgeParser::parse(Rule::ident, "matching").unwrap();
+    ForgeParser::parse(Rule::ident, "timers").unwrap();
+}
+
+// ============================================================
+// v3 type system tests
+// ============================================================
+
+#[test]
+fn parse_array_types() {
+    ForgeParser::parse(Rule::type_name, "Text[9]").unwrap();
+    ForgeParser::parse(Rule::type_name, "Player[]").unwrap();
+    ForgeParser::parse(Rule::type_name, "Number[3]").unwrap();
+    // Plain types still work
+    ForgeParser::parse(Rule::type_name, "Text").unwrap();
+    ForgeParser::parse(Rule::type_name, "MyType").unwrap();
+}
+
+// ============================================================
+// v3 expression tests
+// ============================================================
+
+#[test]
+fn parse_comparison_ops() {
+    ForgeParser::parse(Rule::expr, "x == y").unwrap();
+    ForgeParser::parse(Rule::expr, "x != y").unwrap();
+    ForgeParser::parse(Rule::expr, "x >= 0").unwrap();
+    ForgeParser::parse(Rule::expr, "x <= 8").unwrap();
+    ForgeParser::parse(Rule::expr, "x > 0").unwrap();
+    ForgeParser::parse(Rule::expr, "x < 10").unwrap();
+}
+
+#[test]
+fn parse_boolean_ops() {
+    ForgeParser::parse(Rule::expr, "x and y").unwrap();
+    ForgeParser::parse(Rule::expr, "x or y").unwrap();
+    ForgeParser::parse(Rule::expr, "not x").unwrap();
+    ForgeParser::parse(
+        Rule::expr,
+        r#"cell >= 0 and cell <= 8 and board == """#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn parse_arithmetic_ops() {
+    ForgeParser::parse(Rule::expr, "1 + 2").unwrap();
+    ForgeParser::parse(Rule::expr, "x - 1").unwrap();
+    ForgeParser::parse(Rule::expr, "a * b").unwrap();
+    ForgeParser::parse(Rule::expr, "count / 2").unwrap();
+    ForgeParser::parse(Rule::expr, "1 + 2 * 3").unwrap();
+}
+
+#[test]
+fn parse_unary_neg() {
+    ForgeParser::parse(Rule::expr, "-1").unwrap();
+    ForgeParser::parse(Rule::expr, "-x").unwrap();
+}
+
+#[test]
+fn parse_array_literal() {
+    ForgeParser::parse(Rule::array_lit, "[1, 2, 3]").unwrap();
+    ForgeParser::parse(Rule::array_lit, "[]").unwrap();
+    ForgeParser::parse(Rule::array_lit, r#"["a", "b"]"#).unwrap();
+}
+
+#[test]
+fn parse_nested_array_literal() {
+    ForgeParser::parse(Rule::array_lit, "[[0, 1, 2], [3, 4, 5]]").unwrap();
+}
+
+#[test]
+fn parse_indexing() {
+    ForgeParser::parse(Rule::postfix_expr, "board[0]").unwrap();
+    ForgeParser::parse(Rule::postfix_expr, "board[cell]").unwrap();
+    ForgeParser::parse(Rule::postfix_expr, "line[0]").unwrap();
+}
+
+#[test]
+fn parse_method_call() {
+    ForgeParser::parse(Rule::postfix_expr, "list.count()").unwrap();
+    ForgeParser::parse(Rule::postfix_expr, "board.none(empty)").unwrap();
+}
+
+#[test]
+fn parse_chained_postfix() {
+    // field access then indexing
+    ForgeParser::parse(Rule::postfix_expr, "memory.board[cell]").unwrap();
+    // double field access
+    ForgeParser::parse(Rule::postfix_expr, "memory.players.count").unwrap();
+}
+
+// ============================================================
+// v3 statement tests
+// ============================================================
+
+#[test]
+fn parse_emit_stmt() {
+    ForgeParser::parse(Rule::emit_stmt, "emit MoveEvent(room, player, cell)").unwrap();
+    ForgeParser::parse(Rule::emit_stmt, "emit GameEndEvent()").unwrap();
+}
+
+#[test]
+fn parse_transition_stmt() {
+    ForgeParser::parse(Rule::transition_stmt, "transition to playing").unwrap();
+    ForgeParser::parse(Rule::transition_stmt, "transition to done").unwrap();
+}
+
+#[test]
+fn parse_timer_stmts() {
+    ForgeParser::parse(Rule::start_timer_stmt, "start reconnect_window for player").unwrap();
+    ForgeParser::parse(Rule::start_timer_stmt, "start turn_limit").unwrap();
+    ForgeParser::parse(Rule::cancel_timer_stmt, "cancel reconnect_window for player").unwrap();
+    ForgeParser::parse(Rule::reset_timer_stmt, "reset turn_limit").unwrap();
+}
+
+#[test]
+fn parse_forward_stmt() {
+    ForgeParser::parse(Rule::forward_stmt, "forward msg to target").unwrap();
+}
+
+#[test]
+fn parse_memory_update_with_index() {
+    ForgeParser::parse(Rule::memory_update_stmt, "memory.board[cell] = x").unwrap();
+    // Without index still works
+    ForgeParser::parse(Rule::memory_update_stmt, "memory.history = val").unwrap();
+}
+
+#[test]
+fn parse_requires_clause() {
+    ForgeParser::parse(Rule::requires_clause, "requires lifecycle == playing").unwrap();
+    ForgeParser::parse(
+        Rule::requires_clause,
+        "requires lifecycle == waiting on fail: silent",
+    )
+    .unwrap();
+    ForgeParser::parse(
+        Rule::requires_clause,
+        r#"requires valid_move(board, cell) on fail: give "invalid""#,
+    )
+    .unwrap();
+    ForgeParser::parse(
+        Rule::requires_clause,
+        "requires x > 0 on fail: log",
+    )
+    .unwrap();
+}
+
+#[test]
+fn parse_fail_policies() {
+    ForgeParser::parse(Rule::fail_policy, "silent").unwrap();
+    ForgeParser::parse(Rule::fail_policy, "log").unwrap();
+    ForgeParser::parse(Rule::fail_policy, "escalate").unwrap();
+    ForgeParser::parse(Rule::fail_policy, "crash").unwrap();
+    ForgeParser::parse(Rule::fail_policy, r#"give "error""#).unwrap();
+}
+
+// ============================================================
+// v3 match statement tests
+// ============================================================
+
+#[test]
+fn parse_pattern() {
+    ForgeParser::parse(Rule::wildcard_pattern, "_").unwrap();
+    ForgeParser::parse(Rule::binding_pattern, "sym").unwrap();
+    ForgeParser::parse(Rule::constructor_pattern, "Winner(sym)").unwrap();
+    ForgeParser::parse(Rule::constructor_pattern, "Buy(item, qty)").unwrap();
+    // Bare uppercase constructors (no parens)
+    ForgeParser::parse(Rule::constructor_pattern, "Draw").unwrap();
+    ForgeParser::parse(Rule::constructor_pattern, "Ongoing").unwrap();
+    // Empty arg constructors
+    ForgeParser::parse(Rule::constructor_pattern, "Nothing()").unwrap();
+}
+
+#[test]
+fn parse_match_stmt() {
+    let src = "\
+match outcome
+      Winner(sym) -> give sym
+      Draw -> give \"draw\"
+      _ -> give \"ongoing\"
+";
+    ForgeParser::parse(Rule::match_stmt, src).unwrap();
+}
+
+// ============================================================
+// v3 if/else and for tests
+// ============================================================
+
+#[test]
+fn parse_if_else_stmt() {
+    let src = "\
+if x > 0
+      give x
+";
+    ForgeParser::parse(Rule::if_else_stmt, src).unwrap();
+}
+
+#[test]
+fn parse_if_else_with_else() {
+    let src = "\
+if x > 0
+      give x
+    else
+      give 0
+";
+    ForgeParser::parse(Rule::if_else_stmt, src).unwrap();
+}
+
+#[test]
+fn parse_if_else_if() {
+    let src = "\
+if x > 10
+      give \"big\"
+    else if x > 0
+      give \"small\"
+    else
+      give \"zero\"
+";
+    ForgeParser::parse(Rule::if_else_stmt, src).unwrap();
+}
+
+#[test]
+fn parse_for_loop() {
+    let src = "\
+for item in list
+      say item
+";
+    ForgeParser::parse(Rule::for_loop, src).unwrap();
+}
+
+// ============================================================
+// v3 declaration tests
+// ============================================================
+
+#[test]
+fn parse_pure_decl() {
+    let src = "\
+pure valid_move
+  needs board: Text[9], cell: Number
+  gives Bool
+  do
+    give cell >= 0 and cell <= 8
+";
+    ForgeParser::parse(Rule::pure_decl, src).unwrap();
+}
+
+#[test]
+fn parse_event_decl() {
+    let src = "\
+event MoveEvent
+  room_id: Text
+  player: Text
+  cell: Number
+";
+    ForgeParser::parse(Rule::event_decl, src).unwrap();
+}
+
+#[test]
+fn parse_states_decl() {
+    let src = "\
+states RoomLifecycle
+  waiting -> playing when players_full
+  playing -> done when winner_found
+";
+    ForgeParser::parse(Rule::states_decl, src).unwrap();
+}
+
+#[test]
+fn parse_type_decl() {
+    let src = "\
+type MoveRequest
+  room_id: Text
+  cell: Number
+  token: Text
+";
+    ForgeParser::parse(Rule::type_decl, src).unwrap();
+}
+
+#[test]
+fn parse_endpoint_decl() {
+    let src = "\
+endpoint move(req: MoveRequest) -> GameState or MoveError
+  give process(req)
+";
+    ForgeParser::parse(Rule::endpoint_decl, src).unwrap();
+}
+
+#[test]
+fn parse_boundary_directive() {
+    ForgeParser::parse(Rule::boundary_directive, "#! boundary: server").unwrap();
+    ForgeParser::parse(Rule::boundary_directive, "#!boundary:client").unwrap();
+    ForgeParser::parse(Rule::boundary_directive, "#! boundary: shared").unwrap();
+}
+
+#[test]
+fn parse_program_with_boundary() {
+    let src = "\
+#! boundary: server
+task greet
+  needs name: Text
+  gives Text
+  do
+    say \"Hello, {name}!\"
+";
+    ForgeParser::parse(Rule::program, src).unwrap();
+}
+
+// ============================================================
+// v3 agent extension tests
+// ============================================================
+
+#[test]
+fn parse_agent_with_lifecycle() {
+    let src = "\
+agent room
+  lifecycle: RoomLifecycle
+
+  memory
+    board: Text[9]
+    turn: Number
+
+  timer reconnect_window: 30s
+
+  subscribe MoveEvent
+
+  on join: Text
+    say \"joined\"
+
+  if stuck
+    escalate to human
+";
+    ForgeParser::parse(Rule::agent_decl, src).unwrap();
+}
+
+#[test]
+fn parse_on_handler_with_params() {
+    let src = "  on move(player: Text, cell: Number)\n    say player\n";
+    ForgeParser::parse(Rule::on_handler, src).unwrap();
+}
+
+#[test]
+fn parse_on_handler_dotted_name() {
+    let src = "  on reconnect_window.expired(player: Text)\n    say player\n";
+    ForgeParser::parse(Rule::on_handler, src).unwrap();
+}
+
+#[test]
+fn parse_on_handler_with_requires() {
+    let src = "  on move(player: Text, cell: Number)\n    requires lifecycle == playing on fail: silent\n    requires cell >= 0 on fail: log\n    say player\n";
+    ForgeParser::parse(Rule::on_handler, src).unwrap();
+}
+
+#[test]
+fn parse_timer_field() {
+    ForgeParser::parse(Rule::timer_field, "timer reconnect_window: 30s").unwrap();
+    ForgeParser::parse(Rule::timer_field, "timer turn_limit: 15s").unwrap();
+    ForgeParser::parse(Rule::timer_field, "timer idle_check: 2min").unwrap();
+}
+
+#[test]
+fn parse_subscribe_line() {
+    ForgeParser::parse(Rule::subscribe_line, "subscribe MoveEvent").unwrap();
+    ForgeParser::parse(
+        Rule::subscribe_line,
+        "subscribe GameEndEvent where room == target",
+    )
+    .unwrap();
+}
+
+#[test]
+fn parse_handler_event_name() {
+    ForgeParser::parse(Rule::handler_event_name, "message").unwrap();
+    ForgeParser::parse(Rule::handler_event_name, "reconnect_window.expired").unwrap();
+    ForgeParser::parse(Rule::handler_event_name, "turn_limit.expired").unwrap();
+}
+
+#[test]
+fn parse_lifecycle_clause() {
+    ForgeParser::parse(Rule::lifecycle_clause, "lifecycle: RoomLifecycle").unwrap();
+}
+
+// ============================================================
+// v3 nested statement tests (i3/i4 levels)
+// ============================================================
+
+#[test]
+fn parse_if_inside_do_block() {
+    let src = "\
+do
+    if x > 0
+      give x
+";
+    ForgeParser::parse(Rule::do_block, src).unwrap();
+}
+
+#[test]
+fn parse_for_inside_do_block() {
+    let src = "\
+do
+    for item in list
+      say item
+";
+    ForgeParser::parse(Rule::do_block, src).unwrap();
+}
+
+#[test]
+fn parse_match_inside_do_block() {
+    let src = "\
+do
+    match result
+      Winner(sym) -> give sym
+      _ -> give \"ongoing\"
+";
+    ForgeParser::parse(Rule::do_block, src).unwrap();
+}
+
+#[test]
+fn parse_nested_if_in_for() {
+    // for at i2 (inside do), body at i3, if at i3, if body at i4
+    let src = "\
+do
+    for line in lines
+      if line != \"\"
+        say line
+";
+    ForgeParser::parse(Rule::do_block, src).unwrap();
 }

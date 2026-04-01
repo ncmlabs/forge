@@ -1,14 +1,21 @@
 // =============================================================
-// FORGE v2 PEG Grammar
+// FORGE v3 PEG Grammar
 // =============================================================
 // No implicit WHITESPACE — all spacing is explicit.
-// Indentation: 2-space fixed levels (i1, i2, i3).
+// Indentation: 2-space fixed levels (i1, i2, i3, i4).
+// v3 adds: pure, event, states, timer, boundary, requires,
+//          match, if/else, for, operators, arrays.
 // =============================================================
 
 // --- Program structure ---
-program   = { SOI ~ (blank_line | top_level)* ~ EOI }
+program   = { SOI ~ (boundary_directive ~ nl)? ~ (blank_line | top_level)* ~ EOI }
 top_level = {
     use_decl
+  | pure_decl
+  | event_decl
+  | states_decl
+  | type_decl
+  | endpoint_decl
   | task_decl
   | flow_decl
   | agent_decl
@@ -29,17 +36,23 @@ comment    = _{ "#" ~ (!NEWLINE ~ ANY)* }
 i1         = _{ "  " }
 i2         = _{ "    " }
 i3         = _{ "      " }
+i4         = _{ "        " }
 
 // --- Identifiers & Keywords ---
 // Only true keywords that can NEVER be used as identifiers.
-// Contextual keywords (memory, search, can, workers, strategy, etc.)
-// are handled by rule ordering and only reserved in their specific contexts.
+// Contextual keywords (memory, search, can, workers, strategy,
+// lifecycle, on, fail, where, etc.) are handled by rule ordering
+// and only reserved in their specific contexts.
 keyword = @{
     ( "use" | "task" | "flow" | "agent" | "pool" | "contract" | "system"
     | "fn" | "needs" | "gives" | "do" | "is" | "stage"
     | "if" | "else" | "when" | "give" | "say" | "reason" | "classify"
     | "into" | "true" | "false" | "or" | "with" | "escalate"
-    | "to" | "try" | "above" )
+    | "to" | "try" | "above"
+    | "pure" | "event" | "states" | "timer" | "endpoint" | "type"
+    | "requires" | "emit" | "forward" | "subscribe" | "transition"
+    | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
+    | "match" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -62,7 +75,12 @@ builtin_type = @{
     | "Profile" | "SearchResults" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
-type_name = { builtin_type | ident }
+type_name    = { (builtin_type | ident) ~ array_suffix? }
+array_suffix = { "[" ~ _s_opt ~ number_lit? ~ _s_opt ~ "]" }
+
+// --- Boundary directive (file-level) ---
+boundary_directive = { "#!" ~ _s_opt ~ "boundary" ~ _s_opt ~ ":" ~ _s_opt ~ boundary_kind }
+boundary_kind      = @{ ("server" | "client" | "shared") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // --- use declaration ---
 use_decl = {
@@ -99,6 +117,40 @@ if_fails_block = {
     (i2 ~ statement ~ nl)+
 }
 
+// --- pure declaration ---
+pure_decl = {
+    "pure" ~ _s ~ ident ~ nl ~
+    (i1 ~ needs_clause ~ nl)? ~
+    (i1 ~ gives_clause ~ nl)? ~
+    i1 ~ do_block
+}
+
+// --- event declaration ---
+event_decl = {
+    "event" ~ _s ~ ident ~ nl ~
+    (i1 ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ type_name ~ nl)+
+}
+
+// --- states declaration ---
+states_decl = {
+    "states" ~ _s ~ ident ~ nl ~
+    (i1 ~ state_transition ~ nl)+
+}
+state_transition = { ident ~ _s_opt ~ "->" ~ _s_opt ~ ident ~ (_s ~ "when" ~ _s ~ expr)? }
+
+// --- type declaration (record types for shared boundary) ---
+type_decl = {
+    "type" ~ _s ~ ident ~ nl ~
+    (i1 ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ type_name ~ nl)+
+}
+
+// --- endpoint declaration ---
+endpoint_decl = {
+    "endpoint" ~ _s ~ ident ~ "(" ~ _s_opt ~ param_list? ~ _s_opt ~ ")" ~
+    (_s_opt ~ "->" ~ _s_opt ~ output_type)? ~ nl ~
+    (i1 ~ statement ~ nl)+
+}
+
 // --- flow declaration ---
 flow_decl = {
     "flow" ~ _s ~ ident ~ nl ~
@@ -119,19 +171,47 @@ needs_ref      = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~ "." ~ ("
 // --- agent declaration ---
 agent_decl = {
     "agent" ~ _s ~ ident ~ nl ~
+    (i1 ~ lifecycle_clause ~ nl)? ~
     (i1 ~ memory_block)? ~
+    (i1 ~ timer_field ~ nl)* ~
+    (i1 ~ subscribe_line ~ nl)* ~
     (blank_line | on_handler)+ ~
     (i1 ~ stuck_policy)?
 }
+
+lifecycle_clause = { "lifecycle" ~ _s_opt ~ ":" ~ _s_opt ~ ident }
 
 memory_block = {
     "memory" ~ nl ~
     (i2 ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ type_name ~ nl)+
 }
 
+timer_field = { "timer" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ duration }
+
+subscribe_line = { "subscribe" ~ _s ~ ident ~ (_s ~ "where" ~ _s ~ expr)? }
+
 on_handler = {
-    i1 ~ "on" ~ _s ~ ident ~ (_s_opt ~ ":" ~ _s_opt ~ type_name)? ~ nl ~
+    i1 ~ "on" ~ _s ~ handler_event_name ~
+    (_s_opt ~ "(" ~ _s_opt ~ param_list? ~ _s_opt ~ ")")? ~
+    (_s_opt ~ ":" ~ _s_opt ~ type_name)? ~
+    nl ~
+    (i2 ~ requires_clause ~ nl)* ~
     (i2 ~ statement ~ nl)+
+}
+
+// Supports dotted names like reconnect_window.expired
+handler_event_name = @{
+    (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~
+    ("." ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*)*
+}
+
+requires_clause = {
+    "requires" ~ _s ~ expr ~
+    (_s_opt ~ "on" ~ _s ~ "fail" ~ _s_opt ~ ":" ~ _s_opt ~ fail_policy)?
+}
+
+fail_policy = {
+    "silent" | "log" | "escalate" | "crash" | "give" ~ _s ~ expr
 }
 
 stuck_policy = {
@@ -153,7 +233,7 @@ pool_strategy = {
   | "quorum(" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
   | "first(" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
 }
-duration = @{ ASCII_DIGIT+ ~ ("s" | "m" | "h") }
+duration = @{ ASCII_DIGIT+ ~ ("min" | "s" | "m" | "h") }
 
 // --- contract declaration ---
 contract_decl = {
@@ -179,11 +259,20 @@ fn_main_decl = {
     (i1 ~ statement ~ nl)*
 }
 
-// --- Statements ---
+// --- Statements (i2 level, inside do blocks) ---
 statement = {
     when_block
+  | match_stmt
+  | if_else_stmt
+  | for_loop
   | give_stmt
   | say_stmt
+  | emit_stmt
+  | transition_stmt
+  | start_timer_stmt
+  | cancel_timer_stmt
+  | reset_timer_stmt
+  | forward_stmt
   | escalate_stmt
   | memory_update_stmt
   | bind_stmt
@@ -194,9 +283,17 @@ bind_stmt          = { ident ~ _s_opt ~ "=" ~ _s_opt ~ expr }
 give_stmt          = { "give" ~ _s ~ expr ~ (_s ~ "with" ~ _s ~ call_expr)? }
 say_stmt           = { "say" ~ _s ~ expr }
 escalate_stmt      = { "escalate" ~ _s ~ "to" ~ _s ~ ident }
-memory_update_stmt = { "memory" ~ "." ~ ident ~ _s_opt ~ "=" ~ _s_opt ~ expr }
+memory_update_stmt = { "memory" ~ "." ~ ident ~ (_s_opt ~ "[" ~ _s_opt ~ expr ~ _s_opt ~ "]")? ~ _s_opt ~ "=" ~ _s_opt ~ expr }
 expr_stmt          = { expr }
 
+emit_stmt          = { "emit" ~ _s ~ ident ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
+transition_stmt    = { "transition" ~ _s ~ "to" ~ _s ~ ident }
+start_timer_stmt   = { "start" ~ _s ~ ident ~ (_s ~ "for" ~ _s ~ expr)? }
+cancel_timer_stmt  = { "cancel" ~ _s ~ ident ~ (_s ~ "for" ~ _s ~ expr)? }
+reset_timer_stmt   = { "reset" ~ _s ~ ident }
+forward_stmt       = { "forward" ~ _s ~ expr ~ _s ~ "to" ~ _s ~ expr }
+
+// --- when block (confidence-only branching) ---
 when_block = {
     when_clause ~
     (same_indent_when ~ when_clause)* ~
@@ -212,7 +309,109 @@ when_clause = { "when" ~ _s ~ conf_predicate ~ _s_opt ~ "->" ~ _s_opt ~ statemen
 else_clause = { "else" ~ _s_opt ~ "->" ~ _s_opt ~ statement_inline }
 
 statement_inline = {
-    give_stmt | say_stmt | escalate_stmt | expr_stmt
+    give_stmt | say_stmt | escalate_stmt
+  | emit_stmt | transition_stmt
+  | start_timer_stmt | cancel_timer_stmt | reset_timer_stmt
+  | forward_stmt | expr_stmt
+}
+
+// --- match statement (structural pattern matching) ---
+// Does NOT consume trailing nl — caller (do_block) handles it.
+match_stmt = {
+    "match" ~ _s ~ expr ~ nl ~
+    i3 ~ match_arm ~ (nl ~ i3 ~ match_arm)*
+}
+
+match_arm = { pattern ~ _s_opt ~ "->" ~ _s_opt ~ statement_inline }
+
+// Patterns: wildcard (_), constructor (Uppercase with optional args), binding (lowercase)
+pattern = { wildcard_pattern | constructor_pattern | binding_pattern }
+wildcard_pattern    = { "_" }
+constructor_pattern = {
+    ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* ~
+    ("(" ~ _s_opt ~ (pattern ~ (_s_opt ~ "," ~ _s_opt ~ pattern)*)? ~ _s_opt ~ ")")?
+}
+binding_pattern     = @{ !keyword ~ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// --- if/else statement (boolean conditions) ---
+// Does NOT consume trailing nl — caller (do_block) handles it.
+if_else_stmt = {
+    "if" ~ _s ~ expr ~ nl ~
+    i3 ~ statement_i3 ~ (nl ~ i3 ~ statement_i3)* ~
+    (nl ~ i2 ~ "else" ~ _s ~ "if" ~ _s ~ expr ~ nl ~
+     i3 ~ statement_i3 ~ (nl ~ i3 ~ statement_i3)*)* ~
+    (nl ~ i2 ~ "else" ~ nl ~
+     i3 ~ statement_i3 ~ (nl ~ i3 ~ statement_i3)*)?
+}
+
+// --- for loop ---
+// Does NOT consume trailing nl — caller (do_block) handles it.
+for_loop = {
+    "for" ~ _s ~ ident ~ _s ~ "in" ~ _s ~ expr ~ nl ~
+    i3 ~ statement_i3 ~ (nl ~ i3 ~ statement_i3)*
+}
+
+// --- Statements at i3 level (inside if/for/match blocks) ---
+// These can nest one more level (bodies at i4) but no deeper.
+statement_i3 = {
+    when_block_i3
+  | match_stmt_i3
+  | if_else_stmt_i3
+  | for_loop_i3
+  | give_stmt
+  | say_stmt
+  | emit_stmt
+  | transition_stmt
+  | start_timer_stmt
+  | cancel_timer_stmt
+  | reset_timer_stmt
+  | forward_stmt
+  | escalate_stmt
+  | memory_update_stmt
+  | bind_stmt
+  | expr_stmt
+}
+
+when_block_i3 = {
+    when_clause_i3 ~
+    (nl ~ i3 ~ when_clause_i3)* ~
+    (nl ~ i3 ~ else_clause)?
+}
+when_clause_i3 = { "when" ~ _s ~ conf_predicate ~ _s_opt ~ "->" ~ _s_opt ~ statement_inline }
+
+match_stmt_i3 = {
+    "match" ~ _s ~ expr ~ nl ~
+    i4 ~ match_arm ~ (nl ~ i4 ~ match_arm)*
+}
+
+if_else_stmt_i3 = {
+    "if" ~ _s ~ expr ~ nl ~
+    i4 ~ statement_i4 ~ (nl ~ i4 ~ statement_i4)* ~
+    (nl ~ i3 ~ "else" ~ _s ~ "if" ~ _s ~ expr ~ nl ~
+     i4 ~ statement_i4 ~ (nl ~ i4 ~ statement_i4)*)* ~
+    (nl ~ i3 ~ "else" ~ nl ~
+     i4 ~ statement_i4 ~ (nl ~ i4 ~ statement_i4)*)?
+}
+
+for_loop_i3 = {
+    "for" ~ _s ~ ident ~ _s ~ "in" ~ _s ~ expr ~ nl ~
+    i4 ~ statement_i4 ~ (nl ~ i4 ~ statement_i4)*
+}
+
+// --- Statements at i4 level (leaf — no further nesting) ---
+statement_i4 = {
+    give_stmt
+  | say_stmt
+  | emit_stmt
+  | transition_stmt
+  | start_timer_stmt
+  | cancel_timer_stmt
+  | reset_timer_stmt
+  | forward_stmt
+  | escalate_stmt
+  | memory_update_stmt
+  | bind_stmt
+  | expr_stmt
 }
 
 // --- Confidence predicates ---
@@ -223,13 +422,37 @@ conf_predicate = {
 conf_level = @{ ("sure" | "unsure" | "unreliable" | "conflicted") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // --- Expressions ---
+// Precedence (lowest to highest):
+//   compose (>>)  →  or  →  and  →  comparison  →  additive  →
+//   multiplicative  →  unary  →  fan_out  →  postfix  →  pipe_term  →  atom
 expr = { compose_expr }
 
-compose_expr = { fan_out_expr ~ (_s_opt ~ ">>" ~ _s_opt ~ fan_out_expr)* }
+compose_expr = { or_expr ~ (_s_opt ~ ">>" ~ _s_opt ~ or_expr)* }
+
+or_expr  = { and_expr ~ (_s ~ "or" ~ _s ~ and_expr)* }
+and_expr = { comparison_expr ~ (_s ~ "and" ~ _s ~ comparison_expr)* }
+
+comparison_expr = { additive_expr ~ (_s_opt ~ comparison_op ~ _s_opt ~ additive_expr)? }
+comparison_op   = { "==" | "!=" | ">=" | "<=" | ">" | "<" }
+
+additive_expr       = { multiplicative_expr ~ (_s_opt ~ additive_op ~ _s_opt ~ multiplicative_expr)* }
+additive_op         = { "+" | "-" }
+multiplicative_expr = { unary_expr ~ (_s_opt ~ multiplicative_op ~ _s_opt ~ unary_expr)* }
+multiplicative_op   = { "*" | "/" }
+
+unary_expr = { unary_op? ~ fan_out_expr }
+unary_op   = { "not" ~ _s | "-" }
 
 fan_out_expr = {
-    "(" ~ _s_opt ~ pipe_term ~ (_s_opt ~ "|" ~ _s_opt ~ pipe_term)+ ~ _s_opt ~ ")"
-  | pipe_term
+    "(" ~ _s_opt ~ postfix_expr ~ (_s_opt ~ "|" ~ _s_opt ~ postfix_expr)+ ~ _s_opt ~ ")"
+  | postfix_expr
+}
+
+postfix_expr = { pipe_term ~ postfix_op* }
+postfix_op   = {
+    "[" ~ _s_opt ~ expr ~ _s_opt ~ "]"
+  | "." ~ ident ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")"
+  | "." ~ (ident | "*")
 }
 
 pipe_term = {
@@ -239,7 +462,6 @@ pipe_term = {
   | try_or_expr
   | constructor_expr
   | call_expr
-  | field_access_expr
   | atom
 }
 
@@ -259,16 +481,17 @@ call_expr = { ident ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
 arg_list  = { call_arg ~ (_s_opt ~ "," ~ _s_opt ~ call_arg)* }
 call_arg  = { (ident ~ _s_opt ~ ":" ~ _s_opt)? ~ expr }
 
-field_access_expr = { ident ~ ("." ~ (ident | "*"))+ }
-
 atom = {
     template_string
   | number_lit
   | bool_lit
+  | array_lit
   | type_dot_access
   | ident
   | "(" ~ _s_opt ~ expr ~ _s_opt ~ ")"
 }
+
+array_lit = { "[" ~ _s_opt ~ (expr ~ (_s_opt ~ "," ~ _s_opt ~ expr)*)? ~ _s_opt ~ "]" }
 
 // For Intent.unknown, Conversation.empty, etc.
 type_dot_access = { builtin_type ~ "." ~ ident }
