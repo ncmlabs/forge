@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "forge", about = "FORGE — an agent-native programming language")]
@@ -22,7 +23,8 @@ enum Command {
     Cost { file: PathBuf },
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -47,14 +49,46 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Command::Run { file: _ } => {
-            eprintln!("not yet implemented: run");
+        Command::Run { file } => {
+            run_program(&file, false).await?;
         }
-        Command::Trace { file: _ } => {
-            eprintln!("not yet implemented: trace");
+        Command::Trace { file } => {
+            run_program(&file, true).await?;
         }
         Command::Cost { file: _ } => {
             eprintln!("not yet implemented: cost");
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
+    let source = std::fs::read_to_string(file)
+        .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))?;
+    let program = forge::parser::parse(&source)?;
+
+    let config = forge::config::ForgeConfig::load_or_default();
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+
+    let tracer = if trace || std::env::var("FORGE_TRACE").map(|v| v == "1").unwrap_or(false) {
+        Some(forge::tracer::Tracer::new())
+    } else {
+        None
+    };
+
+    let executor = forge::runtime::executor::TaskExecutor::new(
+        program,
+        Arc::new(registry),
+        tracer,
+    );
+
+    match executor.run().await {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("runtime error: {}", e);
+            std::process::exit(1);
         }
     }
 

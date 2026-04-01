@@ -9,3 +9,7 @@ task classify_intent
     when result.sure -> give result
     when result.unsure -> give "unclear"
     else -> give "unknown"
+
+fn main
+  out = classify_intent("I need help with my order")
+  say out
