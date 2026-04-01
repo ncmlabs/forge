@@ -32,8 +32,20 @@ fn main() -> anyhow::Result<()> {
             let program = forge::parser::parse(&source)?;
             println!("{:#?}", program);
         }
-        Command::Check { file: _ } => {
-            eprintln!("not yet implemented: check");
+        Command::Check { file } => {
+            let source = std::fs::read_to_string(&file)
+                .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))?;
+            let program = forge::parser::parse(&source)?;
+            let ctx = forge::resolver::CheckContext::new(&source, &file.display().to_string());
+            match ctx.check(&program) {
+                Ok(()) => println!("OK"),
+                Err(errors) => {
+                    for e in &errors {
+                        eprintln!("{e}");
+                    }
+                    std::process::exit(1);
+                }
+            }
         }
         Command::Run { file: _ } => {
             eprintln!("not yet implemented: run");
