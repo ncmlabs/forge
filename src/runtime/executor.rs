@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use crate::ast::*;
 use crate::llm::registry::ProviderRegistry;
 use crate::llm::CompletionRequest;
+use crate::runtime::agent::AgentContext;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::tracer::{Tracer, LLMResponseInfo};
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -48,30 +49,30 @@ pub enum RuntimeError {
 
 // ── Environment (scope stack) ─────────────────────────────────────────────────
 
-struct Env {
+pub(crate) struct Env {
     scopes: Vec<HashMap<String, ConfidentValue>>,
 }
 
 impl Env {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { scopes: vec![HashMap::new()] }
     }
 
-    fn push_scope(&mut self) {
+    pub(crate) fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
 
-    fn pop_scope(&mut self) {
+    pub(crate) fn pop_scope(&mut self) {
         self.scopes.pop();
     }
 
-    fn bind(&mut self, name: &str, value: ConfidentValue) {
+    pub(crate) fn bind(&mut self, name: &str, value: ConfidentValue) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), value);
         }
     }
 
-    fn lookup(&self, name: &str) -> Result<&ConfidentValue, RuntimeError> {
+    pub(crate) fn lookup(&self, name: &str) -> Result<&ConfidentValue, RuntimeError> {
         for scope in self.scopes.iter().rev() {
             if let Some(val) = scope.get(name) {
                 return Ok(val);
@@ -89,13 +90,14 @@ impl Env {
 
 #[derive(Clone)]
 pub struct TaskExecutor {
-    program:   Program,
-    providers: Arc<ProviderRegistry>,
-    tracer:    Option<Tracer>,
-    task_map:  HashMap<String, TaskDecl>,
-    pure_map:  HashMap<String, PureDecl>,
-    flow_map:  HashMap<String, FlowDecl>,
-    output:    Arc<Mutex<Vec<String>>>,
+    program:       Program,
+    providers:     Arc<ProviderRegistry>,
+    tracer:        Option<Tracer>,
+    task_map:      HashMap<String, TaskDecl>,
+    pure_map:      HashMap<String, PureDecl>,
+    flow_map:      HashMap<String, FlowDecl>,
+    output:        Arc<Mutex<Vec<String>>>,
+    agent_context: Option<Arc<Mutex<AgentContext>>>,
 }
 
 impl TaskExecutor {
@@ -131,7 +133,19 @@ impl TaskExecutor {
             pure_map,
             flow_map,
             output: Arc::new(Mutex::new(Vec::new())),
+            agent_context: None,
         }
+    }
+
+    /// Attach an agent context for agent statement execution.
+    pub fn with_agent_context(mut self, ctx: Arc<Mutex<AgentContext>>) -> Self {
+        self.agent_context = Some(ctx);
+        self
+    }
+
+    /// Get a reference to the agent context, if set.
+    pub fn agent_context(&self) -> Option<&Arc<Mutex<AgentContext>>> {
+        self.agent_context.as_ref()
     }
 
     /// Get collected `say` output (for testing)
@@ -161,7 +175,7 @@ impl TaskExecutor {
     /// Execute a list of statements. `give` propagates as `GiveSignal` error
     /// so it can cross if/else/match/for boundaries. Callers at function
     /// boundaries (call_task, call_pure, call_flow, run) must catch it.
-    fn exec_stmts<'a>(
+    pub(crate) fn exec_stmts<'a>(
         &'a self,
         stmts: &'a [Spanned<Stmt>],
         env: &'a mut Env,
@@ -293,31 +307,114 @@ impl TaskExecutor {
                 }
             }
 
-            // ── Stubs for agent features (issue #11) ──────────────────────
+            // ── Agent features (issue #11) ─────────────────────────────
 
-            Stmt::Emit(name, _args) => {
-                eprintln!("[forge] stub: emit {} (issue #11)", name.node);
+            Stmt::Emit(name, args) => {
+                if let Some(ref ctx_arc) = self.agent_context {
+                    let mut arg_vals = Vec::new();
+                    for arg in args {
+                        arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                    }
+                    ctx_arc.lock().unwrap().event_sink.emitted.push((
+                        name.node.clone(),
+                        arg_vals,
+                    ));
+                } else {
+                    return Err(RuntimeError::Unsupported("emit outside agent".into()));
+                }
             }
             Stmt::TransitionTo(state) => {
-                eprintln!("[forge] stub: transition to {} (issue #11)", state.node);
+                if let Some(ref ctx_arc) = self.agent_context {
+                    let mut ctx = ctx_arc.lock().unwrap();
+                    if let Some(ref mut sm) = ctx.state_machine {
+                        sm.transition_to(&state.node)?;
+                    } else {
+                        return Err(RuntimeError::Unsupported(
+                            "transition without lifecycle".into(),
+                        ));
+                    }
+                } else {
+                    return Err(RuntimeError::Unsupported("transition outside agent".into()));
+                }
             }
             Stmt::StartTimer { name, .. } => {
-                eprintln!("[forge] stub: start timer {} (issue #11)", name.node);
+                if let Some(ref ctx_arc) = self.agent_context {
+                    ctx_arc.lock().unwrap().timer_manager.start(&name.node)?;
+                } else {
+                    return Err(RuntimeError::Unsupported("start timer outside agent".into()));
+                }
             }
             Stmt::CancelTimer { name, .. } => {
-                eprintln!("[forge] stub: cancel timer {} (issue #11)", name.node);
+                if let Some(ref ctx_arc) = self.agent_context {
+                    ctx_arc.lock().unwrap().timer_manager.cancel(&name.node)?;
+                } else {
+                    return Err(RuntimeError::Unsupported("cancel timer outside agent".into()));
+                }
             }
             Stmt::ResetTimer(name) => {
-                eprintln!("[forge] stub: reset timer {} (issue #11)", name.node);
+                if let Some(ref ctx_arc) = self.agent_context {
+                    ctx_arc.lock().unwrap().timer_manager.reset(&name.node)?;
+                } else {
+                    return Err(RuntimeError::Unsupported("reset timer outside agent".into()));
+                }
             }
-            Stmt::Forward(_expr, _target) => {
-                eprintln!("[forge] stub: forward (issue #11)");
+            Stmt::Forward(expr, target) => {
+                if let Some(ref ctx_arc) = self.agent_context {
+                    let val = self.eval_expr(expr, env).await?;
+                    let tgt = self.eval_expr(target, env).await?;
+                    ctx_arc.lock().unwrap().event_sink.forwards.push((val, tgt));
+                } else {
+                    return Err(RuntimeError::Unsupported("forward outside agent".into()));
+                }
             }
-            Stmt::MemoryUpdate(field, _idx, _expr) => {
-                eprintln!("[forge] stub: memory.{} update (issue #11)", field.node);
+            Stmt::MemoryUpdate(field, idx, expr) => {
+                if let Some(ref ctx_arc) = self.agent_context {
+                    let val = self.eval_expr(expr, env).await?;
+                    if let Some(idx_expr) = idx {
+                        // Array index update: memory.field[idx] = val
+                        let idx_val = self.eval_expr(idx_expr, env).await?;
+                        let i = match &idx_val.value {
+                            Value::Number(n) => *n as usize,
+                            _ => return Err(RuntimeError::TypeError {
+                                expected: "Number".into(),
+                                got: format!("{}", idx_val.value),
+                            }),
+                        };
+                        let mut ctx = ctx_arc.lock().unwrap();
+                        if let Some(arr_val) = ctx.memory.get(&field.node).cloned() {
+                            match arr_val.value {
+                                Value::Array(mut items) => {
+                                    if i >= items.len() {
+                                        return Err(RuntimeError::IndexOutOfBounds {
+                                            index: i, len: items.len(),
+                                        });
+                                    }
+                                    items[i] = val;
+                                    ctx.memory.set(&field.node,
+                                        ConfidentValue::deterministic(Value::Array(items)));
+                                }
+                                _ => return Err(RuntimeError::TypeError {
+                                    expected: "Array".into(),
+                                    got: format!("{}", arr_val.value),
+                                }),
+                            }
+                        }
+                    } else {
+                        ctx_arc.lock().unwrap().memory.set(&field.node, val);
+                    }
+                    // Re-bind memory in env so subsequent reads see the update
+                    let ctx = ctx_arc.lock().unwrap();
+                    env.bind("memory", ConfidentValue::deterministic(ctx.memory.to_record()));
+                } else {
+                    return Err(RuntimeError::Unsupported("memory update outside agent".into()));
+                }
             }
             Stmt::Escalate(target) => {
-                eprintln!("[forge] stub: escalate to {} (issue #11)", target.node);
+                if let Some(ref ctx_arc) = self.agent_context {
+                    ctx_arc.lock().unwrap().event_sink.escalations.push(target.node.clone());
+                } else {
+                    return Err(RuntimeError::Unsupported("escalate outside agent".into()));
+                }
             }
         }
         Ok(())
@@ -326,7 +423,7 @@ impl TaskExecutor {
 
     // ── Expression evaluation ─────────────────────────────────────────────────
 
-    fn eval_expr<'a>(
+    pub(crate) fn eval_expr<'a>(
         &'a self,
         expr: &'a Spanned<Expr>,
         env: &'a mut Env,
