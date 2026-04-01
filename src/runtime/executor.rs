@@ -995,6 +995,17 @@ fn main
     }
 
     #[tokio::test]
+    async fn test_template_escapes_render_as_control_characters() {
+        let (result, outputs) = run_forge(r#"
+fn main
+  language = "rust"
+  say "Line 1\nLanguage: {language}\tend\\"
+"#).await;
+        assert!(result.is_ok());
+        assert_eq!(outputs, vec!["Line 1\nLanguage: rust\tend\\"]);
+    }
+
+    #[tokio::test]
     async fn test_give_returns_value() {
         let (result, _) = run_forge("fn main\n  give 42\n").await;
         let val = result.unwrap();

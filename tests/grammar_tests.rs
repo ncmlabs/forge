@@ -47,6 +47,8 @@ fn parse_template_string() {
     ForgeParser::parse(Rule::template_string, r#""hello""#).unwrap();
     ForgeParser::parse(Rule::template_string, r#""hello {name}""#).unwrap();
     ForgeParser::parse(Rule::template_string, r#""a {x} b {y} c""#).unwrap();
+    ForgeParser::parse(Rule::template_string, r#""line 1\nline 2""#).unwrap();
+    ForgeParser::parse(Rule::template_string, r#""quote: \" backslash: \\""#).unwrap();
 }
 
 #[test]

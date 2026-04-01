@@ -94,6 +94,49 @@ fn parse_template_with_interpolation() {
 }
 
 #[test]
+fn parse_template_decodes_escape_sequences() {
+    let prog = parse_task_with(r#"x = "line 1\nline 2\t\"quoted\"\\done""#);
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Template(parts) => {
+            assert_eq!(parts.len(), 1);
+            match &parts[0].node {
+                TemplatePart::Text(t) => {
+                    assert_eq!(t, "line 1\nline 2\t\"quoted\"\\done");
+                }
+                _ => panic!("expected text part"),
+            }
+        }
+        other => panic!("expected Template, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_template_mixes_escapes_and_interpolation() {
+    let prog = parse_task_with(r#"x = "x\n{name}\tend""#);
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Template(parts) => {
+            assert_eq!(parts.len(), 3);
+            match &parts[0].node {
+                TemplatePart::Text(t) => assert_eq!(t, "x\n"),
+                _ => panic!("expected text part"),
+            }
+            match &parts[1].node {
+                TemplatePart::Interp(e) => match &e.node {
+                    Expr::Ident(name) => assert_eq!(name, "name"),
+                    _ => panic!("expected ident in interp"),
+                },
+                _ => panic!("expected interp part"),
+            }
+            match &parts[2].node {
+                TemplatePart::Text(t) => assert_eq!(t, "\tend"),
+                _ => panic!("expected text part"),
+            }
+        }
+        other => panic!("expected Template, got {:?}", other),
+    }
+}
+
+#[test]
 fn parse_builtin_and_custom_types() {
     let src = "task t\n  needs x: Text, y: Number, z: MyType\n  do\n    say x\n";
     let prog = parse(src).unwrap();
@@ -163,6 +206,18 @@ fn parse_classify_expression() {
             assert_eq!(c.labels.len(), 2);
             assert_eq!(c.labels[0].node, "buy");
             assert_eq!(c.labels[1].node, "sell");
+        }
+        other => panic!("expected Classify, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_classify_labels_decode_escapes() {
+    let prog = parse_task_with(r#"x = classify message into ["line 1\nline 2", "tab\tlabel"]"#);
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Classify(c) => {
+            assert_eq!(c.labels[0].node, "line 1\nline 2");
+            assert_eq!(c.labels[1].node, "tab\tlabel");
         }
         other => panic!("expected Classify, got {:?}", other),
     }
