@@ -1,0 +1,133 @@
+#! boundary: shared
+
+use
+  llm.reason
+  llm.classify
+
+# ── Pure checks: deterministic, no hallucination possible ────────
+
+pure is_api_key
+  needs line: Text
+  gives Bool
+  do
+    if line.contains("sk-ant-")
+      give true
+    if line.contains("ghp_")
+      give true
+    if line.contains("gsk_")
+      give true
+    if line.contains("AKIA")
+      give true
+    give false
+
+pure is_private_ip
+  needs line: Text
+  gives Bool
+  do
+    if line.contains("192.168.")
+      give true
+    if line.contains("10.0.")
+      give true
+    if line.contains("172.16.")
+      give true
+    give false
+
+pure is_private_key
+  needs line: Text
+  gives Bool
+  do
+    if line.contains("BEGIN RSA PRIVATE KEY")
+      give true
+    if line.contains("BEGIN EC PRIVATE KEY")
+      give true
+    if line.contains("BEGIN OPENSSH PRIVATE KEY")
+      give true
+    give false
+
+pure is_secret_assignment
+  needs line: Text
+  gives Bool
+  do
+    if line.contains("password=")
+      give true
+    if line.contains("secret=")
+      give true
+    if line.contains("auth_token=")
+      give true
+    if line.contains("access_key=")
+      give true
+    give false
+
+pure classify_finding
+  needs finding_type: Text
+  gives Text
+  do
+    if finding_type == "API_KEY"
+      give "CRITICAL: API key detected — rotate immediately"
+    if finding_type == "PRIVATE_IP"
+      give "WARNING: Internal IP address exposed"
+    if finding_type == "PRIVATE_KEY"
+      give "CRITICAL: Private key material — never commit keys"
+    if finding_type == "SECRET"
+      give "WARNING: Hardcoded secret — use environment variables"
+    give "CLEAN"
+
+pure scan_line
+  needs line: Text
+  gives Text
+  do
+    if is_api_key(line)
+      give "API_KEY"
+    if is_private_ip(line)
+      give "PRIVATE_IP"
+    if is_private_key(line)
+      give "PRIVATE_KEY"
+    if is_secret_assignment(line)
+      give "SECRET"
+    give "CLEAN"
+
+pure format_report
+  needs fast_result: Text, deep_result: Text
+  gives Text
+  do
+    if fast_result == "CLEAN"
+      give "Security scan: PASSED\n\nDeep analysis: {deep_result}"
+    give "Security scan: BLOCKED\n\nFinding: {fast_result}\nSeverity: {classify_finding(fast_result)}\n\nDeep analysis: {deep_result}"
+
+# ── LLM-augmented deep analysis ─────────────────────────────────
+
+task deep_analyze
+  needs code: Text
+  gives Text
+  do
+    result = reason "You are a security auditor reviewing a code diff. Check for:\n1. Leaked API keys or tokens\n2. Hardcoded passwords or secrets\n3. Internal/private IP addresses\n4. Private key material\n5. Database credentials in connection strings\n6. JWT tokens\n\nIf the code is clean, respond with just: CLEAN\nOtherwise list each finding on one line with severity.\n\nCode to review:\n{code}"
+    when result.sure -> give result
+    when result.unsure -> give "NEEDS_HUMAN_REVIEW: {result}"
+    else -> give "INCONCLUSIVE: escalate to human reviewer"
+
+# ── Full security review pipeline ────────────────────────────────
+
+flow security_review
+  needs diff: Text
+  gives Text
+
+  stage fast_check
+    result = scan_line(diff)
+
+  stage deep_check
+    analysis = deep_analyze(diff)
+
+  stage verdict
+    needs fast_check.result, deep_check.analysis
+    give format_report(fast_check.result, deep_check.analysis)
+
+# ── Demo: scan a known-bad snippet ──────────────────────────────
+
+fn main
+  sample = "api_key = \"sk-ant-api03-FAKE1234567890abcdefghijklmnop\"\ndb_url = \"postgres://admin:s3cret@192.168.1.50:5432/prod\""
+  say "Scanning sample code for security issues..."
+  result = scan_line(sample)
+  say "Fast scan result: {result}"
+  say "Assessment: {classify_finding(result)}"
+  full = security_review(sample)
+  say full

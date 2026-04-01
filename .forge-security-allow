@@ -1,0 +1,19 @@
+# FORGE Security Scanner — Allowlist
+# Files listed here are skipped during secret scanning.
+# These files intentionally contain secret patterns (regex definitions,
+# test fixtures, documentation placeholders).
+# Format: one file path per line (relative to repo root)
+
+# The scanner itself contains regex patterns for secret detection
+scripts/check-security.sh
+
+# FORGE security spec contains example pattern strings
+examples/security_scanner.forge
+
+# Documentation files with placeholder examples (sk-ant-..., etc.)
+roadmap.md
+providers.md
+docs/forge-reference.md
+
+# Default config uses ${ENV_VAR} references, not real keys
+config/forge.config.toml

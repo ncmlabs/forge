@@ -10,6 +10,13 @@
             "command": "bash scripts/check-principles.sh",
             "timeout": 10,
             "statusMessage": "Checking FORGE principles..."
+          },
+          {
+            "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "bash scripts/check-security.sh",
+            "timeout": 10,
+            "statusMessage": "Scanning for secrets..."
           }
         ]
       }
