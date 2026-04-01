@@ -1,2 +1,4 @@
 /target
 .worktrees/
+config/claude.config.toml
+config/ollama.config.toml
