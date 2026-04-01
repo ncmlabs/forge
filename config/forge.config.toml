@@ -1,0 +1,65 @@
+# ── Default provider ──────────────────────────────────────────────────────────
+[llm]
+default = "claude-haiku"
+
+# Optional: automatic routing by task category
+[llm.routing]
+fast     = "claude-haiku"
+balanced = "claude-sonnet"
+high     = "claude-opus"
+local    = "ollama-llama"
+
+# Optional: global budget limit
+[llm.budget]
+max_cost_usd     = 5.00
+max_total_tokens = 1000000
+alert_at_pct     = 80
+
+# ── Anthropic ─────────────────────────────────────────────────────────────────
+[providers.claude-haiku]
+type     = "anthropic"
+model    = "claude-haiku-4-5-20251001"
+api_key  = "${ANTHROPIC_API_KEY}"
+fallback = "ollama-llama"
+
+[providers.claude-sonnet]
+type    = "anthropic"
+model   = "claude-sonnet-4-5"
+api_key = "${ANTHROPIC_API_KEY}"
+
+[providers.claude-opus]
+type    = "anthropic"
+model   = "claude-opus-4-5"
+api_key = "${ANTHROPIC_API_KEY}"
+
+# ── OpenAI ────────────────────────────────────────────────────────────────────
+[providers.gpt4o]
+type    = "openai"
+model   = "gpt-4o"
+api_key = "${OPENAI_API_KEY}"
+
+# ── Local: Ollama ─────────────────────────────────────────────────────────────
+[providers.ollama-llama]
+type         = "openai-compat"
+model        = "llama3.2"
+base_url     = "http://localhost:11434/v1"
+api_key      = "not-required"
+timeout_secs = 120
+
+# ── Groq (fast cloud inference, OpenAI-compatible) ───────────────────────────
+[providers.groq]
+type     = "openai-compat"
+model    = "llama-3.1-70b-versatile"
+base_url = "https://api.groq.com/openai/v1"
+api_key  = "${GROQ_API_KEY}"
+
+[providers.groq.capabilities]
+max_context_tokens = 128000
+quality_tier       = "balanced"
+cost_per_1k_input  = 0.00059
+cost_per_1k_output = 0.00079
+
+# ── Mock (for testing — no API key, deterministic) ───────────────────────────
+[providers.mock]
+type  = "mock"
+model = "mock-model"

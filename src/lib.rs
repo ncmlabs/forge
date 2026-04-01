@@ -5,4 +5,5 @@ pub mod resolver;
 pub mod planner;
 pub mod tracer;
 pub mod runtime;
+pub mod config;
 pub mod llm;
