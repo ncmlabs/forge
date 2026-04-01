@@ -1,6 +1,12 @@
 use clap::{Parser, Subcommand};
+use std::collections::HashMap;
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use forge::ast::TopLevel;
+use forge::runtime::agent::AgentProcess;
+use forge::runtime::confidence::{ConfidentValue, Value};
 
 #[derive(Parser)]
 #[command(name = "forge", about = "FORGE — an agent-native programming language")]
@@ -19,6 +25,8 @@ enum Command {
     Run { file: PathBuf },
     /// Execute with full JSON trace to stderr
     Trace { file: PathBuf },
+    /// Run an agent interactively
+    Agent { file: PathBuf },
     /// Estimate token cost (static analysis)
     Cost { file: PathBuf },
 }
@@ -54,6 +62,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Trace { file } => {
             run_program(&file, true).await?;
+        }
+        Command::Agent { file } => {
+            run_agent(&file).await?;
         }
         Command::Cost { file: _ } => {
             eprintln!("not yet implemented: cost");
@@ -93,4 +104,145 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
+    let source = std::fs::read_to_string(file)
+        .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))?;
+    let program = forge::parser::parse(&source)?;
+
+    // Find the agent declaration and optional states
+    let agent_decl = program.items.iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("no agent declaration found in {}", file.display()))?;
+
+    let states_decl = program.items.iter()
+        .find_map(|item| match &item.node {
+            TopLevel::States(s) => Some(s.clone()),
+            _ => None,
+        });
+
+    let config = forge::config::ForgeConfig::load_or_default();
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+
+    let agent = AgentProcess::new(
+        agent_decl.clone(),
+        states_decl.as_ref(),
+        Arc::new(registry),
+        None,
+        program,
+    );
+
+    // Print banner
+    let handler_names: Vec<&str> = agent_decl.handlers.iter()
+        .map(|h| h.node.event.node.as_str())
+        .collect();
+    let memory_fields: Vec<&str> = agent_decl.memory.iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+
+    println!("FORGE Agent: {}", agent_decl.name.node);
+    if !memory_fields.is_empty() {
+        println!("  memory: {}", memory_fields.join(", "));
+    }
+    println!("  handlers: {}", handler_names.join(", "));
+    println!();
+    println!("Type an event name with optional arguments. Examples:");
+    println!("  start");
+    println!("  answer \"the pure keyword\"");
+    println!("  quit");
+    println!();
+
+    // REPL loop
+    let stdin = io::stdin();
+    let mut reader = stdin.lock().lines();
+
+    loop {
+        print!("> ");
+        io::stdout().flush()?;
+
+        let line = match reader.next() {
+            Some(Ok(line)) => line,
+            _ => break,
+        };
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "quit" || trimmed == "exit" {
+            break;
+        }
+
+        // Parse input: event_name [arg1] ["quoted arg"] ...
+        let (event_name, raw_args) = match trimmed.split_once(char::is_whitespace) {
+            Some((name, rest)) => (name.trim(), parse_args(rest.trim())),
+            None => (trimmed, vec![]),
+        };
+
+        // Match positional args to handler param names
+        let handler = agent_decl.handlers.iter()
+            .find(|h| h.node.event.node == event_name);
+        let mut params = HashMap::new();
+        if let Some(h) = handler {
+            for (i, param) in h.node.params.iter().enumerate() {
+                if let Some(arg) = raw_args.get(i) {
+                    params.insert(
+                        param.node.name.clone(),
+                        ConfidentValue::deterministic(Value::Text(arg.clone())),
+                    );
+                }
+            }
+        }
+
+        match agent.dispatch(event_name, params).await {
+            Ok(Some(val)) => println!("→ {}", val.value),
+            Ok(None) => {}
+            Err(e) => eprintln!("error: {}", e),
+        }
+        println!();
+    }
+
+    println!("bye!");
+    Ok(())
+}
+
+/// Parse arguments from input, respecting quoted strings.
+fn parse_args(input: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => {
+                if in_quotes {
+                    // End of quoted string
+                    args.push(current.clone());
+                    current.clear();
+                    in_quotes = false;
+                } else {
+                    // Start of quoted string
+                    in_quotes = true;
+                }
+            }
+            ' ' | '\t' if !in_quotes => {
+                if !current.is_empty() {
+                    args.push(current.clone());
+                    current.clear();
+                }
+            }
+            _ => {
+                current.push(ch);
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    args
 }

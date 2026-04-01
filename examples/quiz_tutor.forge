@@ -1,0 +1,149 @@
+use
+  llm.reason
+  llm.classify
+
+# ── Events ────────────────────────────────────────────────────
+
+event TopicCompleted
+  topic: Text
+  score: Number
+
+event SessionSummary
+  total_questions: Number
+  correct: Number
+  level: Text
+
+# ── Lifecycle ─────────────────────────────────────────────────
+
+states TutorPhase
+  beginner -> intermediate when score >= 3
+  intermediate -> advanced when score >= 7
+  advanced -> advanced
+
+# ── Quiz generation tasks ─────────────────────────────────────
+
+task generate_question
+  needs topic: Text, difficulty: Text
+  gives Text
+  do
+    give reason "You are a FORGE programming language tutor. Generate one quiz question about '{topic}' at {difficulty} difficulty. FORGE is a language for AI agent systems with tasks, flows, agents, confidence predicates, and composition operators. Be specific. Do not include the answer."
+
+task check_answer
+  needs question: Text, student_answer: Text
+  gives Text
+  do
+    give reason "Grade this FORGE quiz answer. Question: {question}. Answer: {student_answer}. Reply CORRECT, PARTIAL, or WRONG then a one-sentence explanation."
+
+task generate_hint
+  needs question: Text, topic: Text
+  gives Text
+  do
+    give reason "Give a short hint (not the answer) for this FORGE question: {question}. Topic: {topic}."
+
+task pick_topic
+  needs difficulty: Text, previous: Text
+  gives Text
+  do
+    give reason "Pick one topic for a {difficulty} FORGE quiz from the appropriate list. Beginner: tasks, pure functions, say/give, template strings, types. Intermediate: flows, stages, confidence, when/else, composition, try-or. Advanced: agents, memory, stuck detection, state machines, requires guards, events, timers. Do NOT pick '{previous}'. Reply with just the topic name."
+
+# ── The tutor agent ───────────────────────────────────────────
+#
+# Demonstrates: memory, lifecycle, handlers, requires guards,
+# stuck detection, timers, event emission, escalation.
+
+agent forge_tutor
+  lifecycle: TutorPhase
+  memory
+    score: Number
+    questions_asked: Number
+    current_question: Text
+    current_topic: Text
+    streak: Number
+    level: Text
+  timer session_timeout: 15m
+  subscribe TopicCompleted
+
+  on start
+    memory.level = "beginner"
+    topic = pick_topic("beginner", "")
+    memory.current_topic = topic
+    question = generate_question(topic, "beginner")
+    memory.current_question = question
+    memory.questions_asked = memory.questions_asked + 1
+    say "Welcome to the FORGE Quiz Tutor!"
+    say "Level: beginner | Score: 0 | Topic: {topic}"
+    say "Q{memory.questions_asked}: {question}"
+
+  on answer(student_answer: Text)
+    requires memory.questions_asked > 0 on fail: give "No active question. Send 'start' first."
+    verdict = check_answer(memory.current_question, student_answer)
+    grade = classify verdict into ["correct", "partial", "wrong"]
+    when grade.sure -> say "Graded with confidence."
+    when grade.unsure -> say "Uncertain grade."
+    else -> say "Could not grade."
+    if grade == "correct"
+      memory.score = memory.score + 1
+      memory.streak = memory.streak + 1
+      say "Correct! {verdict}"
+      say "Score: {memory.score} | Streak: {memory.streak}"
+    if grade == "partial"
+      say "Partially correct. {verdict}"
+      say "Try again or send 'hint'."
+    if grade == "wrong"
+      memory.streak = 0
+      say "Not quite. {verdict}"
+    if memory.streak >= 3
+      emit TopicCompleted(topic: memory.current_topic, score: memory.score)
+      memory.streak = 0
+      say "Topic mastered!"
+    if memory.score >= 7
+      memory.level = "advanced"
+      transition to advanced
+      say "Level up: ADVANCED!"
+    if memory.score >= 3
+      if memory.level == "beginner"
+        memory.level = "intermediate"
+        transition to intermediate
+        say "Level up: INTERMEDIATE!"
+    topic = pick_topic(memory.level, memory.current_topic)
+    memory.current_topic = topic
+    question = generate_question(topic, memory.level)
+    memory.current_question = question
+    memory.questions_asked = memory.questions_asked + 1
+    say "Q{memory.questions_asked}: {question}"
+
+  on hint
+    requires memory.questions_asked > 0 on fail: give "No active question yet."
+    hint_text = generate_hint(memory.current_question, memory.current_topic)
+    say "Hint: {hint_text}"
+
+  on skip
+    requires memory.questions_asked > 0 on fail: give "Nothing to skip."
+    say "Skipping topic: {memory.current_topic}"
+    memory.streak = 0
+    topic = pick_topic(memory.level, memory.current_topic)
+    memory.current_topic = topic
+    question = generate_question(topic, memory.level)
+    memory.current_question = question
+    memory.questions_asked = memory.questions_asked + 1
+    say "Q{memory.questions_asked}: {question}"
+
+  on end_session
+    emit SessionSummary(total_questions: memory.questions_asked, correct: memory.score, level: memory.level)
+    say "=== Session Summary ==="
+    say "Questions: {memory.questions_asked}"
+    say "Correct: {memory.score}"
+    say "Level reached: {memory.level}"
+    say "Thanks for learning FORGE!"
+
+  on session_timeout.expired
+    say "Session timed out after 15 minutes."
+    emit SessionSummary(total_questions: memory.questions_asked, correct: memory.score, level: memory.level)
+    escalate to documentation
+
+  if stuck for 3 turns
+    hint_text = generate_hint(memory.current_question, memory.current_topic)
+    say "You seem stuck. Here is some help:"
+    say "Hint: {hint_text}"
+    say "FORGE is built around honesty (confidence), composition, and supervision."
+    say "Send 'skip' to move to a new question."
