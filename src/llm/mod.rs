@@ -79,7 +79,7 @@ impl CompletionRequest {
         Self {
             prompt:         prompt.into(),
             system:         None,
-            max_tokens:     1024,
+            max_tokens:     4096,
             temperature:    0.7,
             stop_sequences: vec![],
             json_mode:      false,

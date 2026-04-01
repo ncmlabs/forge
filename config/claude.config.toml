@@ -1,0 +1,36 @@
+# ── FORGE Claude Config ───────────────────────────────────────────────────────
+# Uses Claude Haiku for fast, high-quality documentation generation
+# Fallback to Ollama on GPU server if needed
+
+[llm]
+default = "claude-haiku"
+
+[llm.routing]
+fast     = "claude-haiku"
+balanced = "claude-haiku"
+high     = "claude-sonnet"
+
+[llm.budget]
+max_cost_usd     = 5.00
+max_total_tokens = 500000
+
+# ── Claude Haiku (fast, cheap, good quality) ─────────────────────────────────
+[providers.claude-haiku]
+type     = "anthropic"
+model    = "claude-haiku-4-5-20251001"
+api_key  = "REDACTED_USE_ENV_VAR"
+fallback = "qwen-coder"
+
+# ── Claude Sonnet (higher quality for complex sections) ──────────────────────
+[providers.claude-sonnet]
+type    = "anthropic"
+model   = "claude-sonnet-4-5-20250514"
+api_key = "REDACTED_USE_ENV_VAR"
+
+# ── Ollama fallback ──────────────────────────────────────────────────────────
+[providers.qwen-coder]
+type         = "openai-compat"
+model        = "qwen3-coder:latest"
+base_url     = "http://GPU_SERVER_IP:11434/v1"
+api_key      = "not-required"
+timeout_secs = 120
