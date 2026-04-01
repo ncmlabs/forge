@@ -1,0 +1,20 @@
+use
+  llm.reason
+
+task FactChecker
+  needs claim: Text
+  gives Text
+  do
+    result = reason "Is this claim factually accurate? Yes or no, explain briefly: {claim}"
+    when result.sure     -> give result
+    when result.unsure   -> give "uncertain"
+    else                 -> give "could not verify"
+
+pool fact_checkers
+  workers: FactChecker * 3
+  strategy: majority
+  timeout: 15s
+
+fn main
+  verdict = fact_checkers.send("check", "The speed of light is 299,792 km/s")
+  say "Verdict: {verdict}"

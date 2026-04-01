@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use crate::llm::{
     CompletionRequest, CompletionResponse, LLMProvider,
     ProviderCapabilities, ProviderError, QualityTier,
@@ -10,6 +12,7 @@ pub struct MockProvider {
     caps:             ProviderCapabilities,
     responses:        HashMap<String, String>,
     default_response: String,
+    sequence:         Option<(Vec<String>, Arc<AtomicUsize>)>,
 }
 
 impl MockProvider {
@@ -26,6 +29,7 @@ impl MockProvider {
             },
             responses: HashMap::new(),
             default_response: "mock response".to_string(),
+            sequence: None,
         }
     }
 
@@ -39,6 +43,13 @@ impl MockProvider {
         self.default_response = response.to_string();
         self
     }
+
+    /// Return responses in round-robin order from the given sequence.
+    /// Takes priority over pattern-based and default responses.
+    pub fn with_responses_sequence(mut self, responses: Vec<String>) -> Self {
+        self.sequence = Some((responses, Arc::new(AtomicUsize::new(0))));
+        self
+    }
 }
 
 #[async_trait]
@@ -50,10 +61,15 @@ impl LLMProvider for MockProvider {
         &self,
         req: CompletionRequest,
     ) -> Result<CompletionResponse, ProviderError> {
-        let content = self.responses.iter()
-            .find(|(pattern, _)| req.prompt.contains(pattern.as_str()))
-            .map(|(_, resp)| resp.clone())
-            .unwrap_or_else(|| self.default_response.clone());
+        let content = if let Some((ref seq, ref counter)) = self.sequence {
+            let idx = counter.fetch_add(1, Ordering::Relaxed) % seq.len();
+            seq[idx].clone()
+        } else {
+            self.responses.iter()
+                .find(|(pattern, _)| req.prompt.contains(pattern.as_str()))
+                .map(|(_, resp)| resp.clone())
+                .unwrap_or_else(|| self.default_response.clone())
+        };
 
         Ok(CompletionResponse {
             tokens_in:     (req.prompt.len() / 4) as u32,

@@ -201,7 +201,7 @@ impl StuckDetector {
 }
 
 /// Jaccard similarity on word tokens.
-fn jaccard_similarity(a: &str, b: &str) -> f64 {
+pub(crate) fn jaccard_similarity(a: &str, b: &str) -> f64 {
     use std::collections::HashSet;
     let set_a: HashSet<&str> = a.split_whitespace().collect();
     let set_b: HashSet<&str> = b.split_whitespace().collect();

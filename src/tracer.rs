@@ -127,4 +127,24 @@ impl Tracer {
             "has_give": has_give,
         }));
     }
+
+    // ── Pool tracing ────────────────────────────────────────────────────────
+
+    pub fn pool_send(&self, pool_name: &str, event: &str, worker_count: usize, strategy: &str) {
+        self.emit("pool_send", serde_json::json!({
+            "pool": pool_name,
+            "event": event,
+            "workers": worker_count,
+            "strategy": strategy,
+        }));
+    }
+
+    pub fn pool_resolved(&self, pool_name: &str, strategy: &str, success: bool, agreement: Option<f32>) {
+        self.emit("pool_resolved", serde_json::json!({
+            "pool": pool_name,
+            "strategy": strategy,
+            "success": success,
+            "agreement": agreement,
+        }));
+    }
 }

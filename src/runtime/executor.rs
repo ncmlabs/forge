@@ -42,6 +42,9 @@ pub enum RuntimeError {
     #[error("flow error: {0}")]
     FlowError(String),
 
+    #[error("pool error: {0}")]
+    PoolError(String),
+
     // Control flow — not a real error, used to propagate `give` values
     #[error("give signal (internal)")]
     GiveSignal(ConfidentValue),
@@ -96,6 +99,7 @@ pub struct TaskExecutor {
     task_map:      HashMap<String, TaskDecl>,
     pure_map:      HashMap<String, PureDecl>,
     flow_map:      HashMap<String, FlowDecl>,
+    pool_map:      HashMap<String, PoolDecl>,
     output:        Arc<Mutex<Vec<String>>>,
     agent_context: Option<Arc<Mutex<AgentContext>>>,
 }
@@ -109,6 +113,7 @@ impl TaskExecutor {
         let mut task_map = HashMap::new();
         let mut pure_map = HashMap::new();
         let mut flow_map = HashMap::new();
+        let mut pool_map = HashMap::new();
 
         for item in &program.items {
             match &item.node {
@@ -121,6 +126,9 @@ impl TaskExecutor {
                 TopLevel::Flow(f) => {
                     flow_map.insert(f.name.node.clone(), f.clone());
                 }
+                TopLevel::Pool(pl) => {
+                    pool_map.insert(pl.name.node.clone(), pl.clone());
+                }
                 _ => {}
             }
         }
@@ -132,6 +140,7 @@ impl TaskExecutor {
             task_map,
             pure_map,
             flow_map,
+            pool_map,
             output: Arc::new(Mutex::new(Vec::new())),
             agent_context: None,
         }
@@ -549,6 +558,30 @@ impl TaskExecutor {
             }
 
             Expr::MethodCall(obj_expr, method, args) => {
+                // Pool .send() interception — pools are declarations, not runtime values
+                if method.node == "send" {
+                    if let Expr::Ident(ref name) = obj_expr.node {
+                        if let Some(pool_decl) = self.pool_map.get(name).cloned() {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let event = arg_vals.first()
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_else(|| "default".to_string());
+                            let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
+
+                            let pool = crate::runtime::pool::PoolExecutor::new(
+                                pool_decl,
+                                &self.program,
+                                self.providers.clone(),
+                                self.tracer.clone(),
+                            )?;
+                            return pool.send(&event, payload).await;
+                        }
+                    }
+                }
+
                 let obj = self.eval_expr(obj_expr, env).await?;
                 match method.node.as_str() {
                     "len" | "count" => {
@@ -667,6 +700,18 @@ impl TaskExecutor {
                     self.call_pure(&pure_decl, arg_vals).await
                 } else if let Some(flow_decl) = self.flow_map.get(name).cloned() {
                     self.call_flow(&flow_decl, arg_vals).await
+                } else if let Some(pool_decl) = self.pool_map.get(name).cloned() {
+                    let pool = crate::runtime::pool::PoolExecutor::new(
+                        pool_decl,
+                        &self.program,
+                        self.providers.clone(),
+                        self.tracer.clone(),
+                    )?;
+                    let event = arg_vals.first()
+                        .map(|v| format!("{}", v.value))
+                        .unwrap_or_else(|| "default".to_string());
+                    let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
+                    pool.send(&event, payload).await
                 } else {
                     Err(RuntimeError::NotCallable { name: name.clone() })
                 }
@@ -795,7 +840,7 @@ impl TaskExecutor {
 
     // ── Task/Pure call helpers ─────────────────────────────────────────────────
 
-    async fn call_task(
+    pub(crate) async fn call_task(
         &self,
         decl: &TaskDecl,
         args: Vec<ConfidentValue>,
