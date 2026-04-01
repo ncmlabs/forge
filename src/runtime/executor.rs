@@ -38,6 +38,9 @@ pub enum RuntimeError {
     #[error("not yet implemented: {0}")]
     Unsupported(String),
 
+    #[error("flow error: {0}")]
+    FlowError(String),
+
     // Control flow — not a real error, used to propagate `give` values
     #[error("give signal (internal)")]
     GiveSignal(ConfidentValue),
@@ -76,16 +79,22 @@ impl Env {
         }
         Err(RuntimeError::UndefinedVariable { name: name.to_string() })
     }
+
+    fn top_scope_bindings(&self) -> HashMap<String, ConfidentValue> {
+        self.scopes.last().cloned().unwrap_or_default()
+    }
 }
 
 // ── Task Executor ─────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct TaskExecutor {
     program:   Program,
     providers: Arc<ProviderRegistry>,
     tracer:    Option<Tracer>,
     task_map:  HashMap<String, TaskDecl>,
     pure_map:  HashMap<String, PureDecl>,
+    flow_map:  HashMap<String, FlowDecl>,
     output:    Arc<Mutex<Vec<String>>>,
 }
 
@@ -97,6 +106,7 @@ impl TaskExecutor {
     ) -> Self {
         let mut task_map = HashMap::new();
         let mut pure_map = HashMap::new();
+        let mut flow_map = HashMap::new();
 
         for item in &program.items {
             match &item.node {
@@ -105,6 +115,9 @@ impl TaskExecutor {
                 }
                 TopLevel::Pure(p) => {
                     pure_map.insert(p.name.node.clone(), p.clone());
+                }
+                TopLevel::Flow(f) => {
+                    flow_map.insert(f.name.node.clone(), f.clone());
                 }
                 _ => {}
             }
@@ -116,6 +129,7 @@ impl TaskExecutor {
             tracer,
             task_map,
             pure_map,
+            flow_map,
             output: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -144,7 +158,7 @@ impl TaskExecutor {
         &'a self,
         stmts: &'a [Spanned<Stmt>],
         env: &'a mut Env,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ConfidentValue, RuntimeError>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ConfidentValue, RuntimeError>> + Send + 'a>> {
         Box::pin(async move {
         for stmt in stmts {
             match self.exec_stmt(stmt, env).await {
@@ -161,7 +175,7 @@ impl TaskExecutor {
         &'a self,
         stmt: &'a Spanned<Stmt>,
         env: &'a mut Env,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), RuntimeError>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), RuntimeError>> + Send + 'a>> {
         Box::pin(async move {
         match &stmt.node {
             Stmt::Bind(name, expr) => {
@@ -313,7 +327,7 @@ impl TaskExecutor {
         &'a self,
         expr: &'a Spanned<Expr>,
         env: &'a mut Env,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ConfidentValue, RuntimeError>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ConfidentValue, RuntimeError>> + Send + 'a>> {
         Box::pin(async move {
         match &expr.node {
             Expr::NumberLit(n) => {
@@ -521,6 +535,8 @@ impl TaskExecutor {
                     result
                 } else if let Some(pure_decl) = self.pure_map.get(name).cloned() {
                     self.call_pure(&pure_decl, arg_vals).await
+                } else if let Some(flow_decl) = self.flow_map.get(name).cloned() {
+                    self.call_flow(&flow_decl, arg_vals).await
                 } else {
                     Err(RuntimeError::NotCallable { name: name.clone() })
                 }
@@ -681,6 +697,175 @@ impl TaskExecutor {
         let result = self.exec_stmts(&decl.body, &mut env).await?;
         // Pure functions always return deterministic confidence
         Ok(ConfidentValue::deterministic(result.value))
+    }
+
+    // ── Flow execution ────────────────────────────────────────────────────────
+
+    async fn call_flow(
+        &self,
+        decl: &FlowDecl,
+        args: Vec<ConfidentValue>,
+    ) -> Result<ConfidentValue, RuntimeError> {
+        use crate::planner::FlowPlanner;
+
+        let graph = FlowPlanner::dependency_graph(decl)
+            .map_err(|e| RuntimeError::FlowError(e.to_string()))?;
+        let waves = FlowPlanner::execution_waves(&graph)
+            .map_err(|e| RuntimeError::FlowError(e.to_string()))?;
+
+        // Build stage lookup
+        let stage_map: HashMap<String, StageDecl> = decl.stages.iter()
+            .map(|s| (s.node.name.node.clone(), s.node.clone()))
+            .collect();
+
+        // Bind flow parameters
+        let mut flow_args: HashMap<String, ConfidentValue> = HashMap::new();
+        for (i, param) in decl.needs.iter().enumerate() {
+            let val = args.get(i).cloned()
+                .unwrap_or(ConfidentValue::deterministic(Value::Unit));
+            flow_args.insert(param.node.name.clone(), val);
+        }
+
+        let mut stage_outputs: HashMap<String, HashMap<String, ConfidentValue>> = HashMap::new();
+        let mut last_result = ConfidentValue::deterministic(Value::Unit);
+
+        if let Some(ref tracer) = self.tracer {
+            tracer.flow_start(&decl.name.node, waves.len());
+        }
+
+        for (wave_idx, wave) in waves.iter().enumerate() {
+            if let Some(ref tracer) = self.tracer {
+                tracer.wave_start(wave_idx, wave);
+            }
+
+            if wave.len() == 1 {
+                // Single stage — no spawn overhead
+                let stage_name = &wave[0];
+                let stage_decl = &stage_map[stage_name];
+                let (bindings, give_val) = self.execute_stage(
+                    stage_name, stage_decl, &flow_args, &stage_outputs,
+                ).await?;
+                if let Some(gv) = give_val {
+                    last_result = gv;
+                }
+                stage_outputs.insert(stage_name.clone(), bindings);
+            } else {
+                // Multiple stages — run concurrently
+                let mut handles = Vec::new();
+                for stage_name in wave {
+                    let stage_decl = stage_map[stage_name].clone();
+                    let flow_args_clone = flow_args.clone();
+                    let stage_outputs_clone = stage_outputs.clone();
+                    let executor_clone = self.clone();
+                    let name = stage_name.clone();
+
+                    handles.push(tokio::spawn(async move {
+                        let result = executor_clone.execute_stage(
+                            &name, &stage_decl, &flow_args_clone, &stage_outputs_clone,
+                        ).await;
+                        (name, result)
+                    }));
+                }
+
+                for handle in handles {
+                    let (name, result) = handle.await
+                        .map_err(|e| RuntimeError::FlowError(format!("stage join error: {}", e)))?;
+                    let (bindings, give_val) = result?;
+                    if let Some(gv) = give_val {
+                        last_result = gv;
+                    }
+                    stage_outputs.insert(name, bindings);
+                }
+            }
+
+            if let Some(ref tracer) = self.tracer {
+                tracer.wave_complete(wave_idx);
+            }
+        }
+
+        if let Some(ref tracer) = self.tracer {
+            tracer.flow_complete(&decl.name.node);
+        }
+
+        Ok(last_result)
+    }
+
+    async fn execute_stage(
+        &self,
+        stage_name: &str,
+        stage_decl: &StageDecl,
+        flow_args: &HashMap<String, ConfidentValue>,
+        stage_outputs: &HashMap<String, HashMap<String, ConfidentValue>>,
+    ) -> Result<(HashMap<String, ConfidentValue>, Option<ConfidentValue>), RuntimeError> {
+        if let Some(ref tracer) = self.tracer {
+            tracer.stage_start(stage_name);
+        }
+
+        let mut env = Env::new();
+
+        // Bind flow arguments
+        for (name, val) in flow_args {
+            env.bind(name, val.clone());
+        }
+
+        // Bind stage dependencies as Records
+        let mut needed_stages: HashMap<String, Option<Vec<String>>> = HashMap::new();
+        for needs_ref in &stage_decl.needs {
+            let stage = &needs_ref.node.stage;
+            match &needs_ref.node.field {
+                NeedsRefField::Glob => {
+                    needed_stages.insert(stage.clone(), None);
+                }
+                NeedsRefField::Named(field) => {
+                    needed_stages.entry(stage.clone())
+                        .and_modify(|v| {
+                            if let Some(fields) = v {
+                                fields.push(field.clone());
+                            }
+                        })
+                        .or_insert(Some(vec![field.clone()]));
+                }
+            }
+        }
+
+        for (dep_stage, fields_opt) in &needed_stages {
+            let dep_bindings = stage_outputs.get(dep_stage)
+                .ok_or_else(|| RuntimeError::FlowError(
+                    format!("stage '{}' output not available for stage '{}'", dep_stage, stage_name)
+                ))?;
+
+            let record: HashMap<String, ConfidentValue> = match fields_opt {
+                None => dep_bindings.clone(),
+                Some(fields) => {
+                    fields.iter()
+                        .filter_map(|f| dep_bindings.get(f).map(|v| (f.clone(), v.clone())))
+                        .collect()
+                }
+            };
+
+            env.bind(dep_stage, ConfidentValue::deterministic(
+                Value::Record(record)
+            ));
+        }
+
+        // Push scope so we can extract stage-produced bindings
+        env.push_scope();
+
+        // exec_stmts catches GiveSignal and returns Ok(val).
+        // If no give, it returns Ok(Unit). Distinguish by checking the value.
+        let result = self.exec_stmts(&stage_decl.body, &mut env).await?;
+        let give_value = match &result.value {
+            Value::Unit => None,
+            _ => Some(result),
+        };
+
+        let stage_bindings = env.top_scope_bindings();
+
+        if let Some(ref tracer) = self.tracer {
+            tracer.stage_complete(stage_name, give_value.is_some());
+        }
+
+        Ok((stage_bindings, give_value))
     }
 }
 
@@ -1026,5 +1211,117 @@ fn main
         let (result, _) = run_forge("fn main\n  give try undefined_var or 42\n").await;
         let val = result.unwrap();
         assert!(matches!(val.value, Value::Number(n) if (n - 42.0).abs() < f64::EPSILON));
+    }
+
+    // ── Flow tests ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_flow_single_stage() {
+        let (result, outputs) = run_forge(r#"
+flow greetflow
+  needs name: Text
+  gives Text
+
+  stage greet
+    give "Hello, {name}!"
+
+fn main
+  result = greetflow("World")
+  say result
+"#).await;
+        assert!(result.is_ok());
+        assert_eq!(outputs, vec!["Hello, World!"]);
+    }
+
+    #[tokio::test]
+    async fn test_flow_multi_wave_with_deps() {
+        let (result, outputs) = run_forge(r#"
+flow pipeline
+  needs input: Text
+  gives Text
+
+  stage first
+    msg = "{input} processed"
+
+  stage second
+    needs first.*
+    give "{first.msg} and refined"
+
+fn main
+  result = pipeline("data")
+  say result
+"#).await;
+        assert!(result.is_ok());
+        assert_eq!(outputs, vec!["data processed and refined"]);
+    }
+
+    #[tokio::test]
+    async fn test_flow_parallel_independent_stages() {
+        let (result, _) = run_forge(r#"
+flow parallel
+  needs x: Text
+  gives Text
+
+  stage a
+    val = "A:{x}"
+
+  stage b
+    val = "B:{x}"
+
+  stage combine
+    needs a.val, b.val
+    give "{a.val}+{b.val}"
+
+fn main
+  give parallel("test")
+"#).await;
+        let val = result.unwrap();
+        assert!(matches!(val.value, Value::Text(ref s) if s == "A:test+B:test"));
+    }
+
+    #[tokio::test]
+    async fn test_flow_with_llm_reason() {
+        let mock = MockProvider::new("mock")
+            .with_response("synthesize", "synthesis result")
+            .with_default("other response");
+        let (result, outputs) = run_forge_with_mock(r#"
+flow analyze
+  needs topic: Text
+  gives Text
+
+  stage gather
+    info = "facts about {topic}"
+
+  stage synthesize
+    needs gather.*
+    give reason "synthesize {gather.info}"
+
+fn main
+  result = analyze("AI")
+  say result
+"#, mock).await;
+        assert!(result.is_ok());
+        assert_eq!(outputs, vec!["synthesis result"]);
+    }
+
+    #[tokio::test]
+    async fn test_flow_cycle_detection() {
+        let (result, _) = run_forge(r#"
+flow cyclic
+  needs x: Text
+  gives Text
+
+  stage a
+    needs b.*
+    val = "a"
+
+  stage b
+    needs a.*
+    val = "b"
+
+fn main
+  give cyclic("test")
+"#).await;
+        assert!(matches!(result, Err(RuntimeError::FlowError(ref msg)) if msg.contains("cycle")));
     }
 }
