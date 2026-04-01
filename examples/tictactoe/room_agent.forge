@@ -1,0 +1,51 @@
+#! boundary: server
+
+event PlayerJoined
+  player: Text
+  room: Text
+
+event MoveMade
+  player: Text
+  cell: Number
+
+states GamePhase
+  waiting -> playing when player_count == 2
+  playing -> finished
+
+type GameResult
+  winner: Text
+  detail: Text
+
+agent room_agent
+  lifecycle: GamePhase
+  memory
+    board: Text[9]
+    current_turn: Text
+    player_count: Number
+  timer reconnect_window: 30s
+  subscribe PlayerJoined where room == memory.room
+
+  on join(player: Text)
+    requires player_count < 2 on fail: give "room full"
+    memory.player_count = memory.player_count + 1
+    emit PlayerJoined(player: player, room: "main")
+    if memory.player_count == 2
+      transition to playing
+
+  on move(player: Text, cell: Number)
+    requires player == memory.current_turn on fail: silent
+    requires memory.board[cell] == "_" on fail: give "cell taken"
+    memory.board[cell] = player
+    result = check_winner(memory.board)
+    match result
+      Winner(who) -> give GameResult(winner: who, detail: "three in a row")
+      Draw -> give GameResult(winner: "none", detail: "draw")
+      _ -> say "next turn"
+    memory.current_turn = next_player(memory.current_turn)
+
+  on reconnect_window.expired
+    escalate to lobby
+
+  if stuck for 5 turns
+    say "game appears stuck"
+    escalate to lobby

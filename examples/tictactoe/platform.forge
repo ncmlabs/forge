@@ -1,0 +1,39 @@
+use
+  llm.reason
+  llm.classify
+
+pure check_winner
+  needs board: Text[9]
+  gives Text
+  do
+    for line in winning_lines(board)
+      if line.all_same and line.first != "_"
+        give Winner(line.first)
+    if board.none("_")
+      give Draw
+    give Continue
+
+pure next_player
+  needs current: Text
+  gives Text
+  do
+    if current == "X"
+      give "O"
+    else
+      give "X"
+
+contract GameRoom
+  can join(player: Text) -> Text
+  can move(player: Text, cell: Number) -> GameResult
+
+pool rooms
+  workers: room_agent * 10
+  strategy: fastest
+  timeout: 30s
+  fallback: lobby_handler
+
+system tictactoe
+  use
+    game: room_agent
+    lobby: lobby_handler
+  game >> lobby
