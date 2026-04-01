@@ -44,6 +44,33 @@ fn build_bool_lit(pair: Pair) -> bool {
     pair.as_str() == "true"
 }
 
+fn decode_template_escape(pair: &Pair) -> anyhow::Result<char> {
+    match pair.as_str() {
+        "\\n" => Ok('\n'),
+        "\\r" => Ok('\r'),
+        "\\t" => Ok('\t'),
+        "\\\"" => Ok('"'),
+        "\\\\" => Ok('\\'),
+        other => Err(parse_error(pair, &format!("unsupported escape sequence: {}", other))),
+    }
+}
+
+fn push_text_part(parts: &mut Vec<Spanned<TemplatePart>>, text: String, span: Span) {
+    if text.is_empty() {
+        return;
+    }
+
+    if let Some(last) = parts.last_mut() {
+        if let TemplatePart::Text(existing) = &mut last.node {
+            existing.push_str(&text);
+            last.span.end = span.end;
+            return;
+        }
+    }
+
+    parts.push(Spanned::new(TemplatePart::Text(text), span));
+}
+
 fn build_template_string(pair: Pair) -> anyhow::Result<Vec<Spanned<TemplatePart>>> {
     let mut parts = Vec::new();
     for child in pair.into_inner() {
@@ -52,10 +79,11 @@ fn build_template_string(pair: Pair) -> anyhow::Result<Vec<Spanned<TemplatePart>
                 let inner = child.into_inner().next().unwrap();
                 match inner.as_rule() {
                     Rule::template_text => {
-                        parts.push(spanned(
-                            TemplatePart::Text(inner.as_str().to_string()),
-                            &inner,
-                        ));
+                        push_text_part(&mut parts, inner.as_str().to_string(), to_span(&inner));
+                    }
+                    Rule::template_escape => {
+                        let decoded = decode_template_escape(&inner)?;
+                        push_text_part(&mut parts, decoded.to_string(), to_span(&inner));
                     }
                     Rule::template_interp => {
                         let expr_pair = inner.into_inner().next().unwrap();
@@ -72,6 +100,22 @@ fn build_template_string(pair: Pair) -> anyhow::Result<Vec<Spanned<TemplatePart>
         }
     }
     Ok(parts)
+}
+
+fn build_plain_template_string(pair: Pair) -> anyhow::Result<String> {
+    let parts = build_template_string(pair)?;
+    let mut text = String::new();
+    for part in parts {
+        match part.node {
+            TemplatePart::Text(part_text) => text.push_str(&part_text),
+            TemplatePart::Interp(_) => {
+                return Err(anyhow::anyhow!(
+                    "classify labels must be plain strings without interpolation"
+                ));
+            }
+        }
+    }
+    Ok(text)
 }
 
 fn build_type_name(pair: Pair) -> anyhow::Result<Spanned<TypeName>> {
@@ -354,10 +398,7 @@ fn build_classify_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let mut labels = Vec::new();
     for child in label_list.into_inner() {
         if child.as_rule() == Rule::template_string {
-            // Extract the raw text from the template string (labels are plain strings)
-            let s = child.as_str();
-            // Strip surrounding quotes
-            let text = &s[1..s.len() - 1];
+            let text = build_plain_template_string(child.clone())?;
             labels.push(spanned(text.to_string(), &child));
         }
     }
