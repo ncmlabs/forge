@@ -4,6 +4,7 @@
 
 use std::time::Instant;
 
+#[derive(Clone)]
 pub struct Tracer {
     start: Instant,
 }
@@ -83,6 +84,47 @@ impl Tracer {
         self.emit("task_return", serde_json::json!({
             "task": name,
             "success": success,
+        }));
+    }
+
+    // ── Flow / wave / stage tracing ──────────────────────────────────────────
+
+    pub fn flow_start(&self, name: &str, wave_count: usize) {
+        self.emit("flow_start", serde_json::json!({
+            "flow": name,
+            "waves": wave_count,
+        }));
+    }
+
+    pub fn flow_complete(&self, name: &str) {
+        self.emit("flow_complete", serde_json::json!({
+            "flow": name,
+        }));
+    }
+
+    pub fn wave_start(&self, wave_idx: usize, stages: &[String]) {
+        self.emit("wave_start", serde_json::json!({
+            "wave": wave_idx,
+            "stages": stages,
+        }));
+    }
+
+    pub fn wave_complete(&self, wave_idx: usize) {
+        self.emit("wave_complete", serde_json::json!({
+            "wave": wave_idx,
+        }));
+    }
+
+    pub fn stage_start(&self, name: &str) {
+        self.emit("stage_start", serde_json::json!({
+            "stage": name,
+        }));
+    }
+
+    pub fn stage_complete(&self, name: &str, has_give: bool) {
+        self.emit("stage_complete", serde_json::json!({
+            "stage": name,
+            "has_give": has_give,
         }));
     }
 }
