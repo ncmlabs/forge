@@ -149,11 +149,18 @@ impl TaskExecutor {
             .ok_or(RuntimeError::NoMainFunction)?;
 
         let mut env = Env::new();
-        self.exec_stmts(&main_decl.body, &mut env).await
+        match self.exec_stmts(&main_decl.body, &mut env).await {
+            Ok(val) => Ok(val),
+            Err(RuntimeError::GiveSignal(val)) => Ok(val),
+            Err(e) => Err(e),
+        }
     }
 
     // ── Statement execution ───────────────────────────────────────────────────
 
+    /// Execute a list of statements. `give` propagates as `GiveSignal` error
+    /// so it can cross if/else/match/for boundaries. Callers at function
+    /// boundaries (call_task, call_pure, call_flow, run) must catch it.
     fn exec_stmts<'a>(
         &'a self,
         stmts: &'a [Spanned<Stmt>],
@@ -161,11 +168,7 @@ impl TaskExecutor {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ConfidentValue, RuntimeError>> + Send + 'a>> {
         Box::pin(async move {
         for stmt in stmts {
-            match self.exec_stmt(stmt, env).await {
-                Ok(()) => {}
-                Err(RuntimeError::GiveSignal(val)) => return Ok(val),
-                Err(e) => return Err(e),
-            }
+            self.exec_stmt(stmt, env).await?;
         }
         Ok(ConfidentValue::deterministic(Value::Unit))
         })
@@ -501,6 +504,36 @@ impl TaskExecutor {
                         };
                         Ok(ConfidentValue::deterministic(Value::Bool(none)))
                     }
+                    "lower" => {
+                        let text = match &obj.value {
+                            Value::Text(s) => s.to_lowercase(),
+                            _ => return Err(RuntimeError::TypeError {
+                                expected: "Text".to_string(),
+                                got: format!("{}", obj.value),
+                            }),
+                        };
+                        Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
+                    }
+                    "upper" => {
+                        let text = match &obj.value {
+                            Value::Text(s) => s.to_uppercase(),
+                            _ => return Err(RuntimeError::TypeError {
+                                expected: "Text".to_string(),
+                                got: format!("{}", obj.value),
+                            }),
+                        };
+                        Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
+                    }
+                    "trim" => {
+                        let text = match &obj.value {
+                            Value::Text(s) => s.trim().to_string(),
+                            _ => return Err(RuntimeError::TypeError {
+                                expected: "Text".to_string(),
+                                got: format!("{}", obj.value),
+                            }),
+                        };
+                        Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
+                    }
                     other => Err(RuntimeError::Unsupported(
                         format!("method .{}()", other),
                     )),
@@ -678,7 +711,11 @@ impl TaskExecutor {
         }
 
         match &decl.body.node {
-            TaskBody::Do(stmts) => self.exec_stmts(stmts, &mut env).await,
+            TaskBody::Do(stmts) => match self.exec_stmts(stmts, &mut env).await {
+                Ok(val) => Ok(val),
+                Err(RuntimeError::GiveSignal(val)) => Ok(val),
+                Err(e) => Err(e),
+            },
             TaskBody::Is(expr) => self.eval_expr(expr, &mut env).await,
         }
     }
@@ -694,7 +731,11 @@ impl TaskExecutor {
                 .unwrap_or(ConfidentValue::deterministic(Value::Unit));
             env.bind(&param.node.name, val);
         }
-        let result = self.exec_stmts(&decl.body, &mut env).await?;
+        let result = match self.exec_stmts(&decl.body, &mut env).await {
+            Ok(val) => val,
+            Err(RuntimeError::GiveSignal(val)) => val,
+            Err(e) => return Err(e),
+        };
         // Pure functions always return deterministic confidence
         Ok(ConfidentValue::deterministic(result.value))
     }
@@ -851,9 +892,13 @@ impl TaskExecutor {
         // Push scope so we can extract stage-produced bindings
         env.push_scope();
 
-        // exec_stmts catches GiveSignal and returns Ok(val).
-        // If no give, it returns Ok(Unit). Distinguish by checking the value.
-        let result = self.exec_stmts(&stage_decl.body, &mut env).await?;
+        // exec_stmts propagates GiveSignal as Err — catch it here at the
+        // stage boundary so give values are captured correctly.
+        let result = match self.exec_stmts(&stage_decl.body, &mut env).await {
+            Ok(val) => val,
+            Err(RuntimeError::GiveSignal(val)) => val,
+            Err(e) => return Err(e),
+        };
         let give_value = match &result.value {
             Value::Unit => None,
             _ => Some(result),

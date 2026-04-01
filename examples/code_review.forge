@@ -1,0 +1,54 @@
+use
+  llm.reason
+  llm.classify
+
+task detect_language
+  needs code: Text
+  gives Text
+  do
+    result = classify code into ["python", "javascript", "rust", "go", "java", "typescript", "other"]
+    when result.sure -> give result
+    when result.unsure -> give "unknown"
+    else -> give "unknown"
+
+task analyze_quality
+  needs code: Text, language: Text
+  gives Text
+  do
+    give reason "You are a code reviewer. Analyze this {language} code for quality issues (readability, naming, structure). Be concise, list max 3 issues:\n\n{code}"
+
+task analyze_security
+  needs code: Text, language: Text
+  gives Text
+  do
+    give reason "You are a security auditor. Analyze this {language} code for security vulnerabilities (injection, auth, data exposure). Be concise, list max 3 issues:\n\n{code}"
+
+pure format_verdict
+  needs language: Text, quality: Text, security: Text
+  gives Text
+  do
+    give "=== Code Review ===\nLanguage: {language}\n\n--- Quality ---\n{quality}\n\n--- Security ---\n{security}"
+
+flow review_code
+  needs code: Text
+  gives Text
+
+  stage detect
+    lang = detect_language(code)
+
+  stage quality
+    needs detect.lang
+    report = analyze_quality(code, detect.lang)
+
+  stage security
+    needs detect.lang
+    report = analyze_security(code, detect.lang)
+
+  stage verdict
+    needs detect.lang, quality.report, security.report
+    give format_verdict(detect.lang, quality.report, security.report)
+
+fn main
+  code = "import subprocess\ndef run(cmd):\n    return subprocess.call(cmd, shell=True)\n\nuser_input = input('Enter command: ')\nrun(user_input)"
+  result = review_code(code)
+  say result

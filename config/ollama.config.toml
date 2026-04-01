@@ -1,0 +1,40 @@
+# ── FORGE Ollama Config ───────────────────────────────────────────────────────
+# GPU server: GPU_SERVER_IP (RTX 3090)
+# Models: qwen3-coder:latest, qwen3.5:27b, gpt-oss:latest
+
+[llm]
+default = "qwen-coder"
+
+[llm.routing]
+fast     = "gpt-oss"
+balanced = "qwen-coder"
+high     = "qwen35"
+
+[llm.budget]
+max_cost_usd     = 0.00
+max_total_tokens = 100000
+
+# ── Qwen3 Coder (code analysis, classification) ─────────────────────────────
+[providers.qwen-coder]
+type         = "openai-compat"
+model        = "qwen3-coder:latest"
+base_url     = "http://GPU_SERVER_IP:11434/v1"
+api_key      = "not-required"
+timeout_secs = 120
+fallback     = "qwen35"
+
+# ── Qwen 3.5 27B (general reasoning) ────────────────────────────────────────
+[providers.qwen35]
+type         = "openai-compat"
+model        = "qwen3.5:27b"
+base_url     = "http://GPU_SERVER_IP:11434/v1"
+api_key      = "not-required"
+timeout_secs = 120
+
+# ── GPT-OSS (fast, lightweight) ─────────────────────────────────────────────
+[providers.gpt-oss]
+type         = "openai-compat"
+model        = "gpt-oss:latest"
+base_url     = "http://GPU_SERVER_IP:11434/v1"
+api_key      = "not-required"
+timeout_secs = 120

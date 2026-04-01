@@ -463,7 +463,9 @@ fn build_postfix_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         } else if op_str.starts_with('.') {
             if let Some(first_child) = op_inner.next() {
                 if first_child.as_rule() == Rule::ident {
-                    // Check if method call (has arg_list) or field access
+                    // Check if method call (has parens) or field access.
+                    // Zero-arg method calls like .len() have no arg_list child,
+                    // so we also check whether the raw text contains '('.
                     if let Some(arg_list) = op_inner.next() {
                         let args = build_arg_list(arg_list)?;
                         result = Spanned::new(
@@ -471,6 +473,16 @@ fn build_postfix_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
                                 Box::new(result),
                                 spanned(first_child.as_str().to_string(), &first_child),
                                 args,
+                            ),
+                            op_span,
+                        );
+                    } else if op_str.contains('(') {
+                        // Zero-arg method call: .len(), .count()
+                        result = Spanned::new(
+                            Expr::MethodCall(
+                                Box::new(result),
+                                spanned(first_child.as_str().to_string(), &first_child),
+                                vec![],
                             ),
                             op_span,
                         );

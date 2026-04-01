@@ -1,0 +1,75 @@
+use
+  llm.reason
+  llm.classify
+
+task argue_for
+  needs topic: Text
+  gives Text
+  do
+    give reason "Make a compelling 2-sentence argument FOR: {topic}"
+
+task argue_against
+  needs topic: Text
+  gives Text
+  do
+    give reason "Make a compelling 2-sentence argument AGAINST: {topic}"
+
+task score_argument
+  needs argument: Text
+  gives Number
+  do
+    result = classify argument into ["weak", "moderate", "strong", "compelling"]
+    label = result.lower()
+    if label == "compelling"
+      give 4
+    else if label == "strong"
+      give 3
+    else if label == "moderate"
+      give 2
+    else
+      give 1
+
+task judge
+  needs for_arg: Text, against_arg: Text
+  gives Text
+  do
+    for_score = score_argument(for_arg)
+    against_score = score_argument(against_arg)
+    verdict = reason "Given these arguments:\nFOR: {for_arg}\nAGAINST: {against_arg}\nWhich side wins? Answer only: FOR, AGAINST, or TIE"
+    when verdict.sure(above: 0.9) -> give "Clear verdict: {verdict} (FOR scored {for_score}, AGAINST scored {against_score})"
+    when verdict.sure -> give "Verdict: {verdict} (FOR scored {for_score}, AGAINST scored {against_score})"
+    when verdict.unsure -> give "Uncertain verdict: {verdict}"
+    else -> give "Cannot determine winner"
+
+pure format_header
+  needs topic: Text, count: Number
+  gives Text
+  do
+    if count > 2
+      give "=== Grand Debate: {topic} ({count} arguments) ==="
+    else if count == 2
+      give "=== Debate: {topic} ==="
+    else
+      give "=== Mini Debate: {topic} ==="
+
+fn main
+  topic = "AI should be open source"
+  arguments = (argue_for(topic) | argue_against(topic))
+  arg_count = arguments.len()
+  header = format_header(topic, arg_count)
+  say header
+  for_arg = arguments[0]
+  against_arg = arguments[1]
+  say "FOR: {for_arg}"
+  say "AGAINST: {against_arg}"
+  for arg in arguments
+      say "Argument: {arg}"
+  piped_result = argue_for(topic) >> score_argument(_pipe)
+  say "Pipe test - FOR score: {piped_result}"
+  safe_result = try undefined_task("x") or "fallback: task not found"
+  say "Try-or fallback: {safe_result}"
+  verdict_text = reason "Is AI dangerous? Answer yes or no."
+  has_yes = verdict_text.lower().contains("yes")
+  say "Contains test: {has_yes}"
+  final = judge(for_arg, against_arg)
+  say final
