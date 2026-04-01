@@ -1,0 +1,11 @@
+use
+  llm.classify
+
+task classify_intent
+  needs message: Text
+  gives Intent
+  do
+    result = classify message into ["buy", "support", "cancel", "other"]
+    when result.sure -> give result
+    when result.unsure -> give "unclear"
+    else -> give "unknown"

@@ -1,0 +1,274 @@
+// =============================================================
+// FORGE v2 PEG Grammar
+// =============================================================
+// No implicit WHITESPACE — all spacing is explicit.
+// Indentation: 2-space fixed levels (i1, i2, i3).
+// =============================================================
+
+// --- Program structure ---
+program   = { SOI ~ (blank_line | top_level)* ~ EOI }
+top_level = {
+    use_decl
+  | task_decl
+  | flow_decl
+  | agent_decl
+  | pool_decl
+  | contract_decl
+  | system_decl
+  | fn_main_decl
+}
+
+// --- Whitespace primitives ---
+sp         = _{ " " | "\t" }
+_s         = _{ sp+ }
+_s_opt     = _{ sp* }
+nl         = _{ _s_opt ~ comment? ~ NEWLINE }
+blank_line = _{ _s_opt ~ comment? ~ NEWLINE }
+NEWLINE    = _{ "\r\n" | "\n" }
+comment    = _{ "#" ~ (!NEWLINE ~ ANY)* }
+i1         = _{ "  " }
+i2         = _{ "    " }
+i3         = _{ "      " }
+
+// --- Identifiers & Keywords ---
+// Only true keywords that can NEVER be used as identifiers.
+// Contextual keywords (memory, search, can, workers, strategy, etc.)
+// are handled by rule ordering and only reserved in their specific contexts.
+keyword = @{
+    ( "use" | "task" | "flow" | "agent" | "pool" | "contract" | "system"
+    | "fn" | "needs" | "gives" | "do" | "is" | "stage"
+    | "if" | "else" | "when" | "give" | "say" | "reason" | "classify"
+    | "into" | "true" | "false" | "or" | "with" | "escalate"
+    | "to" | "try" | "above" )
+    ~ !(ASCII_ALPHANUMERIC | "_")
+}
+
+ident = @{ !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// --- Literals ---
+number_lit = @{ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+bool_lit   = @{ ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// Template string: allows {expr} interpolation
+template_string = ${ "\"" ~ template_part* ~ "\"" }
+template_part   =  { template_interp | template_text }
+template_interp =  { "{" ~ _s_opt ~ expr ~ _s_opt ~ "}" }
+template_text   = @{ (!("\"" | "{") ~ ANY)+ }
+
+// --- Type names ---
+builtin_type = @{
+    ( "Text" | "Number" | "Bool" | "Results" | "Report" | "Intent"
+    | "Summary" | "Failure" | "Classification" | "Conversation"
+    | "Profile" | "SearchResults" )
+    ~ !(ASCII_ALPHANUMERIC | "_")
+}
+type_name = { builtin_type | ident }
+
+// --- use declaration ---
+use_decl = {
+    "use" ~ nl ~
+    (i1 ~ cap_path ~ nl)+
+}
+cap_path = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~ ("." ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*)+ }
+
+// --- task declaration ---
+task_decl = {
+    "task" ~ _s ~ ident ~ nl ~
+    (i1 ~ needs_clause ~ nl)? ~
+    (i1 ~ gives_clause ~ nl)? ~
+    ( i1 ~ do_block | i1 ~ is_clause ~ nl ) ~
+    (i1 ~ if_fails_block)?
+}
+
+needs_clause = { "needs" ~ _s ~ param ~ (_s_opt ~ "," ~ _s_opt ~ param)* }
+gives_clause = { "gives" ~ _s ~ output_type }
+output_type  = { type_name ~ (_s ~ "or" ~ _s ~ type_name)* }
+
+param      = { ident ~ _s_opt ~ ":" ~ _s_opt ~ type_name }
+param_list = { param ~ (_s_opt ~ "," ~ _s_opt ~ param)* }
+
+is_clause = { "is" ~ _s ~ compose_expr }
+
+do_block = {
+    "do" ~ nl ~
+    (i2 ~ statement ~ nl)+
+}
+
+if_fails_block = {
+    "if" ~ _s ~ "fails" ~ nl ~
+    (i2 ~ statement ~ nl)+
+}
+
+// --- flow declaration ---
+flow_decl = {
+    "flow" ~ _s ~ ident ~ nl ~
+    (i1 ~ needs_clause ~ nl)? ~
+    (i1 ~ gives_clause ~ nl)? ~
+    (blank_line | stage_block)+
+}
+
+stage_block = {
+    i1 ~ "stage" ~ _s ~ ident ~ nl ~
+    (i2 ~ "needs" ~ _s ~ needs_ref_list ~ nl)? ~
+    (blank_line | i2 ~ statement ~ nl)+
+}
+
+needs_ref_list = { needs_ref ~ (_s_opt ~ "," ~ _s_opt ~ needs_ref)* }
+needs_ref      = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~ "." ~ ("*" | (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*) }
+
+// --- agent declaration ---
+agent_decl = {
+    "agent" ~ _s ~ ident ~ nl ~
+    (i1 ~ memory_block)? ~
+    (blank_line | on_handler)+ ~
+    (i1 ~ stuck_policy)?
+}
+
+memory_block = {
+    "memory" ~ nl ~
+    (i2 ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ type_name ~ nl)+
+}
+
+on_handler = {
+    i1 ~ "on" ~ _s ~ ident ~ (_s_opt ~ ":" ~ _s_opt ~ type_name)? ~ nl ~
+    (i2 ~ statement ~ nl)+
+}
+
+stuck_policy = {
+    "if" ~ _s ~ "stuck" ~ (_s ~ "for" ~ _s ~ number_lit ~ _s ~ "turns")? ~ nl ~
+    (i2 ~ statement ~ nl)+
+}
+
+// --- pool declaration ---
+pool_decl = {
+    "pool" ~ _s ~ ident ~ nl ~
+    i1 ~ "workers" ~ _s_opt ~ ":" ~ _s_opt ~ ident ~ _s ~ "*" ~ _s ~ number_lit ~ nl ~
+    i1 ~ "strategy" ~ _s_opt ~ ":" ~ _s_opt ~ pool_strategy ~ nl ~
+    (i1 ~ "timeout" ~ _s_opt ~ ":" ~ _s_opt ~ duration ~ nl)? ~
+    (i1 ~ "fallback" ~ _s_opt ~ ":" ~ _s_opt ~ ident ~ nl)?
+}
+
+pool_strategy = {
+    "fastest" | "all" | "majority"
+  | "quorum(" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
+  | "first(" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
+}
+duration = @{ ASCII_DIGIT+ ~ ("s" | "m" | "h") }
+
+// --- contract declaration ---
+contract_decl = {
+    "contract" ~ _s ~ ident ~ nl ~
+    (i1 ~ can_signature ~ nl)+
+}
+
+can_signature = {
+    "can" ~ _s ~ ident ~ _s_opt ~ "(" ~ _s_opt ~ param_list? ~ _s_opt ~ ")"
+    ~ _s_opt ~ "->" ~ _s_opt ~ type_name
+}
+
+// --- system declaration ---
+system_decl = {
+    "system" ~ _s ~ ident ~ nl ~
+    (i1 ~ "use" ~ nl ~ (i2 ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ ident ~ nl)+)? ~
+    (blank_line | i1 ~ compose_expr ~ nl)*
+}
+
+// --- fn main ---
+fn_main_decl = {
+    "fn" ~ _s ~ "main" ~ nl ~
+    (i1 ~ statement ~ nl)*
+}
+
+// --- Statements ---
+statement = {
+    when_block
+  | give_stmt
+  | say_stmt
+  | escalate_stmt
+  | memory_update_stmt
+  | bind_stmt
+  | expr_stmt
+}
+
+bind_stmt          = { ident ~ _s_opt ~ "=" ~ _s_opt ~ expr }
+give_stmt          = { "give" ~ _s ~ expr ~ (_s ~ "with" ~ _s ~ call_expr)? }
+say_stmt           = { "say" ~ _s ~ expr }
+escalate_stmt      = { "escalate" ~ _s ~ "to" ~ _s ~ ident }
+memory_update_stmt = { "memory" ~ "." ~ ident ~ _s_opt ~ "=" ~ _s_opt ~ expr }
+expr_stmt          = { expr }
+
+when_block = {
+    when_clause ~
+    (same_indent_when ~ when_clause)* ~
+    (same_indent_else ~ else_clause)?
+}
+
+// These rules match the indentation for subsequent when/else lines.
+// Inside a do_block (i2 indent), subsequent when/else appear at i2.
+same_indent_when = _{ nl ~ i2 }
+same_indent_else = _{ nl ~ i2 }
+
+when_clause = { "when" ~ _s ~ conf_predicate ~ _s_opt ~ "->" ~ _s_opt ~ statement_inline }
+else_clause = { "else" ~ _s_opt ~ "->" ~ _s_opt ~ statement_inline }
+
+statement_inline = {
+    give_stmt | say_stmt | escalate_stmt | expr_stmt
+}
+
+// --- Confidence predicates ---
+conf_predicate = {
+    ident ~ "." ~ "sure" ~ "(" ~ _s_opt ~ "above" ~ _s_opt ~ ":" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
+  | ident ~ "." ~ conf_level
+}
+conf_level = @{ ("sure" | "unsure" | "unreliable" | "conflicted") ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// --- Expressions ---
+expr = { compose_expr }
+
+compose_expr = { fan_out_expr ~ (_s_opt ~ ">>" ~ _s_opt ~ fan_out_expr)* }
+
+fan_out_expr = {
+    "(" ~ _s_opt ~ pipe_term ~ (_s_opt ~ "|" ~ _s_opt ~ pipe_term)+ ~ _s_opt ~ ")"
+  | pipe_term
+}
+
+pipe_term = {
+    reason_expr
+  | classify_expr
+  | search_expr
+  | try_or_expr
+  | constructor_expr
+  | call_expr
+  | field_access_expr
+  | atom
+}
+
+reason_expr   = { "reason" ~ _s ~ string_arg }
+classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list }
+search_expr   = { "search" ~ _s ~ string_arg }
+try_or_expr   = { "try" ~ _s ~ expr ~ _s ~ "or" ~ _s ~ expr }
+
+string_arg = { template_string | ident }
+
+label_list = { "[" ~ _s_opt ~ template_string
+               ~ (_s_opt ~ "," ~ _s_opt ~ template_string)* ~ _s_opt ~ "]" }
+
+constructor_expr = { builtin_type ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
+
+call_expr = { ident ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
+arg_list  = { call_arg ~ (_s_opt ~ "," ~ _s_opt ~ call_arg)* }
+call_arg  = { (ident ~ _s_opt ~ ":" ~ _s_opt)? ~ expr }
+
+field_access_expr = { ident ~ ("." ~ (ident | "*"))+ }
+
+atom = {
+    template_string
+  | number_lit
+  | bool_lit
+  | type_dot_access
+  | ident
+  | "(" ~ _s_opt ~ expr ~ _s_opt ~ ")"
+}
+
+// For Intent.unknown, Conversation.empty, etc.
+type_dot_access = { builtin_type ~ "." ~ ident }

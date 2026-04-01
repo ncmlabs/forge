@@ -1,0 +1,5 @@
+task greet
+  needs name: Text
+  gives Text
+  do
+    say "Hello, {name}!"
