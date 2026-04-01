@@ -468,7 +468,7 @@ pipe_term = {
 reason_expr   = { "reason" ~ _s ~ string_arg }
 classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list }
 search_expr   = { "search" ~ _s ~ string_arg }
-try_or_expr   = { "try" ~ _s ~ expr ~ _s ~ "or" ~ _s ~ expr }
+try_or_expr   = { "try" ~ _s ~ and_expr ~ _s ~ "or" ~ _s ~ expr }
 
 string_arg = { template_string | ident }
 

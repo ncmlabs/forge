@@ -87,6 +87,14 @@ fn parse_search_expr() {
 }
 
 #[test]
+fn parse_try_or_expr() {
+    ForgeParser::parse(Rule::try_or_expr, "try foo or bar").unwrap();
+    ForgeParser::parse(Rule::try_or_expr, r#"try search "query" or "default""#).unwrap();
+    ForgeParser::parse(Rule::try_or_expr, "try a + b or c").unwrap();
+    ForgeParser::parse(Rule::try_or_expr, "try a > 0 and b or fallback").unwrap();
+}
+
+#[test]
 fn parse_call_expr() {
     ForgeParser::parse(Rule::call_expr, "greet()").unwrap();
     ForgeParser::parse(Rule::call_expr, "greet(name)").unwrap();
