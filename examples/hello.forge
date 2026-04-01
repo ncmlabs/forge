@@ -2,4 +2,8 @@ task greet
   needs name: Text
   gives Text
   do
-    say "Hello, {name}!"
+    give "Hello, {name}!"
+
+fn main
+  result = greet("World")
+  say result

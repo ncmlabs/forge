@@ -775,7 +775,7 @@ fn parse_boundary_directive() {
 fn parse_hello_forge_file() {
     let src = std::fs::read_to_string("examples/hello.forge").unwrap();
     let prog = parse(&src).unwrap();
-    assert_eq!(prog.items.len(), 1);
+    assert_eq!(prog.items.len(), 2);
     match &prog.items[0].node {
         TopLevel::Task(t) => {
             assert_eq!(t.name.node, "greet");
@@ -784,13 +784,14 @@ fn parse_hello_forge_file() {
         }
         _ => panic!("expected task"),
     }
+    assert!(matches!(&prog.items[1].node, TopLevel::FnMain(_)));
 }
 
 #[test]
 fn parse_classify_forge_file() {
     let src = std::fs::read_to_string("examples/classify.forge").unwrap();
     let prog = parse(&src).unwrap();
-    assert_eq!(prog.items.len(), 2);
+    assert_eq!(prog.items.len(), 3);
     assert!(matches!(&prog.items[0].node, TopLevel::Use(_)));
     match &prog.items[1].node {
         TopLevel::Task(t) => {
@@ -806,6 +807,7 @@ fn parse_classify_forge_file() {
         }
         _ => panic!("expected task"),
     }
+    assert!(matches!(&prog.items[2].node, TopLevel::FnMain(_)));
 }
 
 #[test]
