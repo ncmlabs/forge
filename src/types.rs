@@ -64,14 +64,16 @@ pub struct CapabilitySignature {
 // ── Confidence source ────────────────────────────────────────
 
 /// Tags how a value's confidence was determined.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ConfidenceSource {
     /// Pure function — always 1.0
     Deterministic,
-    /// Derived from an LLM call
-    LlmDerived,
-    /// Not yet determined
-    Unknown,
+    /// From model heuristic
+    LLMDirect(f32),
+    /// Multiple agents agreed
+    ConsensusAgreement(f32),
+    /// Propagated from upstream
+    Derived(f32),
 }
 
 // ── Conversions ──────────────────────────────────────────────
