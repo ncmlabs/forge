@@ -64,9 +64,10 @@ bool_lit   = @{ ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Template string: allows {expr} interpolation
 template_string = ${ "\"" ~ template_part* ~ "\"" }
-template_part   =  { template_interp | template_text }
+template_part   =  { template_interp | template_escape | template_text }
 template_interp =  { "{" ~ _s_opt ~ expr ~ _s_opt ~ "}" }
-template_text   = @{ (!("\"" | "{") ~ ANY)+ }
+template_escape = @{ "\\" ~ ("n" | "r" | "t" | "\"" | "\\") }
+template_text   = @{ (!("\"" | "{" | "\\") ~ ANY)+ }
 
 // --- Type names ---
 builtin_type = @{
