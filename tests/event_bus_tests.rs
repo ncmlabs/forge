@@ -326,3 +326,138 @@ async fn agent_filter_subscribe_rejects_non_matching() {
     let result = agent.run().await;
     assert!(result.is_ok());
 }
+
+// ── Multi-agent end-to-end scenario ─────────────────────────────────────────
+
+/// Simulates a tic-tac-toe room scenario:
+///   1. room_agent handles "join", updates memory.player_count, emits PlayerJoined(player: name)
+///   2. observer subscribes to PlayerJoined, receives via bus, dispatches to handler
+///
+/// Exercises the full pipeline: emit with labeled args → EventSink → drain → bus
+/// → subscriber channel → agent run loop → filter → handler dispatch.
+#[tokio::test]
+async fn multi_agent_event_flow() {
+    // ── room_agent: handles "join", emits PlayerJoined ──────────────────
+    let room_decl = AgentDecl {
+        name: spanned("room_agent".into()),
+        lifecycle: None,
+        memory: vec![
+            spanned(FieldDef {
+                name: "player_count".into(),
+                type_name: spanned(TypeName::Number),
+            }),
+        ],
+        timers: vec![],
+        subscriptions: vec![],
+        handlers: vec![spanned(OnHandler {
+            event: spanned("join".into()),
+            params: vec![spanned(Param {
+                name: "player".into(),
+                type_name: spanned(TypeName::Text),
+            })],
+            payload_type: None,
+            requires: vec![],
+            body: vec![
+                // memory.player_count = memory.player_count + 1
+                spanned(Stmt::MemoryUpdate(
+                    spanned("player_count".into()),
+                    None,
+                    spanned(Expr::BinOp(
+                        Box::new(spanned(Expr::FieldAccess(
+                            Box::new(spanned(Expr::Ident("memory".into()))),
+                            spanned("player_count".into()),
+                        ))),
+                        spanned(BinOp::Add),
+                        Box::new(spanned(Expr::NumberLit(1.0))),
+                    )),
+                )),
+                // emit PlayerJoined(player: player)
+                spanned(Stmt::Emit(
+                    spanned("PlayerJoined".into()),
+                    vec![spanned(CallArg {
+                        label: Some(spanned("player".into())),
+                        value: spanned(Expr::Ident("player".into())),
+                    })],
+                )),
+                spanned(Stmt::Give(
+                    spanned(Expr::Template(vec![spanned(TemplatePart::Text("joined".into()))])),
+                    None,
+                )),
+            ],
+        })],
+        stuck_policy: None,
+    };
+
+    // ── observer: subscribes to PlayerJoined, gives "observed" ──────────
+    let observer_decl = subscribing_agent("observer", "PlayerJoined", None);
+
+    // ── Wire both agents to shared bus ──────────────────────────────────
+    let bus = EventBus::new_shared(None);
+
+    let room_agent = AgentProcess::new(
+        room_decl, None, mock_registry(), None, empty_program(),
+    ).with_event_bus(bus.clone()).await;
+
+    let mut observer = AgentProcess::new(
+        observer_decl, None, mock_registry(), None, empty_program(),
+    ).with_event_bus(bus.clone()).await;
+
+    // Verify observer registered its subscription
+    assert_eq!(bus.read().await.subscriber_count("PlayerJoined"), 1);
+
+    // ── Dispatch "join" to room_agent ───────────────────────────────────
+    let mut params = HashMap::new();
+    params.insert("player".into(), ConfidentValue::deterministic(Value::Text("Alice".into())));
+
+    let result = room_agent.dispatch("join", params).await.unwrap();
+    assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "joined")));
+
+    // Verify room_agent memory updated
+    {
+        let ctx = room_agent.context().lock().unwrap();
+        match &ctx.memory.get("player_count").unwrap().value {
+            Value::Number(n) => assert_eq!(*n, 1.0),
+            other => panic!("expected Number, got {:?}", other),
+        }
+    }
+
+    // Verify room_agent emitted PlayerJoined with labeled field
+    {
+        let ctx = room_agent.context().lock().unwrap();
+        assert_eq!(ctx.event_sink.emitted.len(), 1);
+        assert_eq!(ctx.event_sink.emitted[0].name, "PlayerJoined");
+        match &ctx.event_sink.emitted[0].fields["player"].value {
+            Value::Text(s) => assert_eq!(s, "Alice"),
+            other => panic!("expected Text, got {:?}", other),
+        }
+    }
+
+    // ── Drain room_agent's events through the bus ───────────────────────
+    // This simulates what run() does automatically after each handler
+    {
+        let (emitted, _forwards) = {
+            let mut ctx = room_agent.context().lock().unwrap();
+            let emitted = std::mem::take(&mut ctx.event_sink.emitted);
+            let forwards = std::mem::take(&mut ctx.event_sink.forwards);
+            (emitted, forwards)
+        };
+        let bus_guard = bus.read().await;
+        for event in emitted {
+            let payload = EventPayload {
+                event_name: event.name,
+                args: event.args,
+                source_agent: "room_agent".to_string(),
+                fields: event.fields,
+            };
+            let delivered = bus_guard.publish(&payload);
+            assert_eq!(delivered, 1, "observer should have received the event");
+        }
+    }
+
+    // ── Close bus so observer.run() terminates after processing ─────────
+    bus.write().await.close();
+
+    // ── Observer processes the event via run() ──────────────────────────
+    let observer_result = observer.run().await;
+    assert!(observer_result.is_ok());
+}
