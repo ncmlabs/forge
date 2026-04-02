@@ -482,6 +482,7 @@ fn ast_agent() {
                 ))],
             }),
         ],
+        warden_override: Vec::new(),
         stuck_policy: Some(sp(StuckPolicy {
             turns: None,
             body: vec![sp(Stmt::Escalate(sp("human".into())))],
@@ -963,6 +964,7 @@ fn ast_agent_v3() {
                 body: vec![sp(Stmt::TransitionTo(sp("done".into())))],
             }),
         ],
+        warden_override: Vec::new(),
         stuck_policy: None,
     };
     let _ = format!("{:?}", agent.clone());

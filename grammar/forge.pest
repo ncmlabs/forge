@@ -20,6 +20,7 @@ top_level = {
   | flow_decl
   | agent_decl
   | pool_decl
+  | warden_decl
   | contract_decl
   | system_decl
   | fn_main_decl
@@ -44,7 +45,7 @@ i4         = _{ "        " }
 // lifecycle, on, fail, where, etc.) are handled by rule ordering
 // and only reserved in their specific contexts.
 keyword = @{
-    ( "use" | "task" | "flow" | "agent" | "pool" | "contract" | "system"
+    ( "use" | "task" | "flow" | "agent" | "pool" | "warden" | "contract" | "system"
     | "fn" | "needs" | "gives" | "do" | "is" | "stage"
     | "if" | "else" | "when" | "give" | "say" | "reason" | "classify"
     | "into" | "true" | "false" | "or" | "with" | "escalate"
@@ -176,6 +177,7 @@ agent_decl = {
     (i1 ~ memory_block)? ~
     (i1 ~ timer_field ~ nl)* ~
     (i1 ~ subscribe_line ~ nl)* ~
+    (i1 ~ warden_override_block)? ~
     (blank_line | on_handler)+ ~
     (i1 ~ stuck_policy)?
 }
@@ -235,6 +237,40 @@ pool_strategy = {
   | "first(" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
 }
 duration = @{ ASCII_DIGIT+ ~ ("min" | "s" | "m" | "h") }
+
+// --- warden declaration ---
+warden_decl = {
+    "warden" ~ _s ~ ident ~ nl ~
+    i1 ~ manages_clause ~ nl ~
+    (blank_line | i1 ~ ward_policy ~ nl)* ~
+    (i1 ~ max_retries_clause ~ nl)?
+}
+
+manages_clause = { "manages" ~ _s_opt ~ "[" ~ _s_opt ~ ident_list ~ _s_opt ~ "]" }
+ident_list     = { ident ~ (_s_opt ~ "," ~ _s_opt ~ ident)* }
+
+ward_policy = {
+    "on" ~ _s ~ failure_type ~ _s_opt ~ ":" ~ _s_opt ~ ward_response ~ _s_opt ~ "," ~ _s_opt ~ ward_scope ~
+    (nl ~ i2 ~ after_clause)*
+}
+
+failure_type = @{ ("stuck" | "crash" | "hallucination" | "budget" | "timeout") ~ !(ASCII_ALPHANUMERIC | "_") }
+
+ward_response = @{ ("nudge" | "restart" | "replace" | "escalate") ~ !(ASCII_ALPHANUMERIC | "_") }
+
+ward_scope = @{ ("self" | "downstream" | "all") ~ !(ASCII_ALPHANUMERIC | "_") }
+
+after_clause = { "after" ~ _s ~ number_lit ~ _s_opt ~ ":" ~ _s_opt ~ ward_response }
+
+max_retries_clause = {
+    "max_retries" ~ _s ~ number_lit ~ _s ~ "per" ~ _s ~ duration ~ _s ~ "then" ~ _s ~ "escalate"
+}
+
+// --- warden_override block inside agent declarations ---
+warden_override_block = {
+    "warden_override" ~ nl ~
+    (i2 ~ ward_policy ~ nl)*
+}
 
 // --- contract declaration ---
 contract_decl = {

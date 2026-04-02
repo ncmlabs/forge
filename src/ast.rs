@@ -41,6 +41,7 @@ pub enum TopLevel {
     Flow(FlowDecl),
     Agent(AgentDecl),
     Pool(PoolDecl),
+    Warden(WardenDecl),
     Contract(ContractDecl),
     System(SystemDecl),
     Event(EventDecl),
@@ -192,6 +193,7 @@ pub struct AgentDecl {
     pub memory: Vec<Spanned<FieldDef>>,
     pub timers: Vec<Spanned<TimerField>>,
     pub subscriptions: Vec<Spanned<SubscribeDecl>>,
+    pub warden_override: Vec<Spanned<WardPolicy>>,
     pub handlers: Vec<Spanned<OnHandler>>,
     pub stuck_policy: Option<Spanned<StuckPolicy>>,
 }
@@ -273,6 +275,60 @@ pub enum DurationUnit {
     Seconds,
     Minutes,
     Hours,
+}
+
+// ── warden ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct WardenDecl {
+    pub name: Spanned<String>,
+    pub manages: Vec<Spanned<String>>,
+    pub policies: Vec<Spanned<WardPolicy>>,
+    pub max_retries: Option<Spanned<MaxRetries>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WardPolicy {
+    pub failure_type: Spanned<FailureType>,
+    pub response: Spanned<WardResponse>,
+    pub scope: Spanned<WardScope>,
+    pub after_clauses: Vec<Spanned<AfterClause>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FailureType {
+    Stuck,
+    Crash,
+    Hallucination,
+    Budget,
+    Timeout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WardResponse {
+    Nudge,
+    Restart,
+    Replace,
+    Escalate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WardScope {
+    This,
+    Downstream,
+    All,
+}
+
+#[derive(Debug, Clone)]
+pub struct AfterClause {
+    pub count: u64,
+    pub response: Spanned<WardResponse>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MaxRetries {
+    pub count: u64,
+    pub window: Spanned<Duration>,
 }
 
 // ── contract ──────────────────────────────────────────────────

@@ -152,6 +152,7 @@ fn top_level_name_and_kind(item: &TopLevel) -> Option<(String, SymbolKind)> {
         TopLevel::Endpoint(d) => Some((d.name.node.clone(), SymbolKind::Endpoint)),
         TopLevel::Contract(d) => Some((d.name.node.clone(), SymbolKind::Contract)),
         TopLevel::System(d) => Some((d.name.node.clone(), SymbolKind::System)),
+        TopLevel::Warden(d) => Some((d.name.node.clone(), SymbolKind::System)),
         TopLevel::Use(_) | TopLevel::FnMain(_) => None,
     }
 }
@@ -271,6 +272,7 @@ fn check_cross_boundary_refs(
             // No walkable bodies for these declarations
             TopLevel::Use(_)
             | TopLevel::Pool(_)
+            | TopLevel::Warden(_)
             | TopLevel::Event(_)
             | TopLevel::States(_)
             | TopLevel::TypeDef(_)
