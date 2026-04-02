@@ -20,6 +20,7 @@ fn errors(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
     diags.iter().filter(|d| matches!(d.kind, DiagnosticKind::Error)).collect()
 }
 
+#[allow(dead_code)]
 fn warnings(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
     diags.iter().filter(|d| matches!(d.kind, DiagnosticKind::Warning)).collect()
 }
@@ -247,6 +248,28 @@ type Message
 }
 
 #[test]
+fn shared_event_with_agent_field_is_error() {
+    let shared = "\
+#! boundary: shared
+
+event Signal
+  payload: MyAgent
+";
+    let server = "\
+#! boundary: server
+
+agent MyAgent
+  on ping(msg: Text)
+    say msg
+";
+    let diags = check_boundary(&[(shared, "shared.forge"), (server, "server.forge")]);
+    let errs = errors(&diags);
+    assert_eq!(errs.len(), 1);
+    assert!(errs[0].message.contains("Signal"));
+    assert!(errs[0].message.contains("payload"));
+}
+
+#[test]
 fn same_boundary_references_are_ok() {
     let server1 = "\
 #! boundary: server
@@ -373,9 +396,8 @@ pure format
 }
 
 #[test]
-fn empty_file_no_errors() {
-    // Try parsing an empty program — if parser accepts it, test boundary checker handles it
-    // If parser rejects empty strings, use a minimal valid source instead
+fn minimal_file_no_errors() {
+    // A minimal file with no boundary directive and no cross-boundary refs
     let source = "\
 task noop
   needs x: Text

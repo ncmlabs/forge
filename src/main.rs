@@ -185,7 +185,8 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
 
     diagnostics.extend(forge::checker::check_all(&program, &fname));
 
-    // Boundary checker (single-file — catches endpoint placement etc.)
+    // Boundary checker (single-file only — catches endpoint placement and per-file rules;
+    // cross-file checks require `forge check` with multiple files)
     let boundary_refs = vec![(&program, fname.as_str())];
     diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
 

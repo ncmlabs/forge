@@ -1,5 +1,5 @@
 // FORGE checker coordinator
-// See issue #16 (pure checker), #17 (states checker)
+// See issues #16 (pure), #17 (states), #18 (requires), #21 (boundary)
 
 pub mod boundary_checker;
 pub mod pure_checker;
@@ -22,6 +22,6 @@ pub fn check_all(program: &Program, file: &str) -> Vec<Diagnostic> {
     // Pass 3: requires clause enforcement
     diagnostics.extend(requires_checker::check(program, file));
 
-    // future: diagnostics.extend(boundary_checker::check(program, file));
+    // boundary_checker::check() is called separately from main.rs (multi-program signature)
     diagnostics
 }

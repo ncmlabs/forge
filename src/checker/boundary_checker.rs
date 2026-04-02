@@ -4,7 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BoundaryKind, Expr, Program, Spanned, Stmt, TaskBody, TemplatePart, TopLevel, TypeName,
+    BoundaryKind, Expr, FieldDef, Program, Spanned, Stmt, TaskBody, TemplatePart, TopLevel,
+    TypeName,
 };
 use crate::diagnostic::Diagnostic;
 
@@ -169,42 +170,54 @@ fn check_shared_serializability(
         }
 
         for item in &program.items {
-            if let TopLevel::TypeDef(typedef) = &item.node {
-                for field in &typedef.fields {
-                    if let TypeName::Custom(ref_name) = &field.node.type_name.node {
-                        if let Some(kind) = registry.symbol_kinds.get(ref_name.as_str()) {
-                            let non_serializable = matches!(
-                                kind,
-                                SymbolKind::Agent | SymbolKind::Pool | SymbolKind::Flow
-                            );
-                            if non_serializable {
-                                let kind_name = match kind {
-                                    SymbolKind::Agent => "agent",
-                                    SymbolKind::Pool => "pool",
-                                    SymbolKind::Flow => "flow",
-                                    _ => unreachable!(),
-                                };
-                                diagnostics.push(
-                                    Diagnostic::error(
-                                        *file,
-                                        format!(
-                                            "shared type `{}` contains non-serializable field `{}`",
-                                            typedef.name.node, field.node.name
-                                        ),
-                                        field.node.type_name.span.start
-                                            ..field.node.type_name.span.end,
-                                        format!(
-                                            "`{}` is an {} reference, which cannot cross the wire",
-                                            ref_name, kind_name
-                                        ),
-                                    )
-                                    .with_help(
-                                        "use a shared type or primitive type for shared boundary fields",
-                                    ),
-                                );
-                            }
-                        }
-                    }
+            let (decl_name, fields) = match &item.node {
+                TopLevel::TypeDef(td) => (&td.name.node, &td.fields),
+                TopLevel::Event(ev) => (&ev.name.node, &ev.fields),
+                _ => continue,
+            };
+            check_fields_serializable(decl_name, fields, registry, file, diagnostics);
+        }
+    }
+}
+
+fn check_fields_serializable(
+    decl_name: &str,
+    fields: &[Spanned<FieldDef>],
+    registry: &BoundaryRegistry,
+    file: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for field in fields {
+        if let TypeName::Custom(ref_name) = &field.node.type_name.node {
+            if let Some(kind) = registry.symbol_kinds.get(ref_name.as_str()) {
+                let non_serializable = matches!(
+                    kind,
+                    SymbolKind::Agent | SymbolKind::Pool | SymbolKind::Flow
+                );
+                if non_serializable {
+                    let kind_name = match kind {
+                        SymbolKind::Agent => "agent",
+                        SymbolKind::Pool => "pool",
+                        SymbolKind::Flow => "flow",
+                        _ => unreachable!(),
+                    };
+                    diagnostics.push(
+                        Diagnostic::error(
+                            file,
+                            format!(
+                                "shared type `{}` contains non-serializable field `{}`",
+                                decl_name, field.node.name
+                            ),
+                            field.node.type_name.span.start..field.node.type_name.span.end,
+                            format!(
+                                "`{}` is an {} reference, which cannot cross the wire",
+                                ref_name, kind_name
+                            ),
+                        )
+                        .with_help(
+                            "use a shared type or primitive type for shared boundary fields",
+                        ),
+                    );
                 }
             }
         }
