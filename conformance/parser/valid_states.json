@@ -1,0 +1,9 @@
+{
+  "name": "valid_states_declaration",
+  "category": "parser",
+  "description": "States declaration with transitions parses successfully",
+  "input": "states GamePhase\n  waiting -> playing\n  playing -> done\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

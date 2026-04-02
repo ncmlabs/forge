@@ -1,0 +1,10 @@
+{
+  "name": "error_message_format",
+  "category": "errors",
+  "description": "Compile errors contain meaningful diagnostic messages",
+  "input": "pure bad\n  needs x: Text\n  gives Text\n  do\n    give reason \"think about {x}\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["cannot use"]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "valid_task_declaration",
+  "category": "parser",
+  "description": "Basic task declaration with needs/gives/do parses successfully",
+  "input": "task greet\n  needs name: Text\n  gives Text\n  do\n    give \"hello\"\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

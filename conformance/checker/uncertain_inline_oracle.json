@@ -1,0 +1,11 @@
+{
+  "name": "uncertain_inline_oracle",
+  "category": "checker",
+  "subcategory": "uncertain",
+  "description": "Oracle result used directly without confidence dispatch is rejected",
+  "input": "use\n  llm.reason\n\ntask analyze\n  needs topic: Text\n  gives Text\n  do\n    result = reason \"analyze {topic}\"\n    give result\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["unhandled uncertain"]
+  }
+}

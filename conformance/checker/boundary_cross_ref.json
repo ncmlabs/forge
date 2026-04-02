@@ -1,0 +1,20 @@
+{
+  "name": "boundary_cross_ref",
+  "category": "checker",
+  "subcategory": "boundary",
+  "description": "Client code referencing server-only symbol is rejected",
+  "input": [
+    {
+      "file": "server.forge",
+      "source": "#! boundary: server\n\ntask server_only_task\n  needs input: Text\n  gives Text\n  do\n    give \"processed: {input}\"\n"
+    },
+    {
+      "file": "client.forge",
+      "source": "#! boundary: client\n\nfn main\n  result = server_only_task(\"hello\")\n  say result\n"
+    }
+  ],
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["server-only symbol"]
+  }
+}

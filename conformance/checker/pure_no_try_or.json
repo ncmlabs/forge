@@ -1,0 +1,11 @@
+{
+  "name": "pure_no_try_or",
+  "category": "checker",
+  "subcategory": "pure",
+  "description": "Pure function cannot use try...or (stochastic fallback)",
+  "input": "task helper\n  needs x: Text\n  gives Text\n  do\n    give x\n\npure bad\n  needs x: Text\n  gives Text\n  do\n    give try helper(x) or \"fallback\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["cannot use", "try...or"]
+  }
+}

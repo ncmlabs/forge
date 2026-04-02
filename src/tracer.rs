@@ -2,11 +2,13 @@
 // Emits JSON trace events to stderr for accountability (Principle VIII).
 // See issue #9.
 
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[derive(Clone)]
 pub struct Tracer {
     start: Instant,
+    captured: Option<Arc<Mutex<Vec<(String, serde_json::Value)>>>>,
 }
 
 impl Default for Tracer {
@@ -27,7 +29,22 @@ pub struct LLMResponseInfo<'a> {
 
 impl Tracer {
     pub fn new() -> Self {
-        Self { start: Instant::now() }
+        Self { start: Instant::now(), captured: None }
+    }
+
+    /// Create a tracer that captures events in memory (for conformance tests).
+    pub fn with_capture() -> Self {
+        Self {
+            start: Instant::now(),
+            captured: Some(Arc::new(Mutex::new(Vec::new()))),
+        }
+    }
+
+    /// Return captured event type names in order.
+    pub fn captured_events(&self) -> Vec<String> {
+        self.captured.as_ref().map_or_else(Vec::new, |buf| {
+            buf.lock().unwrap().iter().map(|(name, _)| name.clone()).collect()
+        })
     }
 
     fn ts_ms(&self) -> u64 {
@@ -43,6 +60,9 @@ impl Tracer {
             if let serde_json::Value::Object(ref mut root) = obj {
                 root.extend(map);
             }
+        }
+        if let Some(ref buf) = self.captured {
+            buf.lock().unwrap().push((event.to_string(), obj.clone()));
         }
         eprintln!("{}", obj);
     }

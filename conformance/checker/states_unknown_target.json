@@ -1,0 +1,11 @@
+{
+  "name": "states_unknown_target",
+  "category": "checker",
+  "subcategory": "states",
+  "description": "Transition to undeclared state is rejected",
+  "input": "states Phase\n  idle -> active\n\nagent broken\n  lifecycle: Phase\n  on start(msg: Text)\n    transition to nonexistent\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["unknown state"]
+  }
+}

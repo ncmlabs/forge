@@ -1,0 +1,11 @@
+{
+  "name": "warden_unknown_managed",
+  "category": "checker",
+  "subcategory": "warden",
+  "description": "Warden managing an undeclared agent is rejected",
+  "input": "warden supervisor\n  manages [ghost_agent]\n  on stuck: nudge, self\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["manages", "not declared"]
+  }
+}

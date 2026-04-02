@@ -1,0 +1,10 @@
+{
+  "name": "invalid_indentation",
+  "category": "parser",
+  "description": "Wrong indentation level fails to parse",
+  "input": "task greet\n    needs name: Text\ngives Text\n  do\n    give \"hello\"\n",
+  "expected": {
+    "outcome": "parse_error",
+    "error_contains": ["expected"]
+  }
+}

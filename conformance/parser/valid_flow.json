@@ -1,0 +1,9 @@
+{
+  "name": "valid_flow_declaration",
+  "category": "parser",
+  "description": "Flow with multiple stages and dependencies parses successfully",
+  "input": "use\n  llm.reason\n  web.search\n\nflow research\n  needs topic: Text\n  gives Text\n\n  stage gather_web\n    result = search topic\n\n  stage gather_papers\n    result = search \"{topic} academic paper\"\n\n  stage synthesize\n    needs gather_web.result, gather_papers.result\n    draft = reason \"synthesize: {gather_web.result} {gather_papers.result}\"\n\n  stage verify\n    needs synthesize.draft\n    give reason \"check: {synthesize.draft}\"\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

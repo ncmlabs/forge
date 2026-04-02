@@ -1,0 +1,9 @@
+{
+  "name": "valid_warden_declaration",
+  "category": "parser",
+  "description": "Warden with manages, policy, and after clause parses successfully",
+  "input": "agent bot\n  on handle(msg: Text)\n    say msg\n\nwarden supervisor\n  manages [bot]\n  on stuck: nudge, self\n    after 3: restart\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}
