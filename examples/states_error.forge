@@ -1,0 +1,9 @@
+states GamePhase
+  waiting -> playing
+  playing -> done
+
+agent broken_agent
+  lifecycle: GamePhase
+  on start(msg: Text)
+    requires lifecycle == done
+    transition to playing
