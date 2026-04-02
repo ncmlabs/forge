@@ -271,6 +271,65 @@ async fn requires_fail_crash_returns_error() {
     assert!(result.is_err());
 }
 
+#[tokio::test]
+async fn requires_fail_log_rejects() {
+    let handler = spanned(OnHandler {
+        event: spanned("action".into()),
+        params: vec![],
+        payload_type: None,
+        requires: vec![spanned(RequiresClause {
+            condition: spanned(Expr::BoolLit(false)),
+            on_fail: Some(spanned(FailPolicy::Log)),
+        })],
+        body: vec![spanned(Stmt::Give(
+            spanned(Expr::Template(vec![spanned(TemplatePart::Text("should not reach".into()))])),
+            None,
+        ))],
+    });
+
+    let decl = simple_agent(vec![], vec![handler], None);
+    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let result = agent.dispatch("action", HashMap::new()).await.unwrap();
+    // on fail: log rejects the handler (returns None) and logs to stderr
+    assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn requires_short_circuits_on_first_failure() {
+    // Two requires: first fails (false), second passes (true).
+    // Handler body should NOT execute because first guard fails.
+    // This proves evaluation order and short-circuit behavior.
+    let handler = spanned(OnHandler {
+        event: spanned("action".into()),
+        params: vec![],
+        payload_type: None,
+        requires: vec![
+            spanned(RequiresClause {
+                condition: spanned(Expr::BoolLit(false)),
+                on_fail: Some(spanned(FailPolicy::Give(
+                    spanned(Expr::Template(vec![spanned(TemplatePart::Text("first_failed".into()))])),
+                ))),
+            }),
+            spanned(RequiresClause {
+                condition: spanned(Expr::BoolLit(true)),
+                on_fail: Some(spanned(FailPolicy::Give(
+                    spanned(Expr::Template(vec![spanned(TemplatePart::Text("second_failed".into()))])),
+                ))),
+            }),
+        ],
+        body: vec![spanned(Stmt::Give(
+            spanned(Expr::Template(vec![spanned(TemplatePart::Text("body_reached".into()))])),
+            None,
+        ))],
+    });
+
+    let decl = simple_agent(vec![], vec![handler], None);
+    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let result = agent.dispatch("action", HashMap::new()).await.unwrap();
+    // Should get "first_failed" — proves first guard ran and short-circuited
+    assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "first_failed")));
+}
+
 // ── State machine via agent ──────────────────────────────────────────────────
 
 #[tokio::test]

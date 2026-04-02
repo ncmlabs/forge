@@ -2,6 +2,7 @@
 // See issue #16 (pure checker), #17 (states checker)
 
 pub mod pure_checker;
+pub mod requires_checker;
 pub mod states_checker;
 
 use crate::ast::Program;
@@ -16,6 +17,9 @@ pub fn check_all(program: &Program, file: &str) -> Vec<Diagnostic> {
 
     // Pass 2: states / lifecycle enforcement
     diagnostics.extend(states_checker::check(program, file));
+
+    // Pass 3: requires clause enforcement
+    diagnostics.extend(requires_checker::check(program, file));
 
     // future: diagnostics.extend(boundary_checker::check(program, file));
     diagnostics
