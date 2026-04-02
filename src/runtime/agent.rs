@@ -110,6 +110,14 @@ impl EventSink {
     }
 }
 
+// ── Warden Signal ───────────────────────────────────────────────────────────
+
+/// Signal from a managed agent to its warden.
+#[derive(Debug, Clone)]
+pub enum AgentSignal {
+    Stuck { agent_name: String },
+}
+
 // ── Stuck Detector ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -224,6 +232,7 @@ pub struct AgentProcess {
     event_receivers: Vec<(Option<Spanned<Expr>>, mpsc::Receiver<EventPayload>)>,
     timer_engine: Arc<Mutex<TimerEngine>>,
     pub timer_rx: mpsc::Receiver<TimerFired>,
+    warden_tx: Option<mpsc::Sender<AgentSignal>>,
 }
 
 impl AgentProcess {
@@ -261,13 +270,19 @@ impl AgentProcess {
 
         Self {
             decl, context, executor, event_bus: None, event_receivers: Vec::new(),
-            timer_engine, timer_rx,
+            timer_engine, timer_rx, warden_tx: None,
         }
     }
 
     /// Get a reference to the shared context.
     pub fn context(&self) -> &Arc<Mutex<AgentContext>> {
         &self.context
+    }
+
+    /// Attach a warden signal channel for reporting stuck status.
+    pub fn with_warden_signal(mut self, tx: mpsc::Sender<AgentSignal>) -> Self {
+        self.warden_tx = Some(tx);
+        self
     }
 
     /// Dispatch an event to the appropriate handler.
@@ -335,6 +350,12 @@ impl AgentProcess {
         // Check stuck detection and execute stuck policy if needed
         let is_stuck = self.context.lock().unwrap().stuck_detector.is_stuck();
         if is_stuck {
+            // Signal warden if attached
+            if let Some(ref tx) = self.warden_tx {
+                let _ = tx.try_send(AgentSignal::Stuck {
+                    agent_name: self.decl.name.node.clone(),
+                });
+            }
             if let Some(ref policy) = self.decl.stuck_policy {
                 // Re-bind memory for stuck policy body
                 {
