@@ -235,14 +235,29 @@ async fn accept_tictactoe_game() {
         combined_program,
     );
 
+    // Initialize board with "_" markers (memory default is empty strings)
+    {
+        let mut ctx = agent.context().lock().unwrap();
+        let blank_board: Vec<ConfidentValue> = (0..9)
+            .map(|_| ConfidentValue::deterministic(Value::Text("_".to_string())))
+            .collect();
+        ctx.memory.set(
+            "board",
+            ConfidentValue::deterministic(Value::Array(blank_board)),
+        );
+        ctx.memory.set(
+            "current_turn",
+            ConfidentValue::deterministic(Value::Text("X".to_string())),
+        );
+    }
+
     // ── Phase 1: Join mechanics and state transitions ────────────
 
-    // 1. Player X joins — lifecycle should be "waiting"
+    // 1. Player X joins
     println!("=== Player X joins ===");
     let params = HashMap::from([text_param("player", "X")]);
     let _r = agent.dispatch("join", params).await.unwrap();
 
-    // Verify player count incremented
     {
         let ctx = agent.context().lock().unwrap();
         let count = ctx.memory.get("player_count").unwrap();
@@ -250,7 +265,6 @@ async fn accept_tictactoe_game() {
             matches!(&count.value, Value::Number(n) if *n == 1.0),
             "player_count should be 1 after first join"
         );
-        // Should have emitted PlayerJoined event
         let has_join_event = ctx
             .event_sink
             .emitted
@@ -271,55 +285,78 @@ async fn accept_tictactoe_game() {
             matches!(&count.value, Value::Number(n) if *n == 2.0),
             "player_count should be 2 after second join"
         );
-        // Lifecycle should have transitioned to "playing"
         let sm = ctx.state_machine.as_ref().expect("should have state machine");
         assert_eq!(sm.current, "playing", "lifecycle should be 'playing' after 2 joins");
     }
 
-    // 3. Requires guard: join should be rejected now (lifecycle != waiting)
+    // 3. Requires guard rejects third join
     println!("=== Third join attempt (should be rejected) ===");
     let params = HashMap::from([text_param("player", "Z")]);
     let result = agent.dispatch("join", params).await.unwrap();
-    // The on fail policy is `give "game already started"`
     assert!(
         matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s.contains("game already started"))),
         "third join should be rejected with 'game already started', got: {:?}",
         result
     );
 
-    // ── Phase 2: Move mechanics ──────────────────────────────────
+    // ── Phase 2: Full scripted game — X wins with top row ────────
+    //    Board layout: 0|1|2
+    //                   3|4|5
+    //                   6|7|8
 
-    // The move handler calls check_winner(memory.board) which relies on
-    // winning_lines() — a built-in not yet implemented in the runtime.
-    // For now, verify that the move handler dispatches and board updates work.
-    println!("=== Move: X -> cell 0 ===");
-    let params = HashMap::from([
-        text_param("player", "X"),
-        number_param("cell", 0.0),
-    ]);
-    // The move may error on check_winner call since winning_lines is not
-    // implemented yet — that's acceptable for Layer 1 acceptance.
-    let move_result = agent.dispatch("move", params).await;
-    match move_result {
-        Ok(result) => {
-            println!("Move succeeded: {:?}", result);
-            // If the move handler executed, verify board was updated
-            let ctx = agent.context().lock().unwrap();
-            let board = ctx.memory.get("board");
-            if let Some(b) = board {
-                println!("Board after move: {:?}", b.value);
-            }
-        }
-        Err(e) => {
-            // Expected: winning_lines/check_winner not callable yet
-            println!("Move handler not fully executable yet: {}", e);
-            println!("(This is expected — check_winner depends on built-in array operations)");
-        }
+    let moves = [
+        ("X", 0.0), // X takes top-left
+        ("O", 3.0), // O takes middle-left
+        ("X", 1.0), // X takes top-center
+        ("O", 4.0), // O takes center
+        ("X", 2.0), // X takes top-right → X wins!
+    ];
+
+    let mut last_result = None;
+    for (player, cell) in &moves {
+        println!("=== Move: {} -> cell {} ===", player, cell);
+        let params = HashMap::from([
+            text_param("player", player),
+            number_param("cell", *cell),
+        ]);
+        last_result = agent.dispatch("move", params).await.unwrap();
     }
 
-    println!("=== Tic-tac-toe acceptance test complete! ===");
-    println!("Verified: parsing, agent construction, join mechanics, state transitions,");
-    println!("requires guards, event emission, memory updates.");
+    // The final move should return a GameResult with winner X
+    let result = last_result.expect("last move should return a GameResult");
+    println!("Game result: {:?}", result.value);
+
+    match &result.value {
+        Value::Record(fields) => {
+            // Result is a tagged record: { _type: "GameResult", _value: { winner, detail } }
+            let inner = fields.get("_value")
+                .and_then(|v| match &v.value {
+                    Value::Record(inner) => Some(inner),
+                    _ => None,
+                })
+                .or_else(|| {
+                    // Or a flat record with winner directly
+                    if fields.contains_key("winner") { Some(fields) } else { None }
+                })
+                .expect("GameResult should have winner field (flat or tagged)");
+            let winner = inner.get("winner").expect("inner record should have winner");
+            assert!(
+                matches!(&winner.value, Value::Text(s) if s == "X"),
+                "winner should be X, got: {:?}",
+                winner.value
+            );
+        }
+        other => panic!("expected GameResult record, got: {:?}", other),
+    }
+
+    // Verify board state
+    {
+        let ctx = agent.context().lock().unwrap();
+        let board = ctx.memory.get("board").expect("board should exist");
+        println!("Final board: {:?}", board.value);
+    }
+
+    println!("=== Tic-tac-toe full game complete — X wins! ===");
 }
 
 // ── CLI smoke tests ──────────────────────────────────────────────

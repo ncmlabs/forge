@@ -485,7 +485,14 @@ impl TaskExecutor {
             }
 
             Expr::Ident(name) => {
-                Ok(env.lookup(name)?.clone())
+                match env.lookup(name) {
+                    Ok(val) => Ok(val.clone()),
+                    Err(_) if name.starts_with(|c: char| c.is_uppercase()) => {
+                        // Uppercase unbound identifiers are type variants (e.g., Continue, Draw)
+                        Ok(ConfidentValue::deterministic(Value::Text(name.clone())))
+                    }
+                    Err(e) => Err(e),
+                }
             }
 
             Expr::Template(parts) => {
@@ -561,8 +568,26 @@ impl TaskExecutor {
 
             Expr::FieldAccess(obj_expr, field) => {
                 let obj = self.eval_expr(obj_expr, env).await?;
-                match &obj.value {
-                    Value::Record(fields) => {
+                match (&obj.value, field.node.as_str()) {
+                    // Array/List property accessors (no-arg methods as properties)
+                    (Value::Array(v) | Value::List(v), "first") => {
+                        Ok(v.first().cloned()
+                            .unwrap_or(ConfidentValue::deterministic(Value::Unit)))
+                    }
+                    (Value::Array(v) | Value::List(v), "all_same") => {
+                        let same = if v.is_empty() {
+                            true
+                        } else {
+                            let first = &v[0].value;
+                            v.iter().all(|item| values_equal(&item.value, first))
+                        };
+                        Ok(ConfidentValue::deterministic(Value::Bool(same)))
+                    }
+                    (Value::Array(v) | Value::List(v), "len" | "count") => {
+                        Ok(ConfidentValue::deterministic(Value::Number(v.len() as f64)))
+                    }
+                    // Record field access
+                    (Value::Record(fields), _) => {
                         fields.get(&field.node).cloned().ok_or_else(|| {
                             RuntimeError::UndefinedVariable {
                                 name: format!(".{}", field.node),
@@ -654,6 +679,32 @@ impl TaskExecutor {
                             _ => false,
                         };
                         Ok(ConfidentValue::deterministic(Value::Bool(found)))
+                    }
+                    "all_same" => {
+                        let same = match &obj.value {
+                            Value::Array(v) | Value::List(v) => {
+                                if v.is_empty() {
+                                    true
+                                } else {
+                                    let first = &v[0].value;
+                                    v.iter().all(|item| values_equal(&item.value, first))
+                                }
+                            }
+                            _ => false,
+                        };
+                        Ok(ConfidentValue::deterministic(Value::Bool(same)))
+                    }
+                    "first" => {
+                        match &obj.value {
+                            Value::Array(v) | Value::List(v) => {
+                                Ok(v.first().cloned()
+                                    .unwrap_or(ConfidentValue::deterministic(Value::Unit)))
+                            }
+                            _ => Err(RuntimeError::TypeError {
+                                expected: "Array or List".to_string(),
+                                got: format!("{}", obj.value),
+                            }),
+                        }
                     }
                     "none" => {
                         if args.is_empty() {
@@ -749,6 +800,52 @@ impl TaskExecutor {
                         .unwrap_or_else(|| "default".to_string());
                     let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
                     pool.send(&event, payload).await
+                } else if name.starts_with(|c: char| c.is_uppercase()) {
+                    // Uppercase names not in task/pure/flow/pool maps are type constructors
+                    let mut fields = HashMap::new();
+                    for (i, arg) in call.args.iter().enumerate() {
+                        let val = self.eval_expr(&arg.node.value, env).await?;
+                        let key = arg.node.label.as_ref()
+                            .map(|l| l.node.clone())
+                            .unwrap_or_else(|| format!("_{}", i));
+                        fields.insert(key, val);
+                    }
+                    if fields.is_empty() {
+                        // No-arg variant: just a tag
+                        Ok(ConfidentValue::deterministic(Value::Text(name.clone())))
+                    } else {
+                        // With args: Record tagged by position or label
+                        // Wrap in an outer record with the type name for match dispatch
+                        let inner = ConfidentValue::deterministic(Value::Record(fields));
+                        let mut wrapper = HashMap::new();
+                        wrapper.insert("_type".to_string(), ConfidentValue::deterministic(Value::Text(name.clone())));
+                        wrapper.insert("_value".to_string(), inner);
+                        Ok(ConfidentValue::deterministic(Value::Record(wrapper)))
+                    }
+                } else if name == "winning_lines" {
+                    // Built-in: returns the 8 triplets for tic-tac-toe win detection
+                    let board = arg_vals.into_iter().next()
+                        .unwrap_or(ConfidentValue::deterministic(Value::Unit));
+                    let cells = match &board.value {
+                        Value::Array(v) | Value::List(v) => v.clone(),
+                        _ => return Err(RuntimeError::TypeError {
+                            expected: "Array[9]".to_string(),
+                            got: format!("{}", board.value),
+                        }),
+                    };
+                    let indices: &[&[usize]] = &[
+                        &[0, 1, 2], &[3, 4, 5], &[6, 7, 8], // rows
+                        &[0, 3, 6], &[1, 4, 7], &[2, 5, 8], // cols
+                        &[0, 4, 8], &[2, 4, 6],              // diags
+                    ];
+                    let lines: Vec<ConfidentValue> = indices.iter().map(|idx| {
+                        let line: Vec<ConfidentValue> = idx.iter()
+                            .map(|&i| cells.get(i).cloned()
+                                .unwrap_or(ConfidentValue::deterministic(Value::Text("_".to_string()))))
+                            .collect();
+                        ConfidentValue::deterministic(Value::Array(line))
+                    }).collect();
+                    Ok(ConfidentValue::deterministic(Value::Array(lines)))
                 } else {
                     Err(RuntimeError::NotCallable { name: name.clone() })
                 }
@@ -1161,8 +1258,38 @@ fn match_pattern(
     match &pattern.node {
         Pattern::Wildcard => Some(vec![]),
         Pattern::Binding(name) => Some(vec![(name.clone(), subject.clone())]),
-        Pattern::Constructor(name, _sub_pats) => {
+        Pattern::Constructor(name, sub_pats) => {
             match &subject.value {
+                // Tagged record: { _type: "Winner", _value: { _0: val } }
+                Value::Record(fields) => {
+                    let type_match = fields.get("_type")
+                        .and_then(|t| match &t.value {
+                            Value::Text(s) => Some(s.as_str()),
+                            _ => None,
+                        })
+                        .map(|s| s == name)
+                        .unwrap_or(false);
+                    if !type_match {
+                        return None;
+                    }
+                    let mut bindings = vec![];
+                    if let Some(inner) = fields.get("_value") {
+                        if let Value::Record(inner_fields) = &inner.value {
+                            for (i, sub_pat) in sub_pats.iter().enumerate() {
+                                let key = format!("_{}", i);
+                                if let Some(val) = inner_fields.get(&key) {
+                                    if let Some(mut sub_bindings) = match_pattern(sub_pat, val) {
+                                        bindings.append(&mut sub_bindings);
+                                    } else {
+                                        return None;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(bindings)
+                }
+                // Simple tag: Value::Text("Continue") matches Constructor("Continue")
                 Value::Text(s) if s == name => Some(vec![]),
                 _ => None,
             }
