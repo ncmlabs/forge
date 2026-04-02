@@ -1,6 +1,7 @@
 // FORGE checker coordinator
 // See issue #16 (pure checker), #17 (states checker)
 
+pub mod boundary_checker;
 pub mod pure_checker;
 pub mod requires_checker;
 pub mod states_checker;
