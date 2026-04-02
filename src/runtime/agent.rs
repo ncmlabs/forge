@@ -14,6 +14,7 @@ use crate::runtime::event_bus::{EventPayload, SharedEventBus};
 use crate::runtime::executor::{Env, RuntimeError, TaskExecutor};
 use crate::runtime::memory::AgentMemory;
 use crate::runtime::state_machine::StateMachine;
+use crate::runtime::timer_engine::{TimerEngine, TimerFired};
 use crate::tracer::Tracer;
 
 // ── Timer Manager ────────────────────────────────────────────────────────────
@@ -221,6 +222,8 @@ pub struct AgentProcess {
     executor: TaskExecutor,
     event_bus: Option<SharedEventBus>,
     event_receivers: Vec<(Option<Spanned<Expr>>, mpsc::Receiver<EventPayload>)>,
+    timer_engine: Arc<Mutex<TimerEngine>>,
+    pub timer_rx: mpsc::Receiver<TimerFired>,
 }
 
 impl AgentProcess {
@@ -246,10 +249,20 @@ impl AgentProcess {
             stuck_threshold,
         )));
 
-        let executor = TaskExecutor::new(program, registry, tracer)
-            .with_agent_context(context.clone());
+        // Async timer engine (issue #20)
+        let (fire_tx, timer_rx) = mpsc::channel::<TimerFired>(64);
+        let timer_engine = Arc::new(Mutex::new(
+            TimerEngine::new(&decl.name.node, &decl.timers, fire_tx, tracer.clone()),
+        ));
 
-        Self { decl, context, executor, event_bus: None, event_receivers: Vec::new() }
+        let executor = TaskExecutor::new(program, registry, tracer)
+            .with_agent_context(context.clone())
+            .with_timer_engine(timer_engine.clone());
+
+        Self {
+            decl, context, executor, event_bus: None, event_receivers: Vec::new(),
+            timer_engine, timer_rx,
+        }
     }
 
     /// Get a reference to the shared context.
@@ -360,8 +373,8 @@ impl AgentProcess {
         self
     }
 
-    /// Run the agent event loop: receive events from the bus, evaluate filters,
-    /// dispatch to handlers, and drain emitted events back through the bus.
+    /// Run the agent event loop: receive events from the bus and timer expiry
+    /// events, dispatch to handlers, and drain emitted events back through the bus.
     /// Returns when all event channels are closed.
     pub async fn run(&mut self) -> Result<(), RuntimeError> {
         // Merge all receivers into a single stream via a helper channel
@@ -383,27 +396,84 @@ impl AgentProcess {
         // Drop our copy so merge_rx closes when all forwarders finish
         drop(merge_tx);
 
-        while let Some((filter, payload)) = merge_rx.recv().await {
-            if self.should_handle(&payload, &filter).await? {
-                let event_name = payload.event_name.clone();
-                let mut params = payload.fields.clone();
-                // Also bind positional args by index for handlers that use them
-                for (i, val) in payload.args.iter().enumerate() {
-                    params.entry(format!("arg{}", i)).or_insert_with(|| val.clone());
-                }
-                // Bind "event" as a record for filter-style access in handler body
-                params.insert("event".to_string(),
-                    ConfidentValue::deterministic(Value::Record(payload.fields.clone())));
+        loop {
+            tokio::select! {
+                msg = merge_rx.recv() => {
+                    match msg {
+                        Some((filter, payload)) => {
+                            if self.should_handle(&payload, &filter).await? {
+                                let event_name = payload.event_name.clone();
+                                let mut params = payload.fields.clone();
+                                for (i, val) in payload.args.iter().enumerate() {
+                                    params.entry(format!("arg{}", i))
+                                        .or_insert_with(|| val.clone());
+                                }
+                                params.insert("event".to_string(),
+                                    ConfidentValue::deterministic(
+                                        Value::Record(payload.fields.clone()),
+                                    ));
 
-                let _ = self.dispatch(&event_name, params).await?;
-                self.drain_event_sink().await?;
+                                let _ = self.dispatch(&event_name, params).await?;
+                                self.drain_event_sink().await?;
+                            }
+                        }
+                        None => break, // All event channels closed
+                    }
+                }
+                fired = self.timer_rx.recv() => {
+                    if let Some(timer_event) = fired {
+                        self.handle_timer_fired(timer_event).await?;
+                        self.drain_event_sink().await?;
+                    }
+                }
             }
         }
+
+        // Shutdown: cancel all active timers
+        self.timer_engine.lock().unwrap().cancel_all();
 
         // Wait for forwarder tasks to finish
         for h in handles {
             let _ = h.await;
         }
+        Ok(())
+    }
+
+    /// Handle a timer expiry: update state, dispatch to `on timer_name.expired` handler.
+    pub async fn handle_timer_fired(&self, fired: TimerFired) -> Result<(), RuntimeError> {
+        // Update synchronous timer state
+        {
+            let mut ctx = self.context.lock().unwrap();
+            ctx.timer_manager.expire(&fired.timer_name);
+        }
+
+        // Build handler event name: "{timer_name}.expired"
+        let event_name = format!("{}.expired", fired.timer_name);
+
+        // Build params — include context if present
+        let mut params = HashMap::new();
+        if let Some(context_val) = fired.context {
+            // Bind as first positional param name from handler, or "context"
+            let handler = self.decl.handlers.iter()
+                .find(|h| h.node.event.node == event_name);
+            if let Some(h) = handler {
+                if let Some(first_param) = h.node.params.first() {
+                    params.insert(first_param.node.name.clone(), context_val);
+                } else {
+                    params.insert("context".to_string(), context_val);
+                }
+            } else {
+                params.insert("context".to_string(), context_val);
+            }
+        }
+
+        // Dispatch — missing handler is not an error for timers
+        match self.dispatch(&event_name, params).await {
+            Ok(_) => {}
+            Err(RuntimeError::Unsupported(msg)) if msg.contains("no handler") => {}
+            Err(e) => return Err(e),
+        }
+
         Ok(())
     }
 

@@ -172,4 +172,28 @@ impl Tracer {
             "reason": reason,
         }));
     }
+
+    // ── Timer tracing (issue #20) ──────────────────────────────────────────
+
+    pub fn timer_started(&self, agent: &str, timer_name: &str, duration_secs: u64) {
+        self.emit("timer_started", serde_json::json!({
+            "agent": agent,
+            "timer": timer_name,
+            "duration_secs": duration_secs,
+        }));
+    }
+
+    pub fn timer_cancelled(&self, agent: &str, timer_name: &str) {
+        self.emit("timer_cancelled", serde_json::json!({
+            "agent": agent,
+            "timer": timer_name,
+        }));
+    }
+
+    pub fn timer_fired(&self, agent: &str, timer_name: &str) {
+        self.emit("timer_fired", serde_json::json!({
+            "agent": agent,
+            "timer": timer_name,
+        }));
+    }
 }

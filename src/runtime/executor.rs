@@ -10,6 +10,7 @@ use crate::llm::registry::ProviderRegistry;
 use crate::llm::CompletionRequest;
 use crate::runtime::agent::{AgentContext, EmittedEvent};
 use crate::runtime::confidence::{ConfidentValue, Value};
+use crate::runtime::timer_engine::TimerEngine;
 use crate::tracer::{Tracer, LLMResponseInfo};
 // ── Errors ────────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,7 @@ pub struct TaskExecutor {
     pool_map:      HashMap<String, PoolDecl>,
     output:        Arc<Mutex<Vec<String>>>,
     agent_context: Option<Arc<Mutex<AgentContext>>>,
+    timer_engine:  Option<Arc<Mutex<TimerEngine>>>,
 }
 
 impl TaskExecutor {
@@ -143,12 +145,19 @@ impl TaskExecutor {
             pool_map,
             output: Arc::new(Mutex::new(Vec::new())),
             agent_context: None,
+            timer_engine: None,
         }
     }
 
     /// Attach an agent context for agent statement execution.
     pub fn with_agent_context(mut self, ctx: Arc<Mutex<AgentContext>>) -> Self {
         self.agent_context = Some(ctx);
+        self
+    }
+
+    /// Attach an async timer engine for timer operations (issue #20).
+    pub fn with_timer_engine(mut self, engine: Arc<Mutex<TimerEngine>>) -> Self {
+        self.timer_engine = Some(engine);
         self
     }
 
@@ -354,18 +363,34 @@ impl TaskExecutor {
                     return Err(RuntimeError::Unsupported("transition outside agent".into()));
                 }
             }
-            Stmt::StartTimer { name, .. } => {
+            Stmt::StartTimer { name, context } => {
+                let ctx_val = match context {
+                    Some(expr) => Some(self.eval_expr(expr, env).await?),
+                    None => None,
+                };
                 if let Some(ref ctx_arc) = self.agent_context {
                     ctx_arc.lock().unwrap().timer_manager.start(&name.node)?;
                 } else {
                     return Err(RuntimeError::Unsupported("start timer outside agent".into()));
                 }
+                if let Some(ref engine) = self.timer_engine {
+                    engine.lock().unwrap().start(&name.node, ctx_val)
+                        .map_err(|e| RuntimeError::Unsupported(e.to_string()))?;
+                }
             }
-            Stmt::CancelTimer { name, .. } => {
+            Stmt::CancelTimer { name, context } => {
+                let ctx_val = match context {
+                    Some(expr) => Some(self.eval_expr(expr, env).await?),
+                    None => None,
+                };
                 if let Some(ref ctx_arc) = self.agent_context {
                     ctx_arc.lock().unwrap().timer_manager.cancel(&name.node)?;
                 } else {
                     return Err(RuntimeError::Unsupported("cancel timer outside agent".into()));
+                }
+                if let Some(ref engine) = self.timer_engine {
+                    engine.lock().unwrap().cancel(&name.node, &ctx_val)
+                        .map_err(|e| RuntimeError::Unsupported(e.to_string()))?;
                 }
             }
             Stmt::ResetTimer(name) => {
@@ -373,6 +398,10 @@ impl TaskExecutor {
                     ctx_arc.lock().unwrap().timer_manager.reset(&name.node)?;
                 } else {
                     return Err(RuntimeError::Unsupported("reset timer outside agent".into()));
+                }
+                if let Some(ref engine) = self.timer_engine {
+                    engine.lock().unwrap().reset(&name.node, None)
+                        .map_err(|e| RuntimeError::Unsupported(e.to_string()))?;
                 }
             }
             Stmt::Forward(expr, target) => {

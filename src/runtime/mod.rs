@@ -8,3 +8,4 @@ pub mod pool;
 pub mod confidence;
 pub mod state_machine;
 pub mod event_bus;
+pub mod timer_engine;
