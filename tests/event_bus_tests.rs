@@ -77,6 +77,7 @@ fn subscribing_agent(
                 None,
             ))],
         })],
+        warden_override: Vec::new(),
         stuck_policy: None,
     }
 }
@@ -109,6 +110,7 @@ fn emitting_agent(
                 )),
             ],
         })],
+        warden_override: Vec::new(),
         stuck_policy: None,
     }
 }
@@ -385,6 +387,7 @@ async fn multi_agent_event_flow() {
                 )),
             ],
         })],
+        warden_override: Vec::new(),
         stuck_policy: None,
     };
 

@@ -1489,11 +1489,15 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     let mut memory = Vec::new();
     let mut timers = Vec::new();
     let mut subscriptions = Vec::new();
+    let mut warden_override = Vec::new();
     let mut handlers = Vec::new();
     let mut stuck_policy = None;
 
     for child in inner {
         match child.as_rule() {
+            Rule::warden_override_block => {
+                warden_override = build_warden_override(child)?;
+            }
             Rule::lifecycle_clause => {
                 let lc_ident = child.into_inner().next().unwrap();
                 lifecycle = Some(spanned(lc_ident.as_str().to_string(), &lc_ident));
@@ -1583,6 +1587,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             memory,
             timers,
             subscriptions,
+            warden_override,
             handlers,
             stuck_policy,
         }),
@@ -1659,6 +1664,146 @@ fn build_pool_strategy(pair: Pair) -> anyhow::Result<Spanned<PoolStrategy>> {
     }
 
     Err(anyhow::anyhow!("unknown pool strategy: {}", s))
+}
+
+// ── Warden ──────────────────────────────────────────────────
+
+fn build_failure_type(pair: &Pair) -> anyhow::Result<Spanned<FailureType>> {
+    let span = to_span(pair);
+    let ft = match pair.as_str() {
+        "stuck" => FailureType::Stuck,
+        "crash" => FailureType::Crash,
+        "hallucination" => FailureType::Hallucination,
+        "budget" => FailureType::Budget,
+        "timeout" => FailureType::Timeout,
+        other => return Err(parse_error(pair, &format!("unknown failure type: {}", other))),
+    };
+    Ok(Spanned::new(ft, span))
+}
+
+fn build_ward_response(pair: &Pair) -> anyhow::Result<Spanned<WardResponse>> {
+    let span = to_span(pair);
+    let wr = match pair.as_str() {
+        "nudge" => WardResponse::Nudge,
+        "restart" => WardResponse::Restart,
+        "replace" => WardResponse::Replace,
+        "escalate" => WardResponse::Escalate,
+        other => return Err(parse_error(pair, &format!("unknown ward response: {}", other))),
+    };
+    Ok(Spanned::new(wr, span))
+}
+
+fn build_ward_scope(pair: &Pair) -> anyhow::Result<Spanned<WardScope>> {
+    let span = to_span(pair);
+    let ws = match pair.as_str() {
+        "self" => WardScope::This,
+        "downstream" => WardScope::Downstream,
+        "all" => WardScope::All,
+        other => return Err(parse_error(pair, &format!("unknown ward scope: {}", other))),
+    };
+    Ok(Spanned::new(ws, span))
+}
+
+fn build_ward_policy(pair: Pair) -> anyhow::Result<Spanned<WardPolicy>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+
+    let ft_pair = inner.next().unwrap();
+    let failure_type = build_failure_type(&ft_pair)?;
+
+    let resp_pair = inner.next().unwrap();
+    let response = build_ward_response(&resp_pair)?;
+
+    let scope_pair = inner.next().unwrap();
+    let scope = build_ward_scope(&scope_pair)?;
+
+    let mut after_clauses = Vec::new();
+    for child in inner {
+        if child.as_rule() == Rule::after_clause {
+            let ac_span = to_span(&child);
+            let mut ac_inner = child.into_inner();
+            let count_pair = ac_inner.next().unwrap();
+            let count = count_pair.as_str().parse::<u64>()
+                .map_err(|e| parse_error(&count_pair, &format!("invalid count: {}", e)))?;
+            let ac_resp_pair = ac_inner.next().unwrap();
+            let ac_response = build_ward_response(&ac_resp_pair)?;
+            after_clauses.push(Spanned::new(
+                AfterClause { count, response: ac_response },
+                ac_span,
+            ));
+        }
+    }
+
+    Ok(Spanned::new(
+        WardPolicy {
+            failure_type,
+            response,
+            scope,
+            after_clauses,
+        },
+        span,
+    ))
+}
+
+fn build_warden_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let name_pair = inner.next().unwrap();
+    let name = spanned(name_pair.as_str().to_string(), &name_pair);
+
+    let mut manages = Vec::new();
+    let mut policies = Vec::new();
+    let mut max_retries = None;
+
+    for child in inner {
+        match child.as_rule() {
+            Rule::manages_clause => {
+                for id_child in child.into_inner() {
+                    if id_child.as_rule() == Rule::ident_list {
+                        for id_pair in id_child.into_inner() {
+                            if id_pair.as_rule() == Rule::ident {
+                                manages.push(spanned(id_pair.as_str().to_string(), &id_pair));
+                            }
+                        }
+                    }
+                }
+            }
+            Rule::ward_policy => {
+                policies.push(build_ward_policy(child)?);
+            }
+            Rule::max_retries_clause => {
+                let mr_span = to_span(&child);
+                let mut mr_inner = child.into_inner();
+                let count_pair = mr_inner.next().unwrap();
+                let count = count_pair.as_str().parse::<u64>()
+                    .map_err(|e| parse_error(&count_pair, &format!("invalid max_retries: {}", e)))?;
+                let dur_pair = mr_inner.next().unwrap();
+                let window = build_duration(dur_pair)?;
+                max_retries = Some(Spanned::new(MaxRetries { count, window }, mr_span));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Spanned::new(
+        TopLevel::Warden(WardenDecl {
+            name,
+            manages,
+            policies,
+            max_retries,
+        }),
+        span,
+    ))
+}
+
+fn build_warden_override(pair: Pair) -> anyhow::Result<Vec<Spanned<WardPolicy>>> {
+    let mut policies = Vec::new();
+    for child in pair.into_inner() {
+        if child.as_rule() == Rule::ward_policy {
+            policies.push(build_ward_policy(child)?);
+        }
+    }
+    Ok(policies)
 }
 
 fn build_contract_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
@@ -1817,6 +1962,7 @@ fn build_program(pairs: Pairs) -> anyhow::Result<Program> {
                     Rule::flow_decl => build_flow_decl(inner)?,
                     Rule::agent_decl => build_agent_decl(inner)?,
                     Rule::pool_decl => build_pool_decl(inner)?,
+                    Rule::warden_decl => build_warden_decl(inner)?,
                     Rule::contract_decl => build_contract_decl(inner)?,
                     Rule::system_decl => build_system_decl(inner)?,
                     Rule::fn_main_decl => build_fn_main_decl(inner)?,

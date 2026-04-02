@@ -196,4 +196,23 @@ impl Tracer {
             "timer": timer_name,
         }));
     }
+
+    pub fn ward_action(
+        &self,
+        warden: &str,
+        agent: &str,
+        failure_type: &str,
+        response: &str,
+        scope: &str,
+        retry_count: u64,
+    ) {
+        self.emit("ward_action", serde_json::json!({
+            "warden": warden,
+            "agent": agent,
+            "failure_type": failure_type,
+            "response": response,
+            "scope": scope,
+            "retry_count": retry_count,
+        }));
+    }
 }

@@ -50,6 +50,7 @@ fn simple_agent_with_timers(
         timers,
         subscriptions: vec![],
         handlers,
+        warden_override: Vec::new(),
         stuck_policy: None,
     }
 }
