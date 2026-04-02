@@ -87,17 +87,25 @@ async fn main() -> anyhow::Result<()> {
         Command::Check { file } => {
             let source = read_source(&file)?;
             let program = parse_or_exit(&source, &file);
-            let ctx = forge::resolver::CheckContext::new(&file.display().to_string());
-            match ctx.check(&program) {
-                Ok(()) => println!("OK"),
-                Err(errors) => {
-                    let registry = forge::resolver::CapabilityRegistry::builtin();
-                    let diagnostics: Vec<_> = errors.iter()
-                        .map(|e| e.to_diagnostic(&file.display().to_string(), &registry))
-                        .collect();
-                    forge::diagnostic::render_diagnostics(&source, &diagnostics);
-                    std::process::exit(1);
-                }
+            let fname = file.display().to_string();
+            let mut diagnostics = Vec::new();
+
+            // Pass 1: resolver (capabilities, composition)
+            let ctx = forge::resolver::CheckContext::new(&fname);
+            if let Err(errors) = ctx.check(&program) {
+                let registry = forge::resolver::CapabilityRegistry::builtin();
+                diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+            }
+
+            // Pass 2: checker (pure enforcement, future passes)
+            let check_errors = forge::checker::check_all(&program);
+            diagnostics.extend(check_errors.iter().map(|e| e.to_diagnostic(&fname)));
+
+            if diagnostics.is_empty() {
+                println!("OK");
+            } else {
+                forge::diagnostic::render_diagnostics(&source, &diagnostics);
+                std::process::exit(1);
             }
         }
         Command::Run { file } => {
@@ -139,6 +147,24 @@ fn parse_or_exit(source: &str, file: &PathBuf) -> forge::ast::Program {
 async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
     let source = read_source(file)?;
     let program = parse_or_exit(&source, file);
+    let fname = file.display().to_string();
+
+    // Validate before execution
+    let mut diagnostics = Vec::new();
+
+    let ctx = forge::resolver::CheckContext::new(&fname);
+    if let Err(errors) = ctx.check(&program) {
+        let registry = forge::resolver::CapabilityRegistry::builtin();
+        diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+    }
+
+    let check_errors = forge::checker::check_all(&program);
+    diagnostics.extend(check_errors.iter().map(|e| e.to_diagnostic(&fname)));
+
+    if !diagnostics.is_empty() {
+        forge::diagnostic::render_diagnostics(&source, &diagnostics);
+        std::process::exit(1);
+    }
 
     let config = forge::config::ForgeConfig::load_or_default();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)

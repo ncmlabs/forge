@@ -26,12 +26,6 @@ pub enum ResolveError {
         span_end: usize,
     },
 
-    #[error("pure function `{name}` cannot use LLM operations (reason/classify/search)")]
-    PureUsesLlm {
-        name: String,
-        span_start: usize,
-        span_end: usize,
-    },
 }
 
 impl ResolveError {
@@ -66,14 +60,6 @@ impl ResolveError {
                     *span_start..*span_end,
                     format!("`{}` is not compatible with `{}`", left, right),
                 )
-            }
-            ResolveError::PureUsesLlm { name, span_start, span_end } => {
-                Diagnostic::error(
-                    file,
-                    format!("pure function `{}` cannot use LLM operations", name),
-                    *span_start..*span_end,
-                    "reason/classify/search not allowed in pure functions",
-                ).with_help("move this operation to a `task` instead")
             }
         }
     }
@@ -158,8 +144,6 @@ impl CheckContext {
                     self.check_stmts_composition(&task_body_stmts(task));
                 }
                 TopLevel::Pure(pure) => {
-                    // Check purity: no LLM operations allowed
-                    self.check_pure_body(&pure.name.node, &pure.body);
                     self.check_stmts_composition(&pure.body);
                 }
                 TopLevel::Flow(flow) => {
@@ -186,144 +170,6 @@ impl CheckContext {
             Ok(())
         } else {
             Err(self.errors)
-        }
-    }
-
-    /// Check that a pure function body contains no LLM operations.
-    fn check_pure_body(&mut self, fn_name: &str, stmts: &[Spanned<Stmt>]) {
-        for stmt in stmts {
-            self.check_pure_stmt(fn_name, stmt);
-        }
-    }
-
-    fn check_pure_stmt(&mut self, fn_name: &str, stmt: &Spanned<Stmt>) {
-        match &stmt.node {
-            Stmt::Bind(_, expr) | Stmt::Give(expr, _) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
-                self.check_pure_expr(fn_name, expr);
-            }
-            Stmt::When(when) => {
-                for clause in &when.clauses {
-                    self.check_pure_stmt(fn_name, &clause.node.body);
-                }
-                if let Some(else_clause) = &when.else_body {
-                    self.check_pure_stmt(fn_name, &else_clause.node.body);
-                }
-            }
-            Stmt::Match(m) => {
-                self.check_pure_expr(fn_name, &m.subject);
-                for arm in &m.arms {
-                    self.check_pure_stmt(fn_name, &arm.node.body);
-                }
-            }
-            Stmt::IfElse(ie) => {
-                self.check_pure_expr(fn_name, &ie.condition);
-                for s in &ie.then_body {
-                    self.check_pure_stmt(fn_name, s);
-                }
-                for (cond, body) in &ie.else_ifs {
-                    self.check_pure_expr(fn_name, cond);
-                    for s in body {
-                        self.check_pure_stmt(fn_name, s);
-                    }
-                }
-                if let Some(body) = &ie.else_body {
-                    for s in body {
-                        self.check_pure_stmt(fn_name, s);
-                    }
-                }
-            }
-            Stmt::For(f) => {
-                self.check_pure_expr(fn_name, &f.iterable);
-                for s in &f.body {
-                    self.check_pure_stmt(fn_name, s);
-                }
-            }
-            Stmt::Forward(a, b) => {
-                self.check_pure_expr(fn_name, a);
-                self.check_pure_expr(fn_name, b);
-            }
-            Stmt::Emit(_, args) => {
-                for arg in args {
-                    self.check_pure_expr(fn_name, &arg.node.value);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn check_pure_expr(&mut self, fn_name: &str, expr: &Spanned<Expr>) {
-        match &expr.node {
-            Expr::Reason(_) | Expr::Classify(_) | Expr::Search(_) => {
-                self.errors.push(ResolveError::PureUsesLlm {
-                    name: fn_name.to_string(),
-                    span_start: expr.span.start,
-                    span_end: expr.span.end,
-                });
-            }
-            Expr::TryOr(a, b) => {
-                self.check_pure_expr(fn_name, a);
-                self.check_pure_expr(fn_name, b);
-            }
-            Expr::Compose(parts) => {
-                for p in parts {
-                    self.check_pure_expr(fn_name, p);
-                }
-            }
-            Expr::FanOut(parts) => {
-                for p in parts {
-                    self.check_pure_expr(fn_name, p);
-                }
-            }
-            Expr::BinOp(a, _, b) => {
-                self.check_pure_expr(fn_name, a);
-                self.check_pure_expr(fn_name, b);
-            }
-            Expr::UnaryOp(_, a) => {
-                self.check_pure_expr(fn_name, a);
-            }
-            Expr::Call(c) => {
-                for arg in &c.args {
-                    self.check_pure_expr(fn_name, &arg.node.value);
-                }
-            }
-            Expr::Constructor(c) => {
-                for arg in &c.args {
-                    self.check_pure_expr(fn_name, &arg.node.value);
-                }
-            }
-            Expr::FieldAccess(inner, _) | Expr::GlobAccess(inner) => {
-                self.check_pure_expr(fn_name, inner);
-            }
-            Expr::Index(a, b) => {
-                self.check_pure_expr(fn_name, a);
-                self.check_pure_expr(fn_name, b);
-            }
-            Expr::MethodCall(inner, _, args) => {
-                self.check_pure_expr(fn_name, inner);
-                for arg in args {
-                    self.check_pure_expr(fn_name, &arg.node.value);
-                }
-            }
-            Expr::Paren(inner) => {
-                self.check_pure_expr(fn_name, inner);
-            }
-            Expr::ArrayLit(elems) => {
-                for e in elems {
-                    self.check_pure_expr(fn_name, e);
-                }
-            }
-            Expr::Template(parts) => {
-                for part in parts {
-                    if let crate::ast::TemplatePart::Interp(inner) = &part.node {
-                        self.check_pure_expr(fn_name, inner);
-                    }
-                }
-            }
-            // Leaves: literals, idents, type access — always pure
-            Expr::NumberLit(_)
-            | Expr::BoolLit(_)
-            | Expr::Ident(_)
-            | Expr::TypeAccess(_, _) => {}
         }
     }
 
@@ -500,24 +346,6 @@ mod tests {
     #[test]
     fn no_use_block_is_ok() {
         let source = "task greet\n  needs name: Text\n  gives Text\n  do\n    say \"Hello, {name}!\"\n";
-        let program = parse(source).unwrap();
-        let ctx = CheckContext::new("<test>");
-        assert!(ctx.check(&program).is_ok());
-    }
-
-    #[test]
-    fn pure_rejects_reason() {
-        let source = "pure bad\n  needs x: Text\n  gives Text\n  do\n    result = reason x\n    give result\n";
-        let program = parse(source).unwrap();
-        let ctx = CheckContext::new("<test>");
-        let errs = ctx.check(&program).unwrap_err();
-        assert_eq!(errs.len(), 1);
-        assert!(matches!(&errs[0], ResolveError::PureUsesLlm { name, .. } if name == "bad"));
-    }
-
-    #[test]
-    fn pure_allows_non_llm() {
-        let source = "pure add\n  needs a: Number, b: Number\n  gives Number\n  do\n    give a + b\n";
         let program = parse(source).unwrap();
         let ctx = CheckContext::new("<test>");
         assert!(ctx.check(&program).is_ok());
