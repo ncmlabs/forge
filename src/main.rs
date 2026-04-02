@@ -97,9 +97,8 @@ async fn main() -> anyhow::Result<()> {
                 diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
             }
 
-            // Pass 2: checker (pure enforcement, future passes)
-            let check_errors = forge::checker::check_all(&program);
-            diagnostics.extend(check_errors.iter().map(|e| e.to_diagnostic(&fname)));
+            // Pass 2: checker (pure enforcement, states, future passes)
+            diagnostics.extend(forge::checker::check_all(&program, &fname));
 
             if diagnostics.is_empty() {
                 println!("OK");
@@ -158,8 +157,7 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
         diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
     }
 
-    let check_errors = forge::checker::check_all(&program);
-    diagnostics.extend(check_errors.iter().map(|e| e.to_diagnostic(&fname)));
+    diagnostics.extend(forge::checker::check_all(&program, &fname));
 
     if !diagnostics.is_empty() {
         forge::diagnostic::render_diagnostics(&source, &diagnostics);
