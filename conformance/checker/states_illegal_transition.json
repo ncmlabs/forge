@@ -1,0 +1,11 @@
+{
+  "name": "states_illegal_transition",
+  "category": "checker",
+  "subcategory": "states",
+  "description": "Transition not in declared state machine paths is rejected",
+  "input": "states GamePhase\n  waiting -> playing\n  playing -> done\n\nagent broken_agent\n  lifecycle: GamePhase\n  on start(msg: Text)\n    requires lifecycle == done\n    transition to playing\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["illegal transition"]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "hello_task_runs",
+  "category": "runtime",
+  "description": "A simple task with no LLM calls executes and produces output",
+  "input": "task greet\n  needs name: Text\n  gives Text\n  do\n    give \"Hello, {name}!\"\n\nfn main\n  result = greet(\"World\")\n  say result\n",
+  "mock_responses": [],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": ["task_call", "task_return"]
+  }
+}

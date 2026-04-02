@@ -1,0 +1,11 @@
+{
+  "name": "uncertain_unhandled_tainted",
+  "category": "checker",
+  "subcategory": "uncertain",
+  "description": "Tainted value from oracle passed to give without when/match is rejected",
+  "input": "use\n  llm.reason\n\ntask summarize\n  needs text: Text\n  gives Text\n  do\n    summary = reason \"summarize: {text}\"\n    give summary\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["unhandled uncertain"]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "pure_no_classify",
+  "category": "checker",
+  "subcategory": "pure",
+  "description": "Pure function cannot use classify (LLM operation)",
+  "input": "pure bad\n  needs x: Text\n  gives Text\n  do\n    give classify x into [\"a\", \"b\"]\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["cannot use", "classify"]
+  }
+}

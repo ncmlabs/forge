@@ -1,0 +1,11 @@
+{
+  "name": "pure_no_reason",
+  "category": "checker",
+  "subcategory": "pure",
+  "description": "Pure function cannot use reason (LLM operation)",
+  "input": "pure bad\n  needs x: Text\n  gives Text\n  do\n    give reason \"think about {x}\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["cannot use", "reason"]
+  }
+}

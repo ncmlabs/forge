@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge-lang.org/conformance/schema.json",
+  "title": "FORGE Conformance Test",
+  "description": "Schema for FORGE language conformance test cases (issue #27)",
+  "type": "object",
+  "required": ["name", "category", "description", "input", "expected"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Unique test identifier (snake_case)"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["parser", "checker", "runtime", "errors"],
+      "description": "Test category"
+    },
+    "subcategory": {
+      "type": "string",
+      "description": "Optional subcategory (e.g. checker module name)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this tests"
+    },
+    "input": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Single-file FORGE source code"
+        },
+        {
+          "type": "array",
+          "description": "Multi-file input for cross-boundary tests",
+          "items": {
+            "type": "object",
+            "required": ["file", "source"],
+            "properties": {
+              "file": { "type": "string", "description": "Filename (e.g. server.forge)" },
+              "source": { "type": "string", "description": "FORGE source code" }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 2
+        }
+      ]
+    },
+    "expected": {
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": ["parse_ok", "parse_error", "compile_ok", "compile_error", "run_ok", "run_error"],
+          "description": "Expected test outcome"
+        },
+        "error_contains": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "All substrings must appear in at least one diagnostic message"
+        },
+        "error_kind": {
+          "type": "string",
+          "enum": ["error", "warning"],
+          "default": "error",
+          "description": "Expected diagnostic severity"
+        },
+        "trace_shape": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Ordered subsequence of expected trace event types"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mock_responses": {
+      "type": "array",
+      "description": "Scripted LLM responses for runtime tests",
+      "items": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": { "type": "string", "description": "Response text" },
+          "confidence": { "type": "number", "description": "Expected confidence (documentation only — actual confidence computed from text)" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "if": {
+    "properties": {
+      "expected": {
+        "properties": {
+          "outcome": { "pattern": "_error$" }
+        }
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "expected": {
+        "required": ["outcome", "error_contains"]
+      }
+    }
+  }
+}

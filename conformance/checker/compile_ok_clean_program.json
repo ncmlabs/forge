@@ -1,0 +1,9 @@
+{
+  "name": "compile_ok_clean_program",
+  "category": "checker",
+  "description": "A valid program with no violations compiles cleanly",
+  "input": "task greet\n  needs name: Text\n  gives Text\n  do\n    give \"Hello, {name}!\"\n\nfn main\n  result = greet(\"World\")\n  say result\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

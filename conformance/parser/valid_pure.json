@@ -1,0 +1,9 @@
+{
+  "name": "valid_pure_declaration",
+  "category": "parser",
+  "description": "Pure function declaration parses successfully",
+  "input": "pure add\n  needs a: Number, b: Number\n  gives Number\n  do\n    give a + b\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

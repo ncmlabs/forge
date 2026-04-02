@@ -1,0 +1,10 @@
+{
+  "name": "invalid_syntax",
+  "category": "parser",
+  "description": "Malformed task declaration fails to parse",
+  "input": "task\n  gives\n  broken syntax!!!\n",
+  "expected": {
+    "outcome": "parse_error",
+    "error_contains": ["expected"]
+  }
+}

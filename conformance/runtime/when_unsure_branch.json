@@ -1,0 +1,13 @@
+{
+  "name": "when_unsure_branch",
+  "category": "runtime",
+  "description": "When branch dispatches on unsure confidence from hedging LLM response",
+  "input": "use\n  llm.reason\n\ntask analyze\n  needs topic: Text\n  gives Text\n  do\n    result = reason \"analyze {topic}\"\n    when result.sure -> give result\n    when result.unsure -> give \"uncertain\"\n\nfn main\n  result = analyze(\"test\")\n  say result\n",
+  "mock_responses": [
+    {"text": "I'm not sure but I think possibly it might be about something", "confidence": 0.53}
+  ],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": ["task_call", "llm_request", "llm_response", "when_dispatch", "task_return"]
+  }
+}

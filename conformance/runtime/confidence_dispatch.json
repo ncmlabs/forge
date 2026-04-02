@@ -1,0 +1,13 @@
+{
+  "name": "confidence_dispatch_sure",
+  "category": "runtime",
+  "description": "When branch dispatches on sure confidence from LLM response",
+  "input": "use\n  llm.reason\n\ntask analyze\n  needs topic: Text\n  gives Text\n  do\n    result = reason \"analyze {topic}\"\n    when result.sure -> give result\n    when result.unsure -> give \"not sure\"\n\nfn main\n  result = analyze(\"test\")\n  say result\n",
+  "mock_responses": [
+    {"text": "This is a clear analysis of the topic", "confidence": 0.85}
+  ],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": ["task_call", "llm_request", "llm_response", "when_dispatch", "task_return"]
+  }
+}

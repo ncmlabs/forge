@@ -1,0 +1,11 @@
+{
+  "name": "pure_no_escalate",
+  "category": "checker",
+  "subcategory": "pure",
+  "description": "Pure function cannot use escalate (side effect)",
+  "input": "pure bad\n  needs x: Text\n  gives Text\n  do\n    escalate to human\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["cannot use", "escalate"]
+  }
+}

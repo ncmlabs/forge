@@ -1,0 +1,11 @@
+{
+  "name": "task_chain",
+  "category": "runtime",
+  "description": "Sequential task calls produce nested trace events",
+  "input": "task inner\n  needs x: Text\n  gives Text\n  do\n    give \"processed: {x}\"\n\ntask outer\n  needs x: Text\n  gives Text\n  do\n    result = inner(x)\n    give result\n\nfn main\n  result = outer(\"hello\")\n  say result\n",
+  "mock_responses": [],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": ["task_call", "task_call", "task_return", "task_return"]
+  }
+}

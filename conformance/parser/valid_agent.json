@@ -1,0 +1,9 @@
+{
+  "name": "valid_agent_declaration",
+  "category": "parser",
+  "description": "Agent with lifecycle, memory, and handler parses successfully",
+  "input": "states Phase\n  idle -> active\n  active -> done\n\nagent worker\n  lifecycle: Phase\n  memory\n    count: Number\n  on start(msg: Text)\n    count = count + 1\n    say msg\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

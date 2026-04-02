@@ -1,0 +1,12 @@
+{
+  "name": "requires_llm_warning",
+  "category": "checker",
+  "subcategory": "requires",
+  "description": "Using reason in requires clause produces a warning",
+  "input": "use\n  llm.reason\n\nagent checker\n  on verify(msg: Text)\n    requires reason \"is {msg} valid?\"\n    say msg\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["requires clause uses LLM operation"],
+    "error_kind": "warning"
+  }
+}

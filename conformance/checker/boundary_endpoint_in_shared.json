@@ -1,0 +1,11 @@
+{
+  "name": "boundary_endpoint_in_shared",
+  "category": "checker",
+  "subcategory": "boundary",
+  "description": "Endpoint declared in shared boundary (default) is rejected",
+  "input": "endpoint login(user: Text, pass: Text) -> Text\n  give \"ok\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["not allowed in", "boundary"]
+  }
+}
