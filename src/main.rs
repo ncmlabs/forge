@@ -68,6 +68,15 @@ enum Command {
         /// Path to the .forge source file
         file: PathBuf,
     },
+    /// Generate skeleton FORGE code from a plain-text system description
+    Fleet {
+        /// Plain-text system description (e.g., "a chat system with moderator and logger")
+        #[arg(long)]
+        spec: String,
+        /// Output directory (default: print to stdout)
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -148,6 +157,17 @@ async fn main() -> anyhow::Result<()> {
             let config = forge::config::ForgeConfig::load_or_default();
             let estimate = forge::cost_estimator::estimate(&program, &config);
             print!("{}", estimate);
+        }
+        Command::Fleet { spec, output } => {
+            let result = forge::fleet::generate(&spec)?;
+            match output {
+                Some(dir) => {
+                    forge::fleet::write_to_dir(&result, &dir)?;
+                }
+                None => {
+                    print!("{}", result.source);
+                }
+            }
         }
     }
 

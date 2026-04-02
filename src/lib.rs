@@ -10,3 +10,4 @@ pub mod config;
 pub mod llm;
 pub mod diagnostic;
 pub mod cost_estimator;
+pub mod fleet;
