@@ -44,8 +44,9 @@ enum Command {
     },
     /// Type-check capabilities, composition types, and purity constraints
     Check {
-        /// Path to the .forge source file
-        file: PathBuf,
+        /// Paths to .forge source files
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
     },
     /// Execute a .forge program
     Run {
@@ -84,26 +85,51 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Command::Check { file } => {
-            let source = read_source(&file)?;
-            let program = parse_or_exit(&source, &file);
-            let fname = file.display().to_string();
-            let mut diagnostics = Vec::new();
+        Command::Check { files } => {
+            let mut all_diagnostics = Vec::new();
+            let mut parsed_programs = Vec::new();
 
-            // Pass 1: resolver (capabilities, composition)
-            let ctx = forge::resolver::CheckContext::new(&fname);
-            if let Err(errors) = ctx.check(&program) {
-                let registry = forge::resolver::CapabilityRegistry::builtin();
-                diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+            for file in &files {
+                let source = read_source(file)?;
+                let program = parse_or_exit(&source, file);
+                let fname = file.display().to_string();
+
+                // Per-file: resolver
+                let ctx = forge::resolver::CheckContext::new(&fname);
+                if let Err(errors) = ctx.check(&program) {
+                    let registry = forge::resolver::CapabilityRegistry::builtin();
+                    all_diagnostics.extend(
+                        errors.iter().map(|e| e.to_diagnostic(&fname, &registry)),
+                    );
+                }
+
+                // Per-file: checker (pure, states, requires)
+                all_diagnostics.extend(forge::checker::check_all(&program, &fname));
+
+                parsed_programs.push((program, fname, source));
             }
 
-            // Pass 2: checker (pure enforcement, states, future passes)
-            diagnostics.extend(forge::checker::check_all(&program, &fname));
+            // Cross-file: boundary checker
+            let boundary_refs: Vec<_> = parsed_programs
+                .iter()
+                .map(|(p, f, _)| (p, f.as_str()))
+                .collect();
+            all_diagnostics.extend(
+                forge::checker::boundary_checker::check(&boundary_refs),
+            );
 
-            if diagnostics.is_empty() {
+            if all_diagnostics.is_empty() {
                 println!("OK");
             } else {
-                forge::diagnostic::render_diagnostics(&source, &diagnostics);
+                // Render diagnostics for each file with its source
+                for diag in &all_diagnostics {
+                    if let Some((_, _, source)) = parsed_programs
+                        .iter()
+                        .find(|(_, f, _)| f == &diag.file)
+                    {
+                        diag.render(source);
+                    }
+                }
                 std::process::exit(1);
             }
         }
@@ -158,6 +184,10 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
     }
 
     diagnostics.extend(forge::checker::check_all(&program, &fname));
+
+    // Boundary checker (single-file — catches endpoint placement etc.)
+    let boundary_refs = vec![(&program, fname.as_str())];
+    diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
 
     if !diagnostics.is_empty() {
         forge::diagnostic::render_diagnostics(&source, &diagnostics);
