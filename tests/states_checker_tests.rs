@@ -177,6 +177,28 @@ agent room
     assert!(errs[0].message.contains("unguarded"));
 }
 
+// ── Conflicting guards ───────────────────────────────────────
+
+#[test]
+fn conflicting_lifecycle_guards_is_error() {
+    let source = "\
+states GamePhase
+  waiting -> playing
+  playing -> done
+
+agent room
+  lifecycle: GamePhase
+  on start(msg: Text)
+    requires lifecycle == waiting
+    requires lifecycle == playing
+    transition to playing
+";
+    let diags = check(source);
+    let errs = errors(&diags);
+    assert!(errs.iter().any(|d| d.message.contains("conflicting")),
+        "expected conflicting guards error, got: {:?}", errs);
+}
+
 // ── Structural warnings ───────────────────────────────────────
 
 #[test]

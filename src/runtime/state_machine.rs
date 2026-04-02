@@ -45,14 +45,11 @@ impl StateMachine {
 
         let mut graph: HashMap<String, Vec<TransitionEdge>> = HashMap::new();
         for t in &decl.transitions {
-            let condition = t.node.condition.as_ref().map(|_| {
-                format!("{} -> {}", t.node.from.node, t.node.to.node)
-            });
             graph.entry(t.node.from.node.clone())
                 .or_default()
                 .push(TransitionEdge {
                     to: t.node.to.node.clone(),
-                    condition,
+                    condition: None, // conditions not evaluated at runtime yet
                 });
         }
 

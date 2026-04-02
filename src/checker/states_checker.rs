@@ -237,7 +237,6 @@ fn check_agent(
     for handler in &agent.handlers {
         check_handler(
             &handler.node,
-            handler.span.start..handler.span.end,
             state_names,
             edges,
             file,
@@ -248,7 +247,6 @@ fn check_agent(
 
 fn check_handler(
     handler: &crate::ast::OnHandler,
-    _handler_span: std::ops::Range<usize>,
     state_names: &HashSet<String>,
     edges: &HashSet<(String, String)>,
     file: &str,
