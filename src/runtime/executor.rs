@@ -336,7 +336,9 @@ impl TaskExecutor {
                 if let Some(ref ctx_arc) = self.agent_context {
                     let mut ctx = ctx_arc.lock().unwrap();
                     if let Some(ref mut sm) = ctx.state_machine {
-                        sm.transition_to(&state.node)?;
+                        sm.transition(&state.node).map_err(|e| {
+                            RuntimeError::FlowError(e.to_string())
+                        })?;
                     } else {
                         return Err(RuntimeError::Unsupported(
                             "transition without lifecycle".into(),

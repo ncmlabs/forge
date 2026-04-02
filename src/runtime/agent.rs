@@ -10,49 +10,8 @@ use crate::llm::registry::ProviderRegistry;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::executor::{Env, RuntimeError, TaskExecutor};
 use crate::runtime::memory::AgentMemory;
+use crate::runtime::state_machine::StateMachine;
 use crate::tracer::Tracer;
-
-// ── State Machine ────────────────────────────────────────────────────────────
-
-/// Simple lifecycle state tracker. Validates transitions against declared edges.
-#[derive(Debug, Clone)]
-pub struct StateMachine {
-    current: String,
-    transitions: Vec<StateTransition>,
-}
-
-impl StateMachine {
-    /// Initialize from a `StatesDecl`. First state in the first transition is the initial state.
-    pub fn new(decl: &StatesDecl) -> Self {
-        let initial = decl.transitions.first()
-            .map(|t| t.node.from.node.clone())
-            .unwrap_or_else(|| "initial".to_string());
-        Self {
-            current: initial,
-            transitions: decl.transitions.iter().map(|t| t.node.clone()).collect(),
-        }
-    }
-
-    pub fn current(&self) -> &str {
-        &self.current
-    }
-
-    /// Attempt a transition to `target`. Returns error if no valid edge exists.
-    pub fn transition_to(&mut self, target: &str) -> Result<(), RuntimeError> {
-        let valid = self.transitions.iter().any(|t| {
-            t.from.node == self.current && t.to.node == target
-        });
-        if valid {
-            self.current = target.to_string();
-            Ok(())
-        } else {
-            Err(RuntimeError::FlowError(format!(
-                "no transition from '{}' to '{}'",
-                self.current, target,
-            )))
-        }
-    }
-}
 
 // ── Timer Manager ────────────────────────────────────────────────────────────
 
@@ -435,7 +394,7 @@ mod tests {
             ],
         };
         let sm = StateMachine::new(&decl);
-        assert_eq!(sm.current(), "idle");
+        assert_eq!(sm.current, "idle");
     }
 
     #[test]
@@ -456,10 +415,10 @@ mod tests {
             ],
         };
         let mut sm = StateMachine::new(&decl);
-        assert!(sm.transition_to("active").is_ok());
-        assert_eq!(sm.current(), "active");
-        assert!(sm.transition_to("done").is_ok());
-        assert_eq!(sm.current(), "done");
+        assert!(sm.transition("active").is_ok());
+        assert_eq!(sm.current, "active");
+        assert!(sm.transition("done").is_ok());
+        assert_eq!(sm.current, "done");
     }
 
     #[test]
@@ -475,7 +434,7 @@ mod tests {
             ],
         };
         let mut sm = StateMachine::new(&decl);
-        assert!(sm.transition_to("done").is_err());
+        assert!(sm.transition("done").is_err());
     }
 
     // ── TimerManager tests ───────────────────────────────────────

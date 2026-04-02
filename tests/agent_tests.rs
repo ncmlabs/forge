@@ -299,7 +299,7 @@ async fn state_machine_transition_via_handler() {
 
     agent.dispatch("activate", HashMap::new()).await.unwrap();
     let ctx = agent.context().lock().unwrap();
-    assert_eq!(ctx.state_machine.as_ref().unwrap().current(), "active");
+    assert_eq!(ctx.state_machine.as_ref().unwrap().current, "active");
 }
 
 #[tokio::test]
