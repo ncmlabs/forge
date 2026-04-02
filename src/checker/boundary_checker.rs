@@ -1,7 +1,7 @@
 // FORGE boundary checker
 // See issue #21 for full specification
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
     BoundaryKind, Expr, Program, Spanned, Stmt, TaskBody, TemplatePart, TopLevel, TypeName,
@@ -21,6 +21,11 @@ pub fn check(programs: &[(&Program, &str)]) -> Vec<Diagnostic> {
 
     // Phase 2: cross-file symbol table + reference validation
     let registry = BoundaryRegistry::build(programs);
+
+    // Phase 2a: shared type serializability
+    check_shared_serializability(programs, &registry, &mut diagnostics);
+
+    // Phase 2b: cross-boundary reference validation
     for (program, file) in programs {
         let boundary = effective_boundary(program);
         check_cross_boundary_refs(program, boundary, &registry, file, &mut diagnostics);
@@ -78,21 +83,40 @@ fn check_endpoint_placement(
 
 // ── Phase 2: Cross-file symbol table ──────────────────────
 
+#[derive(Debug, Clone, Copy)]
+enum SymbolKind {
+    Task,
+    Pure,
+    Flow,
+    Agent,
+    Pool,
+    Event,
+    States,
+    TypeDef,
+    Endpoint,
+    Contract,
+    System,
+}
+
 struct BoundaryRegistry {
     server_symbols: HashSet<String>,
     client_symbols: HashSet<String>,
+    /// Maps symbol name to its kind (needed for serializability check)
+    symbol_kinds: HashMap<String, SymbolKind>,
 }
 
 impl BoundaryRegistry {
     fn build(programs: &[(&Program, &str)]) -> Self {
         let mut server_symbols = HashSet::new();
         let mut client_symbols = HashSet::new();
+        let mut symbol_kinds = HashMap::new();
 
         for (program, _file) in programs {
             let boundary = effective_boundary(program);
             for item in &program.items {
-                let name = top_level_name(&item.node);
-                if let Some(name) = name {
+                let name_and_kind = top_level_name_and_kind(&item.node);
+                if let Some((name, kind)) = name_and_kind {
+                    symbol_kinds.insert(name.clone(), kind);
                     match boundary {
                         BoundaryKind::Server => {
                             server_symbols.insert(name);
@@ -108,26 +132,82 @@ impl BoundaryRegistry {
             }
         }
 
-        BoundaryRegistry { server_symbols, client_symbols }
+        BoundaryRegistry { server_symbols, client_symbols, symbol_kinds }
     }
 }
 
-/// Extract the name of a top-level declaration, if it has one.
+/// Extract the name and kind of a top-level declaration, if it has one.
 /// Returns None for Use and FnMain (which are skipped per the spec).
-fn top_level_name(item: &TopLevel) -> Option<String> {
+fn top_level_name_and_kind(item: &TopLevel) -> Option<(String, SymbolKind)> {
     match item {
-        TopLevel::Task(d) => Some(d.name.node.clone()),
-        TopLevel::Pure(d) => Some(d.name.node.clone()),
-        TopLevel::Flow(d) => Some(d.name.node.clone()),
-        TopLevel::Agent(d) => Some(d.name.node.clone()),
-        TopLevel::Pool(d) => Some(d.name.node.clone()),
-        TopLevel::Event(d) => Some(d.name.node.clone()),
-        TopLevel::States(d) => Some(d.name.node.clone()),
-        TopLevel::TypeDef(d) => Some(d.name.node.clone()),
-        TopLevel::Endpoint(d) => Some(d.name.node.clone()),
-        TopLevel::Contract(d) => Some(d.name.node.clone()),
-        TopLevel::System(d) => Some(d.name.node.clone()),
+        TopLevel::Task(d) => Some((d.name.node.clone(), SymbolKind::Task)),
+        TopLevel::Pure(d) => Some((d.name.node.clone(), SymbolKind::Pure)),
+        TopLevel::Flow(d) => Some((d.name.node.clone(), SymbolKind::Flow)),
+        TopLevel::Agent(d) => Some((d.name.node.clone(), SymbolKind::Agent)),
+        TopLevel::Pool(d) => Some((d.name.node.clone(), SymbolKind::Pool)),
+        TopLevel::Event(d) => Some((d.name.node.clone(), SymbolKind::Event)),
+        TopLevel::States(d) => Some((d.name.node.clone(), SymbolKind::States)),
+        TopLevel::TypeDef(d) => Some((d.name.node.clone(), SymbolKind::TypeDef)),
+        TopLevel::Endpoint(d) => Some((d.name.node.clone(), SymbolKind::Endpoint)),
+        TopLevel::Contract(d) => Some((d.name.node.clone(), SymbolKind::Contract)),
+        TopLevel::System(d) => Some((d.name.node.clone(), SymbolKind::System)),
         TopLevel::Use(_) | TopLevel::FnMain(_) => None,
+    }
+}
+
+// ── Phase 2a: Shared type serializability ─────────────────
+
+fn check_shared_serializability(
+    programs: &[(&Program, &str)],
+    registry: &BoundaryRegistry,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for (program, file) in programs {
+        let boundary = effective_boundary(program);
+        if boundary != BoundaryKind::Shared {
+            continue;
+        }
+
+        for item in &program.items {
+            if let TopLevel::TypeDef(typedef) = &item.node {
+                for field in &typedef.fields {
+                    if let TypeName::Custom(ref_name) = &field.node.type_name.node {
+                        if let Some(kind) = registry.symbol_kinds.get(ref_name.as_str()) {
+                            let non_serializable = matches!(
+                                kind,
+                                SymbolKind::Agent | SymbolKind::Pool | SymbolKind::Flow
+                            );
+                            if non_serializable {
+                                let kind_name = match kind {
+                                    SymbolKind::Agent => "agent",
+                                    SymbolKind::Pool => "pool",
+                                    SymbolKind::Flow => "flow",
+                                    _ => unreachable!(),
+                                };
+                                diagnostics.push(
+                                    Diagnostic::error(
+                                        *file,
+                                        format!(
+                                            "shared type `{}` contains non-serializable field `{}`",
+                                            typedef.name.node, field.node.name
+                                        ),
+                                        field.node.type_name.span.start
+                                            ..field.node.type_name.span.end,
+                                        format!(
+                                            "`{}` is an {} reference, which cannot cross the wire",
+                                            ref_name, kind_name
+                                        ),
+                                    )
+                                    .with_help(
+                                        "use a shared type or primitive type for shared boundary fields",
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

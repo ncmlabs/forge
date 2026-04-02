@@ -178,6 +178,74 @@ task display
     assert!(errors(&diags).is_empty());
 }
 
+// ── Shared type serializability ─────────────────────────────
+
+#[test]
+fn shared_type_with_agent_field_is_error() {
+    let shared = "\
+#! boundary: shared
+
+type Session
+  user: Text
+  handler: MyAgent
+";
+    let server = "\
+#! boundary: server
+
+agent MyAgent
+  on ping(msg: Text)
+    say msg
+";
+    let diags = check_boundary(&[(shared, "shared.forge"), (server, "server.forge")]);
+    let errs = errors(&diags);
+    assert_eq!(errs.len(), 1);
+    assert!(errs[0].message.contains("Session"));
+    assert!(errs[0].message.contains("handler"));
+}
+
+#[test]
+fn shared_type_with_pool_field_is_error() {
+    let shared = "\
+#! boundary: shared
+
+type Config
+  name: Text
+  workers: MyPool
+";
+    let server = "\
+#! boundary: server
+
+task worker
+  needs x: Text
+  gives Text
+  do
+    give x
+
+pool MyPool
+  workers: worker * 3
+  strategy: fastest
+";
+    let diags = check_boundary(&[(shared, "shared.forge"), (server, "server.forge")]);
+    let errs = errors(&diags);
+    assert_eq!(errs.len(), 1);
+    assert!(errs[0].message.contains("Config"));
+    assert!(errs[0].message.contains("workers"));
+}
+
+#[test]
+fn shared_type_with_only_primitive_fields_is_ok() {
+    let shared = "\
+#! boundary: shared
+
+type Message
+  content: Text
+  count: Number
+  valid: Bool
+";
+    let diags = check_boundary(&[(shared, "shared.forge")]);
+    assert!(diags.is_empty());
+}
+
 #[test]
 fn same_boundary_references_are_ok() {
     let server1 = "\
