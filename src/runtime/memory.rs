@@ -95,9 +95,10 @@ fn default_for_type(ty: &TypeName) -> ConfidentValue {
         TypeName::Profile | TypeName::Custom(_) => Value::Record(HashMap::new()),
         TypeName::Results | TypeName::SearchResults => Value::List(vec![]),
         TypeName::Failure => Value::Text(String::new()),
-        TypeName::Array(_, size) => {
+        TypeName::Array(inner, size) => {
             let len = size.unwrap_or(0);
-            Value::Array(vec![ConfidentValue::deterministic(Value::Unit); len])
+            let element_default = default_for_type(inner);
+            Value::Array(vec![element_default; len])
         }
     };
     ConfidentValue::deterministic(value)

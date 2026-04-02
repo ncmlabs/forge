@@ -1,0 +1,7 @@
+#! boundary: server
+
+task server_only_task
+  needs input: Text
+  gives Text
+  do
+    give "processed: {input}"

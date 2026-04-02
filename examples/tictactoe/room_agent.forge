@@ -27,7 +27,7 @@ agent room_agent
 
   on join(player: Text)
     requires lifecycle == waiting on fail: give "game already started"
-    requires player_count < 2 on fail: give "room full"
+    requires memory.player_count < 2 on fail: give "room full"
     memory.player_count = memory.player_count + 1
     emit PlayerJoined(player: player, room: "main")
     if memory.player_count == 2
