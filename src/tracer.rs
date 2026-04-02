@@ -147,4 +147,29 @@ impl Tracer {
             "agreement": agreement,
         }));
     }
+
+    // ── Event bus tracing (issue #19) ───────────────────────────────────────
+
+    pub fn event_emit(&self, source_agent: &str, event_name: &str, subscriber_count: usize) {
+        self.emit("event_emit", serde_json::json!({
+            "source_agent": source_agent,
+            "event": event_name,
+            "subscribers": subscriber_count,
+        }));
+    }
+
+    pub fn event_delivered(&self, event_name: &str, target_agent: &str) {
+        self.emit("event_delivered", serde_json::json!({
+            "event": event_name,
+            "target_agent": target_agent,
+        }));
+    }
+
+    pub fn event_delivery_failed(&self, event_name: &str, target_agent: &str, reason: &str) {
+        self.emit("event_delivery_failed", serde_json::json!({
+            "event": event_name,
+            "target_agent": target_agent,
+            "reason": reason,
+        }));
+    }
 }

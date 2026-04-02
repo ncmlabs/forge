@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use crate::ast::*;
 use crate::llm::registry::ProviderRegistry;
 use crate::llm::CompletionRequest;
-use crate::runtime::agent::AgentContext;
+use crate::runtime::agent::{AgentContext, EmittedEvent};
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::tracer::{Tracer, LLMResponseInfo};
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -321,13 +321,19 @@ impl TaskExecutor {
             Stmt::Emit(name, args) => {
                 if let Some(ref ctx_arc) = self.agent_context {
                     let mut arg_vals = Vec::new();
+                    let mut fields = std::collections::HashMap::new();
                     for arg in args {
-                        arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                        let val = self.eval_expr(&arg.node.value, env).await?;
+                        if let Some(ref label) = arg.node.label {
+                            fields.insert(label.node.clone(), val.clone());
+                        }
+                        arg_vals.push(val);
                     }
-                    ctx_arc.lock().unwrap().event_sink.emitted.push((
-                        name.node.clone(),
-                        arg_vals,
-                    ));
+                    ctx_arc.lock().unwrap().event_sink.emitted.push(EmittedEvent {
+                        name: name.node.clone(),
+                        args: arg_vals,
+                        fields,
+                    });
                 } else {
                     return Err(RuntimeError::Unsupported("emit outside agent".into()));
                 }

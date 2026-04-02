@@ -478,7 +478,7 @@ async fn emit_collected_in_event_sink() {
 
     let ctx = agent.context().lock().unwrap();
     assert_eq!(ctx.event_sink.emitted.len(), 1);
-    assert_eq!(ctx.event_sink.emitted[0].0, "Resolved");
+    assert_eq!(ctx.event_sink.emitted[0].name, "Resolved");
 }
 
 // ── Escalate tests ───────────────────────────────────────────────────────────

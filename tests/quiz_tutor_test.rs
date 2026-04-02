@@ -113,7 +113,7 @@ async fn quiz_tutor_full_session() {
     {
         let ctx = agent.context().lock().unwrap();
         let has_summary = ctx.event_sink.emitted.iter()
-            .any(|(name, _)| name == "SessionSummary");
+            .any(|e| e.name == "SessionSummary");
         assert!(has_summary, "should have emitted SessionSummary event");
     }
 

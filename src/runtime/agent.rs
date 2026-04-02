@@ -5,9 +5,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::mpsc;
+
 use crate::ast::*;
 use crate::llm::registry::ProviderRegistry;
 use crate::runtime::confidence::{ConfidentValue, Value};
+use crate::runtime::event_bus::{EventPayload, SharedEventBus};
 use crate::runtime::executor::{Env, RuntimeError, TaskExecutor};
 use crate::runtime::memory::AgentMemory;
 use crate::runtime::state_machine::StateMachine;
@@ -83,11 +86,19 @@ impl TimerManager {
 
 // ── Event Sink ───────────────────────────────────────────────────────────────
 
+/// A single emitted event with named fields for filter access.
+#[derive(Debug, Clone)]
+pub struct EmittedEvent {
+    pub name: String,
+    pub args: Vec<ConfidentValue>,
+    pub fields: HashMap<String, ConfidentValue>,
+}
+
 /// Collects side effects (emitted events, escalations, forwards) for testing
-/// and future wiring to EventBus (issue #19).
+/// and wiring to EventBus (issue #19).
 #[derive(Debug, Clone, Default)]
 pub struct EventSink {
-    pub emitted: Vec<(String, Vec<ConfidentValue>)>,
+    pub emitted: Vec<EmittedEvent>,
     pub escalations: Vec<String>,
     pub forwards: Vec<(ConfidentValue, ConfidentValue)>,
 }
@@ -208,6 +219,8 @@ pub struct AgentProcess {
     pub decl: AgentDecl,
     context: Arc<Mutex<AgentContext>>,
     executor: TaskExecutor,
+    event_bus: Option<SharedEventBus>,
+    event_receivers: Vec<(Option<Spanned<Expr>>, mpsc::Receiver<EventPayload>)>,
 }
 
 impl AgentProcess {
@@ -236,7 +249,7 @@ impl AgentProcess {
         let executor = TaskExecutor::new(program, registry, tracer)
             .with_agent_context(context.clone());
 
-        Self { decl, context, executor }
+        Self { decl, context, executor, event_bus: None, event_receivers: Vec::new() }
     }
 
     /// Get a reference to the shared context.
@@ -324,6 +337,134 @@ impl AgentProcess {
         }
 
         Ok(result)
+    }
+
+    // ── EventBus integration (issue #19) ──────────────────────────────────
+
+    /// Attach an event bus and register all declared subscriptions.
+    pub async fn with_event_bus(mut self, bus: SharedEventBus) -> Self {
+        let mut receivers = Vec::new();
+        {
+            let mut bus_guard = bus.write().await;
+            for sub in &self.decl.subscriptions {
+                let rx = bus_guard.subscribe(
+                    &sub.node.event_name.node,
+                    &self.decl.name.node,
+                    sub.node.filter.clone(),
+                );
+                receivers.push((sub.node.filter.clone(), rx));
+            }
+        }
+        self.event_bus = Some(bus);
+        self.event_receivers = receivers;
+        self
+    }
+
+    /// Run the agent event loop: receive events from the bus, evaluate filters,
+    /// dispatch to handlers, and drain emitted events back through the bus.
+    /// Returns when all event channels are closed.
+    pub async fn run(&mut self) -> Result<(), RuntimeError> {
+        // Merge all receivers into a single stream via a helper channel
+        let (merge_tx, mut merge_rx) = mpsc::channel::<(Option<Spanned<Expr>>, EventPayload)>(64);
+
+        // Spawn forwarders for each subscription receiver
+        let mut handles = Vec::new();
+        for (filter, rx) in self.event_receivers.drain(..) {
+            let tx = merge_tx.clone();
+            handles.push(tokio::spawn(async move {
+                let mut rx = rx;
+                while let Some(payload) = rx.recv().await {
+                    if tx.send((filter.clone(), payload)).await.is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        // Drop our copy so merge_rx closes when all forwarders finish
+        drop(merge_tx);
+
+        while let Some((filter, payload)) = merge_rx.recv().await {
+            if self.should_handle(&payload, &filter).await? {
+                let event_name = payload.event_name.clone();
+                let mut params = payload.fields.clone();
+                // Also bind positional args by index for handlers that use them
+                for (i, val) in payload.args.iter().enumerate() {
+                    params.entry(format!("arg{}", i)).or_insert_with(|| val.clone());
+                }
+                // Bind "event" as a record for filter-style access in handler body
+                params.insert("event".to_string(),
+                    ConfidentValue::deterministic(Value::Record(payload.fields.clone())));
+
+                let _ = self.dispatch(&event_name, params).await?;
+                self.drain_event_sink().await?;
+            }
+        }
+
+        // Wait for forwarder tasks to finish
+        for h in handles {
+            let _ = h.await;
+        }
+        Ok(())
+    }
+
+    /// Evaluate a subscription filter against an event payload.
+    async fn should_handle(
+        &self,
+        payload: &EventPayload,
+        filter: &Option<Spanned<Expr>>,
+    ) -> Result<bool, RuntimeError> {
+        match filter {
+            None => Ok(true),
+            Some(filter_expr) => {
+                let mut env = Env::new();
+                // Bind each field directly
+                for (name, val) in &payload.fields {
+                    env.bind(name, val.clone());
+                }
+                // Bind "event" as a record for dot-access (event.room_id)
+                env.bind("event", ConfidentValue::deterministic(
+                    Value::Record(payload.fields.clone()),
+                ));
+                let result = self.executor.eval_expr(filter_expr, &mut env).await?;
+                Ok(truthy(&result))
+            }
+        }
+    }
+
+    /// Drain emitted events from the EventSink and publish them through the bus.
+    /// Lock ordering: AgentContext mutex released before EventBus RwLock acquired.
+    async fn drain_event_sink(&self) -> Result<(), RuntimeError> {
+        let (emitted, forwards) = {
+            let mut ctx = self.context.lock().unwrap();
+            let emitted = std::mem::take(&mut ctx.event_sink.emitted);
+            let forwards = std::mem::take(&mut ctx.event_sink.forwards);
+            (emitted, forwards)
+        };
+
+        if let Some(ref bus) = self.event_bus {
+            let bus_guard = bus.read().await;
+            for event in emitted {
+                let payload = EventPayload {
+                    event_name: event.name,
+                    args: event.args,
+                    source_agent: self.decl.name.node.clone(),
+                    fields: event.fields,
+                };
+                bus_guard.publish(&payload);
+            }
+            for (val, target) in forwards {
+                if let Value::Text(target_agent) = &target.value {
+                    let payload = EventPayload {
+                        event_name: "forward".to_string(),
+                        args: vec![val],
+                        source_agent: self.decl.name.node.clone(),
+                        fields: HashMap::new(),
+                    };
+                    bus_guard.forward(&payload, target_agent);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Apply a fail policy when a requires guard fails.
@@ -533,7 +674,11 @@ mod tests {
     #[test]
     fn event_sink_collects() {
         let mut sink = EventSink::new();
-        sink.emitted.push(("TestEvent".into(), vec![]));
+        sink.emitted.push(EmittedEvent {
+            name: "TestEvent".into(),
+            args: vec![],
+            fields: HashMap::new(),
+        });
         sink.escalations.push("human".into());
         assert_eq!(sink.emitted.len(), 1);
         assert_eq!(sink.escalations.len(), 1);
