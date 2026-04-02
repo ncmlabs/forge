@@ -101,11 +101,7 @@ impl EventBus {
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     if let Some(ref t) = self.tracer {
-                        t.event_delivery_failed(
-                            &payload.event_name,
-                            &sub.agent_id,
-                            "channel full",
-                        );
+                        t.event_delivery_failed(&payload.event_name, &sub.agent_id, "channel full");
                     }
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
@@ -255,11 +251,14 @@ mod tests {
         bus.channel_capacity = 2;
         // Re-create with small capacity — subscribe uses channel_capacity at call time
         let (tx, mut rx) = mpsc::channel(2);
-        bus.subscribers.entry("Foo".into()).or_default().push(Subscriber {
-            agent_id: "agent-a".into(),
-            filter: None,
-            sender: tx,
-        });
+        bus.subscribers
+            .entry("Foo".into())
+            .or_default()
+            .push(Subscriber {
+                agent_id: "agent-a".into(),
+                filter: None,
+                sender: tx,
+            });
 
         // Fill channel
         bus.publish(&payload("Foo", "src"));

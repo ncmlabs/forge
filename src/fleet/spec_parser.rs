@@ -2,12 +2,54 @@ use crate::fleet::spec_model::*;
 
 /// FORGE keywords that cannot be used as identifiers.
 const FORGE_KEYWORDS: &[&str] = &[
-    "use", "task", "flow", "agent", "pool", "warden", "contract", "system",
-    "fn", "needs", "gives", "do", "is", "stage", "if", "else", "when",
-    "give", "say", "reason", "classify", "into", "true", "false", "or",
-    "with", "escalate", "to", "try", "above", "pure", "event", "states",
-    "timer", "endpoint", "type", "requires", "emit", "forward", "subscribe",
-    "transition", "start", "cancel", "reset", "for", "in", "not", "and",
+    "use",
+    "task",
+    "flow",
+    "agent",
+    "pool",
+    "warden",
+    "contract",
+    "system",
+    "fn",
+    "needs",
+    "gives",
+    "do",
+    "is",
+    "stage",
+    "if",
+    "else",
+    "when",
+    "give",
+    "say",
+    "reason",
+    "classify",
+    "into",
+    "true",
+    "false",
+    "or",
+    "with",
+    "escalate",
+    "to",
+    "try",
+    "above",
+    "pure",
+    "event",
+    "states",
+    "timer",
+    "endpoint",
+    "type",
+    "requires",
+    "emit",
+    "forward",
+    "subscribe",
+    "transition",
+    "start",
+    "cancel",
+    "reset",
+    "for",
+    "in",
+    "not",
+    "and",
     "match",
 ];
 
@@ -22,8 +64,14 @@ pub fn parse_spec(spec: &str) -> SpecModel {
     let events = vec![EventSpec {
         name: capitalize_first(&format!("{}Message", capitalize_first(&system_name))),
         fields: vec![
-            FieldSpec { name: "sender".into(), type_name: "Text".into() },
-            FieldSpec { name: "content".into(), type_name: "Text".into() },
+            FieldSpec {
+                name: "sender".into(),
+                type_name: "Text".into(),
+            },
+            FieldSpec {
+                name: "content".into(),
+                type_name: "Text".into(),
+            },
         ],
     }];
 
@@ -40,14 +88,16 @@ pub fn parse_spec(spec: &str) -> SpecModel {
                         ("active".into(), "done".into()),
                     ],
                 }),
-                memory_fields: vec![
-                    FieldSpec { name: "context".into(), type_name: "Text".into() },
-                ],
+                memory_fields: vec![FieldSpec {
+                    name: "context".into(),
+                    type_name: "Text".into(),
+                }],
                 handlers: vec![HandlerSpec {
                     event_name: "message".into(),
-                    params: vec![
-                        FieldSpec { name: "content".into(), type_name: "Text".into() },
-                    ],
+                    params: vec![FieldSpec {
+                        name: "content".into(),
+                        type_name: "Text".into(),
+                    }],
                     todo_hint: Some(format!("{} handling", name)),
                 }],
                 subscriptions: vec![],
@@ -103,7 +153,7 @@ fn extract_agent_names(spec: &str) -> Vec<String> {
         let after_with = &spec[with_pos + 5..];
         // Split on "and" or commas
         let parts: Vec<&str> = after_with
-            .split(|c: char| c == ',' || c == '.')
+            .split([',', '.'])
             .flat_map(|part| part.split(" and "))
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -123,9 +173,23 @@ fn extract_agent_names(spec: &str) -> Vec<String> {
     }
 
     // Fallback: look for role-like words
-    let role_words = ["handler", "worker", "processor", "manager", "monitor",
-                      "logger", "moderator", "bot", "analyzer", "reporter",
-                      "alerter", "checker", "validator", "router", "scheduler"];
+    let role_words = [
+        "handler",
+        "worker",
+        "processor",
+        "manager",
+        "monitor",
+        "logger",
+        "moderator",
+        "bot",
+        "analyzer",
+        "reporter",
+        "alerter",
+        "checker",
+        "validator",
+        "router",
+        "scheduler",
+    ];
 
     let words: Vec<&str> = spec.split_whitespace().collect();
     let mut agents = Vec::new();
@@ -204,8 +268,14 @@ fn extract_flow(spec: &str) -> Option<FlowSpec> {
                 type_name: "Text".into(),
             }),
             stages: vec![
-                StageSpec { name: "intake".into(), needs_refs: vec![] },
-                StageSpec { name: "process".into(), needs_refs: vec!["intake".into()] },
+                StageSpec {
+                    name: "intake".into(),
+                    needs_refs: vec![],
+                },
+                StageSpec {
+                    name: "process".into(),
+                    needs_refs: vec!["intake".into()],
+                },
             ],
         });
     }
@@ -230,7 +300,13 @@ fn sanitize_ident(s: &str) -> String {
     // Lowercase, replace non-alphanumeric with underscore
     let clean: String = s
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect();
 
     // Strip leading/trailing underscores
@@ -241,7 +317,12 @@ fn sanitize_ident(s: &str) -> String {
     }
 
     // Must start with a letter
-    let result = if trimmed.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+    let result = if trimmed
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+    {
         format!("x_{}", trimmed)
     } else {
         trimmed

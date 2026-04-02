@@ -24,22 +24,31 @@ impl std::fmt::Display for CostEstimate {
             return writeln!(f, "No LLM operations found.");
         }
 
-        writeln!(f, "{:<12} {:<30} {:>10} {:>10} {:>10}",
-            "Operation", "Location", "Tokens In", "Tokens Out", "Est. Cost")?;
+        writeln!(
+            f,
+            "{:<12} {:<30} {:>10} {:>10} {:>10}",
+            "Operation", "Location", "Tokens In", "Tokens Out", "Est. Cost"
+        )?;
         writeln!(f, "{}", "-".repeat(76))?;
 
         for op in &self.operations {
-            writeln!(f, "{:<12} {:<30} {:>10} {:>10} {:>10.4}",
-                op.kind, op.location,
-                op.estimated_tokens_in, op.estimated_tokens_out,
-                op.estimated_cost_usd)?;
+            writeln!(
+                f,
+                "{:<12} {:<30} {:>10} {:>10} {:>10.4}",
+                op.kind,
+                op.location,
+                op.estimated_tokens_in,
+                op.estimated_tokens_out,
+                op.estimated_cost_usd
+            )?;
         }
 
         writeln!(f, "{}", "-".repeat(76))?;
-        writeln!(f, "{:<12} {:<30} {:>10} {:>10} {:>10.4}",
-            "Total", "",
-            self.total_tokens_in, self.total_tokens_out,
-            self.total_cost_usd)?;
+        writeln!(
+            f,
+            "{:<12} {:<30} {:>10} {:>10} {:>10.4}",
+            "Total", "", self.total_tokens_in, self.total_tokens_out, self.total_cost_usd
+        )?;
         Ok(())
     }
 }
@@ -55,10 +64,12 @@ impl CostWalker {
         let default_provider = config.providers.get(&config.llm.default);
         let (cost_in, cost_out) = default_provider
             .and_then(|p| p.capabilities.as_ref())
-            .map(|c| (
-                c.cost_per_1k_input.unwrap_or(0.003),
-                c.cost_per_1k_output.unwrap_or(0.015),
-            ))
+            .map(|c| {
+                (
+                    c.cost_per_1k_input.unwrap_or(0.003),
+                    c.cost_per_1k_output.unwrap_or(0.015),
+                )
+            })
             .unwrap_or((0.003, 0.015));
 
         Self {
@@ -70,7 +81,8 @@ impl CostWalker {
 
     fn add_op(&mut self, kind: &'static str, location: String, tokens_in: u32, tokens_out: u32) {
         let cost = (tokens_in as f32 * self.cost_per_1k_in
-            + tokens_out as f32 * self.cost_per_1k_out) / 1000.0;
+            + tokens_out as f32 * self.cost_per_1k_out)
+            / 1000.0;
         self.operations.push(OpEstimate {
             kind,
             location,
@@ -99,7 +111,8 @@ impl CostWalker {
                 }
                 TopLevel::Agent(agent) => {
                     for handler in &agent.handlers {
-                        let ctx = format!("agent {}.on {}", agent.name.node, handler.node.event.node);
+                        let ctx =
+                            format!("agent {}.on {}", agent.name.node, handler.node.event.node);
                         self.walk_stmts(&handler.node.body, &ctx, 1);
                     }
                 }
@@ -253,10 +266,13 @@ impl CostWalker {
 fn estimate_prompt_tokens(expr: &Spanned<Expr>) -> u32 {
     match &expr.node {
         Expr::Template(parts) => {
-            let char_count: usize = parts.iter().map(|p| match &p.node {
-                TemplatePart::Text(s) => s.len(),
-                TemplatePart::Interp(_) => 50, // assume ~50 chars for interpolated values
-            }).sum();
+            let char_count: usize = parts
+                .iter()
+                .map(|p| match &p.node {
+                    TemplatePart::Text(s) => s.len(),
+                    TemplatePart::Interp(_) => 50, // assume ~50 chars for interpolated values
+                })
+                .sum();
             // ~4 chars per token
             (char_count as u32 / 4).max(10)
         }
@@ -268,8 +284,16 @@ pub fn estimate(program: &Program, config: &ForgeConfig) -> CostEstimate {
     let mut walker = CostWalker::new(config);
     walker.walk_program(program);
 
-    let total_in: u32 = walker.operations.iter().map(|o| o.estimated_tokens_in).sum();
-    let total_out: u32 = walker.operations.iter().map(|o| o.estimated_tokens_out).sum();
+    let total_in: u32 = walker
+        .operations
+        .iter()
+        .map(|o| o.estimated_tokens_in)
+        .sum();
+    let total_out: u32 = walker
+        .operations
+        .iter()
+        .map(|o| o.estimated_tokens_out)
+        .sum();
     let total_cost: f32 = walker.operations.iter().map(|o| o.estimated_cost_usd).sum();
 
     CostEstimate {

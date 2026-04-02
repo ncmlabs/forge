@@ -43,7 +43,9 @@ impl TimerManager {
     }
 
     pub fn empty() -> Self {
-        Self { timers: HashMap::new() }
+        Self {
+            timers: HashMap::new(),
+        }
     }
 
     pub fn start(&mut self, name: &str) -> Result<(), RuntimeError> {
@@ -51,7 +53,10 @@ impl TimerManager {
             *state = TimerState::Running;
             Ok(())
         } else {
-            Err(RuntimeError::Unsupported(format!("unknown timer: {}", name)))
+            Err(RuntimeError::Unsupported(format!(
+                "unknown timer: {}",
+                name
+            )))
         }
     }
 
@@ -60,7 +65,10 @@ impl TimerManager {
             *state = TimerState::Idle;
             Ok(())
         } else {
-            Err(RuntimeError::Unsupported(format!("unknown timer: {}", name)))
+            Err(RuntimeError::Unsupported(format!(
+                "unknown timer: {}",
+                name
+            )))
         }
     }
 
@@ -69,7 +77,10 @@ impl TimerManager {
             *state = TimerState::Running;
             Ok(())
         } else {
-            Err(RuntimeError::Unsupported(format!("unknown timer: {}", name)))
+            Err(RuntimeError::Unsupported(format!(
+                "unknown timer: {}",
+                name
+            )))
         }
     }
 
@@ -145,7 +156,8 @@ impl StuckDetector {
     pub fn record_turn(&mut self, record: TurnRecord) {
         self.history.push(record);
         if self.history.len() > self.threshold * 2 {
-            self.history.drain(..self.history.len() - self.threshold * 2);
+            self.history
+                .drain(..self.history.len() - self.threshold * 2);
         }
     }
 
@@ -158,18 +170,18 @@ impl StuckDetector {
         let recent = &self.history[self.history.len() - self.threshold..];
 
         // Check 1: all responses highly similar (Jaccard > 0.8)
-        let all_similar = recent.windows(2).all(|pair| {
-            jaccard_similarity(&pair[0].response_text, &pair[1].response_text) > 0.8
-        });
+        let all_similar = recent
+            .windows(2)
+            .all(|pair| jaccard_similarity(&pair[0].response_text, &pair[1].response_text) > 0.8);
 
         // Check 2: average confidence below 0.5
         let avg_conf = recent.iter().map(|t| t.confidence).sum::<f32>() / recent.len() as f32;
         let low_confidence = avg_conf < 0.5;
 
         // Check 3: memory unchanged across all recent turns
-        let memory_unchanged = recent.windows(2).all(|pair| {
-            pair[0].memory_hash == pair[1].memory_hash
-        });
+        let memory_unchanged = recent
+            .windows(2)
+            .all(|pair| pair[0].memory_hash == pair[1].memory_hash);
 
         all_similar || low_confidence || (memory_unchanged && self.history.len() >= self.threshold)
     }
@@ -189,7 +201,11 @@ pub(crate) fn jaccard_similarity(a: &str, b: &str) -> f64 {
     }
     let intersection = set_a.intersection(&set_b).count();
     let union = set_a.union(&set_b).count();
-    if union == 0 { 1.0 } else { intersection as f64 / union as f64 }
+    if union == 0 {
+        1.0
+    } else {
+        intersection as f64 / union as f64
+    }
 }
 
 // ── Agent Context ────────────────────────────────────────────────────────────
@@ -247,7 +263,9 @@ impl AgentProcess {
         let memory = AgentMemory::new(&decl.memory);
         let state_machine = states.map(StateMachine::new);
         let timer_manager = TimerManager::new(&decl.timers);
-        let stuck_threshold = decl.stuck_policy.as_ref()
+        let stuck_threshold = decl
+            .stuck_policy
+            .as_ref()
             .and_then(|sp| sp.node.turns)
             .unwrap_or(3) as usize;
 
@@ -260,17 +278,26 @@ impl AgentProcess {
 
         // Async timer engine (issue #20)
         let (fire_tx, timer_rx) = mpsc::channel::<TimerFired>(64);
-        let timer_engine = Arc::new(Mutex::new(
-            TimerEngine::new(&decl.name.node, &decl.timers, fire_tx, tracer.clone()),
-        ));
+        let timer_engine = Arc::new(Mutex::new(TimerEngine::new(
+            &decl.name.node,
+            &decl.timers,
+            fire_tx,
+            tracer.clone(),
+        )));
 
         let executor = TaskExecutor::new(program, registry, tracer)
             .with_agent_context(context.clone())
             .with_timer_engine(timer_engine.clone());
 
         Self {
-            decl, context, executor, event_bus: None, event_receivers: Vec::new(),
-            timer_engine, timer_rx, warden_tx: None,
+            decl,
+            context,
+            executor,
+            event_bus: None,
+            event_receivers: Vec::new(),
+            timer_engine,
+            timer_rx,
+            warden_tx: None,
         }
     }
 
@@ -292,11 +319,14 @@ impl AgentProcess {
         params: HashMap<String, ConfidentValue>,
     ) -> Result<Option<ConfidentValue>, RuntimeError> {
         // Find matching handler
-        let handler = self.decl.handlers.iter()
+        let handler = self
+            .decl
+            .handlers
+            .iter()
             .find(|h| h.node.event.node == event)
-            .ok_or_else(|| RuntimeError::Unsupported(
-                format!("no handler for event '{}'", event),
-            ))?;
+            .ok_or_else(|| {
+                RuntimeError::Unsupported(format!("no handler for event '{}'", event))
+            })?;
 
         // Build environment with handler params and memory
         let mut env = Env::new();
@@ -312,7 +342,10 @@ impl AgentProcess {
         // Bind memory as a record and lifecycle as current state name
         {
             let ctx = self.context.lock().unwrap();
-            env.bind("memory", ConfidentValue::deterministic(ctx.memory.to_record()));
+            env.bind(
+                "memory",
+                ConfidentValue::deterministic(ctx.memory.to_record()),
+            );
             if let Some(ref sm) = ctx.state_machine {
                 env.bind(
                     "lifecycle",
@@ -331,7 +364,10 @@ impl AgentProcess {
 
         // Evaluate requires guards
         for req in &handler.node.requires {
-            let cond_val = self.executor.eval_expr(&req.node.condition, &mut env).await?;
+            let cond_val = self
+                .executor
+                .eval_expr(&req.node.condition, &mut env)
+                .await?;
             if !truthy(&cond_val) {
                 return self.apply_fail_policy(&req.node.on_fail, &mut env).await;
             }
@@ -345,12 +381,11 @@ impl AgentProcess {
         };
 
         // Record turn for stuck detection
-        let response_text = result.as_ref()
+        let response_text = result
+            .as_ref()
             .map(|v| format!("{}", v.value))
             .unwrap_or_default();
-        let confidence = result.as_ref()
-            .map(|v| v.confidence)
-            .unwrap_or(1.0);
+        let confidence = result.as_ref().map(|v| v.confidence).unwrap_or(1.0);
         {
             let mut ctx = self.context.lock().unwrap();
             let memory_hash = ctx.memory.snapshot_hash();
@@ -374,7 +409,10 @@ impl AgentProcess {
                 // Re-bind memory for stuck policy body
                 {
                     let ctx = self.context.lock().unwrap();
-                    env.bind("memory", ConfidentValue::deterministic(ctx.memory.to_record()));
+                    env.bind(
+                        "memory",
+                        ConfidentValue::deterministic(ctx.memory.to_record()),
+                    );
                 }
                 match self.executor.exec_stmts(&policy.node.body, &mut env).await {
                     Ok(_) => {}
@@ -489,7 +527,10 @@ impl AgentProcess {
         let mut params = HashMap::new();
         if let Some(context_val) = fired.context {
             // Bind as first positional param name from handler, or "context"
-            let handler = self.decl.handlers.iter()
+            let handler = self
+                .decl
+                .handlers
+                .iter()
                 .find(|h| h.node.event.node == event_name);
             if let Some(h) = handler {
                 if let Some(first_param) = h.node.params.first() {
@@ -527,9 +568,10 @@ impl AgentProcess {
                     env.bind(name, val.clone());
                 }
                 // Bind "event" as a record for dot-access (event.room_id)
-                env.bind("event", ConfidentValue::deterministic(
-                    Value::Record(payload.fields.clone()),
-                ));
+                env.bind(
+                    "event",
+                    ConfidentValue::deterministic(Value::Record(payload.fields.clone())),
+                );
                 let result = self.executor.eval_expr(filter_expr, &mut env).await?;
                 Ok(truthy(&result))
             }
@@ -579,26 +621,44 @@ impl AgentProcess {
         env: &mut Env,
     ) -> Result<Option<ConfidentValue>, RuntimeError> {
         match on_fail {
-            None | Some(Spanned { node: FailPolicy::Silent, .. }) => {
+            None
+            | Some(Spanned {
+                node: FailPolicy::Silent,
+                ..
+            }) => {
                 // Silent rejection
                 Ok(None)
             }
-            Some(Spanned { node: FailPolicy::Log, .. }) => {
+            Some(Spanned {
+                node: FailPolicy::Log,
+                ..
+            }) => {
                 eprintln!("[forge] requires guard failed (log)");
                 Ok(None)
             }
-            Some(Spanned { node: FailPolicy::Give(expr), .. }) => {
+            Some(Spanned {
+                node: FailPolicy::Give(expr),
+                ..
+            }) => {
                 let val = self.executor.eval_expr(expr, env).await?;
                 Ok(Some(val))
             }
-            Some(Spanned { node: FailPolicy::Escalate, .. }) => {
+            Some(Spanned {
+                node: FailPolicy::Escalate,
+                ..
+            }) => {
                 let mut ctx = self.context.lock().unwrap();
-                ctx.event_sink.escalations.push("requires_guard".to_string());
+                ctx.event_sink
+                    .escalations
+                    .push("requires_guard".to_string());
                 Ok(None)
             }
-            Some(Spanned { node: FailPolicy::Crash, .. }) => {
-                Err(RuntimeError::FlowError("requires guard failed: crash policy".to_string()))
-            }
+            Some(Spanned {
+                node: FailPolicy::Crash,
+                ..
+            }) => Err(RuntimeError::FlowError(
+                "requires guard failed: crash policy".to_string(),
+            )),
         }
     }
 }
@@ -631,13 +691,11 @@ mod tests {
     fn state_machine_initial_state() {
         let decl = StatesDecl {
             name: spanned("Phase".into()),
-            transitions: vec![
-                spanned(StateTransition {
-                    from: spanned("idle".into()),
-                    to: spanned("active".into()),
-                    condition: None,
-                }),
-            ],
+            transitions: vec![spanned(StateTransition {
+                from: spanned("idle".into()),
+                to: spanned("active".into()),
+                condition: None,
+            })],
         };
         let sm = StateMachine::new(&decl);
         assert_eq!(sm.current, "idle");
@@ -671,13 +729,11 @@ mod tests {
     fn state_machine_invalid_transition() {
         let decl = StatesDecl {
             name: spanned("Phase".into()),
-            transitions: vec![
-                spanned(StateTransition {
-                    from: spanned("idle".into()),
-                    to: spanned("active".into()),
-                    condition: None,
-                }),
-            ],
+            transitions: vec![spanned(StateTransition {
+                from: spanned("idle".into()),
+                to: spanned("active".into()),
+                condition: None,
+            })],
         };
         let mut sm = StateMachine::new(&decl);
         assert!(sm.transition("done").is_err());
@@ -689,7 +745,10 @@ mod tests {
     fn timer_start_cancel() {
         let fields = vec![spanned(TimerField {
             name: spanned("timeout".into()),
-            duration: spanned(Duration { value: 10, unit: DurationUnit::Minutes }),
+            duration: spanned(Duration {
+                value: 10,
+                unit: DurationUnit::Minutes,
+            }),
         })];
         let mut tm = TimerManager::new(&fields);
         assert_eq!(tm.state("timeout"), Some(&TimerState::Idle));
@@ -710,8 +769,16 @@ mod tests {
     #[test]
     fn stuck_not_enough_turns() {
         let mut sd = StuckDetector::new(3);
-        sd.record_turn(TurnRecord { response_text: "hi".into(), confidence: 0.9, memory_hash: 1 });
-        sd.record_turn(TurnRecord { response_text: "hi".into(), confidence: 0.9, memory_hash: 1 });
+        sd.record_turn(TurnRecord {
+            response_text: "hi".into(),
+            confidence: 0.9,
+            memory_hash: 1,
+        });
+        sd.record_turn(TurnRecord {
+            response_text: "hi".into(),
+            confidence: 0.9,
+            memory_hash: 1,
+        });
         assert!(!sd.is_stuck());
     }
 
@@ -744,9 +811,21 @@ mod tests {
     #[test]
     fn not_stuck_different_responses() {
         let mut sd = StuckDetector::new(3);
-        sd.record_turn(TurnRecord { response_text: "hello there friend".into(), confidence: 0.9, memory_hash: 1 });
-        sd.record_turn(TurnRecord { response_text: "goodbye world now".into(), confidence: 0.9, memory_hash: 2 });
-        sd.record_turn(TurnRecord { response_text: "something completely different here".into(), confidence: 0.9, memory_hash: 3 });
+        sd.record_turn(TurnRecord {
+            response_text: "hello there friend".into(),
+            confidence: 0.9,
+            memory_hash: 1,
+        });
+        sd.record_turn(TurnRecord {
+            response_text: "goodbye world now".into(),
+            confidence: 0.9,
+            memory_hash: 2,
+        });
+        sd.record_turn(TurnRecord {
+            response_text: "something completely different here".into(),
+            confidence: 0.9,
+            memory_hash: 3,
+        });
         assert!(!sd.is_stuck());
     }
 
@@ -771,7 +850,10 @@ mod tests {
     fn rand_text() -> String {
         // Just unique enough for testing
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        format!("{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+        format!(
+            "{}",
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )
     }
 
     // ── EventSink tests ──────────────────────────────────────────

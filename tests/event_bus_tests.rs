@@ -17,7 +17,10 @@ fn spanned<T>(node: T) -> Spanned<T> {
 }
 
 fn empty_program() -> Program {
-    Program { boundary: None, items: vec![] }
+    Program {
+        boundary: None,
+        items: vec![],
+    }
 }
 
 fn mock_registry() -> Arc<ProviderRegistry> {
@@ -53,11 +56,7 @@ fn payload_with_fields(name: &str, source: &str, fields: Vec<(&str, &str)>) -> E
 }
 
 /// Build a minimal agent with a handler that gives back event field values.
-fn subscribing_agent(
-    name: &str,
-    event_name: &str,
-    filter: Option<Spanned<Expr>>,
-) -> AgentDecl {
+fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>) -> AgentDecl {
     AgentDecl {
         name: spanned(name.into()),
         lifecycle: None,
@@ -73,7 +72,9 @@ fn subscribing_agent(
             payload_type: None,
             requires: vec![],
             body: vec![spanned(Stmt::Give(
-                spanned(Expr::Template(vec![spanned(TemplatePart::Text("handled".into()))])),
+                spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                    "handled".into(),
+                ))])),
                 None,
             ))],
         })],
@@ -83,11 +84,7 @@ fn subscribing_agent(
 }
 
 /// Build an agent that emits an event from its handler.
-fn emitting_agent(
-    name: &str,
-    trigger_event: &str,
-    emit_event: &str,
-) -> AgentDecl {
+fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDecl {
     AgentDecl {
         name: spanned(name.into()),
         lifecycle: None,
@@ -100,12 +97,11 @@ fn emitting_agent(
             payload_type: None,
             requires: vec![],
             body: vec![
-                spanned(Stmt::Emit(
-                    spanned(emit_event.into()),
-                    vec![],
-                )),
+                spanned(Stmt::Emit(spanned(emit_event.into()), vec![])),
                 spanned(Stmt::Give(
-                    spanned(Expr::Template(vec![spanned(TemplatePart::Text("emitted".into()))])),
+                    spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                        "emitted".into(),
+                    ))])),
                     None,
                 )),
             ],
@@ -185,10 +181,11 @@ async fn bus_payload_fields_preserved() {
     let mut bus = EventBus::new(None);
     let mut rx = bus.subscribe("MoveEvent", "agent-b", None);
 
-    let p = payload_with_fields("MoveEvent", "agent-a", vec![
-        ("room_id", "room-001"),
-        ("player", "Alice"),
-    ]);
+    let p = payload_with_fields(
+        "MoveEvent",
+        "agent-a",
+        vec![("room_id", "room-001"), ("player", "Alice")],
+    );
     bus.publish(&p);
 
     let received = rx.recv().await.unwrap();
@@ -206,9 +203,9 @@ async fn agent_registers_subscriptions_with_bus() {
     let decl = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let _agent = AgentProcess::new(
-        decl, None, mock_registry(), None, empty_program(),
-    ).with_event_bus(bus.clone()).await;
+    let _agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
+        .with_event_bus(bus.clone())
+        .await;
 
     let bus_guard = bus.read().await;
     assert_eq!(bus_guard.subscriber_count("MoveEvent"), 1);
@@ -219,9 +216,9 @@ async fn agent_run_receives_and_dispatches_event() {
     let decl = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(
-        decl, None, mock_registry(), None, empty_program(),
-    ).with_event_bus(bus.clone()).await;
+    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
+        .with_event_bus(bus.clone())
+        .await;
 
     // Publish an event, then close the bus so channels close and run() terminates
     {
@@ -241,13 +238,13 @@ async fn agent_emit_drains_through_bus() {
     let decl_b = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let agent_a = AgentProcess::new(
-        decl_a, None, mock_registry(), None, empty_program(),
-    ).with_event_bus(bus.clone()).await;
+    let agent_a = AgentProcess::new(decl_a, None, mock_registry(), None, empty_program())
+        .with_event_bus(bus.clone())
+        .await;
 
-    let _agent_b = AgentProcess::new(
-        decl_b, None, mock_registry(), None, empty_program(),
-    ).with_event_bus(bus.clone()).await;
+    let _agent_b = AgentProcess::new(decl_b, None, mock_registry(), None, empty_program())
+        .with_event_bus(bus.clone())
+        .await;
 
     // Trigger agent_a, which should emit MoveEvent
     let result = agent_a.dispatch("trigger", HashMap::new()).await.unwrap();
@@ -268,24 +265,26 @@ async fn agent_filter_subscribe_with_matching_event() {
             spanned("room_id".into()),
         ))),
         spanned(BinOp::Eq),
-        Box::new(spanned(Expr::Template(vec![
-            spanned(TemplatePart::Text("room-001".into())),
-        ]))),
+        Box::new(spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+            "room-001".into(),
+        ))]))),
     ));
 
     let decl = subscribing_agent("listener", "MoveEvent", Some(filter));
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(
-        decl, None, mock_registry(), None, empty_program(),
-    ).with_event_bus(bus.clone()).await;
+    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
+        .with_event_bus(bus.clone())
+        .await;
 
     // Publish matching event
     {
         let bus_guard = bus.read().await;
-        bus_guard.publish(&payload_with_fields("MoveEvent", "emitter", vec![
-            ("room_id", "room-001"),
-        ]));
+        bus_guard.publish(&payload_with_fields(
+            "MoveEvent",
+            "emitter",
+            vec![("room_id", "room-001")],
+        ));
     }
     bus.write().await.close();
 
@@ -303,24 +302,26 @@ async fn agent_filter_subscribe_rejects_non_matching() {
             spanned("room_id".into()),
         ))),
         spanned(BinOp::Eq),
-        Box::new(spanned(Expr::Template(vec![
-            spanned(TemplatePart::Text("room-001".into())),
-        ]))),
+        Box::new(spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+            "room-001".into(),
+        ))]))),
     ));
 
     let decl = subscribing_agent("listener", "MoveEvent", Some(filter));
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(
-        decl, None, mock_registry(), None, empty_program(),
-    ).with_event_bus(bus.clone()).await;
+    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
+        .with_event_bus(bus.clone())
+        .await;
 
     // Publish NON-matching event (room-999)
     {
         let bus_guard = bus.read().await;
-        bus_guard.publish(&payload_with_fields("MoveEvent", "emitter", vec![
-            ("room_id", "room-999"),
-        ]));
+        bus_guard.publish(&payload_with_fields(
+            "MoveEvent",
+            "emitter",
+            vec![("room_id", "room-999")],
+        ));
     }
     bus.write().await.close();
 
@@ -343,12 +344,10 @@ async fn multi_agent_event_flow() {
     let room_decl = AgentDecl {
         name: spanned("room_agent".into()),
         lifecycle: None,
-        memory: vec![
-            spanned(FieldDef {
-                name: "player_count".into(),
-                type_name: spanned(TypeName::Number),
-            }),
-        ],
+        memory: vec![spanned(FieldDef {
+            name: "player_count".into(),
+            type_name: spanned(TypeName::Number),
+        })],
         timers: vec![],
         subscriptions: vec![],
         handlers: vec![spanned(OnHandler {
@@ -382,7 +381,9 @@ async fn multi_agent_event_flow() {
                     })],
                 )),
                 spanned(Stmt::Give(
-                    spanned(Expr::Template(vec![spanned(TemplatePart::Text("joined".into()))])),
+                    spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                        "joined".into(),
+                    ))])),
                     None,
                 )),
             ],
@@ -397,20 +398,24 @@ async fn multi_agent_event_flow() {
     // ── Wire both agents to shared bus ──────────────────────────────────
     let bus = EventBus::new_shared(None);
 
-    let room_agent = AgentProcess::new(
-        room_decl, None, mock_registry(), None, empty_program(),
-    ).with_event_bus(bus.clone()).await;
+    let room_agent = AgentProcess::new(room_decl, None, mock_registry(), None, empty_program())
+        .with_event_bus(bus.clone())
+        .await;
 
-    let mut observer = AgentProcess::new(
-        observer_decl, None, mock_registry(), None, empty_program(),
-    ).with_event_bus(bus.clone()).await;
+    let mut observer =
+        AgentProcess::new(observer_decl, None, mock_registry(), None, empty_program())
+            .with_event_bus(bus.clone())
+            .await;
 
     // Verify observer registered its subscription
     assert_eq!(bus.read().await.subscriber_count("PlayerJoined"), 1);
 
     // ── Dispatch "join" to room_agent ───────────────────────────────────
     let mut params = HashMap::new();
-    params.insert("player".into(), ConfidentValue::deterministic(Value::Text("Alice".into())));
+    params.insert(
+        "player".into(),
+        ConfidentValue::deterministic(Value::Text("Alice".into())),
+    );
 
     let result = room_agent.dispatch("join", params).await.unwrap();
     assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "joined")));

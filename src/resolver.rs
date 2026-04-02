@@ -25,22 +25,31 @@ pub enum ResolveError {
         span_start: usize,
         span_end: usize,
     },
-
 }
 
 impl ResolveError {
     pub fn to_diagnostic(&self, file: &str, registry: &CapabilityRegistry) -> Diagnostic {
         match self {
-            ResolveError::UnknownCapability { name, span_start, span_end } => {
+            ResolveError::UnknownCapability {
+                name,
+                span_start,
+                span_end,
+            } => {
                 let namespace = name.split('.').next().unwrap_or("");
-                let available: Vec<&str> = registry.capabilities.keys()
+                let available: Vec<&str> = registry
+                    .capabilities
+                    .keys()
                     .filter(|k| k.starts_with(namespace))
                     .map(|k| k.as_str())
                     .collect();
                 let help = if available.is_empty() {
                     None
                 } else {
-                    Some(format!("available {} capabilities: {}", namespace, available.join(", ")))
+                    Some(format!(
+                        "available {} capabilities: {}",
+                        namespace,
+                        available.join(", ")
+                    ))
                 };
                 let mut diag = Diagnostic::error(
                     file,
@@ -53,14 +62,17 @@ impl ResolveError {
                 }
                 diag
             }
-            ResolveError::CompositionMismatch { left, right, span_start, span_end } => {
-                Diagnostic::error(
-                    file,
-                    format!("composition type mismatch: `{}` → `{}`", left, right),
-                    *span_start..*span_end,
-                    format!("`{}` is not compatible with `{}`", left, right),
-                )
-            }
+            ResolveError::CompositionMismatch {
+                left,
+                right,
+                span_start,
+                span_end,
+            } => Diagnostic::error(
+                file,
+                format!("composition type mismatch: `{}` → `{}`", left, right),
+                *span_start..*span_end,
+                format!("`{}` is not compatible with `{}`", left, right),
+            ),
         }
     }
 }
@@ -76,26 +88,41 @@ impl CapabilityRegistry {
     pub fn builtin() -> Self {
         let mut caps = HashMap::new();
 
-        caps.insert("llm.reason".into(), CapabilitySignature {
-            inputs: vec![ForgeType::Text],
-            output: ForgeType::Text,
-        });
-        caps.insert("llm.classify".into(), CapabilitySignature {
-            inputs: vec![ForgeType::Text],
-            output: ForgeType::Classification,
-        });
-        caps.insert("web.search".into(), CapabilitySignature {
-            inputs: vec![ForgeType::Text],
-            output: ForgeType::Results,
-        });
-        caps.insert("data.store".into(), CapabilitySignature {
-            inputs: vec![ForgeType::Text, ForgeType::Text],
-            output: ForgeType::Unit,
-        });
-        caps.insert("data.embed".into(), CapabilitySignature {
-            inputs: vec![ForgeType::Text],
-            output: ForgeType::Embedding,
-        });
+        caps.insert(
+            "llm.reason".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "llm.classify".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Classification,
+            },
+        );
+        caps.insert(
+            "web.search".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Results,
+            },
+        );
+        caps.insert(
+            "data.store".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Text],
+                output: ForgeType::Unit,
+            },
+        );
+        caps.insert(
+            "data.embed".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Embedding,
+            },
+        );
 
         Self { capabilities: caps }
     }
@@ -278,7 +305,6 @@ impl CheckContext {
             _ => {}
         }
     }
-
 }
 
 // ── Type inference (partial, POC) ────────────────────────────
@@ -315,7 +341,10 @@ fn task_body_stmts(task: &crate::ast::TaskDecl) -> Vec<Spanned<Stmt>> {
     match &task.body.node {
         crate::ast::TaskBody::Do(stmts) => stmts.clone(),
         crate::ast::TaskBody::Is(expr) => {
-            vec![Spanned::new(Stmt::ExprStmt((**expr).clone()), task.body.span)]
+            vec![Spanned::new(
+                Stmt::ExprStmt((**expr).clone()),
+                task.body.span,
+            )]
         }
     }
 }
@@ -340,12 +369,15 @@ mod tests {
         let ctx = CheckContext::new("<test>");
         let errs = ctx.check(&program).unwrap_err();
         assert_eq!(errs.len(), 1);
-        assert!(matches!(&errs[0], ResolveError::UnknownCapability { name, .. } if name == "magic.wand"));
+        assert!(
+            matches!(&errs[0], ResolveError::UnknownCapability { name, .. } if name == "magic.wand")
+        );
     }
 
     #[test]
     fn no_use_block_is_ok() {
-        let source = "task greet\n  needs name: Text\n  gives Text\n  do\n    say \"Hello, {name}!\"\n";
+        let source =
+            "task greet\n  needs name: Text\n  gives Text\n  do\n    say \"Hello, {name}!\"\n";
         let program = parse(source).unwrap();
         let ctx = CheckContext::new("<test>");
         assert!(ctx.check(&program).is_ok());

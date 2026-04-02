@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn display_values() {
         assert_eq!(format!("{}", Value::Text("hello".into())), "hello");
-        assert_eq!(format!("{}", Value::Number(3.14)), "3.14");
+        assert_eq!(format!("{}", Value::Number(3.15)), "3.15");
         assert_eq!(format!("{}", Value::Bool(true)), "true");
         assert_eq!(format!("{}", Value::Unit), "()");
     }

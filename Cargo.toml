@@ -2,7 +2,16 @@
 name = "forge"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 description = "FORGE — an agent-native programming language"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ncmlabs/forge"
+homepage = "https://github.com/ncmlabs/forge"
+readme = "README.md"
+authors = ["NCM Labs"]
+keywords = ["language", "agents", "llm", "programming-language", "ai"]
+categories = ["command-line-utilities", "compilers"]
+exclude = [".claude/", "docs/superpowers/", ".forge-security-allow", "conformance/", ".worktrees/"]
 
 [dependencies]
 pest = "2"

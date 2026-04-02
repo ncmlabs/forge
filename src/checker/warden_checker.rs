@@ -62,11 +62,7 @@ fn check_manages_exist(
 }
 
 /// Check that `after` clauses escalate (response levels must increase).
-fn check_escalation_ladder(
-    warden: &WardenDecl,
-    file: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn check_escalation_ladder(warden: &WardenDecl, file: &str, diagnostics: &mut Vec<Diagnostic>) {
     for policy in &warden.policies {
         let mut prev_response = policy.node.response.node;
         let mut prev_count = 0u64;
@@ -74,17 +70,15 @@ fn check_escalation_ladder(
         for after in &policy.node.after_clauses {
             // Count must increase
             if after.node.count <= prev_count {
-                diagnostics.push(
-                    Diagnostic::error(
-                        file,
-                        format!(
-                            "warden `{}`: `after` count must increase (got {} after {})",
-                            warden.name.node, after.node.count, prev_count
-                        ),
-                        after.span.start..after.span.end,
-                        "count must be greater than previous",
+                diagnostics.push(Diagnostic::error(
+                    file,
+                    format!(
+                        "warden `{}`: `after` count must increase (got {} after {})",
+                        warden.name.node, after.node.count, prev_count
                     ),
-                );
+                    after.span.start..after.span.end,
+                    "count must be greater than previous",
+                ));
             }
 
             // Response must escalate (Nudge < Restart < Replace < Escalate)
@@ -110,11 +104,7 @@ fn check_escalation_ladder(
 }
 
 /// Warn if a warden doesn't cover all five failure types.
-fn check_failure_type_coverage(
-    warden: &WardenDecl,
-    file: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn check_failure_type_coverage(warden: &WardenDecl, file: &str, diagnostics: &mut Vec<Diagnostic>) {
     let all_types = [
         FailureType::Stuck,
         FailureType::Crash,

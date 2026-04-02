@@ -1,0 +1,64 @@
+name: Bug Report
+description: Report a bug in FORGE
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps or .forge code to reproduce the issue.
+      placeholder: |
+        1. Create a file with this content:
+        ```forge
+        task main() {
+          ...
+        }
+        ```
+        2. Run `forge run file.forge`
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened. Include error output if applicable.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: FORGE Version
+      description: Output of `forge --version`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true

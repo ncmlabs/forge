@@ -22,7 +22,10 @@ fn spanned<T>(node: T) -> Spanned<T> {
 }
 
 fn empty_program() -> Program {
-    Program { boundary: None, items: vec![] }
+    Program {
+        boundary: None,
+        items: vec![],
+    }
 }
 
 fn mock_registry() -> Arc<ProviderRegistry> {
@@ -35,7 +38,10 @@ fn mock_registry() -> Arc<ProviderRegistry> {
 fn timer_field(name: &str, secs: u64) -> Spanned<TimerField> {
     spanned(TimerField {
         name: spanned(name.to_string()),
-        duration: spanned(Duration { value: secs, unit: DurationUnit::Seconds }),
+        duration: spanned(Duration {
+            value: secs,
+            unit: DurationUnit::Seconds,
+        }),
     })
 }
 
@@ -72,7 +78,6 @@ async fn assert_no_fire(rx: &mut mpsc::Receiver<TimerFired>) {
 
 #[tokio::test(start_paused = true)]
 async fn timer_fires_after_duration() {
-
     let fields = vec![timer_field("timeout", 5)];
     let (fire_tx, mut fire_rx) = mpsc::channel::<TimerFired>(64);
     let mut engine = TimerEngine::new("agent1", &fields, fire_tx, None);
@@ -88,7 +93,6 @@ async fn timer_fires_after_duration() {
 
 #[tokio::test(start_paused = true)]
 async fn timer_cancel_prevents_firing() {
-
     let fields = vec![timer_field("timeout", 5)];
     let (fire_tx, mut fire_rx) = mpsc::channel::<TimerFired>(64);
     let mut engine = TimerEngine::new("agent1", &fields, fire_tx, None);
@@ -103,7 +107,6 @@ async fn timer_cancel_prevents_firing() {
 
 #[tokio::test(start_paused = true)]
 async fn timer_reset_restarts_countdown() {
-
     let fields = vec![timer_field("timeout", 5)];
     let (fire_tx, mut fire_rx) = mpsc::channel::<TimerFired>(64);
     let mut engine = TimerEngine::new("agent1", &fields, fire_tx, None);
@@ -129,7 +132,6 @@ async fn timer_reset_restarts_countdown() {
 
 #[tokio::test(start_paused = true)]
 async fn timer_with_context_delivers_context() {
-
     let fields = vec![timer_field("reconnect", 3)];
     let (fire_tx, mut fire_rx) = mpsc::channel::<TimerFired>(64);
     let mut engine = TimerEngine::new("agent1", &fields, fire_tx, None);
@@ -148,7 +150,6 @@ async fn timer_with_context_delivers_context() {
 
 #[tokio::test(start_paused = true)]
 async fn multiple_concurrent_timers_independent() {
-
     let fields = vec![timer_field("short", 3), timer_field("long", 10)];
     let (fire_tx, mut fire_rx) = mpsc::channel::<TimerFired>(64);
     let mut engine = TimerEngine::new("agent1", &fields, fire_tx, None);
@@ -174,7 +175,6 @@ async fn multiple_concurrent_timers_independent() {
 
 #[tokio::test(start_paused = true)]
 async fn cancel_one_context_leaves_other() {
-
     let fields = vec![timer_field("reconnect", 5)];
     let (fire_tx, mut fire_rx) = mpsc::channel::<TimerFired>(64);
     let mut engine = TimerEngine::new("agent1", &fields, fire_tx, None);
@@ -214,7 +214,6 @@ async fn unknown_timer_errors() {
 
 #[tokio::test(start_paused = true)]
 async fn cancel_all_stops_everything() {
-
     let fields = vec![timer_field("a", 5), timer_field("b", 5)];
     let (fire_tx, mut fire_rx) = mpsc::channel::<TimerFired>(64);
     let mut engine = TimerEngine::new("agent1", &fields, fire_tx, None);
@@ -232,16 +231,12 @@ async fn cancel_all_stops_everything() {
 
 #[tokio::test(start_paused = true)]
 async fn timer_expired_dispatches_handler() {
-
     let expired_handler = spanned(OnHandler {
         event: spanned("timeout.expired".into()),
         params: vec![],
         payload_type: None,
         requires: vec![],
-        body: vec![spanned(Stmt::Emit(
-            spanned("TimedOut".into()),
-            vec![],
-        ))],
+        body: vec![spanned(Stmt::Emit(spanned("TimedOut".into()), vec![]))],
     });
 
     let start_handler = spanned(OnHandler {
@@ -265,7 +260,10 @@ async fn timer_expired_dispatches_handler() {
     // Verify timer is Running
     {
         let ctx = agent.context().lock().unwrap();
-        assert_eq!(ctx.timer_manager.state("timeout"), Some(&TimerState::Running));
+        assert_eq!(
+            ctx.timer_manager.state("timeout"),
+            Some(&TimerState::Running)
+        );
     }
 
     // Advance time past the timer duration
@@ -278,19 +276,24 @@ async fn timer_expired_dispatches_handler() {
 
     // Verify timer state is Expired and handler ran (emitted event)
     let ctx = agent.context().lock().unwrap();
-    assert_eq!(ctx.timer_manager.state("timeout"), Some(&TimerState::Expired));
+    assert_eq!(
+        ctx.timer_manager.state("timeout"),
+        Some(&TimerState::Expired)
+    );
     assert_eq!(ctx.event_sink.emitted.len(), 1);
     assert_eq!(ctx.event_sink.emitted[0].name, "TimedOut");
 }
 
 /// Helper to receive from agent's timer_rx
 async fn recv_agent_fired(agent: &mut AgentProcess) -> TimerFired {
-    agent.timer_rx.try_recv().expect("expected TimerFired event from agent")
+    agent
+        .timer_rx
+        .try_recv()
+        .expect("expected TimerFired event from agent")
 }
 
 #[tokio::test(start_paused = true)]
 async fn timer_expired_with_context_param() {
-
     let expired_handler = spanned(OnHandler {
         event: spanned("reconnect.expired".into()),
         params: vec![spanned(Param {
@@ -312,9 +315,9 @@ async fn timer_expired_with_context_param() {
         requires: vec![],
         body: vec![spanned(Stmt::StartTimer {
             name: spanned("reconnect".into()),
-            context: Some(spanned(Expr::Template(vec![
-                spanned(TemplatePart::Text("player1".into())),
-            ]))),
+            context: Some(spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                "player1".into(),
+            ))]))),
         })],
     });
 
@@ -342,7 +345,6 @@ async fn timer_expired_with_context_param() {
 
 #[tokio::test(start_paused = true)]
 async fn timer_cancel_in_handler_prevents_expiry() {
-
     let start_handler = spanned(OnHandler {
         event: spanned("begin".into()),
         params: vec![],
@@ -388,10 +390,12 @@ async fn timer_cancel_in_handler_prevents_expiry() {
 
 #[tokio::test(start_paused = true)]
 async fn duration_unit_conversion() {
-
     let fields = vec![spanned(TimerField {
         name: spanned("check".to_string()),
-        duration: spanned(Duration { value: 2, unit: DurationUnit::Minutes }),
+        duration: spanned(Duration {
+            value: 2,
+            unit: DurationUnit::Minutes,
+        }),
     })];
     let (fire_tx, mut fire_rx) = mpsc::channel::<TimerFired>(64);
     let mut engine = TimerEngine::new("agent1", &fields, fire_tx, None);

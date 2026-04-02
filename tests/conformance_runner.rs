@@ -72,9 +72,9 @@ fn collect_json_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
             let path = entry.path();
             if path.is_dir() {
                 collect_json_files(&path, out);
-            } else if path.extension().map_or(false, |e| e == "json") {
+            } else if path.extension().is_some_and(|e| e == "json") {
                 // Skip the schema file
-                if path.file_name().map_or(false, |n| n != "schema.json") {
+                if path.file_name().is_some_and(|n| n != "schema.json") {
                     out.push(path);
                 }
             }
@@ -160,7 +160,12 @@ async fn conformance_suite() {
             }
             Err(msg) => {
                 failed += 1;
-                failures.push(format!("FAIL [{}] ({}): {}", test.name, path.display(), msg));
+                failures.push(format!(
+                    "FAIL [{}] ({}): {}",
+                    test.name,
+                    path.display(),
+                    msg
+                ));
             }
         }
     }
@@ -177,10 +182,7 @@ async fn conformance_suite() {
         );
     }
 
-    eprintln!(
-        "conformance suite: all {} tests passed",
-        passed
-    );
+    eprintln!("conformance suite: all {} tests passed", passed);
 }
 
 async fn run_single_test(test: &ConformanceTest) -> Result<(), String> {
@@ -237,7 +239,9 @@ fn test_compile_error(test: &ConformanceTest) -> Result<(), String> {
     let error_contains = test.expected.error_contains.as_deref().unwrap_or(&[]);
     let expected_kind = test.expected.error_kind.as_deref().unwrap_or("error");
 
-    let has_match = diags.iter().any(|d| matches_error(d, error_contains, expected_kind));
+    let has_match = diags
+        .iter()
+        .any(|d| matches_error(d, error_contains, expected_kind));
     if has_match {
         Ok(())
     } else {
@@ -245,15 +249,17 @@ fn test_compile_error(test: &ConformanceTest) -> Result<(), String> {
             "expected compile_error with {:?} (kind={}) but got diagnostics: {:?}",
             error_contains,
             expected_kind,
-            diags.iter().map(|d| format!("[{:?}] {}", d.kind, d.message)).collect::<Vec<_>>()
+            diags
+                .iter()
+                .map(|d| format!("[{:?}] {}", d.kind, d.message))
+                .collect::<Vec<_>>()
         ))
     }
 }
 
 async fn test_run_ok(test: &ConformanceTest) -> Result<(), String> {
     let source = single_source(&test.input)?;
-    let program = forge::parser::parse(&source)
-        .map_err(|e| format!("parse failed: {:?}", e))?;
+    let program = forge::parser::parse(&source).map_err(|e| format!("parse failed: {:?}", e))?;
 
     let mock = build_mock(test);
     let tracer = Tracer::with_capture();
@@ -279,8 +285,7 @@ async fn test_run_ok(test: &ConformanceTest) -> Result<(), String> {
 
 async fn test_run_error(test: &ConformanceTest) -> Result<(), String> {
     let source = single_source(&test.input)?;
-    let program = forge::parser::parse(&source)
-        .map_err(|e| format!("parse failed: {:?}", e))?;
+    let program = forge::parser::parse(&source).map_err(|e| format!("parse failed: {:?}", e))?;
 
     let mock = build_mock(test);
     let tracer = Tracer::with_capture();

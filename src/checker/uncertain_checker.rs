@@ -132,7 +132,10 @@ fn check_stmt(
 /// Returns true if the expression is directly an oracle call
 /// (reason, classify, search).
 fn expr_is_oracle(expr: &Spanned<Expr>) -> bool {
-    matches!(&expr.node, Expr::Reason(_) | Expr::Classify(_) | Expr::Search(_))
+    matches!(
+        &expr.node,
+        Expr::Reason(_) | Expr::Classify(_) | Expr::Search(_)
+    )
 }
 
 /// If the expression references a tainted variable (directly or via
@@ -146,9 +149,7 @@ fn expr_tainted_name(expr: &Spanned<Expr>, tainted: &HashSet<String>) -> Option<
                 None
             }
         }
-        Expr::FieldAccess(inner, _) | Expr::GlobAccess(inner) => {
-            expr_tainted_name(inner, tainted)
-        }
+        Expr::FieldAccess(inner, _) | Expr::GlobAccess(inner) => expr_tainted_name(inner, tainted),
         _ => None,
     }
 }
@@ -175,11 +176,7 @@ fn emit_unhandled_error(
     );
 }
 
-fn emit_inline_oracle_error(
-    expr: &Spanned<Expr>,
-    file: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn emit_inline_oracle_error(expr: &Spanned<Expr>, file: &str, diagnostics: &mut Vec<Diagnostic>) {
     diagnostics.push(
         Diagnostic::error(
             file,

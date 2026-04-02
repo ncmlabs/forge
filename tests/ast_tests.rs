@@ -19,7 +19,7 @@ fn sp<T>(node: T) -> Spanned<T> {
 fn span_is_debug_clone_copy() {
     let s = Span { start: 0, end: 42 };
     let s2 = s; // Copy
-    let s3 = s.clone();
+    let s3 = s;
     let _ = format!("{:?}", s2);
     let _ = format!("{:?}", s3);
 }
@@ -569,9 +569,7 @@ fn ast_fn_main() {
             name: sp("greet".into()),
             args: vec![sp(CallArg {
                 label: None,
-                value: sp(Expr::Template(vec![sp(TemplatePart::Text(
-                    "world".into(),
-                ))])),
+                value: sp(Expr::Template(vec![sp(TemplatePart::Text("world".into()))])),
             })],
         }))))],
     };
@@ -661,9 +659,18 @@ fn ast_all_builtin_types() {
 #[test]
 fn ast_duration_units() {
     let durations = vec![
-        Duration { value: 10, unit: DurationUnit::Seconds },
-        Duration { value: 5, unit: DurationUnit::Minutes },
-        Duration { value: 1, unit: DurationUnit::Hours },
+        Duration {
+            value: 10,
+            unit: DurationUnit::Seconds,
+        },
+        Duration {
+            value: 5,
+            unit: DurationUnit::Minutes,
+        },
+        Duration {
+            value: 1,
+            unit: DurationUnit::Hours,
+        },
     ];
     for d in &durations {
         let _ = format!("{:?}", d.clone());
@@ -690,14 +697,12 @@ fn ast_full_program() {
                 gives: Some(sp(OutputType {
                     types: vec![sp(TypeName::Text)],
                 })),
-                body: sp(TaskBody::Do(vec![sp(Stmt::Say(sp(Expr::Template(
-                    vec![
-                        sp(TemplatePart::Text("Hello, ".into())),
-                        sp(TemplatePart::Interp(Box::new(sp(Expr::Ident(
-                            "name".into(),
-                        ))))),
-                    ],
-                ))))])),
+                body: sp(TaskBody::Do(vec![sp(Stmt::Say(sp(Expr::Template(vec![
+                    sp(TemplatePart::Text("Hello, ".into())),
+                    sp(TemplatePart::Interp(Box::new(sp(Expr::Ident(
+                        "name".into(),
+                    ))))),
+                ]))))])),
                 if_fails: None,
             })),
         ],
@@ -738,7 +743,12 @@ fn ast_boundary_directive() {
     let _ = format!("{:?}", program.clone());
 
     // All three kinds
-    let _ = format!("{:?} {:?} {:?}", BoundaryKind::Server, BoundaryKind::Client, BoundaryKind::Shared);
+    let _ = format!(
+        "{:?} {:?} {:?}",
+        BoundaryKind::Server,
+        BoundaryKind::Client,
+        BoundaryKind::Shared
+    );
 }
 
 // ── pure declaration ─────────────────────────────────────────
@@ -748,10 +758,18 @@ fn ast_pure_decl() {
     let pure = PureDecl {
         name: sp("valid_move".into()),
         needs: vec![
-            sp(Param { name: "board".into(), type_name: sp(TypeName::Array(Box::new(TypeName::Text), Some(9))) }),
-            sp(Param { name: "cell".into(), type_name: sp(TypeName::Number) }),
+            sp(Param {
+                name: "board".into(),
+                type_name: sp(TypeName::Array(Box::new(TypeName::Text), Some(9))),
+            }),
+            sp(Param {
+                name: "cell".into(),
+                type_name: sp(TypeName::Number),
+            }),
         ],
-        gives: Some(sp(OutputType { types: vec![sp(TypeName::Bool)] })),
+        gives: Some(sp(OutputType {
+            types: vec![sp(TypeName::Bool)],
+        })),
         body: vec![sp(Stmt::Give(
             sp(Expr::BinOp(
                 Box::new(sp(Expr::BinOp(
@@ -780,9 +798,18 @@ fn ast_event_decl() {
     let event = EventDecl {
         name: sp("MoveEvent".into()),
         fields: vec![
-            sp(FieldDef { name: "room_id".into(), type_name: sp(TypeName::Text) }),
-            sp(FieldDef { name: "cell".into(), type_name: sp(TypeName::Number) }),
-            sp(FieldDef { name: "board".into(), type_name: sp(TypeName::Array(Box::new(TypeName::Text), Some(9))) }),
+            sp(FieldDef {
+                name: "room_id".into(),
+                type_name: sp(TypeName::Text),
+            }),
+            sp(FieldDef {
+                name: "cell".into(),
+                type_name: sp(TypeName::Number),
+            }),
+            sp(FieldDef {
+                name: "board".into(),
+                type_name: sp(TypeName::Array(Box::new(TypeName::Text), Some(9))),
+            }),
         ],
     };
     let top = sp(TopLevel::Event(event.clone()));
@@ -824,9 +851,18 @@ fn ast_type_def_decl() {
     let type_def = TypeDefDecl {
         name: sp("MoveRequest".into()),
         fields: vec![
-            sp(FieldDef { name: "room_id".into(), type_name: sp(TypeName::Text) }),
-            sp(FieldDef { name: "cell".into(), type_name: sp(TypeName::Number) }),
-            sp(FieldDef { name: "token".into(), type_name: sp(TypeName::Text) }),
+            sp(FieldDef {
+                name: "room_id".into(),
+                type_name: sp(TypeName::Text),
+            }),
+            sp(FieldDef {
+                name: "cell".into(),
+                type_name: sp(TypeName::Number),
+            }),
+            sp(FieldDef {
+                name: "token".into(),
+                type_name: sp(TypeName::Text),
+            }),
         ],
     };
     let top = sp(TopLevel::TypeDef(type_def.clone()));
@@ -839,16 +875,26 @@ fn ast_type_def_decl() {
 fn ast_endpoint_decl() {
     let endpoint = EndpointDecl {
         name: sp("move_endpoint".into()),
-        params: vec![
-            sp(Param { name: "req".into(), type_name: sp(TypeName::Custom("MoveRequest".into())) }),
-        ],
+        params: vec![sp(Param {
+            name: "req".into(),
+            type_name: sp(TypeName::Custom("MoveRequest".into())),
+        })],
         return_type: Some(sp(OutputType {
-            types: vec![sp(TypeName::Custom("GameState".into())), sp(TypeName::Custom("MoveError".into()))],
+            types: vec![
+                sp(TypeName::Custom("GameState".into())),
+                sp(TypeName::Custom("MoveError".into())),
+            ],
         })),
-        body: vec![sp(Stmt::Give(sp(Expr::Call(CallExpr {
-            name: sp("process".into()),
-            args: vec![sp(CallArg { label: None, value: sp(Expr::Ident("req".into())) })],
-        })), None))],
+        body: vec![sp(Stmt::Give(
+            sp(Expr::Call(CallExpr {
+                name: sp("process".into()),
+                args: vec![sp(CallArg {
+                    label: None,
+                    value: sp(Expr::Ident("req".into())),
+                })],
+            })),
+            None,
+        ))],
     };
     let top = sp(TopLevel::Endpoint(endpoint.clone()));
     let _ = format!("{:?}", top);
@@ -860,7 +906,10 @@ fn ast_endpoint_decl() {
 fn ast_timer_field() {
     let timer = TimerField {
         name: sp("reconnect_window".into()),
-        duration: sp(Duration { value: 30, unit: DurationUnit::Seconds }),
+        duration: sp(Duration {
+            value: 30,
+            unit: DurationUnit::Seconds,
+        }),
     };
     let _ = format!("{:?}", timer.clone());
 }
@@ -905,13 +954,20 @@ fn ast_requires_clause() {
 
     let req_give = RequiresClause {
         condition: sp(Expr::Ident("valid".into())),
-        on_fail: Some(sp(FailPolicy::Give(sp(Expr::Template(vec![sp(TemplatePart::Text("invalid".into()))]))))),
+        on_fail: Some(sp(FailPolicy::Give(sp(Expr::Template(vec![sp(
+            TemplatePart::Text("invalid".into()),
+        )]))))),
     };
     let _ = format!("{:?}", req_give.clone());
 
     // All fail policies
-    let _ = format!("{:?} {:?} {:?} {:?}",
-        FailPolicy::Silent, FailPolicy::Log, FailPolicy::Escalate, FailPolicy::Crash);
+    let _ = format!(
+        "{:?} {:?} {:?} {:?}",
+        FailPolicy::Silent,
+        FailPolicy::Log,
+        FailPolicy::Escalate,
+        FailPolicy::Crash
+    );
 }
 
 // ── agent with v3 extensions ─────────────────────────────────
@@ -922,43 +978,56 @@ fn ast_agent_v3() {
         name: sp("room_agent".into()),
         lifecycle: Some(sp("RoomLifecycle".into())),
         memory: vec![
-            sp(FieldDef { name: "board".into(), type_name: sp(TypeName::Array(Box::new(TypeName::Text), Some(9))) }),
-            sp(FieldDef { name: "turn".into(), type_name: sp(TypeName::Number) }),
-        ],
-        timers: vec![
-            sp(TimerField {
-                name: sp("reconnect_window".into()),
-                duration: sp(Duration { value: 30, unit: DurationUnit::Seconds }),
+            sp(FieldDef {
+                name: "board".into(),
+                type_name: sp(TypeName::Array(Box::new(TypeName::Text), Some(9))),
+            }),
+            sp(FieldDef {
+                name: "turn".into(),
+                type_name: sp(TypeName::Number),
             }),
         ],
-        subscriptions: vec![
-            sp(SubscribeDecl { event_name: sp("MoveEvent".into()), filter: None }),
-        ],
+        timers: vec![sp(TimerField {
+            name: sp("reconnect_window".into()),
+            duration: sp(Duration {
+                value: 30,
+                unit: DurationUnit::Seconds,
+            }),
+        })],
+        subscriptions: vec![sp(SubscribeDecl {
+            event_name: sp("MoveEvent".into()),
+            filter: None,
+        })],
         handlers: vec![
             sp(OnHandler {
                 event: sp("move".into()),
                 params: vec![
-                    sp(Param { name: "player".into(), type_name: sp(TypeName::Text) }),
-                    sp(Param { name: "cell".into(), type_name: sp(TypeName::Number) }),
-                ],
-                payload_type: None,
-                requires: vec![
-                    sp(RequiresClause {
-                        condition: sp(Expr::BinOp(
-                            Box::new(sp(Expr::Ident("lifecycle".into()))),
-                            sp(BinOp::Eq),
-                            Box::new(sp(Expr::Ident("playing".into()))),
-                        )),
-                        on_fail: Some(sp(FailPolicy::Silent)),
+                    sp(Param {
+                        name: "player".into(),
+                        type_name: sp(TypeName::Text),
+                    }),
+                    sp(Param {
+                        name: "cell".into(),
+                        type_name: sp(TypeName::Number),
                     }),
                 ],
+                payload_type: None,
+                requires: vec![sp(RequiresClause {
+                    condition: sp(Expr::BinOp(
+                        Box::new(sp(Expr::Ident("lifecycle".into()))),
+                        sp(BinOp::Eq),
+                        Box::new(sp(Expr::Ident("playing".into()))),
+                    )),
+                    on_fail: Some(sp(FailPolicy::Silent)),
+                })],
                 body: vec![sp(Stmt::Say(sp(Expr::Ident("player".into()))))],
             }),
             sp(OnHandler {
                 event: sp("reconnect_window.expired".into()),
-                params: vec![
-                    sp(Param { name: "player".into(), type_name: sp(TypeName::Text) }),
-                ],
+                params: vec![sp(Param {
+                    name: "player".into(),
+                    type_name: sp(TypeName::Text),
+                })],
                 payload_type: None,
                 requires: vec![],
                 body: vec![sp(Stmt::TransitionTo(sp("done".into())))],
@@ -977,8 +1046,14 @@ fn ast_emit_stmt() {
     let stmt = Stmt::Emit(
         sp("MoveEvent".into()),
         vec![
-            sp(CallArg { label: None, value: sp(Expr::Ident("room".into())) }),
-            sp(CallArg { label: None, value: sp(Expr::Ident("cell".into())) }),
+            sp(CallArg {
+                label: None,
+                value: sp(Expr::Ident("room".into())),
+            }),
+            sp(CallArg {
+                label: None,
+                value: sp(Expr::Ident("cell".into())),
+            }),
         ],
     );
     let _ = format!("{:?}", stmt.clone());
@@ -1001,7 +1076,12 @@ fn ast_timer_stmts() {
         context: Some(sp(Expr::Ident("player".into()))),
     };
     let reset = Stmt::ResetTimer(sp("turn_limit".into()));
-    let _ = format!("{:?} {:?} {:?}", start.clone(), cancel.clone(), reset.clone());
+    let _ = format!(
+        "{:?} {:?} {:?}",
+        start.clone(),
+        cancel.clone(),
+        reset.clone()
+    );
 }
 
 #[test]
@@ -1031,16 +1111,27 @@ fn ast_match_block() {
         subject: sp(Expr::Ident("outcome".into())),
         arms: vec![
             sp(MatchArm {
-                pattern: sp(Pattern::Constructor("Winner".into(), vec![sp(Pattern::Binding("sym".into()))])),
+                pattern: sp(Pattern::Constructor(
+                    "Winner".into(),
+                    vec![sp(Pattern::Binding("sym".into()))],
+                )),
                 body: sp(Stmt::Give(sp(Expr::Ident("sym".into())), None)),
             }),
             sp(MatchArm {
                 pattern: sp(Pattern::Constructor("Draw".into(), vec![])),
-                body: sp(Stmt::Give(sp(Expr::Template(vec![sp(TemplatePart::Text("draw".into()))])), None)),
+                body: sp(Stmt::Give(
+                    sp(Expr::Template(vec![sp(TemplatePart::Text("draw".into()))])),
+                    None,
+                )),
             }),
             sp(MatchArm {
                 pattern: sp(Pattern::Wildcard),
-                body: sp(Stmt::Give(sp(Expr::Template(vec![sp(TemplatePart::Text("ongoing".into()))])), None)),
+                body: sp(Stmt::Give(
+                    sp(Expr::Template(vec![sp(TemplatePart::Text(
+                        "ongoing".into(),
+                    ))])),
+                    None,
+                )),
             }),
         ],
     };
@@ -1059,17 +1150,21 @@ fn ast_if_else_block() {
             Box::new(sp(Expr::NumberLit(0.0))),
         )),
         then_body: vec![sp(Stmt::Give(sp(Expr::Ident("x".into())), None))],
-        else_ifs: vec![
-            (sp(Expr::BinOp(
+        else_ifs: vec![(
+            sp(Expr::BinOp(
                 Box::new(sp(Expr::Ident("x".into()))),
                 sp(BinOp::Eq),
                 Box::new(sp(Expr::NumberLit(0.0))),
-            )), vec![sp(Stmt::Give(sp(Expr::NumberLit(0.0)), None))]),
-        ],
-        else_body: Some(vec![sp(Stmt::Give(sp(Expr::UnaryOp(
-            sp(UnaryOp::Neg),
-            Box::new(sp(Expr::Ident("x".into()))),
-        )), None))]),
+            )),
+            vec![sp(Stmt::Give(sp(Expr::NumberLit(0.0)), None))],
+        )],
+        else_body: Some(vec![sp(Stmt::Give(
+            sp(Expr::UnaryOp(
+                sp(UnaryOp::Neg),
+                Box::new(sp(Expr::Ident("x".into()))),
+            )),
+            None,
+        ))]),
     };
     let stmt = Stmt::IfElse(Box::new(block));
     let _ = format!("{:?}", stmt.clone());
@@ -1114,7 +1209,10 @@ fn ast_method_call() {
     let e = Expr::MethodCall(
         Box::new(sp(Expr::Ident("board".into()))),
         sp("none".into()),
-        vec![sp(CallArg { label: None, value: sp(Expr::Ident("empty".into())) })],
+        vec![sp(CallArg {
+            label: None,
+            value: sp(Expr::Ident("empty".into())),
+        })],
     );
     let _ = format!("{:?}", e.clone());
 }
@@ -1122,9 +1220,18 @@ fn ast_method_call() {
 #[test]
 fn ast_bin_ops() {
     let ops = vec![
-        BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Div,
-        BinOp::Eq, BinOp::Ne, BinOp::Lt, BinOp::Gt, BinOp::Le, BinOp::Ge,
-        BinOp::And, BinOp::Or,
+        BinOp::Add,
+        BinOp::Sub,
+        BinOp::Mul,
+        BinOp::Div,
+        BinOp::Eq,
+        BinOp::Ne,
+        BinOp::Lt,
+        BinOp::Gt,
+        BinOp::Le,
+        BinOp::Ge,
+        BinOp::And,
+        BinOp::Or,
     ];
     for op in &ops {
         let e = Expr::BinOp(
@@ -1156,12 +1263,22 @@ fn ast_array_type_name() {
 fn ast_patterns() {
     let w = Pattern::Wildcard;
     let b = Pattern::Binding("sym".into());
-    let c = Pattern::Constructor("Winner".into(), vec![
-        sp(Pattern::Binding("sym".into())),
-    ]);
-    let nested = Pattern::Constructor("Pair".into(), vec![
-        sp(Pattern::Constructor("Some".into(), vec![sp(Pattern::Binding("x".into()))])),
-        sp(Pattern::Wildcard),
-    ]);
-    let _ = format!("{:?} {:?} {:?} {:?}", w.clone(), b.clone(), c.clone(), nested.clone());
+    let c = Pattern::Constructor("Winner".into(), vec![sp(Pattern::Binding("sym".into()))]);
+    let nested = Pattern::Constructor(
+        "Pair".into(),
+        vec![
+            sp(Pattern::Constructor(
+                "Some".into(),
+                vec![sp(Pattern::Binding("x".into()))],
+            )),
+            sp(Pattern::Wildcard),
+        ],
+    );
+    let _ = format!(
+        "{:?} {:?} {:?} {:?}",
+        w.clone(),
+        b.clone(),
+        c.clone(),
+        nested.clone()
+    );
 }

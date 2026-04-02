@@ -39,13 +39,16 @@ pub struct StateMachine {
 impl StateMachine {
     /// Build from a `StatesDecl`. Initial state = first `from` in the first transition.
     pub fn new(decl: &StatesDecl) -> Self {
-        let initial = decl.transitions.first()
+        let initial = decl
+            .transitions
+            .first()
             .map(|t| t.node.from.node.clone())
             .unwrap_or_else(|| "initial".to_string());
 
         let mut graph: HashMap<String, Vec<TransitionEdge>> = HashMap::new();
         for t in &decl.transitions {
-            graph.entry(t.node.from.node.clone())
+            graph
+                .entry(t.node.from.node.clone())
                 .or_default()
                 .push(TransitionEdge {
                     to: t.node.to.node.clone(),
@@ -53,12 +56,17 @@ impl StateMachine {
                 });
         }
 
-        Self { current: initial, graph }
+        Self {
+            current: initial,
+            graph,
+        }
     }
 
     /// Attempt a transition. Returns error if no valid edge exists from current state.
     pub fn transition(&mut self, to: &str) -> Result<(), StateError> {
-        let valid = self.graph.get(&self.current)
+        let valid = self
+            .graph
+            .get(&self.current)
             .map(|edges| edges.iter().any(|e| e.to == to))
             .unwrap_or(false);
 

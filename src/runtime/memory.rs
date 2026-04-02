@@ -1,8 +1,8 @@
 // FORGE agent memory model — issue #11
 // HashMap-based field store with context serialization for LLM prompts.
 
-use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use crate::ast::{FieldDef, Spanned, TypeName};
@@ -28,7 +28,9 @@ impl AgentMemory {
 
     /// Create empty memory (no fields).
     pub fn empty() -> Self {
-        Self { fields: HashMap::new() }
+        Self {
+            fields: HashMap::new(),
+        }
     }
 
     pub fn get(&self, field: &str) -> Option<&ConfidentValue> {
@@ -67,7 +69,9 @@ impl AgentMemory {
     /// Hash of current memory state for stuck detection.
     pub fn snapshot_hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
-        let mut entries: Vec<(&String, String)> = self.fields.iter()
+        let mut entries: Vec<(&String, String)> = self
+            .fields
+            .iter()
             .map(|(k, v)| (k, format!("{}", v.value)))
             .collect();
         entries.sort_by(|a, b| a.0.cmp(b.0));
@@ -87,8 +91,11 @@ impl AgentMemory {
 /// Produce a type-appropriate default `ConfidentValue`.
 fn default_for_type(ty: &TypeName) -> ConfidentValue {
     let value = match ty {
-        TypeName::Text | TypeName::Summary | TypeName::Report
-        | TypeName::Classification | TypeName::Intent => Value::Text(String::new()),
+        TypeName::Text
+        | TypeName::Summary
+        | TypeName::Report
+        | TypeName::Classification
+        | TypeName::Intent => Value::Text(String::new()),
         TypeName::Number => Value::Number(0.0),
         TypeName::Bool => Value::Bool(false),
         TypeName::Conversation => Value::List(vec![]),
@@ -139,7 +146,10 @@ mod tests {
     fn memory_get_set_roundtrip() {
         let fields = vec![text_field("name")];
         let mut mem = AgentMemory::new(&fields);
-        mem.set("name", ConfidentValue::deterministic(Value::Text("Alice".into())));
+        mem.set(
+            "name",
+            ConfidentValue::deterministic(Value::Text("Alice".into())),
+        );
         assert!(matches!(mem.get("name").unwrap().value, Value::Text(ref s) if s == "Alice"));
     }
 
@@ -147,7 +157,10 @@ mod tests {
     fn memory_to_record() {
         let fields = vec![text_field("topic"), number_field("count")];
         let mut mem = AgentMemory::new(&fields);
-        mem.set("topic", ConfidentValue::deterministic(Value::Text("billing".into())));
+        mem.set(
+            "topic",
+            ConfidentValue::deterministic(Value::Text("billing".into())),
+        );
         mem.set("count", ConfidentValue::deterministic(Value::Number(3.0)));
         let rec = mem.to_record();
         match rec {
@@ -163,8 +176,14 @@ mod tests {
     fn memory_context_string_budget() {
         let fields = vec![text_field("a"), text_field("b")];
         let mut mem = AgentMemory::new(&fields);
-        mem.set("a", ConfidentValue::deterministic(Value::Text("hello".into())));
-        mem.set("b", ConfidentValue::deterministic(Value::Text("world".into())));
+        mem.set(
+            "a",
+            ConfidentValue::deterministic(Value::Text("hello".into())),
+        );
+        mem.set(
+            "b",
+            ConfidentValue::deterministic(Value::Text("world".into())),
+        );
         // Very small budget — should include at least one field
         let ctx = mem.to_context_string(5);
         assert!(!ctx.is_empty());

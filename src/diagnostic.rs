@@ -63,7 +63,8 @@ impl Diagnostic {
 
         let span = self.span.clone();
         // Clamp span to source length to avoid panics
-        let clamped = span.start.min(source.len())..span.end.min(source.len()).max(span.start.min(source.len()));
+        let clamped = span.start.min(source.len())
+            ..span.end.min(source.len()).max(span.start.min(source.len()));
 
         let mut builder = Report::build(kind, clamped.clone())
             .with_message(&self.message)
@@ -77,9 +78,7 @@ impl Diagnostic {
             builder = builder.with_help(help);
         }
 
-        let _ = builder
-            .finish()
-            .eprint(Source::from(source));
+        let _ = builder.finish().eprint(Source::from(source));
     }
 }
 

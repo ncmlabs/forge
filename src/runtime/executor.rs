@@ -11,7 +11,7 @@ use crate::llm::CompletionRequest;
 use crate::runtime::agent::{AgentContext, EmittedEvent};
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::timer_engine::TimerEngine;
-use crate::tracer::{Tracer, LLMResponseInfo};
+use crate::tracer::{LLMResponseInfo, Tracer};
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
@@ -59,7 +59,9 @@ pub(crate) struct Env {
 
 impl Env {
     pub(crate) fn new() -> Self {
-        Self { scopes: vec![HashMap::new()] }
+        Self {
+            scopes: vec![HashMap::new()],
+        }
     }
 
     pub(crate) fn push_scope(&mut self) {
@@ -82,7 +84,9 @@ impl Env {
                 return Ok(val);
             }
         }
-        Err(RuntimeError::UndefinedVariable { name: name.to_string() })
+        Err(RuntimeError::UndefinedVariable {
+            name: name.to_string(),
+        })
     }
 
     fn top_scope_bindings(&self) -> HashMap<String, ConfidentValue> {
@@ -94,24 +98,20 @@ impl Env {
 
 #[derive(Clone)]
 pub struct TaskExecutor {
-    program:       Program,
-    providers:     Arc<ProviderRegistry>,
-    tracer:        Option<Tracer>,
-    task_map:      HashMap<String, TaskDecl>,
-    pure_map:      HashMap<String, PureDecl>,
-    flow_map:      HashMap<String, FlowDecl>,
-    pool_map:      HashMap<String, PoolDecl>,
-    output:        Arc<Mutex<Vec<String>>>,
+    program: Program,
+    providers: Arc<ProviderRegistry>,
+    tracer: Option<Tracer>,
+    task_map: HashMap<String, TaskDecl>,
+    pure_map: HashMap<String, PureDecl>,
+    flow_map: HashMap<String, FlowDecl>,
+    pool_map: HashMap<String, PoolDecl>,
+    output: Arc<Mutex<Vec<String>>>,
     agent_context: Option<Arc<Mutex<AgentContext>>>,
-    timer_engine:  Option<Arc<Mutex<TimerEngine>>>,
+    timer_engine: Option<Arc<Mutex<TimerEngine>>>,
 }
 
 impl TaskExecutor {
-    pub fn new(
-        program: Program,
-        providers: Arc<ProviderRegistry>,
-        tracer: Option<Tracer>,
-    ) -> Self {
+    pub fn new(program: Program, providers: Arc<ProviderRegistry>, tracer: Option<Tracer>) -> Self {
         let mut task_map = HashMap::new();
         let mut pure_map = HashMap::new();
         let mut flow_map = HashMap::new();
@@ -173,7 +173,10 @@ impl TaskExecutor {
 
     /// Run the program starting from `fn main`
     pub async fn run(&self) -> Result<ConfidentValue, RuntimeError> {
-        let main_decl = self.program.items.iter()
+        let main_decl = self
+            .program
+            .items
+            .iter()
             .find_map(|item| match &item.node {
                 TopLevel::FnMain(m) => Some(m),
                 _ => None,
@@ -197,12 +200,14 @@ impl TaskExecutor {
         &'a self,
         stmts: &'a [Spanned<Stmt>],
         env: &'a mut Env,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ConfidentValue, RuntimeError>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ConfidentValue, RuntimeError>> + Send + 'a>,
+    > {
         Box::pin(async move {
-        for stmt in stmts {
-            self.exec_stmt(stmt, env).await?;
-        }
-        Ok(ConfidentValue::deterministic(Value::Unit))
+            for stmt in stmts {
+                self.exec_stmt(stmt, env).await?;
+            }
+            Ok(ConfidentValue::deterministic(Value::Unit))
         })
     }
 
@@ -210,260 +215,302 @@ impl TaskExecutor {
         &'a self,
         stmt: &'a Spanned<Stmt>,
         env: &'a mut Env,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), RuntimeError>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), RuntimeError>> + Send + 'a>>
+    {
         Box::pin(async move {
-        match &stmt.node {
-            Stmt::Bind(name, expr) => {
-                let val = self.eval_expr(expr, env).await?;
-                env.bind(&name.node, val);
-            }
-
-            Stmt::Say(expr) => {
-                let val = self.eval_expr(expr, env).await?;
-                let text = format!("{}", val.value);
-                println!("{}", text);
-                self.output.lock().unwrap().push(text);
-            }
-
-            Stmt::Give(expr, _with) => {
-                let val = self.eval_expr(expr, env).await?;
-                return Err(RuntimeError::GiveSignal(val));
-            }
-
-            Stmt::ExprStmt(expr) => {
-                self.eval_expr(expr, env).await?;
-            }
-
-            // ── Control flow ──────────────────────────────────────────────
-
-            Stmt::When(when_block) => {
-                for clause in &when_block.clauses {
-                    let pred = &clause.node.predicate.node;
-                    let subject_val = env.lookup(&pred.subject.node)?;
-                    let matches = match &pred.level.node {
-                        ConfLevel::Sure(None)    => subject_val.sure(),
-                        ConfLevel::Sure(Some(t)) => subject_val.sure_above(*t as f32),
-                        ConfLevel::Unsure        => subject_val.unsure(),
-                        ConfLevel::Unreliable    => subject_val.unreliable(),
-                        ConfLevel::Conflicted    => subject_val.conflicted(),
-                    };
-
-                    if let Some(ref tracer) = self.tracer {
-                        tracer.when_dispatch(
-                            &pred.subject.node,
-                            &format!("{:?}", pred.level.node),
-                            matches,
-                        );
-                    }
-
-                    if matches {
-                        self.exec_stmt(&clause.node.body, env).await?;
-                        return Ok(());
-                    }
-                }
-                if let Some(else_clause) = &when_block.else_body {
-                    if let Some(ref tracer) = self.tracer {
-                        tracer.when_dispatch("_", "else", true);
-                    }
-                    self.exec_stmt(&else_clause.node.body, env).await?;
-                }
-            }
-
-            Stmt::IfElse(block) => {
-                let cond = self.eval_expr(&block.condition, env).await?;
-                if truthy(&cond) {
-                    self.exec_stmts(&block.then_body, env).await?;
-                } else {
-                    let mut handled = false;
-                    for (cond_expr, body) in &block.else_ifs {
-                        let c = self.eval_expr(cond_expr, env).await?;
-                        if truthy(&c) {
-                            self.exec_stmts(body, env).await?;
-                            handled = true;
-                            break;
-                        }
-                    }
-                    if !handled {
-                        if let Some(body) = &block.else_body {
-                            self.exec_stmts(body, env).await?;
-                        }
-                    }
-                }
-            }
-
-            Stmt::Match(block) => {
-                let subject = self.eval_expr(&block.subject, env).await?;
-                for arm in &block.arms {
-                    if let Some(bindings) = match_pattern(&arm.node.pattern, &subject) {
-                        env.push_scope();
-                        for (name, val) in bindings {
-                            env.bind(&name, val);
-                        }
-                        self.exec_stmt(&arm.node.body, env).await?;
-                        env.pop_scope();
-                        return Ok(());
-                    }
-                }
-            }
-
-            Stmt::For(for_loop) => {
-                let iterable = self.eval_expr(&for_loop.iterable, env).await?;
-                let items = match &iterable.value {
-                    Value::Array(v) | Value::List(v) => v.clone(),
-                    other => return Err(RuntimeError::TypeError {
-                        expected: "Array or List".to_string(),
-                        got: format!("{}", other),
-                    }),
-                };
-                for item in items {
-                    env.push_scope();
-                    env.bind(&for_loop.binding.node, item);
-                    match self.exec_stmts(&for_loop.body, env).await {
-                        Ok(_) => { env.pop_scope(); }
-                        Err(e) => { env.pop_scope(); return Err(e); }
-                    }
-                }
-            }
-
-            // ── Agent features (issue #11) ─────────────────────────────
-
-            Stmt::Emit(name, args) => {
-                if let Some(ref ctx_arc) = self.agent_context {
-                    let mut arg_vals = Vec::new();
-                    let mut fields = std::collections::HashMap::new();
-                    for arg in args {
-                        let val = self.eval_expr(&arg.node.value, env).await?;
-                        if let Some(ref label) = arg.node.label {
-                            fields.insert(label.node.clone(), val.clone());
-                        }
-                        arg_vals.push(val);
-                    }
-                    ctx_arc.lock().unwrap().event_sink.emitted.push(EmittedEvent {
-                        name: name.node.clone(),
-                        args: arg_vals,
-                        fields,
-                    });
-                } else {
-                    return Err(RuntimeError::Unsupported("emit outside agent".into()));
-                }
-            }
-            Stmt::TransitionTo(state) => {
-                if let Some(ref ctx_arc) = self.agent_context {
-                    let mut ctx = ctx_arc.lock().unwrap();
-                    if let Some(ref mut sm) = ctx.state_machine {
-                        sm.transition(&state.node).map_err(|e| {
-                            RuntimeError::FlowError(e.to_string())
-                        })?;
-                    } else {
-                        return Err(RuntimeError::Unsupported(
-                            "transition without lifecycle".into(),
-                        ));
-                    }
-                } else {
-                    return Err(RuntimeError::Unsupported("transition outside agent".into()));
-                }
-            }
-            Stmt::StartTimer { name, context } => {
-                let ctx_val = match context {
-                    Some(expr) => Some(self.eval_expr(expr, env).await?),
-                    None => None,
-                };
-                if let Some(ref ctx_arc) = self.agent_context {
-                    ctx_arc.lock().unwrap().timer_manager.start(&name.node)?;
-                } else {
-                    return Err(RuntimeError::Unsupported("start timer outside agent".into()));
-                }
-                if let Some(ref engine) = self.timer_engine {
-                    engine.lock().unwrap().start(&name.node, ctx_val)
-                        .map_err(|e| RuntimeError::Unsupported(e.to_string()))?;
-                }
-            }
-            Stmt::CancelTimer { name, context } => {
-                let ctx_val = match context {
-                    Some(expr) => Some(self.eval_expr(expr, env).await?),
-                    None => None,
-                };
-                if let Some(ref ctx_arc) = self.agent_context {
-                    ctx_arc.lock().unwrap().timer_manager.cancel(&name.node)?;
-                } else {
-                    return Err(RuntimeError::Unsupported("cancel timer outside agent".into()));
-                }
-                if let Some(ref engine) = self.timer_engine {
-                    engine.lock().unwrap().cancel(&name.node, &ctx_val)
-                        .map_err(|e| RuntimeError::Unsupported(e.to_string()))?;
-                }
-            }
-            Stmt::ResetTimer(name) => {
-                if let Some(ref ctx_arc) = self.agent_context {
-                    ctx_arc.lock().unwrap().timer_manager.reset(&name.node)?;
-                } else {
-                    return Err(RuntimeError::Unsupported("reset timer outside agent".into()));
-                }
-                if let Some(ref engine) = self.timer_engine {
-                    engine.lock().unwrap().reset(&name.node, None)
-                        .map_err(|e| RuntimeError::Unsupported(e.to_string()))?;
-                }
-            }
-            Stmt::Forward(expr, target) => {
-                if let Some(ref ctx_arc) = self.agent_context {
+            match &stmt.node {
+                Stmt::Bind(name, expr) => {
                     let val = self.eval_expr(expr, env).await?;
-                    let tgt = self.eval_expr(target, env).await?;
-                    ctx_arc.lock().unwrap().event_sink.forwards.push((val, tgt));
-                } else {
-                    return Err(RuntimeError::Unsupported("forward outside agent".into()));
+                    env.bind(&name.node, val);
                 }
-            }
-            Stmt::MemoryUpdate(field, idx, expr) => {
-                if let Some(ref ctx_arc) = self.agent_context {
+
+                Stmt::Say(expr) => {
                     let val = self.eval_expr(expr, env).await?;
-                    if let Some(idx_expr) = idx {
-                        // Array index update: memory.field[idx] = val
-                        let idx_val = self.eval_expr(idx_expr, env).await?;
-                        let i = match &idx_val.value {
-                            Value::Number(n) => *n as usize,
-                            _ => return Err(RuntimeError::TypeError {
-                                expected: "Number".into(),
-                                got: format!("{}", idx_val.value),
-                            }),
+                    let text = format!("{}", val.value);
+                    println!("{}", text);
+                    self.output.lock().unwrap().push(text);
+                }
+
+                Stmt::Give(expr, _with) => {
+                    let val = self.eval_expr(expr, env).await?;
+                    return Err(RuntimeError::GiveSignal(val));
+                }
+
+                Stmt::ExprStmt(expr) => {
+                    self.eval_expr(expr, env).await?;
+                }
+
+                // ── Control flow ──────────────────────────────────────────────
+                Stmt::When(when_block) => {
+                    for clause in &when_block.clauses {
+                        let pred = &clause.node.predicate.node;
+                        let subject_val = env.lookup(&pred.subject.node)?;
+                        let matches = match &pred.level.node {
+                            ConfLevel::Sure(None) => subject_val.sure(),
+                            ConfLevel::Sure(Some(t)) => subject_val.sure_above(*t as f32),
+                            ConfLevel::Unsure => subject_val.unsure(),
+                            ConfLevel::Unreliable => subject_val.unreliable(),
+                            ConfLevel::Conflicted => subject_val.conflicted(),
                         };
-                        let mut ctx = ctx_arc.lock().unwrap();
-                        if let Some(arr_val) = ctx.memory.get(&field.node).cloned() {
-                            match arr_val.value {
-                                Value::Array(mut items) => {
-                                    if i >= items.len() {
-                                        return Err(RuntimeError::IndexOutOfBounds {
-                                            index: i, len: items.len(),
-                                        });
-                                    }
-                                    items[i] = val;
-                                    ctx.memory.set(&field.node,
-                                        ConfidentValue::deterministic(Value::Array(items)));
-                                }
-                                _ => return Err(RuntimeError::TypeError {
-                                    expected: "Array".into(),
-                                    got: format!("{}", arr_val.value),
-                                }),
+
+                        if let Some(ref tracer) = self.tracer {
+                            tracer.when_dispatch(
+                                &pred.subject.node,
+                                &format!("{:?}", pred.level.node),
+                                matches,
+                            );
+                        }
+
+                        if matches {
+                            self.exec_stmt(&clause.node.body, env).await?;
+                            return Ok(());
+                        }
+                    }
+                    if let Some(else_clause) = &when_block.else_body {
+                        if let Some(ref tracer) = self.tracer {
+                            tracer.when_dispatch("_", "else", true);
+                        }
+                        self.exec_stmt(&else_clause.node.body, env).await?;
+                    }
+                }
+
+                Stmt::IfElse(block) => {
+                    let cond = self.eval_expr(&block.condition, env).await?;
+                    if truthy(&cond) {
+                        self.exec_stmts(&block.then_body, env).await?;
+                    } else {
+                        let mut handled = false;
+                        for (cond_expr, body) in &block.else_ifs {
+                            let c = self.eval_expr(cond_expr, env).await?;
+                            if truthy(&c) {
+                                self.exec_stmts(body, env).await?;
+                                handled = true;
+                                break;
                             }
                         }
-                    } else {
-                        ctx_arc.lock().unwrap().memory.set(&field.node, val);
+                        if !handled {
+                            if let Some(body) = &block.else_body {
+                                self.exec_stmts(body, env).await?;
+                            }
+                        }
                     }
-                    // Re-bind memory in env so subsequent reads see the update
-                    let ctx = ctx_arc.lock().unwrap();
-                    env.bind("memory", ConfidentValue::deterministic(ctx.memory.to_record()));
-                } else {
-                    return Err(RuntimeError::Unsupported("memory update outside agent".into()));
+                }
+
+                Stmt::Match(block) => {
+                    let subject = self.eval_expr(&block.subject, env).await?;
+                    for arm in &block.arms {
+                        if let Some(bindings) = match_pattern(&arm.node.pattern, &subject) {
+                            env.push_scope();
+                            for (name, val) in bindings {
+                                env.bind(&name, val);
+                            }
+                            self.exec_stmt(&arm.node.body, env).await?;
+                            env.pop_scope();
+                            return Ok(());
+                        }
+                    }
+                }
+
+                Stmt::For(for_loop) => {
+                    let iterable = self.eval_expr(&for_loop.iterable, env).await?;
+                    let items = match &iterable.value {
+                        Value::Array(v) | Value::List(v) => v.clone(),
+                        other => {
+                            return Err(RuntimeError::TypeError {
+                                expected: "Array or List".to_string(),
+                                got: format!("{}", other),
+                            })
+                        }
+                    };
+                    for item in items {
+                        env.push_scope();
+                        env.bind(&for_loop.binding.node, item);
+                        match self.exec_stmts(&for_loop.body, env).await {
+                            Ok(_) => {
+                                env.pop_scope();
+                            }
+                            Err(e) => {
+                                env.pop_scope();
+                                return Err(e);
+                            }
+                        }
+                    }
+                }
+
+                // ── Agent features (issue #11) ─────────────────────────────
+                Stmt::Emit(name, args) => {
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        let mut arg_vals = Vec::new();
+                        let mut fields = std::collections::HashMap::new();
+                        for arg in args {
+                            let val = self.eval_expr(&arg.node.value, env).await?;
+                            if let Some(ref label) = arg.node.label {
+                                fields.insert(label.node.clone(), val.clone());
+                            }
+                            arg_vals.push(val);
+                        }
+                        ctx_arc
+                            .lock()
+                            .unwrap()
+                            .event_sink
+                            .emitted
+                            .push(EmittedEvent {
+                                name: name.node.clone(),
+                                args: arg_vals,
+                                fields,
+                            });
+                    } else {
+                        return Err(RuntimeError::Unsupported("emit outside agent".into()));
+                    }
+                }
+                Stmt::TransitionTo(state) => {
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        let mut ctx = ctx_arc.lock().unwrap();
+                        if let Some(ref mut sm) = ctx.state_machine {
+                            sm.transition(&state.node)
+                                .map_err(|e| RuntimeError::FlowError(e.to_string()))?;
+                        } else {
+                            return Err(RuntimeError::Unsupported(
+                                "transition without lifecycle".into(),
+                            ));
+                        }
+                    } else {
+                        return Err(RuntimeError::Unsupported("transition outside agent".into()));
+                    }
+                }
+                Stmt::StartTimer { name, context } => {
+                    let ctx_val = match context {
+                        Some(expr) => Some(self.eval_expr(expr, env).await?),
+                        None => None,
+                    };
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        ctx_arc.lock().unwrap().timer_manager.start(&name.node)?;
+                    } else {
+                        return Err(RuntimeError::Unsupported(
+                            "start timer outside agent".into(),
+                        ));
+                    }
+                    if let Some(ref engine) = self.timer_engine {
+                        engine
+                            .lock()
+                            .unwrap()
+                            .start(&name.node, ctx_val)
+                            .map_err(|e| RuntimeError::Unsupported(e.to_string()))?;
+                    }
+                }
+                Stmt::CancelTimer { name, context } => {
+                    let ctx_val = match context {
+                        Some(expr) => Some(self.eval_expr(expr, env).await?),
+                        None => None,
+                    };
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        ctx_arc.lock().unwrap().timer_manager.cancel(&name.node)?;
+                    } else {
+                        return Err(RuntimeError::Unsupported(
+                            "cancel timer outside agent".into(),
+                        ));
+                    }
+                    if let Some(ref engine) = self.timer_engine {
+                        engine
+                            .lock()
+                            .unwrap()
+                            .cancel(&name.node, &ctx_val)
+                            .map_err(|e| RuntimeError::Unsupported(e.to_string()))?;
+                    }
+                }
+                Stmt::ResetTimer(name) => {
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        ctx_arc.lock().unwrap().timer_manager.reset(&name.node)?;
+                    } else {
+                        return Err(RuntimeError::Unsupported(
+                            "reset timer outside agent".into(),
+                        ));
+                    }
+                    if let Some(ref engine) = self.timer_engine {
+                        engine
+                            .lock()
+                            .unwrap()
+                            .reset(&name.node, None)
+                            .map_err(|e| RuntimeError::Unsupported(e.to_string()))?;
+                    }
+                }
+                Stmt::Forward(expr, target) => {
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        let val = self.eval_expr(expr, env).await?;
+                        let tgt = self.eval_expr(target, env).await?;
+                        ctx_arc.lock().unwrap().event_sink.forwards.push((val, tgt));
+                    } else {
+                        return Err(RuntimeError::Unsupported("forward outside agent".into()));
+                    }
+                }
+                Stmt::MemoryUpdate(field, idx, expr) => {
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        let val = self.eval_expr(expr, env).await?;
+                        if let Some(idx_expr) = idx {
+                            // Array index update: memory.field[idx] = val
+                            let idx_val = self.eval_expr(idx_expr, env).await?;
+                            let i = match &idx_val.value {
+                                Value::Number(n) => *n as usize,
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Number".into(),
+                                        got: format!("{}", idx_val.value),
+                                    })
+                                }
+                            };
+                            let mut ctx = ctx_arc.lock().unwrap();
+                            if let Some(arr_val) = ctx.memory.get(&field.node).cloned() {
+                                match arr_val.value {
+                                    Value::Array(mut items) => {
+                                        if i >= items.len() {
+                                            return Err(RuntimeError::IndexOutOfBounds {
+                                                index: i,
+                                                len: items.len(),
+                                            });
+                                        }
+                                        items[i] = val;
+                                        ctx.memory.set(
+                                            &field.node,
+                                            ConfidentValue::deterministic(Value::Array(items)),
+                                        );
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::TypeError {
+                                            expected: "Array".into(),
+                                            got: format!("{}", arr_val.value),
+                                        })
+                                    }
+                                }
+                            }
+                        } else {
+                            ctx_arc.lock().unwrap().memory.set(&field.node, val);
+                        }
+                        // Re-bind memory in env so subsequent reads see the update
+                        let ctx = ctx_arc.lock().unwrap();
+                        env.bind(
+                            "memory",
+                            ConfidentValue::deterministic(ctx.memory.to_record()),
+                        );
+                    } else {
+                        return Err(RuntimeError::Unsupported(
+                            "memory update outside agent".into(),
+                        ));
+                    }
+                }
+                Stmt::Escalate(target) => {
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        ctx_arc
+                            .lock()
+                            .unwrap()
+                            .event_sink
+                            .escalations
+                            .push(target.node.clone());
+                    } else {
+                        return Err(RuntimeError::Unsupported("escalate outside agent".into()));
+                    }
                 }
             }
-            Stmt::Escalate(target) => {
-                if let Some(ref ctx_arc) = self.agent_context {
-                    ctx_arc.lock().unwrap().event_sink.escalations.push(target.node.clone());
-                } else {
-                    return Err(RuntimeError::Unsupported("escalate outside agent".into()));
-                }
-            }
-        }
-        Ok(())
+            Ok(())
         })
     }
 
@@ -473,502 +520,530 @@ impl TaskExecutor {
         &'a self,
         expr: &'a Spanned<Expr>,
         env: &'a mut Env,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ConfidentValue, RuntimeError>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ConfidentValue, RuntimeError>> + Send + 'a>,
+    > {
         Box::pin(async move {
-        match &expr.node {
-            Expr::NumberLit(n) => {
-                Ok(ConfidentValue::deterministic(Value::Number(*n)))
-            }
+            match &expr.node {
+                Expr::NumberLit(n) => Ok(ConfidentValue::deterministic(Value::Number(*n))),
 
-            Expr::BoolLit(b) => {
-                Ok(ConfidentValue::deterministic(Value::Bool(*b)))
-            }
+                Expr::BoolLit(b) => Ok(ConfidentValue::deterministic(Value::Bool(*b))),
 
-            Expr::Ident(name) => {
-                match env.lookup(name) {
-                    Ok(val) => Ok(val.clone()),
-                    Err(_) if name.starts_with(|c: char| c.is_uppercase()) => {
-                        // Uppercase unbound identifiers are type variants (e.g., Continue, Draw)
-                        Ok(ConfidentValue::deterministic(Value::Text(name.clone())))
+                Expr::Ident(name) => {
+                    match env.lookup(name) {
+                        Ok(val) => Ok(val.clone()),
+                        Err(_) if name.starts_with(|c: char| c.is_uppercase()) => {
+                            // Uppercase unbound identifiers are type variants (e.g., Continue, Draw)
+                            Ok(ConfidentValue::deterministic(Value::Text(name.clone())))
+                        }
+                        Err(e) => Err(e),
                     }
-                    Err(e) => Err(e),
                 }
-            }
 
-            Expr::Template(parts) => {
-                let mut result = String::new();
-                let mut min_conf: f32 = 1.0;
-                for part in parts {
-                    match &part.node {
-                        TemplatePart::Text(s) => result.push_str(s),
-                        TemplatePart::Interp(inner_expr) => {
-                            let val = self.eval_expr(inner_expr, env).await?;
-                            min_conf = min_conf.min(val.confidence);
-                            result.push_str(&format!("{}", val.value));
+                Expr::Template(parts) => {
+                    let mut result = String::new();
+                    let mut min_conf: f32 = 1.0;
+                    for part in parts {
+                        match &part.node {
+                            TemplatePart::Text(s) => result.push_str(s),
+                            TemplatePart::Interp(inner_expr) => {
+                                let val = self.eval_expr(inner_expr, env).await?;
+                                min_conf = min_conf.min(val.confidence);
+                                result.push_str(&format!("{}", val.value));
+                            }
                         }
                     }
-                }
-                if min_conf >= 1.0 {
-                    Ok(ConfidentValue::deterministic(Value::Text(result)))
-                } else {
-                    Ok(ConfidentValue::derived(Value::Text(result), min_conf))
-                }
-            }
-
-            Expr::ArrayLit(elems) => {
-                let mut items = Vec::new();
-                let mut min_conf: f32 = 1.0;
-                for elem in elems {
-                    let val = self.eval_expr(elem, env).await?;
-                    min_conf = min_conf.min(val.confidence);
-                    items.push(val);
-                }
-                if min_conf >= 1.0 {
-                    Ok(ConfidentValue::deterministic(Value::Array(items)))
-                } else {
-                    Ok(ConfidentValue::derived(Value::Array(items), min_conf))
-                }
-            }
-
-            Expr::Paren(inner) => {
-                self.eval_expr(inner, env).await
-            }
-
-            Expr::BinOp(left, op, right) => {
-                let lval = self.eval_expr(left, env).await?;
-                let rval = self.eval_expr(right, env).await?;
-                let min_conf = lval.confidence.min(rval.confidence);
-                let result = eval_binop(&lval.value, &op.node, &rval.value)?;
-                if min_conf >= 1.0 {
-                    Ok(ConfidentValue::deterministic(result))
-                } else {
-                    Ok(ConfidentValue::derived(result, min_conf))
-                }
-            }
-
-            Expr::UnaryOp(op, inner) => {
-                let val = self.eval_expr(inner, env).await?;
-                let result = match (&op.node, &val.value) {
-                    (UnaryOp::Neg, Value::Number(n)) => Value::Number(-n),
-                    (UnaryOp::Not, Value::Bool(b)) => Value::Bool(!b),
-                    (UnaryOp::Not, other) => Value::Bool(!truthy_val(other)),
-                    (UnaryOp::Neg, other) => return Err(RuntimeError::TypeError {
-                        expected: "Number".to_string(),
-                        got: format!("{}", other),
-                    }),
-                };
-                if val.confidence >= 1.0 {
-                    Ok(ConfidentValue::deterministic(result))
-                } else {
-                    Ok(ConfidentValue::derived(result, val.confidence))
-                }
-            }
-
-            // ── Access expressions ────────────────────────────────────────
-
-            Expr::FieldAccess(obj_expr, field) => {
-                let obj = self.eval_expr(obj_expr, env).await?;
-                match (&obj.value, field.node.as_str()) {
-                    // Array/List property accessors (no-arg methods as properties)
-                    (Value::Array(v) | Value::List(v), "first") => {
-                        Ok(v.first().cloned()
-                            .unwrap_or(ConfidentValue::deterministic(Value::Unit)))
-                    }
-                    (Value::Array(v) | Value::List(v), "all_same") => {
-                        let same = if v.is_empty() {
-                            true
-                        } else {
-                            let first = &v[0].value;
-                            v.iter().all(|item| values_equal(&item.value, first))
-                        };
-                        Ok(ConfidentValue::deterministic(Value::Bool(same)))
-                    }
-                    (Value::Array(v) | Value::List(v), "len" | "count") => {
-                        Ok(ConfidentValue::deterministic(Value::Number(v.len() as f64)))
-                    }
-                    // Record field access
-                    (Value::Record(fields), _) => {
-                        fields.get(&field.node).cloned().ok_or_else(|| {
-                            RuntimeError::UndefinedVariable {
-                                name: format!(".{}", field.node),
-                            }
-                        })
-                    }
-                    _ => Err(RuntimeError::TypeError {
-                        expected: "Record".to_string(),
-                        got: format!("{}", obj.value),
-                    }),
-                }
-            }
-
-            Expr::Index(obj_expr, idx_expr) => {
-                let obj = self.eval_expr(obj_expr, env).await?;
-                let idx = self.eval_expr(idx_expr, env).await?;
-                match (&obj.value, &idx.value) {
-                    (Value::Array(items) | Value::List(items), Value::Number(n)) => {
-                        let i = *n as usize;
-                        items.get(i).cloned().ok_or(RuntimeError::IndexOutOfBounds {
-                            index: i,
-                            len: items.len(),
-                        })
-                    }
-                    _ => Err(RuntimeError::TypeError {
-                        expected: "Array[Number]".to_string(),
-                        got: format!("{}[{}]", obj.value, idx.value),
-                    }),
-                }
-            }
-
-            Expr::MethodCall(obj_expr, method, args) => {
-                // Pool .send() interception — pools are declarations, not runtime values
-                if method.node == "send" {
-                    if let Expr::Ident(ref name) = obj_expr.node {
-                        if let Some(pool_decl) = self.pool_map.get(name).cloned() {
-                            let mut arg_vals = Vec::new();
-                            for arg in args {
-                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
-                            }
-                            let event = arg_vals.first()
-                                .map(|v| format!("{}", v.value))
-                                .unwrap_or_else(|| "default".to_string());
-                            let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
-
-                            let pool = crate::runtime::pool::PoolExecutor::new(
-                                pool_decl,
-                                &self.program,
-                                self.providers.clone(),
-                                self.tracer.clone(),
-                            )?;
-                            return pool.send(&event, payload).await;
-                        }
+                    if min_conf >= 1.0 {
+                        Ok(ConfidentValue::deterministic(Value::Text(result)))
+                    } else {
+                        Ok(ConfidentValue::derived(Value::Text(result), min_conf))
                     }
                 }
 
-                let obj = self.eval_expr(obj_expr, env).await?;
-                match method.node.as_str() {
-                    "len" | "count" => {
-                        let len = match &obj.value {
-                            Value::Array(v) | Value::List(v) => v.len(),
-                            Value::Text(s) => s.len(),
-                            _ => return Err(RuntimeError::TypeError {
-                                expected: "Array, List, or Text".to_string(),
-                                got: format!("{}", obj.value),
-                            }),
-                        };
-                        Ok(ConfidentValue::deterministic(Value::Number(len as f64)))
+                Expr::ArrayLit(elems) => {
+                    let mut items = Vec::new();
+                    let mut min_conf: f32 = 1.0;
+                    for elem in elems {
+                        let val = self.eval_expr(elem, env).await?;
+                        min_conf = min_conf.min(val.confidence);
+                        items.push(val);
                     }
-                    "contains" | "any" => {
-                        if args.is_empty() {
+                    if min_conf >= 1.0 {
+                        Ok(ConfidentValue::deterministic(Value::Array(items)))
+                    } else {
+                        Ok(ConfidentValue::derived(Value::Array(items), min_conf))
+                    }
+                }
+
+                Expr::Paren(inner) => self.eval_expr(inner, env).await,
+
+                Expr::BinOp(left, op, right) => {
+                    let lval = self.eval_expr(left, env).await?;
+                    let rval = self.eval_expr(right, env).await?;
+                    let min_conf = lval.confidence.min(rval.confidence);
+                    let result = eval_binop(&lval.value, &op.node, &rval.value)?;
+                    if min_conf >= 1.0 {
+                        Ok(ConfidentValue::deterministic(result))
+                    } else {
+                        Ok(ConfidentValue::derived(result, min_conf))
+                    }
+                }
+
+                Expr::UnaryOp(op, inner) => {
+                    let val = self.eval_expr(inner, env).await?;
+                    let result = match (&op.node, &val.value) {
+                        (UnaryOp::Neg, Value::Number(n)) => Value::Number(-n),
+                        (UnaryOp::Not, Value::Bool(b)) => Value::Bool(!b),
+                        (UnaryOp::Not, other) => Value::Bool(!truthy_val(other)),
+                        (UnaryOp::Neg, other) => {
                             return Err(RuntimeError::TypeError {
-                                expected: "1 argument".to_string(),
-                                got: "0 arguments".to_string(),
-                            });
+                                expected: "Number".to_string(),
+                                got: format!("{}", other),
+                            })
                         }
-                        let needle = self.eval_expr(&args[0].node.value, env).await?;
-                        let found = match &obj.value {
-                            Value::Array(v) | Value::List(v) => {
-                                v.iter().any(|item| values_equal(&item.value, &needle.value))
-                            }
-                            Value::Text(s) => {
-                                if let Value::Text(needle_s) = &needle.value {
-                                    s.contains(needle_s.as_str())
-                                } else {
-                                    false
-                                }
-                            }
-                            _ => false,
-                        };
-                        Ok(ConfidentValue::deterministic(Value::Bool(found)))
+                    };
+                    if val.confidence >= 1.0 {
+                        Ok(ConfidentValue::deterministic(result))
+                    } else {
+                        Ok(ConfidentValue::derived(result, val.confidence))
                     }
-                    "all_same" => {
-                        let same = match &obj.value {
-                            Value::Array(v) | Value::List(v) => {
-                                if v.is_empty() {
-                                    true
-                                } else {
-                                    let first = &v[0].value;
-                                    v.iter().all(|item| values_equal(&item.value, first))
+                }
+
+                // ── Access expressions ────────────────────────────────────────
+                Expr::FieldAccess(obj_expr, field) => {
+                    let obj = self.eval_expr(obj_expr, env).await?;
+                    match (&obj.value, field.node.as_str()) {
+                        // Array/List property accessors (no-arg methods as properties)
+                        (Value::Array(v) | Value::List(v), "first") => Ok(v
+                            .first()
+                            .cloned()
+                            .unwrap_or(ConfidentValue::deterministic(Value::Unit))),
+                        (Value::Array(v) | Value::List(v), "all_same") => {
+                            let same = if v.is_empty() {
+                                true
+                            } else {
+                                let first = &v[0].value;
+                                v.iter().all(|item| values_equal(&item.value, first))
+                            };
+                            Ok(ConfidentValue::deterministic(Value::Bool(same)))
+                        }
+                        (Value::Array(v) | Value::List(v), "len" | "count") => {
+                            Ok(ConfidentValue::deterministic(Value::Number(v.len() as f64)))
+                        }
+                        // Record field access
+                        (Value::Record(fields), _) => {
+                            fields.get(&field.node).cloned().ok_or_else(|| {
+                                RuntimeError::UndefinedVariable {
+                                    name: format!(".{}", field.node),
                                 }
-                            }
-                            _ => false,
-                        };
-                        Ok(ConfidentValue::deterministic(Value::Bool(same)))
+                            })
+                        }
+                        _ => Err(RuntimeError::TypeError {
+                            expected: "Record".to_string(),
+                            got: format!("{}", obj.value),
+                        }),
                     }
-                    "first" => {
-                        match &obj.value {
-                            Value::Array(v) | Value::List(v) => {
-                                Ok(v.first().cloned()
-                                    .unwrap_or(ConfidentValue::deterministic(Value::Unit)))
+                }
+
+                Expr::Index(obj_expr, idx_expr) => {
+                    let obj = self.eval_expr(obj_expr, env).await?;
+                    let idx = self.eval_expr(idx_expr, env).await?;
+                    match (&obj.value, &idx.value) {
+                        (Value::Array(items) | Value::List(items), Value::Number(n)) => {
+                            let i = *n as usize;
+                            items.get(i).cloned().ok_or(RuntimeError::IndexOutOfBounds {
+                                index: i,
+                                len: items.len(),
+                            })
+                        }
+                        _ => Err(RuntimeError::TypeError {
+                            expected: "Array[Number]".to_string(),
+                            got: format!("{}[{}]", obj.value, idx.value),
+                        }),
+                    }
+                }
+
+                Expr::MethodCall(obj_expr, method, args) => {
+                    // Pool .send() interception — pools are declarations, not runtime values
+                    if method.node == "send" {
+                        if let Expr::Ident(ref name) = obj_expr.node {
+                            if let Some(pool_decl) = self.pool_map.get(name).cloned() {
+                                let mut arg_vals = Vec::new();
+                                for arg in args {
+                                    arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                                }
+                                let event = arg_vals
+                                    .first()
+                                    .map(|v| format!("{}", v.value))
+                                    .unwrap_or_else(|| "default".to_string());
+                                let payload: Vec<ConfidentValue> =
+                                    arg_vals.into_iter().skip(1).collect();
+
+                                let pool = crate::runtime::pool::PoolExecutor::new(
+                                    pool_decl,
+                                    &self.program,
+                                    self.providers.clone(),
+                                    self.tracer.clone(),
+                                )?;
+                                return pool.send(&event, payload).await;
                             }
+                        }
+                    }
+
+                    let obj = self.eval_expr(obj_expr, env).await?;
+                    match method.node.as_str() {
+                        "len" | "count" => {
+                            let len = match &obj.value {
+                                Value::Array(v) | Value::List(v) => v.len(),
+                                Value::Text(s) => s.len(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Array, List, or Text".to_string(),
+                                        got: format!("{}", obj.value),
+                                    })
+                                }
+                            };
+                            Ok(ConfidentValue::deterministic(Value::Number(len as f64)))
+                        }
+                        "contains" | "any" => {
+                            if args.is_empty() {
+                                return Err(RuntimeError::TypeError {
+                                    expected: "1 argument".to_string(),
+                                    got: "0 arguments".to_string(),
+                                });
+                            }
+                            let needle = self.eval_expr(&args[0].node.value, env).await?;
+                            let found = match &obj.value {
+                                Value::Array(v) | Value::List(v) => v
+                                    .iter()
+                                    .any(|item| values_equal(&item.value, &needle.value)),
+                                Value::Text(s) => {
+                                    if let Value::Text(needle_s) = &needle.value {
+                                        s.contains(needle_s.as_str())
+                                    } else {
+                                        false
+                                    }
+                                }
+                                _ => false,
+                            };
+                            Ok(ConfidentValue::deterministic(Value::Bool(found)))
+                        }
+                        "all_same" => {
+                            let same = match &obj.value {
+                                Value::Array(v) | Value::List(v) => {
+                                    if v.is_empty() {
+                                        true
+                                    } else {
+                                        let first = &v[0].value;
+                                        v.iter().all(|item| values_equal(&item.value, first))
+                                    }
+                                }
+                                _ => false,
+                            };
+                            Ok(ConfidentValue::deterministic(Value::Bool(same)))
+                        }
+                        "first" => match &obj.value {
+                            Value::Array(v) | Value::List(v) => Ok(v
+                                .first()
+                                .cloned()
+                                .unwrap_or(ConfidentValue::deterministic(Value::Unit))),
                             _ => Err(RuntimeError::TypeError {
                                 expected: "Array or List".to_string(),
                                 got: format!("{}", obj.value),
                             }),
-                        }
-                    }
-                    "none" => {
-                        if args.is_empty() {
-                            return Err(RuntimeError::TypeError {
-                                expected: "1 argument".to_string(),
-                                got: "0 arguments".to_string(),
-                            });
-                        }
-                        let needle = self.eval_expr(&args[0].node.value, env).await?;
-                        let none = match &obj.value {
-                            Value::Array(v) | Value::List(v) => {
-                                !v.iter().any(|item| values_equal(&item.value, &needle.value))
+                        },
+                        "none" => {
+                            if args.is_empty() {
+                                return Err(RuntimeError::TypeError {
+                                    expected: "1 argument".to_string(),
+                                    got: "0 arguments".to_string(),
+                                });
                             }
-                            _ => true,
-                        };
-                        Ok(ConfidentValue::deterministic(Value::Bool(none)))
+                            let needle = self.eval_expr(&args[0].node.value, env).await?;
+                            let none = match &obj.value {
+                                Value::Array(v) | Value::List(v) => !v
+                                    .iter()
+                                    .any(|item| values_equal(&item.value, &needle.value)),
+                                _ => true,
+                            };
+                            Ok(ConfidentValue::deterministic(Value::Bool(none)))
+                        }
+                        "lower" => {
+                            let text = match &obj.value {
+                                Value::Text(s) => s.to_lowercase(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Text".to_string(),
+                                        got: format!("{}", obj.value),
+                                    })
+                                }
+                            };
+                            Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
+                        }
+                        "upper" => {
+                            let text = match &obj.value {
+                                Value::Text(s) => s.to_uppercase(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Text".to_string(),
+                                        got: format!("{}", obj.value),
+                                    })
+                                }
+                            };
+                            Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
+                        }
+                        "trim" => {
+                            let text = match &obj.value {
+                                Value::Text(s) => s.trim().to_string(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Text".to_string(),
+                                        got: format!("{}", obj.value),
+                                    })
+                                }
+                            };
+                            Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
+                        }
+                        other => Err(RuntimeError::Unsupported(format!("method .{}()", other))),
                     }
-                    "lower" => {
-                        let text = match &obj.value {
-                            Value::Text(s) => s.to_lowercase(),
-                            _ => return Err(RuntimeError::TypeError {
-                                expected: "Text".to_string(),
-                                got: format!("{}", obj.value),
-                            }),
-                        };
-                        Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
-                    }
-                    "upper" => {
-                        let text = match &obj.value {
-                            Value::Text(s) => s.to_uppercase(),
-                            _ => return Err(RuntimeError::TypeError {
-                                expected: "Text".to_string(),
-                                got: format!("{}", obj.value),
-                            }),
-                        };
-                        Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
-                    }
-                    "trim" => {
-                        let text = match &obj.value {
-                            Value::Text(s) => s.trim().to_string(),
-                            _ => return Err(RuntimeError::TypeError {
-                                expected: "Text".to_string(),
-                                got: format!("{}", obj.value),
-                            }),
-                        };
-                        Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
-                    }
-                    other => Err(RuntimeError::Unsupported(
-                        format!("method .{}()", other),
-                    )),
-                }
-            }
-
-            Expr::TypeAccess(_type_name, variant) => {
-                Ok(ConfidentValue::deterministic(Value::Text(variant.node.clone())))
-            }
-
-            Expr::GlobAccess(inner) => {
-                self.eval_expr(inner, env).await
-            }
-
-            // ── Calls ─────────────────────────────────────────────────────
-
-            Expr::Call(call) => {
-                let name = &call.name.node;
-                let mut arg_vals = Vec::new();
-                for arg in &call.args {
-                    arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
                 }
 
-                if let Some(task_decl) = self.task_map.get(name).cloned() {
-                    if let Some(ref tracer) = self.tracer {
-                        tracer.task_call(name);
+                Expr::TypeAccess(_type_name, variant) => Ok(ConfidentValue::deterministic(
+                    Value::Text(variant.node.clone()),
+                )),
+
+                Expr::GlobAccess(inner) => self.eval_expr(inner, env).await,
+
+                // ── Calls ─────────────────────────────────────────────────────
+                Expr::Call(call) => {
+                    let name = &call.name.node;
+                    let mut arg_vals = Vec::new();
+                    for arg in &call.args {
+                        arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
                     }
-                    let result = self.call_task(&task_decl, arg_vals).await;
-                    if let Some(ref tracer) = self.tracer {
-                        tracer.task_return(name, result.is_ok());
+
+                    if let Some(task_decl) = self.task_map.get(name).cloned() {
+                        if let Some(ref tracer) = self.tracer {
+                            tracer.task_call(name);
+                        }
+                        let result = self.call_task(&task_decl, arg_vals).await;
+                        if let Some(ref tracer) = self.tracer {
+                            tracer.task_return(name, result.is_ok());
+                        }
+                        result
+                    } else if let Some(pure_decl) = self.pure_map.get(name).cloned() {
+                        self.call_pure(&pure_decl, arg_vals).await
+                    } else if let Some(flow_decl) = self.flow_map.get(name).cloned() {
+                        self.call_flow(&flow_decl, arg_vals).await
+                    } else if let Some(pool_decl) = self.pool_map.get(name).cloned() {
+                        let pool = crate::runtime::pool::PoolExecutor::new(
+                            pool_decl,
+                            &self.program,
+                            self.providers.clone(),
+                            self.tracer.clone(),
+                        )?;
+                        let event = arg_vals
+                            .first()
+                            .map(|v| format!("{}", v.value))
+                            .unwrap_or_else(|| "default".to_string());
+                        let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
+                        pool.send(&event, payload).await
+                    } else if name.starts_with(|c: char| c.is_uppercase()) {
+                        // Uppercase names not in task/pure/flow/pool maps are type constructors
+                        let mut fields = HashMap::new();
+                        for (i, arg) in call.args.iter().enumerate() {
+                            let val = self.eval_expr(&arg.node.value, env).await?;
+                            let key = arg
+                                .node
+                                .label
+                                .as_ref()
+                                .map(|l| l.node.clone())
+                                .unwrap_or_else(|| format!("_{}", i));
+                            fields.insert(key, val);
+                        }
+                        if fields.is_empty() {
+                            // No-arg variant: just a tag
+                            Ok(ConfidentValue::deterministic(Value::Text(name.clone())))
+                        } else {
+                            // With args: Record tagged by position or label
+                            // Wrap in an outer record with the type name for match dispatch
+                            let inner = ConfidentValue::deterministic(Value::Record(fields));
+                            let mut wrapper = HashMap::new();
+                            wrapper.insert(
+                                "_type".to_string(),
+                                ConfidentValue::deterministic(Value::Text(name.clone())),
+                            );
+                            wrapper.insert("_value".to_string(), inner);
+                            Ok(ConfidentValue::deterministic(Value::Record(wrapper)))
+                        }
+                    } else if name == "winning_lines" {
+                        // Built-in: returns the 8 triplets for tic-tac-toe win detection
+                        let board = arg_vals
+                            .into_iter()
+                            .next()
+                            .unwrap_or(ConfidentValue::deterministic(Value::Unit));
+                        let cells = match &board.value {
+                            Value::Array(v) | Value::List(v) => v.clone(),
+                            _ => {
+                                return Err(RuntimeError::TypeError {
+                                    expected: "Array[9]".to_string(),
+                                    got: format!("{}", board.value),
+                                })
+                            }
+                        };
+                        let indices: &[&[usize]] = &[
+                            &[0, 1, 2],
+                            &[3, 4, 5],
+                            &[6, 7, 8], // rows
+                            &[0, 3, 6],
+                            &[1, 4, 7],
+                            &[2, 5, 8], // cols
+                            &[0, 4, 8],
+                            &[2, 4, 6], // diags
+                        ];
+                        let lines: Vec<ConfidentValue> = indices
+                            .iter()
+                            .map(|idx| {
+                                let line: Vec<ConfidentValue> = idx
+                                    .iter()
+                                    .map(|&i| {
+                                        cells.get(i).cloned().unwrap_or(
+                                            ConfidentValue::deterministic(Value::Text(
+                                                "_".to_string(),
+                                            )),
+                                        )
+                                    })
+                                    .collect();
+                                ConfidentValue::deterministic(Value::Array(line))
+                            })
+                            .collect();
+                        Ok(ConfidentValue::deterministic(Value::Array(lines)))
+                    } else {
+                        Err(RuntimeError::NotCallable { name: name.clone() })
                     }
-                    result
-                } else if let Some(pure_decl) = self.pure_map.get(name).cloned() {
-                    self.call_pure(&pure_decl, arg_vals).await
-                } else if let Some(flow_decl) = self.flow_map.get(name).cloned() {
-                    self.call_flow(&flow_decl, arg_vals).await
-                } else if let Some(pool_decl) = self.pool_map.get(name).cloned() {
-                    let pool = crate::runtime::pool::PoolExecutor::new(
-                        pool_decl,
-                        &self.program,
-                        self.providers.clone(),
-                        self.tracer.clone(),
-                    )?;
-                    let event = arg_vals.first()
-                        .map(|v| format!("{}", v.value))
-                        .unwrap_or_else(|| "default".to_string());
-                    let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
-                    pool.send(&event, payload).await
-                } else if name.starts_with(|c: char| c.is_uppercase()) {
-                    // Uppercase names not in task/pure/flow/pool maps are type constructors
+                }
+
+                Expr::Constructor(ctor) => {
                     let mut fields = HashMap::new();
-                    for (i, arg) in call.args.iter().enumerate() {
+                    for (i, arg) in ctor.args.iter().enumerate() {
                         let val = self.eval_expr(&arg.node.value, env).await?;
-                        let key = arg.node.label.as_ref()
+                        let key = arg
+                            .node
+                            .label
+                            .as_ref()
                             .map(|l| l.node.clone())
                             .unwrap_or_else(|| format!("_{}", i));
                         fields.insert(key, val);
                     }
-                    if fields.is_empty() {
-                        // No-arg variant: just a tag
-                        Ok(ConfidentValue::deterministic(Value::Text(name.clone())))
-                    } else {
-                        // With args: Record tagged by position or label
-                        // Wrap in an outer record with the type name for match dispatch
-                        let inner = ConfidentValue::deterministic(Value::Record(fields));
-                        let mut wrapper = HashMap::new();
-                        wrapper.insert("_type".to_string(), ConfidentValue::deterministic(Value::Text(name.clone())));
-                        wrapper.insert("_value".to_string(), inner);
-                        Ok(ConfidentValue::deterministic(Value::Record(wrapper)))
+                    Ok(ConfidentValue::deterministic(Value::Record(fields)))
+                }
+
+                // ── LLM expressions ───────────────────────────────────────────
+                Expr::Reason(prompt_expr) => {
+                    let prompt = self.eval_expr(prompt_expr, env).await?;
+                    let prompt_text = format!("{}", prompt.value);
+
+                    if let Some(ref tracer) = self.tracer {
+                        tracer.llm_request("reason", &prompt_text);
                     }
-                } else if name == "winning_lines" {
-                    // Built-in: returns the 8 triplets for tic-tac-toe win detection
-                    let board = arg_vals.into_iter().next()
-                        .unwrap_or(ConfidentValue::deterministic(Value::Unit));
-                    let cells = match &board.value {
-                        Value::Array(v) | Value::List(v) => v.clone(),
-                        _ => return Err(RuntimeError::TypeError {
-                            expected: "Array[9]".to_string(),
-                            got: format!("{}", board.value),
-                        }),
-                    };
-                    let indices: &[&[usize]] = &[
-                        &[0, 1, 2], &[3, 4, 5], &[6, 7, 8], // rows
-                        &[0, 3, 6], &[1, 4, 7], &[2, 5, 8], // cols
-                        &[0, 4, 8], &[2, 4, 6],              // diags
-                    ];
-                    let lines: Vec<ConfidentValue> = indices.iter().map(|idx| {
-                        let line: Vec<ConfidentValue> = idx.iter()
-                            .map(|&i| cells.get(i).cloned()
-                                .unwrap_or(ConfidentValue::deterministic(Value::Text("_".to_string()))))
-                            .collect();
-                        ConfidentValue::deterministic(Value::Array(line))
-                    }).collect();
-                    Ok(ConfidentValue::deterministic(Value::Array(lines)))
-                } else {
-                    Err(RuntimeError::NotCallable { name: name.clone() })
-                }
-            }
 
-            Expr::Constructor(ctor) => {
-                let mut fields = HashMap::new();
-                for (i, arg) in ctor.args.iter().enumerate() {
-                    let val = self.eval_expr(&arg.node.value, env).await?;
-                    let key = arg.node.label.as_ref()
-                        .map(|l| l.node.clone())
-                        .unwrap_or_else(|| format!("_{}", i));
-                    fields.insert(key, val);
-                }
-                Ok(ConfidentValue::deterministic(Value::Record(fields)))
-            }
+                    let request = CompletionRequest::simple(&prompt_text);
+                    let response = self
+                        .providers
+                        .resolve_and_complete(request, None)
+                        .await
+                        .map_err(|e| RuntimeError::LLMError(e.to_string()))?;
+                    let confidence = response.estimate_confidence();
 
-            // ── LLM expressions ───────────────────────────────────────────
+                    if let Some(ref tracer) = self.tracer {
+                        tracer.llm_response(&LLMResponseInfo {
+                            operation: "reason",
+                            provider: &response.provider_name,
+                            model: &response.model_used,
+                            tokens_in: response.tokens_in,
+                            tokens_out: response.tokens_out,
+                            cost_usd: response.cost_usd,
+                            confidence,
+                        });
+                    }
 
-            Expr::Reason(prompt_expr) => {
-                let prompt = self.eval_expr(prompt_expr, env).await?;
-                let prompt_text = format!("{}", prompt.value);
-
-                if let Some(ref tracer) = self.tracer {
-                    tracer.llm_request("reason", &prompt_text);
-                }
-
-                let request = CompletionRequest::simple(&prompt_text);
-                let response = self.providers.resolve_and_complete(request, None).await
-                    .map_err(|e| RuntimeError::LLMError(e.to_string()))?;
-                let confidence = response.estimate_confidence();
-
-                if let Some(ref tracer) = self.tracer {
-                    tracer.llm_response(&LLMResponseInfo {
-                        operation: "reason",
-                        provider: &response.provider_name,
-                        model: &response.model_used,
-                        tokens_in: response.tokens_in,
-                        tokens_out: response.tokens_out,
-                        cost_usd: response.cost_usd,
+                    Ok(ConfidentValue::from_llm(
+                        Value::Text(response.content),
                         confidence,
-                    });
+                    ))
                 }
 
-                Ok(ConfidentValue::from_llm(Value::Text(response.content), confidence))
-            }
-
-            Expr::Classify(classify) => {
-                let input = self.eval_expr(&classify.input, env).await?;
-                let labels: Vec<String> = classify.labels.iter()
-                    .map(|l| l.node.clone())
-                    .collect();
-                let prompt = format!(
+                Expr::Classify(classify) => {
+                    let input = self.eval_expr(&classify.input, env).await?;
+                    let labels: Vec<String> =
+                        classify.labels.iter().map(|l| l.node.clone()).collect();
+                    let prompt = format!(
                     "Classify the following into exactly one of these categories: {}\n\nInput: {}\n\nRespond with just the category name.",
                     labels.join(", "),
                     input.value,
                 );
 
-                if let Some(ref tracer) = self.tracer {
-                    tracer.llm_request("classify", &prompt);
-                }
+                    if let Some(ref tracer) = self.tracer {
+                        tracer.llm_request("classify", &prompt);
+                    }
 
-                let request = CompletionRequest::simple(&prompt).with_temperature(0.0);
-                let response = self.providers.resolve_and_complete(request, None).await
-                    .map_err(|e| RuntimeError::LLMError(e.to_string()))?;
-                let confidence = response.estimate_confidence();
+                    let request = CompletionRequest::simple(&prompt).with_temperature(0.0);
+                    let response = self
+                        .providers
+                        .resolve_and_complete(request, None)
+                        .await
+                        .map_err(|e| RuntimeError::LLMError(e.to_string()))?;
+                    let confidence = response.estimate_confidence();
 
-                if let Some(ref tracer) = self.tracer {
-                    tracer.llm_response(&LLMResponseInfo {
-                        operation: "classify",
-                        provider: &response.provider_name,
-                        model: &response.model_used,
-                        tokens_in: response.tokens_in,
-                        tokens_out: response.tokens_out,
-                        cost_usd: response.cost_usd,
+                    if let Some(ref tracer) = self.tracer {
+                        tracer.llm_response(&LLMResponseInfo {
+                            operation: "classify",
+                            provider: &response.provider_name,
+                            model: &response.model_used,
+                            tokens_in: response.tokens_in,
+                            tokens_out: response.tokens_out,
+                            cost_usd: response.cost_usd,
+                            confidence,
+                        });
+                    }
+
+                    Ok(ConfidentValue::from_llm(
+                        Value::Text(response.content.trim().to_string()),
                         confidence,
-                    });
+                    ))
                 }
 
-                Ok(ConfidentValue::from_llm(
-                    Value::Text(response.content.trim().to_string()),
-                    confidence,
-                ))
-            }
+                Expr::Search(_) => Ok(ConfidentValue::deterministic(Value::List(vec![]))),
 
-            Expr::Search(_) => {
-                Ok(ConfidentValue::deterministic(Value::List(vec![])))
-            }
-
-            // ── Composition ───────────────────────────────────────────────
-
-            Expr::TryOr(primary, fallback) => {
-                match self.eval_expr(primary, env).await {
+                // ── Composition ───────────────────────────────────────────────
+                Expr::TryOr(primary, fallback) => match self.eval_expr(primary, env).await {
                     Ok(val) => Ok(val),
                     Err(_) => self.eval_expr(fallback, env).await,
-                }
-            }
+                },
 
-            Expr::Compose(parts) => {
-                if parts.is_empty() {
-                    return Ok(ConfidentValue::deterministic(Value::Unit));
+                Expr::Compose(parts) => {
+                    if parts.is_empty() {
+                        return Ok(ConfidentValue::deterministic(Value::Unit));
+                    }
+                    let mut current = self.eval_expr(&parts[0], env).await?;
+                    for part in &parts[1..] {
+                        env.push_scope();
+                        env.bind("_pipe", current);
+                        current = self.eval_expr(part, env).await?;
+                        env.pop_scope();
+                    }
+                    Ok(current)
                 }
-                let mut current = self.eval_expr(&parts[0], env).await?;
-                for part in &parts[1..] {
-                    env.push_scope();
-                    env.bind("_pipe", current);
-                    current = self.eval_expr(part, env).await?;
-                    env.pop_scope();
-                }
-                Ok(current)
-            }
 
-            Expr::FanOut(parts) => {
-                let mut results = Vec::new();
-                for part in parts {
-                    results.push(self.eval_expr(part, env).await?);
+                Expr::FanOut(parts) => {
+                    let mut results = Vec::new();
+                    for part in parts {
+                        results.push(self.eval_expr(part, env).await?);
+                    }
+                    let min_conf = results.iter().map(|r| r.confidence).fold(1.0_f32, f32::min);
+                    Ok(ConfidentValue::derived(Value::Array(results), min_conf))
                 }
-                let min_conf = results.iter()
-                    .map(|r| r.confidence)
-                    .fold(1.0_f32, f32::min);
-                Ok(ConfidentValue::derived(Value::Array(results), min_conf))
             }
-        }
         })
     }
 
@@ -981,7 +1056,9 @@ impl TaskExecutor {
     ) -> Result<ConfidentValue, RuntimeError> {
         let mut env = Env::new();
         for (i, param) in decl.needs.iter().enumerate() {
-            let val = args.get(i).cloned()
+            let val = args
+                .get(i)
+                .cloned()
                 .unwrap_or(ConfidentValue::deterministic(Value::Unit));
             env.bind(&param.node.name, val);
         }
@@ -1003,7 +1080,9 @@ impl TaskExecutor {
     ) -> Result<ConfidentValue, RuntimeError> {
         let mut env = Env::new();
         for (i, param) in decl.needs.iter().enumerate() {
-            let val = args.get(i).cloned()
+            let val = args
+                .get(i)
+                .cloned()
                 .unwrap_or(ConfidentValue::deterministic(Value::Unit));
             env.bind(&param.node.name, val);
         }
@@ -1031,14 +1110,18 @@ impl TaskExecutor {
             .map_err(|e| RuntimeError::FlowError(e.to_string()))?;
 
         // Build stage lookup
-        let stage_map: HashMap<String, StageDecl> = decl.stages.iter()
+        let stage_map: HashMap<String, StageDecl> = decl
+            .stages
+            .iter()
             .map(|s| (s.node.name.node.clone(), s.node.clone()))
             .collect();
 
         // Bind flow parameters
         let mut flow_args: HashMap<String, ConfidentValue> = HashMap::new();
         for (i, param) in decl.needs.iter().enumerate() {
-            let val = args.get(i).cloned()
+            let val = args
+                .get(i)
+                .cloned()
                 .unwrap_or(ConfidentValue::deterministic(Value::Unit));
             flow_args.insert(param.node.name.clone(), val);
         }
@@ -1059,9 +1142,9 @@ impl TaskExecutor {
                 // Single stage — no spawn overhead
                 let stage_name = &wave[0];
                 let stage_decl = &stage_map[stage_name];
-                let (bindings, give_val) = self.execute_stage(
-                    stage_name, stage_decl, &flow_args, &stage_outputs,
-                ).await?;
+                let (bindings, give_val) = self
+                    .execute_stage(stage_name, stage_decl, &flow_args, &stage_outputs)
+                    .await?;
                 if let Some(gv) = give_val {
                     last_result = gv;
                 }
@@ -1077,15 +1160,21 @@ impl TaskExecutor {
                     let name = stage_name.clone();
 
                     handles.push(tokio::spawn(async move {
-                        let result = executor_clone.execute_stage(
-                            &name, &stage_decl, &flow_args_clone, &stage_outputs_clone,
-                        ).await;
+                        let result = executor_clone
+                            .execute_stage(
+                                &name,
+                                &stage_decl,
+                                &flow_args_clone,
+                                &stage_outputs_clone,
+                            )
+                            .await;
                         (name, result)
                     }));
                 }
 
                 for handle in handles {
-                    let (name, result) = handle.await
+                    let (name, result) = handle
+                        .await
                         .map_err(|e| RuntimeError::FlowError(format!("stage join error: {}", e)))?;
                     let (bindings, give_val) = result?;
                     if let Some(gv) = give_val {
@@ -1134,7 +1223,8 @@ impl TaskExecutor {
                     needed_stages.insert(stage.clone(), None);
                 }
                 NeedsRefField::Named(field) => {
-                    needed_stages.entry(stage.clone())
+                    needed_stages
+                        .entry(stage.clone())
                         .and_modify(|v| {
                             if let Some(fields) = v {
                                 fields.push(field.clone());
@@ -1146,23 +1236,25 @@ impl TaskExecutor {
         }
 
         for (dep_stage, fields_opt) in &needed_stages {
-            let dep_bindings = stage_outputs.get(dep_stage)
-                .ok_or_else(|| RuntimeError::FlowError(
-                    format!("stage '{}' output not available for stage '{}'", dep_stage, stage_name)
-                ))?;
+            let dep_bindings = stage_outputs.get(dep_stage).ok_or_else(|| {
+                RuntimeError::FlowError(format!(
+                    "stage '{}' output not available for stage '{}'",
+                    dep_stage, stage_name
+                ))
+            })?;
 
             let record: HashMap<String, ConfidentValue> = match fields_opt {
                 None => dep_bindings.clone(),
-                Some(fields) => {
-                    fields.iter()
-                        .filter_map(|f| dep_bindings.get(f).map(|v| (f.clone(), v.clone())))
-                        .collect()
-                }
+                Some(fields) => fields
+                    .iter()
+                    .filter_map(|f| dep_bindings.get(f).map(|v| (f.clone(), v.clone())))
+                    .collect(),
             };
 
-            env.bind(dep_stage, ConfidentValue::deterministic(
-                Value::Record(record)
-            ));
+            env.bind(
+                dep_stage,
+                ConfidentValue::deterministic(Value::Record(record)),
+            );
         }
 
         // Push scope so we can extract stage-produced bindings
@@ -1224,13 +1316,13 @@ fn eval_binop(left: &Value, op: &BinOp, right: &Value) -> Result<Value, RuntimeE
         (Value::Number(a), BinOp::Sub, Value::Number(b)) => Ok(Value::Number(a - b)),
         (Value::Number(a), BinOp::Mul, Value::Number(b)) => Ok(Value::Number(a * b)),
         (Value::Number(a), BinOp::Div, Value::Number(b)) => {
-            if *b == 0.0 { return Err(RuntimeError::DivisionByZero); }
+            if *b == 0.0 {
+                return Err(RuntimeError::DivisionByZero);
+            }
             Ok(Value::Number(a / b))
         }
         // String concatenation
-        (Value::Text(a), BinOp::Add, Value::Text(b)) => {
-            Ok(Value::Text(format!("{}{}", a, b)))
-        }
+        (Value::Text(a), BinOp::Add, Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
         // Numeric comparison
         (Value::Number(a), BinOp::Lt, Value::Number(b)) => Ok(Value::Bool(a < b)),
         (Value::Number(a), BinOp::Gt, Value::Number(b)) => Ok(Value::Bool(a > b)),
@@ -1262,7 +1354,8 @@ fn match_pattern(
             match &subject.value {
                 // Tagged record: { _type: "Winner", _value: { _0: val } }
                 Value::Record(fields) => {
-                    let type_match = fields.get("_type")
+                    let type_match = fields
+                        .get("_type")
                         .and_then(|t| match &t.value {
                             Value::Text(s) => Some(s.as_str()),
                             _ => None,
@@ -1308,7 +1401,11 @@ mod tests {
     use crate::types::ConfidenceSource;
 
     async fn run_forge(source: &str) -> (Result<ConfidentValue, RuntimeError>, Vec<String>) {
-        run_forge_with_mock(source, MockProvider::new("mock").with_default("mock response")).await
+        run_forge_with_mock(
+            source,
+            MockProvider::new("mock").with_default("mock response"),
+        )
+        .await
     }
 
     async fn run_forge_with_mock(
@@ -1326,32 +1423,41 @@ mod tests {
 
     #[tokio::test]
     async fn test_say_template() {
-        let (result, outputs) = run_forge(r#"
+        let (result, outputs) = run_forge(
+            r#"
 fn main
   say "hello world"
-"#).await;
+"#,
+        )
+        .await;
         assert!(result.is_ok());
         assert_eq!(outputs, vec!["hello world"]);
     }
 
     #[tokio::test]
     async fn test_bind_and_say() {
-        let (result, outputs) = run_forge(r#"
+        let (result, outputs) = run_forge(
+            r#"
 fn main
   name = "FORGE"
   say "Hello, {name}!"
-"#).await;
+"#,
+        )
+        .await;
         assert!(result.is_ok());
         assert_eq!(outputs, vec!["Hello, FORGE!"]);
     }
 
     #[tokio::test]
     async fn test_template_escapes_render_as_control_characters() {
-        let (result, outputs) = run_forge(r#"
+        let (result, outputs) = run_forge(
+            r#"
 fn main
   language = "rust"
   say "Line 1\nLanguage: {language}\tend\\"
-"#).await;
+"#,
+        )
+        .await;
         assert!(result.is_ok());
         assert_eq!(outputs, vec!["Line 1\nLanguage: rust\tend\\"]);
     }
@@ -1365,12 +1471,15 @@ fn main
 
     #[tokio::test]
     async fn test_binop_arithmetic() {
-        let (result, _) = run_forge(r#"
+        let (result, _) = run_forge(
+            r#"
 fn main
   x = 10 + 5
   y = x * 2
   give y
-"#).await;
+"#,
+        )
+        .await;
         let val = result.unwrap();
         assert!(matches!(val.value, Value::Number(n) if (n - 30.0).abs() < f64::EPSILON));
     }
@@ -1397,18 +1506,24 @@ fn main
     #[tokio::test]
     async fn test_undefined_variable_error() {
         let (result, _) = run_forge("fn main\n  say foo\n").await;
-        assert!(matches!(result, Err(RuntimeError::UndefinedVariable { .. })));
+        assert!(matches!(
+            result,
+            Err(RuntimeError::UndefinedVariable { .. })
+        ));
     }
 
     #[tokio::test]
     async fn test_no_main_error() {
-        let (result, _) = run_forge(r#"
+        let (result, _) = run_forge(
+            r#"
 task greet
   needs name: Text
   gives Text
   do
     say "hello"
-"#).await;
+"#,
+        )
+        .await;
         assert!(matches!(result, Err(RuntimeError::NoMainFunction)));
     }
 
@@ -1421,14 +1536,16 @@ task greet
     #[tokio::test]
     async fn test_if_else_true_branch() {
         // fn main: i1=2sp for stmts, if body at i3=6sp, else at i2=4sp
-        let src = "fn main\n  x = 10\n  if x > 5\n      say \"big\"\n    else\n      say \"small\"\n";
+        let src =
+            "fn main\n  x = 10\n  if x > 5\n      say \"big\"\n    else\n      say \"small\"\n";
         let (_, outputs) = run_forge(src).await;
         assert_eq!(outputs, vec!["big"]);
     }
 
     #[tokio::test]
     async fn test_if_else_false_branch() {
-        let src = "fn main\n  x = 2\n  if x > 5\n      say \"big\"\n    else\n      say \"small\"\n";
+        let src =
+            "fn main\n  x = 2\n  if x > 5\n      say \"big\"\n    else\n      say \"small\"\n";
         let (_, outputs) = run_forge(src).await;
         assert_eq!(outputs, vec!["small"]);
     }
@@ -1458,7 +1575,8 @@ task greet
 
     #[tokio::test]
     async fn test_task_call() {
-        let (_, outputs) = run_forge(r#"
+        let (_, outputs) = run_forge(
+            r#"
 task greet
   needs name: Text
   gives Text
@@ -1468,7 +1586,9 @@ task greet
 fn main
   result = greet("World")
   say result
-"#).await;
+"#,
+        )
+        .await;
         assert_eq!(outputs, vec!["Hello, World!"]);
     }
 
@@ -1485,10 +1605,14 @@ fn main
     #[tokio::test]
     async fn test_reason_mock() {
         let mock = MockProvider::new("mock").with_default("The answer is 42.");
-        let (result, _) = run_forge_with_mock(r#"
+        let (result, _) = run_forge_with_mock(
+            r#"
 fn main
   give reason "What is the meaning of life?"
-"#, mock).await;
+"#,
+            mock,
+        )
+        .await;
         let val = result.unwrap();
         assert!(matches!(val.value, Value::Text(ref s) if s == "The answer is 42."));
         assert!(val.confidence > 0.0);
@@ -1498,7 +1622,8 @@ fn main
     #[tokio::test]
     async fn test_when_sure_branch() {
         let mock = MockProvider::new("mock").with_default("support");
-        let (_, outputs) = run_forge_with_mock(r#"
+        let (_, outputs) = run_forge_with_mock(
+            r#"
 use
   llm.classify
 
@@ -1514,7 +1639,10 @@ task classify_intent
 fn main
   out = classify_intent("help me")
   say out
-"#, mock).await;
+"#,
+            mock,
+        )
+        .await;
         assert_eq!(outputs, vec!["support"]);
     }
 
@@ -1522,7 +1650,8 @@ fn main
     async fn test_when_else_branch() {
         let mock = MockProvider::new("mock")
             .with_default("I'm not sure, I think it might be possibly something, I don't know, it depends, unclear");
-        let (_, outputs) = run_forge_with_mock(r#"
+        let (_, outputs) = run_forge_with_mock(
+            r#"
 use
   llm.classify
 
@@ -1537,7 +1666,10 @@ task classify_intent
 fn main
   out = classify_intent("help")
   say out
-"#, mock).await;
+"#,
+            mock,
+        )
+        .await;
         assert_eq!(outputs, vec!["unknown"]);
     }
 
@@ -1562,9 +1694,12 @@ fn main
 
     #[tokio::test]
     async fn test_text_concat() {
-        let (result, _) = run_forge(r#"fn main
+        let (result, _) = run_forge(
+            r#"fn main
   give "hello" + " " + "world"
-"#).await;
+"#,
+        )
+        .await;
         assert!(matches!(result.unwrap().value, Value::Text(ref s) if s == "hello world"));
     }
 
@@ -1579,7 +1714,8 @@ fn main
 
     #[tokio::test]
     async fn test_flow_single_stage() {
-        let (result, outputs) = run_forge(r#"
+        let (result, outputs) = run_forge(
+            r#"
 flow greetflow
   needs name: Text
   gives Text
@@ -1590,14 +1726,17 @@ flow greetflow
 fn main
   result = greetflow("World")
   say result
-"#).await;
+"#,
+        )
+        .await;
         assert!(result.is_ok());
         assert_eq!(outputs, vec!["Hello, World!"]);
     }
 
     #[tokio::test]
     async fn test_flow_multi_wave_with_deps() {
-        let (result, outputs) = run_forge(r#"
+        let (result, outputs) = run_forge(
+            r#"
 flow pipeline
   needs input: Text
   gives Text
@@ -1612,14 +1751,17 @@ flow pipeline
 fn main
   result = pipeline("data")
   say result
-"#).await;
+"#,
+        )
+        .await;
         assert!(result.is_ok());
         assert_eq!(outputs, vec!["data processed and refined"]);
     }
 
     #[tokio::test]
     async fn test_flow_parallel_independent_stages() {
-        let (result, _) = run_forge(r#"
+        let (result, _) = run_forge(
+            r#"
 flow parallel
   needs x: Text
   gives Text
@@ -1636,7 +1778,9 @@ flow parallel
 
 fn main
   give parallel("test")
-"#).await;
+"#,
+        )
+        .await;
         let val = result.unwrap();
         assert!(matches!(val.value, Value::Text(ref s) if s == "A:test+B:test"));
     }
@@ -1646,7 +1790,8 @@ fn main
         let mock = MockProvider::new("mock")
             .with_response("synthesize", "synthesis result")
             .with_default("other response");
-        let (result, outputs) = run_forge_with_mock(r#"
+        let (result, outputs) = run_forge_with_mock(
+            r#"
 flow analyze
   needs topic: Text
   gives Text
@@ -1661,14 +1806,18 @@ flow analyze
 fn main
   result = analyze("AI")
   say result
-"#, mock).await;
+"#,
+            mock,
+        )
+        .await;
         assert!(result.is_ok());
         assert_eq!(outputs, vec!["synthesis result"]);
     }
 
     #[tokio::test]
     async fn test_flow_cycle_detection() {
-        let (result, _) = run_forge(r#"
+        let (result, _) = run_forge(
+            r#"
 flow cyclic
   needs x: Text
   gives Text
@@ -1683,7 +1832,9 @@ flow cyclic
 
 fn main
   give cyclic("test")
-"#).await;
+"#,
+        )
+        .await;
         assert!(matches!(result, Err(RuntimeError::FlowError(ref msg)) if msg.contains("cycle")));
     }
 }

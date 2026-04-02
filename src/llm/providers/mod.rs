@@ -1,12 +1,16 @@
-use std::sync::Arc;
 use crate::config::ProviderConfig;
 use crate::llm::BoxedProvider;
+use std::sync::Arc;
 
 pub mod anthropic;
-pub mod openai_compat;
 pub mod mock;
+pub mod openai_compat;
 
-fn resolve_api_key(config: &ProviderConfig, provider_type: &str, provider_name: &str) -> Result<String, String> {
+fn resolve_api_key(
+    config: &ProviderConfig,
+    provider_type: &str,
+    provider_name: &str,
+) -> Result<String, String> {
     // 1. Check config api_key (already env-expanded by config loading)
     if let Some(key) = config.api_key.as_deref() {
         if !key.is_empty() {
@@ -47,41 +51,45 @@ fn resolve_api_key(config: &ProviderConfig, provider_type: &str, provider_name: 
     ))
 }
 
-pub fn build_provider(
-    name: &str,
-    config: &ProviderConfig,
-) -> Result<BoxedProvider, String> {
+pub fn build_provider(name: &str, config: &ProviderConfig) -> Result<BoxedProvider, String> {
     match config.type_.as_str() {
         "anthropic" => {
             let api_key = resolve_api_key(config, "anthropic", name)?;
-            let model = config.model.as_deref()
+            let model = config
+                .model
+                .as_deref()
                 .unwrap_or("claude-haiku-4-5-20251001");
             Ok(Arc::new(anthropic::AnthropicProvider::new(
-                name, &api_key, model, config
+                name, &api_key, model, config,
             )?))
         }
 
         "openai" => {
             let api_key = resolve_api_key(config, "openai", name)?;
-            let model = config.model.as_deref()
-                .unwrap_or("gpt-4o");
+            let model = config.model.as_deref().unwrap_or("gpt-4o");
             let mut cfg = config.clone();
             cfg.base_url = Some("https://api.openai.com/v1".to_string());
             Ok(Arc::new(openai_compat::OpenAICompatProvider::new(
-                name, &api_key, model, &cfg
+                name, &api_key, model, &cfg,
             )?))
         }
 
         "openai-compat" | "ollama" | "vllm" | "lmstudio" => {
-            let base_url = config.base_url.as_deref()
+            let base_url = config
+                .base_url
+                .as_deref()
                 .ok_or(format!("{} provider requires base_url", config.type_))?;
-            let model = config.model.as_deref()
+            let model = config
+                .model
+                .as_deref()
                 .ok_or(format!("{} provider requires model", config.type_))?;
-            let api_key = config.api_key.clone()
+            let api_key = config
+                .api_key
+                .clone()
                 .unwrap_or_else(|| "not-required".to_string());
             let _ = base_url; // used by OpenAICompatProvider via config
             Ok(Arc::new(openai_compat::OpenAICompatProvider::new(
-                name, &api_key, model, config
+                name, &api_key, model, config,
             )?))
         }
 

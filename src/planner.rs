@@ -1,7 +1,7 @@
 // FORGE flow planner: dependency graph + execution waves (issue #10)
 
-use std::collections::{HashMap, HashSet, VecDeque};
 use crate::ast::FlowDecl;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Debug, Clone)]
 pub struct DependencyGraph {
@@ -25,7 +25,9 @@ pub struct FlowPlanner;
 impl FlowPlanner {
     /// Build a dependency graph from the flow's stage declarations.
     pub fn dependency_graph(flow: &FlowDecl) -> Result<DependencyGraph, PlannerError> {
-        let stage_names: HashSet<String> = flow.stages.iter()
+        let stage_names: HashSet<String> = flow
+            .stages
+            .iter()
             .map(|s| s.node.name.node.clone())
             .collect();
 
@@ -47,7 +49,9 @@ impl FlowPlanner {
             deps.insert(name.clone(), stage_deps);
         }
 
-        let stages = flow.stages.iter()
+        let stages = flow
+            .stages
+            .iter()
             .map(|s| s.node.name.node.clone())
             .collect();
 
@@ -66,7 +70,10 @@ impl FlowPlanner {
 
             if let Some(deps) = graph.deps.get(stage) {
                 for dep in deps {
-                    reverse_deps.entry(dep.clone()).or_default().push(stage.clone());
+                    reverse_deps
+                        .entry(dep.clone())
+                        .or_default()
+                        .push(stage.clone());
                 }
             }
         }
@@ -102,7 +109,9 @@ impl FlowPlanner {
         }
 
         if processed != graph.stages.len() {
-            let remaining: Vec<String> = graph.stages.iter()
+            let remaining: Vec<String> = graph
+                .stages
+                .iter()
                 .filter(|s| *in_degree.get(*s).unwrap() > 0)
                 .cloned()
                 .collect();
@@ -119,13 +128,16 @@ mod tests {
     use crate::ast::*;
 
     fn span<T>(node: T) -> Spanned<T> {
-        Spanned { node, span: Span { start: 0, end: 0 } }
+        Spanned {
+            node,
+            span: Span { start: 0, end: 0 },
+        }
     }
 
     fn make_stage(name: &str, needs: Vec<NeedsRef>) -> Spanned<StageDecl> {
         span(StageDecl {
             name: span(name.to_string()),
-            needs: needs.into_iter().map(|n| span(n)).collect(),
+            needs: needs.into_iter().map(span).collect(),
             body: vec![],
         })
     }
@@ -140,20 +152,29 @@ mod tests {
     }
 
     fn needs_glob(stage: &str) -> NeedsRef {
-        NeedsRef { stage: stage.to_string(), field: NeedsRefField::Glob }
+        NeedsRef {
+            stage: stage.to_string(),
+            field: NeedsRefField::Glob,
+        }
     }
 
     fn needs_field(stage: &str, field: &str) -> NeedsRef {
-        NeedsRef { stage: stage.to_string(), field: NeedsRefField::Named(field.to_string()) }
+        NeedsRef {
+            stage: stage.to_string(),
+            field: NeedsRefField::Named(field.to_string()),
+        }
     }
 
     #[test]
     fn test_no_deps_single_wave() {
-        let flow = make_flow("f", vec![
-            make_stage("a", vec![]),
-            make_stage("b", vec![]),
-            make_stage("c", vec![]),
-        ]);
+        let flow = make_flow(
+            "f",
+            vec![
+                make_stage("a", vec![]),
+                make_stage("b", vec![]),
+                make_stage("c", vec![]),
+            ],
+        );
         let graph = FlowPlanner::dependency_graph(&flow).unwrap();
         let waves = FlowPlanner::execution_waves(&graph).unwrap();
 
@@ -163,11 +184,14 @@ mod tests {
 
     #[test]
     fn test_linear_chain() {
-        let flow = make_flow("f", vec![
-            make_stage("a", vec![]),
-            make_stage("b", vec![needs_glob("a")]),
-            make_stage("c", vec![needs_field("b", "x")]),
-        ]);
+        let flow = make_flow(
+            "f",
+            vec![
+                make_stage("a", vec![]),
+                make_stage("b", vec![needs_glob("a")]),
+                make_stage("c", vec![needs_field("b", "x")]),
+            ],
+        );
         let graph = FlowPlanner::dependency_graph(&flow).unwrap();
         let waves = FlowPlanner::execution_waves(&graph).unwrap();
 
@@ -180,12 +204,15 @@ mod tests {
     #[test]
     fn test_diamond() {
         // A -> B, A -> C, B+C -> D
-        let flow = make_flow("f", vec![
-            make_stage("a", vec![]),
-            make_stage("b", vec![needs_glob("a")]),
-            make_stage("c", vec![needs_glob("a")]),
-            make_stage("d", vec![needs_glob("b"), needs_glob("c")]),
-        ]);
+        let flow = make_flow(
+            "f",
+            vec![
+                make_stage("a", vec![]),
+                make_stage("b", vec![needs_glob("a")]),
+                make_stage("c", vec![needs_glob("a")]),
+                make_stage("d", vec![needs_glob("b"), needs_glob("c")]),
+            ],
+        );
         let graph = FlowPlanner::dependency_graph(&flow).unwrap();
         let waves = FlowPlanner::execution_waves(&graph).unwrap();
 
@@ -199,10 +226,13 @@ mod tests {
     #[test]
     fn test_cycle_detection() {
         // A needs B, B needs A
-        let flow = make_flow("f", vec![
-            make_stage("a", vec![needs_glob("b")]),
-            make_stage("b", vec![needs_glob("a")]),
-        ]);
+        let flow = make_flow(
+            "f",
+            vec![
+                make_stage("a", vec![needs_glob("b")]),
+                make_stage("b", vec![needs_glob("a")]),
+            ],
+        );
         let graph = FlowPlanner::dependency_graph(&flow).unwrap();
         let result = FlowPlanner::execution_waves(&graph);
 
@@ -211,9 +241,7 @@ mod tests {
 
     #[test]
     fn test_unknown_stage_ref() {
-        let flow = make_flow("f", vec![
-            make_stage("a", vec![needs_glob("nonexistent")]),
-        ]);
+        let flow = make_flow("f", vec![make_stage("a", vec![needs_glob("nonexistent")])]);
         let result = FlowPlanner::dependency_graph(&flow);
 
         assert!(matches!(result, Err(PlannerError::UnknownStageRef { .. })));

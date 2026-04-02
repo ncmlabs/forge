@@ -524,9 +524,15 @@ pub enum Stmt {
     /// `transition to state_name`
     TransitionTo(Spanned<String>),
     /// `start timer_name [for context]`
-    StartTimer { name: Spanned<String>, context: Option<Spanned<Expr>> },
+    StartTimer {
+        name: Spanned<String>,
+        context: Option<Spanned<Expr>>,
+    },
     /// `cancel timer_name [for context]`
-    CancelTimer { name: Spanned<String>, context: Option<Spanned<Expr>> },
+    CancelTimer {
+        name: Spanned<String>,
+        context: Option<Spanned<Expr>>,
+    },
     /// `reset timer_name`
     ResetTimer(Spanned<String>),
     /// `forward expr to expr`

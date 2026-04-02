@@ -23,7 +23,11 @@ pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
             for handler in &agent.handlers {
                 for req in &handler.node.requires {
                     check_requires_expr(&req.node.condition, &task_names, file, &mut diagnostics);
-                    if let Some(Spanned { node: FailPolicy::Give(expr), .. }) = &req.node.on_fail {
+                    if let Some(Spanned {
+                        node: FailPolicy::Give(expr),
+                        ..
+                    }) = &req.node.on_fail
+                    {
                         check_requires_expr(expr, &task_names, file, &mut diagnostics);
                     }
                 }

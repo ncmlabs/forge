@@ -1,34 +1,38 @@
+use crate::llm::CompletionResponse;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use crate::llm::CompletionResponse;
 
 #[derive(Clone)]
 pub struct CostTracker {
-    total_tokens_in:  Arc<AtomicU32>,
+    total_tokens_in: Arc<AtomicU32>,
     total_tokens_out: Arc<AtomicU32>,
-    total_cost_usd:   Arc<AtomicU64>,   // stored as microdollars (×1_000_000)
-    budget_usd:       Option<f32>,
-    alert_at_pct:     u32,
+    total_cost_usd: Arc<AtomicU64>, // stored as microdollars (×1_000_000)
+    budget_usd: Option<f32>,
+    alert_at_pct: u32,
 }
 
 impl CostTracker {
     pub fn new(budget_usd: Option<f32>, alert_at_pct: u32) -> Self {
         Self {
-            total_tokens_in:  Arc::new(AtomicU32::new(0)),
+            total_tokens_in: Arc::new(AtomicU32::new(0)),
             total_tokens_out: Arc::new(AtomicU32::new(0)),
-            total_cost_usd:   Arc::new(AtomicU64::new(0)),
+            total_cost_usd: Arc::new(AtomicU64::new(0)),
             budget_usd,
             alert_at_pct,
         }
     }
 
     pub fn record(&self, resp: &CompletionResponse) -> Result<(), BudgetError> {
-        self.total_tokens_in.fetch_add(resp.tokens_in, Ordering::Relaxed);
-        self.total_tokens_out.fetch_add(resp.tokens_out, Ordering::Relaxed);
+        self.total_tokens_in
+            .fetch_add(resp.tokens_in, Ordering::Relaxed);
+        self.total_tokens_out
+            .fetch_add(resp.tokens_out, Ordering::Relaxed);
 
         let microdollars = (resp.cost_usd * 1_000_000.0) as u64;
-        let new_total = self.total_cost_usd
-            .fetch_add(microdollars, Ordering::Relaxed) + microdollars;
+        let new_total = self
+            .total_cost_usd
+            .fetch_add(microdollars, Ordering::Relaxed)
+            + microdollars;
         let new_total_usd = new_total as f32 / 1_000_000.0;
 
         if let Some(budget) = self.budget_usd {
@@ -54,25 +58,26 @@ impl CostTracker {
 
     pub fn summary(&self) -> CostSummary {
         CostSummary {
-            total_tokens_in:  self.total_tokens_in.load(Ordering::Relaxed),
+            total_tokens_in: self.total_tokens_in.load(Ordering::Relaxed),
             total_tokens_out: self.total_tokens_out.load(Ordering::Relaxed),
-            total_cost_usd:   self.total_cost_usd.load(Ordering::Relaxed) as f32 / 1_000_000.0,
-            budget_usd:       self.budget_usd,
+            total_cost_usd: self.total_cost_usd.load(Ordering::Relaxed) as f32 / 1_000_000.0,
+            budget_usd: self.budget_usd,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct CostSummary {
-    pub total_tokens_in:  u32,
+    pub total_tokens_in: u32,
     pub total_tokens_out: u32,
-    pub total_cost_usd:   f32,
-    pub budget_usd:       Option<f32>,
+    pub total_cost_usd: f32,
+    pub budget_usd: Option<f32>,
 }
 
 impl std::fmt::Display for CostSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f,
+        write!(
+            f,
             "tokens: {}↑ {}↓  cost: ${:.4}{}",
             self.total_tokens_in,
             self.total_tokens_out,
@@ -96,13 +101,13 @@ mod tests {
 
     fn mock_response(cost: f32, tokens_in: u32, tokens_out: u32) -> CompletionResponse {
         CompletionResponse {
-            content:       "test".to_string(),
+            content: "test".to_string(),
             tokens_in,
             tokens_out,
-            latency_ms:    1,
-            model_used:    "mock".to_string(),
+            latency_ms: 1,
+            model_used: "mock".to_string(),
             provider_name: "mock".to_string(),
-            cost_usd:      cost,
+            cost_usd: cost,
         }
     }
 

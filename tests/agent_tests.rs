@@ -17,7 +17,10 @@ fn spanned<T>(node: T) -> Spanned<T> {
 }
 
 fn empty_program() -> Program {
-    Program { boundary: None, items: vec![] }
+    Program {
+        boundary: None,
+        items: vec![],
+    }
 }
 
 fn mock_registry() -> Arc<ProviderRegistry> {
@@ -74,7 +77,10 @@ fn memory_init_from_fields() {
 fn memory_record_for_env() {
     let fields = vec![text_field("name"), number_field("score")];
     let mut mem = AgentMemory::new(&fields);
-    mem.set("name", ConfidentValue::deterministic(Value::Text("Alice".into())));
+    mem.set(
+        "name",
+        ConfidentValue::deterministic(Value::Text("Alice".into())),
+    );
     mem.set("score", ConfidentValue::deterministic(Value::Number(95.0)));
     match mem.to_record() {
         Value::Record(map) => {
@@ -96,7 +102,9 @@ async fn dispatch_selects_correct_handler() {
         payload_type: None,
         requires: vec![],
         body: vec![spanned(Stmt::Give(
-            spanned(Expr::Template(vec![spanned(TemplatePart::Text("hello".into()))])),
+            spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                "hello".into(),
+            ))])),
             None,
         ))],
     });
@@ -120,7 +128,10 @@ async fn dispatch_binds_params() {
     // Handler that gives the "name" param back
     let handler = spanned(OnHandler {
         event: spanned("greet".into()),
-        params: vec![spanned(Param { name: "name".into(), type_name: spanned(TypeName::Text) })],
+        params: vec![spanned(Param {
+            name: "name".into(),
+            type_name: spanned(TypeName::Text),
+        })],
         payload_type: None,
         requires: vec![],
         body: vec![spanned(Stmt::Give(
@@ -132,7 +143,10 @@ async fn dispatch_binds_params() {
     let decl = simple_agent(vec![], vec![handler], None);
     let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
     let mut params = HashMap::new();
-    params.insert("name".into(), ConfidentValue::deterministic(Value::Text("World".into())));
+    params.insert(
+        "name".into(),
+        ConfidentValue::deterministic(Value::Text("World".into())),
+    );
     let result = agent.dispatch("greet", params).await.unwrap();
     assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "World")));
 }
@@ -144,16 +158,17 @@ async fn memory_update_persists_across_dispatches() {
     // Handler that sets memory.topic then gives it back
     let handler = spanned(OnHandler {
         event: spanned("set_topic".into()),
-        params: vec![spanned(Param { name: "t".into(), type_name: spanned(TypeName::Text) })],
+        params: vec![spanned(Param {
+            name: "t".into(),
+            type_name: spanned(TypeName::Text),
+        })],
         payload_type: None,
         requires: vec![],
-        body: vec![
-            spanned(Stmt::MemoryUpdate(
-                spanned("topic".into()),
-                None,
-                spanned(Expr::Ident("t".into())),
-            )),
-        ],
+        body: vec![spanned(Stmt::MemoryUpdate(
+            spanned("topic".into()),
+            None,
+            spanned(Expr::Ident("t".into())),
+        ))],
     });
 
     let read_handler = spanned(OnHandler {
@@ -175,7 +190,10 @@ async fn memory_update_persists_across_dispatches() {
 
     // Set topic
     let mut params = HashMap::new();
-    params.insert("t".into(), ConfidentValue::deterministic(Value::Text("billing".into())));
+    params.insert(
+        "t".into(),
+        ConfidentValue::deterministic(Value::Text("billing".into())),
+    );
     agent.dispatch("set_topic", params).await.unwrap();
 
     // Read topic back
@@ -196,7 +214,9 @@ async fn requires_pass_executes_handler() {
             on_fail: None,
         })],
         body: vec![spanned(Stmt::Give(
-            spanned(Expr::Template(vec![spanned(TemplatePart::Text("ok".into()))])),
+            spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                "ok".into(),
+            ))])),
             None,
         ))],
     });
@@ -218,7 +238,9 @@ async fn requires_fail_silent_skips() {
             on_fail: Some(spanned(FailPolicy::Silent)),
         })],
         body: vec![spanned(Stmt::Give(
-            spanned(Expr::Template(vec![spanned(TemplatePart::Text("should not reach".into()))])),
+            spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                "should not reach".into(),
+            ))])),
             None,
         ))],
     });
@@ -237,12 +259,14 @@ async fn requires_fail_give_returns_value() {
         payload_type: None,
         requires: vec![spanned(RequiresClause {
             condition: spanned(Expr::BoolLit(false)),
-            on_fail: Some(spanned(FailPolicy::Give(
-                spanned(Expr::Template(vec![spanned(TemplatePart::Text("denied".into()))])),
-            ))),
+            on_fail: Some(spanned(FailPolicy::Give(spanned(Expr::Template(vec![
+                spanned(TemplatePart::Text("denied".into())),
+            ]))))),
         })],
         body: vec![spanned(Stmt::Give(
-            spanned(Expr::Template(vec![spanned(TemplatePart::Text("ok".into()))])),
+            spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                "ok".into(),
+            ))])),
             None,
         ))],
     });
@@ -283,7 +307,9 @@ async fn requires_fail_log_rejects() {
             on_fail: Some(spanned(FailPolicy::Log)),
         })],
         body: vec![spanned(Stmt::Give(
-            spanned(Expr::Template(vec![spanned(TemplatePart::Text("should not reach".into()))])),
+            spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                "should not reach".into(),
+            ))])),
             None,
         ))],
     });
@@ -307,19 +333,21 @@ async fn requires_short_circuits_on_first_failure() {
         requires: vec![
             spanned(RequiresClause {
                 condition: spanned(Expr::BoolLit(false)),
-                on_fail: Some(spanned(FailPolicy::Give(
-                    spanned(Expr::Template(vec![spanned(TemplatePart::Text("first_failed".into()))])),
-                ))),
+                on_fail: Some(spanned(FailPolicy::Give(spanned(Expr::Template(vec![
+                    spanned(TemplatePart::Text("first_failed".into())),
+                ]))))),
             }),
             spanned(RequiresClause {
                 condition: spanned(Expr::BoolLit(true)),
-                on_fail: Some(spanned(FailPolicy::Give(
-                    spanned(Expr::Template(vec![spanned(TemplatePart::Text("second_failed".into()))])),
-                ))),
+                on_fail: Some(spanned(FailPolicy::Give(spanned(Expr::Template(vec![
+                    spanned(TemplatePart::Text("second_failed".into())),
+                ]))))),
             }),
         ],
         body: vec![spanned(Stmt::Give(
-            spanned(Expr::Template(vec![spanned(TemplatePart::Text("body_reached".into()))])),
+            spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                "body_reached".into(),
+            ))])),
             None,
         ))],
     });
@@ -328,7 +356,9 @@ async fn requires_short_circuits_on_first_failure() {
     let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
     let result = agent.dispatch("action", HashMap::new()).await.unwrap();
     // Should get "first_failed" — proves first guard ran and short-circuited
-    assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "first_failed")));
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "first_failed"))
+    );
 }
 
 // ── State machine via agent ──────────────────────────────────────────────────
@@ -345,13 +375,11 @@ async fn state_machine_transition_via_handler() {
 
     let states = StatesDecl {
         name: spanned("Phase".into()),
-        transitions: vec![
-            spanned(StateTransition {
-                from: spanned("idle".into()),
-                to: spanned("active".into()),
-                condition: None,
-            }),
-        ],
+        transitions: vec![spanned(StateTransition {
+            from: spanned("idle".into()),
+            to: spanned("active".into()),
+            condition: None,
+        })],
     };
 
     let decl = simple_agent(vec![], vec![handler], None);
@@ -374,13 +402,11 @@ async fn state_machine_invalid_transition_errors() {
 
     let states = StatesDecl {
         name: spanned("Phase".into()),
-        transitions: vec![
-            spanned(StateTransition {
-                from: spanned("idle".into()),
-                to: spanned("active".into()),
-                condition: None,
-            }),
-        ],
+        transitions: vec![spanned(StateTransition {
+            from: spanned("idle".into()),
+            to: spanned("active".into()),
+            condition: None,
+        })],
     };
 
     let decl = simple_agent(vec![], vec![handler], None);
@@ -407,14 +433,20 @@ async fn timer_start_via_handler() {
     let mut decl = simple_agent(vec![], vec![handler], None);
     decl.timers = vec![spanned(TimerField {
         name: spanned("timeout".into()),
-        duration: spanned(Duration { value: 10, unit: DurationUnit::Minutes }),
+        duration: spanned(Duration {
+            value: 10,
+            unit: DurationUnit::Minutes,
+        }),
     })];
 
     let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
     agent.dispatch("begin", HashMap::new()).await.unwrap();
 
     let ctx = agent.context().lock().unwrap();
-    assert_eq!(ctx.timer_manager.state("timeout"), Some(&TimerState::Running));
+    assert_eq!(
+        ctx.timer_manager.state("timeout"),
+        Some(&TimerState::Running)
+    );
 }
 
 #[tokio::test]
@@ -444,7 +476,10 @@ async fn timer_cancel_via_handler() {
     let mut decl = simple_agent(vec![], vec![start_handler, cancel_handler], None);
     decl.timers = vec![spanned(TimerField {
         name: spanned("timeout".into()),
-        duration: spanned(Duration { value: 10, unit: DurationUnit::Minutes }),
+        duration: spanned(Duration {
+            value: 10,
+            unit: DurationUnit::Minutes,
+        }),
     })];
 
     let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
@@ -468,7 +503,9 @@ async fn emit_collected_in_event_sink() {
             spanned("Resolved".into()),
             vec![spanned(CallArg {
                 label: Some(spanned("summary".into())),
-                value: spanned(Expr::Template(vec![spanned(TemplatePart::Text("done".into()))])),
+                value: spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                    "done".into(),
+                ))])),
             })],
         ))],
     });
@@ -513,7 +550,9 @@ async fn stuck_detection_triggers_policy() {
         payload_type: None,
         requires: vec![],
         body: vec![spanned(Stmt::Give(
-            spanned(Expr::Template(vec![spanned(TemplatePart::Text("I cannot help with that".into()))])),
+            spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                "I cannot help with that".into(),
+            ))])),
             None,
         ))],
     });
@@ -560,16 +599,16 @@ agent test_bot
     let program = forge::parser::parse(source).expect("parse failed");
 
     // Extract the agent decl
-    let agent_decl = program.items.iter()
+    let agent_decl = program
+        .items
+        .iter()
         .find_map(|item| match &item.node {
             TopLevel::Agent(a) => Some(a.clone()),
             _ => None,
         })
         .expect("no agent in program");
 
-    let agent = AgentProcess::new(
-        agent_decl, None, mock_registry(), None, program,
-    );
+    let agent = AgentProcess::new(agent_decl, None, mock_registry(), None, program);
 
     // Dispatch three pings — count should increment
     let r1 = agent.dispatch("ping", HashMap::new()).await.unwrap();

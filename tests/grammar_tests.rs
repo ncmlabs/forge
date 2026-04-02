@@ -1,5 +1,5 @@
-use pest::Parser;
 use forge::parser::{ForgeParser, Rule};
+use pest::Parser;
 
 // ============================================================
 // Token-level tests
@@ -382,11 +382,7 @@ fn parse_boolean_ops() {
     ForgeParser::parse(Rule::expr, "x and y").unwrap();
     ForgeParser::parse(Rule::expr, "x or y").unwrap();
     ForgeParser::parse(Rule::expr, "not x").unwrap();
-    ForgeParser::parse(
-        Rule::expr,
-        r#"cell >= 0 and cell <= 8 and board == """#,
-    )
-    .unwrap();
+    ForgeParser::parse(Rule::expr, r#"cell >= 0 and cell <= 8 and board == """#).unwrap();
 }
 
 #[test]
@@ -457,7 +453,11 @@ fn parse_transition_stmt() {
 fn parse_timer_stmts() {
     ForgeParser::parse(Rule::start_timer_stmt, "start reconnect_window for player").unwrap();
     ForgeParser::parse(Rule::start_timer_stmt, "start turn_limit").unwrap();
-    ForgeParser::parse(Rule::cancel_timer_stmt, "cancel reconnect_window for player").unwrap();
+    ForgeParser::parse(
+        Rule::cancel_timer_stmt,
+        "cancel reconnect_window for player",
+    )
+    .unwrap();
     ForgeParser::parse(Rule::reset_timer_stmt, "reset turn_limit").unwrap();
 }
 
@@ -486,11 +486,7 @@ fn parse_requires_clause() {
         r#"requires valid_move(board, cell) on fail: give "invalid""#,
     )
     .unwrap();
-    ForgeParser::parse(
-        Rule::requires_clause,
-        "requires x > 0 on fail: log",
-    )
-    .unwrap();
+    ForgeParser::parse(Rule::requires_clause, "requires x > 0 on fail: log").unwrap();
 }
 
 #[test]

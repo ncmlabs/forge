@@ -63,7 +63,8 @@ fn classify_capability_detected() {
 
 #[test]
 fn search_capability_detected() {
-    let source = assert_generates_valid_forge("a research system that searches the web with finder");
+    let source =
+        assert_generates_valid_forge("a research system that searches the web with finder");
     assert!(source.contains("web.search"));
 }
 

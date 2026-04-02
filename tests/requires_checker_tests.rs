@@ -9,7 +9,10 @@ fn check(source: &str) -> Vec<Diagnostic> {
 }
 
 fn warnings(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| matches!(d.kind, DiagnosticKind::Warning)).collect()
+    diags
+        .iter()
+        .filter(|d| matches!(d.kind, DiagnosticKind::Warning))
+        .collect()
 }
 
 // ── Task call detection ──────────────────────────────────────
@@ -50,7 +53,11 @@ agent room
     say \"ok\"
 ";
     let diags = check(source);
-    assert!(diags.is_empty(), "pure calls should not produce warnings: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "pure calls should not produce warnings: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -77,7 +84,11 @@ agent room
     say msg
 ";
     let diags = check(source);
-    assert!(diags.is_empty(), "lifecycle guards should not trigger requires_checker: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "lifecycle guards should not trigger requires_checker: {:?}",
+        diags
+    );
 }
 
 // ── Multiple requires ────────────────────────────────────────

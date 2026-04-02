@@ -8,7 +8,7 @@ fn check_boundary(sources: &[(&str, &str)]) -> Vec<Diagnostic> {
     let parsed: Vec<_> = sources
         .iter()
         .map(|(src, name)| {
-            let program = parse(src).expect(&format!("parse failed for {}", name));
+            let program = parse(src).unwrap_or_else(|_| panic!("parse failed for {}", name));
             (program, name.to_string())
         })
         .collect();
@@ -17,12 +17,18 @@ fn check_boundary(sources: &[(&str, &str)]) -> Vec<Diagnostic> {
 }
 
 fn errors(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| matches!(d.kind, DiagnosticKind::Error)).collect()
+    diags
+        .iter()
+        .filter(|d| matches!(d.kind, DiagnosticKind::Error))
+        .collect()
 }
 
 #[allow(dead_code)]
 fn warnings(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| matches!(d.kind, DiagnosticKind::Warning)).collect()
+    diags
+        .iter()
+        .filter(|d| matches!(d.kind, DiagnosticKind::Warning))
+        .collect()
 }
 
 // ── Endpoint placement ──────────────────────────────────────

@@ -16,8 +16,7 @@ fn spanned<T>(node: T) -> Spanned<T> {
 }
 
 fn mock_registry_with_sequence(responses: Vec<String>) -> Arc<ProviderRegistry> {
-    let mock = MockProvider::new("mock")
-        .with_responses_sequence(responses);
+    let mock = MockProvider::new("mock").with_responses_sequence(responses);
     let mut reg = ProviderRegistry::new("mock");
     reg.register("mock", Arc::new(mock));
     Arc::new(reg)
@@ -44,7 +43,9 @@ fn output_text() -> Spanned<OutputType> {
 }
 
 fn str_expr(s: &str) -> Spanned<Expr> {
-    spanned(Expr::Template(vec![spanned(TemplatePart::Text(s.to_string()))]))
+    spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+        s.to_string(),
+    ))]))
 }
 
 /// Build a simple task that uses `reason` on the input and gives the result.
@@ -58,14 +59,13 @@ fn reason_task(name: &str) -> Spanned<TopLevel> {
             spanned(Stmt::Bind(
                 spanned("result".to_string()),
                 spanned(Expr::Reason(Box::new(spanned(Expr::Template(vec![
-                    spanned(TemplatePart::Interp(Box::new(spanned(Expr::Ident("input".to_string()))))),
+                    spanned(TemplatePart::Interp(Box::new(spanned(Expr::Ident(
+                        "input".to_string(),
+                    ))))),
                 ]))))),
             )),
             // give result
-            spanned(Stmt::Give(
-                spanned(Expr::Ident("result".to_string())),
-                None,
-            )),
+            spanned(Stmt::Give(spanned(Expr::Ident("result".to_string())), None)),
         ])),
         if_fails: None,
     }))
@@ -95,13 +95,16 @@ fn pool_decl_node(
         worker_type: spanned(worker_type.to_string()),
         worker_count: spanned(count),
         strategy: spanned(strategy),
-        timeout: timeout.map(|d| spanned(d)),
+        timeout: timeout.map(spanned),
         fallback: fallback.map(|f| spanned(f.to_string())),
     }
 }
 
 fn program_with(items: Vec<Spanned<TopLevel>>) -> Program {
-    Program { boundary: None, items }
+    Program {
+        boundary: None,
+        items,
+    }
 }
 
 fn text_arg(s: &str) -> ConfidentValue {
@@ -123,7 +126,10 @@ async fn fastest_returns_result() {
     let decl = pool_decl_node("pool", "checker", 3.0, PoolStrategy::Fastest, None, None);
 
     let pool = PoolExecutor::new(decl, &program, registry, None).unwrap();
-    let result = pool.send("check", vec![text_arg("test input")]).await.unwrap();
+    let result = pool
+        .send("check", vec![text_arg("test input")])
+        .await
+        .unwrap();
 
     assert!(matches!(result.value, Value::Text(_)));
 }
@@ -132,7 +138,14 @@ async fn fastest_returns_result() {
 async fn fastest_unknown_worker_type_errors() {
     let registry = mock_registry_default("response");
     let program = program_with(vec![]);
-    let decl = pool_decl_node("pool", "missing_task", 3.0, PoolStrategy::Fastest, None, None);
+    let decl = pool_decl_node(
+        "pool",
+        "missing_task",
+        3.0,
+        PoolStrategy::Fastest,
+        None,
+        None,
+    );
 
     let result = PoolExecutor::new(decl, &program, registry, None);
     assert!(result.is_err());
@@ -187,7 +200,10 @@ async fn majority_finds_consensus() {
     // Should return consensus answer
     assert!(matches!(result.value, Value::Text(ref s) if s.contains("yes")));
     // Source should be ConsensusAgreement
-    assert!(matches!(result.source, ConfidenceSource::ConsensusAgreement(_)));
+    assert!(matches!(
+        result.source,
+        ConfidenceSource::ConsensusAgreement(_)
+    ));
 }
 
 #[tokio::test]
@@ -223,7 +239,14 @@ async fn majority_disagreement_still_returns_value() {
     let task = reason_task("checker");
     let fb = fallback_task("fallback_checker");
     let program = program_with(vec![task, fb]);
-    let decl = pool_decl_node("pool", "checker", 3.0, PoolStrategy::Majority, None, Some("fallback_checker"));
+    let decl = pool_decl_node(
+        "pool",
+        "checker",
+        3.0,
+        PoolStrategy::Majority,
+        None,
+        Some("fallback_checker"),
+    );
 
     let pool = PoolExecutor::new(decl, &program, registry, None).unwrap();
     let result = pool.send("check", vec![text_arg("claim")]).await.unwrap();
@@ -245,26 +268,40 @@ async fn quorum_threshold_met() {
 
     let task = reason_task("checker");
     let program = program_with(vec![task]);
-    let decl = pool_decl_node("pool", "checker", 3.0, PoolStrategy::Quorum(2.0), None, None);
+    let decl = pool_decl_node(
+        "pool",
+        "checker",
+        3.0,
+        PoolStrategy::Quorum(2.0),
+        None,
+        None,
+    );
 
     let pool = PoolExecutor::new(decl, &program, registry, None).unwrap();
     let result = pool.send("check", vec![text_arg("claim")]).await.unwrap();
 
-    assert!(matches!(result.source, ConfidenceSource::ConsensusAgreement(_)));
+    assert!(matches!(
+        result.source,
+        ConfidenceSource::ConsensusAgreement(_)
+    ));
 }
 
 #[tokio::test]
 async fn quorum_threshold_not_met() {
     // 3 workers, quorum(3) — all must agree but they don't
-    let registry = mock_registry_with_sequence(vec![
-        "yes".to_string(),
-        "yes".to_string(),
-        "no".to_string(),
-    ]);
+    let registry =
+        mock_registry_with_sequence(vec!["yes".to_string(), "yes".to_string(), "no".to_string()]);
 
     let task = reason_task("checker");
     let program = program_with(vec![task]);
-    let decl = pool_decl_node("pool", "checker", 3.0, PoolStrategy::Quorum(3.0), None, None);
+    let decl = pool_decl_node(
+        "pool",
+        "checker",
+        3.0,
+        PoolStrategy::Quorum(3.0),
+        None,
+        None,
+    );
 
     let pool = PoolExecutor::new(decl, &program, registry, None).unwrap();
     let result = pool.send("check", vec![text_arg("claim")]).await;
@@ -281,8 +318,18 @@ async fn timeout_does_not_interrupt_fast_workers() {
 
     let task = reason_task("worker");
     let program = program_with(vec![task]);
-    let timeout = Duration { value: 5, unit: DurationUnit::Seconds };
-    let decl = pool_decl_node("pool", "worker", 2.0, PoolStrategy::Fastest, Some(timeout), None);
+    let timeout = Duration {
+        value: 5,
+        unit: DurationUnit::Seconds,
+    };
+    let decl = pool_decl_node(
+        "pool",
+        "worker",
+        2.0,
+        PoolStrategy::Fastest,
+        Some(timeout),
+        None,
+    );
 
     let pool = PoolExecutor::new(decl, &program, registry, None).unwrap();
     let result = pool.send("run", vec![text_arg("input")]).await.unwrap();
@@ -324,7 +371,12 @@ async fn pool_via_executor_direct_call() {
 
     let task = reason_task("checker");
     let pool_item = spanned(TopLevel::Pool(pool_decl_node(
-        "my_pool", "checker", 3.0, PoolStrategy::Majority, None, None,
+        "my_pool",
+        "checker",
+        3.0,
+        PoolStrategy::Majority,
+        None,
+        None,
     )));
 
     // fn main: result = my_pool("check", "input") ; say result
@@ -366,7 +418,12 @@ async fn pool_via_send_method_call() {
 
     let task = reason_task("checker");
     let pool_item = spanned(TopLevel::Pool(pool_decl_node(
-        "my_pool", "checker", 2.0, PoolStrategy::Fastest, None, None,
+        "my_pool",
+        "checker",
+        2.0,
+        PoolStrategy::Fastest,
+        None,
+        None,
     )));
 
     // fn main: result = my_pool.send("run", "input") ; say result

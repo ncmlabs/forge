@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use forge::ast::TopLevel;
@@ -107,9 +107,8 @@ async fn main() -> anyhow::Result<()> {
                 let ctx = forge::resolver::CheckContext::new(&fname);
                 if let Err(errors) = ctx.check(&program) {
                     let registry = forge::resolver::CapabilityRegistry::builtin();
-                    all_diagnostics.extend(
-                        errors.iter().map(|e| e.to_diagnostic(&fname, &registry)),
-                    );
+                    all_diagnostics
+                        .extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
                 }
 
                 // Per-file: checker (pure, states, requires)
@@ -123,18 +122,15 @@ async fn main() -> anyhow::Result<()> {
                 .iter()
                 .map(|(p, f, _)| (p, f.as_str()))
                 .collect();
-            all_diagnostics.extend(
-                forge::checker::boundary_checker::check(&boundary_refs),
-            );
+            all_diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
 
             if all_diagnostics.is_empty() {
                 println!("OK");
             } else {
                 // Render diagnostics for each file with its source
                 for diag in &all_diagnostics {
-                    if let Some((_, _, source)) = parsed_programs
-                        .iter()
-                        .find(|(_, f, _)| f == &diag.file)
+                    if let Some((_, _, source)) =
+                        parsed_programs.iter().find(|(_, f, _)| f == &diag.file)
                     {
                         diag.render(source);
                     }
@@ -179,7 +175,7 @@ fn read_source(file: &PathBuf) -> anyhow::Result<String> {
         .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))
 }
 
-fn parse_or_exit(source: &str, file: &PathBuf) -> forge::ast::Program {
+fn parse_or_exit(source: &str, file: &Path) -> forge::ast::Program {
     match forge::parser::parse(source) {
         Ok(program) => program,
         Err(e) => {
@@ -219,17 +215,17 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
-    let tracer = if trace || std::env::var("FORGE_TRACE").map(|v| v == "1").unwrap_or(false) {
+    let tracer = if trace
+        || std::env::var("FORGE_TRACE")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    {
         Some(forge::tracer::Tracer::new())
     } else {
         None
     };
 
-    let executor = forge::runtime::executor::TaskExecutor::new(
-        program,
-        Arc::new(registry),
-        tracer,
-    );
+    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer);
 
     match executor.run().await {
         Ok(_) => {}
@@ -247,18 +243,19 @@ async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
     let program = parse_or_exit(&source, file);
 
     // Find the agent declaration and optional states
-    let agent_decl = program.items.iter()
+    let agent_decl = program
+        .items
+        .iter()
         .find_map(|item| match &item.node {
             TopLevel::Agent(a) => Some(a.clone()),
             _ => None,
         })
         .ok_or_else(|| anyhow::anyhow!("no agent declaration found in {}", file.display()))?;
 
-    let states_decl = program.items.iter()
-        .find_map(|item| match &item.node {
-            TopLevel::States(s) => Some(s.clone()),
-            _ => None,
-        });
+    let states_decl = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::States(s) => Some(s.clone()),
+        _ => None,
+    });
 
     let config = forge::config::ForgeConfig::load_or_default();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
@@ -273,10 +270,14 @@ async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
     );
 
     // Print banner
-    let handler_names: Vec<&str> = agent_decl.handlers.iter()
+    let handler_names: Vec<&str> = agent_decl
+        .handlers
+        .iter()
         .map(|h| h.node.event.node.as_str())
         .collect();
-    let memory_fields: Vec<&str> = agent_decl.memory.iter()
+    let memory_fields: Vec<&str> = agent_decl
+        .memory
+        .iter()
         .map(|f| f.node.name.as_str())
         .collect();
 
@@ -317,7 +318,9 @@ async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
         };
 
         // Match positional args to handler param names
-        let handler = agent_decl.handlers.iter()
+        let handler = agent_decl
+            .handlers
+            .iter()
             .find(|h| h.node.event.node == event_name);
         let mut params = HashMap::new();
         if let Some(h) = handler {
@@ -348,9 +351,9 @@ fn parse_args(input: &str) -> Vec<String> {
     let mut args = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
-    let mut chars = input.chars().peekable();
+    let chars = input.chars().peekable();
 
-    while let Some(ch) = chars.next() {
+    for ch in chars {
         match ch {
             '"' => {
                 if in_quotes {

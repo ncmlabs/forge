@@ -94,9 +94,7 @@ pub fn from_type_name(tn: &TypeName) -> ForgeType {
         TypeName::Profile => ForgeType::Profile,
         TypeName::SearchResults => ForgeType::SearchResults,
         TypeName::Custom(s) => ForgeType::Named(s.clone()),
-        TypeName::Array(inner, size) => {
-            ForgeType::Array(Box::new(from_type_name(inner)), *size)
-        }
+        TypeName::Array(inner, size) => ForgeType::Array(Box::new(from_type_name(inner)), *size),
     }
 }
 
@@ -135,13 +133,19 @@ mod tests {
     fn text_compatible_with_anything() {
         assert!(is_compatible(&ForgeType::Text, &ForgeType::Number));
         assert!(is_compatible(&ForgeType::Text, &ForgeType::Classification));
-        assert!(is_compatible(&ForgeType::Text, &ForgeType::Named("Foo".into())));
+        assert!(is_compatible(
+            &ForgeType::Text,
+            &ForgeType::Named("Foo".into())
+        ));
     }
 
     #[test]
     fn different_types_incompatible() {
         assert!(!is_compatible(&ForgeType::Number, &ForgeType::Bool));
-        assert!(!is_compatible(&ForgeType::Classification, &ForgeType::Results));
+        assert!(!is_compatible(
+            &ForgeType::Classification,
+            &ForgeType::Results
+        ));
     }
 
     #[test]

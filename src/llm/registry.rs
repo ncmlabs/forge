@@ -1,17 +1,17 @@
-use std::collections::HashMap;
-use crate::llm::{
-    BoxedProvider, CapabilityHint, CompletionRequest, CompletionResponse,
-    LLMProvider, ProviderError,
-};
 use crate::config::ForgeConfig;
 use crate::llm::providers::build_provider;
+use crate::llm::{
+    BoxedProvider, CapabilityHint, CompletionRequest, CompletionResponse, LLMProvider,
+    ProviderError,
+};
+use std::collections::HashMap;
 
 pub struct ProviderRegistry {
     providers: HashMap<String, BoxedProvider>,
     fallbacks: HashMap<String, String>,
-    default:   String,
+    default: String,
     #[allow(dead_code)]
-    routing:   HashMap<String, String>,
+    routing: HashMap<String, String>,
 }
 
 impl ProviderRegistry {
@@ -20,15 +20,15 @@ impl ProviderRegistry {
         let mut registry = Self {
             providers: HashMap::new(),
             fallbacks: HashMap::new(),
-            default:   config.llm.default.clone(),
-            routing:   config.llm.routing.unwrap_or_default(),
+            default: config.llm.default.clone(),
+            routing: config.llm.routing.unwrap_or_default(),
         };
 
         for (name, provider_config) in &config.providers {
-            let provider = build_provider(name, provider_config)
-                .map_err(|e| ProviderError::Unavailable {
+            let provider =
+                build_provider(name, provider_config).map_err(|e| ProviderError::Unavailable {
                     provider: name.clone(),
-                    reason:   e.to_string(),
+                    reason: e.to_string(),
                 })?;
             registry.providers.insert(name.clone(), provider);
 
@@ -45,8 +45,8 @@ impl ProviderRegistry {
         Self {
             providers: HashMap::new(),
             fallbacks: HashMap::new(),
-            default:   default.to_string(),
-            routing:   HashMap::new(),
+            default: default.to_string(),
+            routing: HashMap::new(),
         }
     }
 
@@ -61,7 +61,7 @@ impl ProviderRegistry {
     pub async fn resolve_and_complete(
         &self,
         request: CompletionRequest,
-        hint:    Option<&CapabilityHint>,
+        hint: Option<&CapabilityHint>,
     ) -> Result<CompletionResponse, ProviderError> {
         let provider_name = self.choose_provider(hint)?;
         self.try_with_fallback(&provider_name, request).await
@@ -75,7 +75,7 @@ impl ProviderRegistry {
                     Ok(name.clone())
                 } else {
                     Err(ProviderError::NoSatisfyingProvider {
-                        requirements: format!("explicitly requested '{}' but not configured", name)
+                        requirements: format!("explicitly requested '{}' but not configured", name),
                     })
                 }
             }
@@ -85,7 +85,9 @@ impl ProviderRegistry {
     }
 
     fn find_best(&self, hint: &CapabilityHint) -> Result<String, ProviderError> {
-        let mut candidates: Vec<(&String, &BoxedProvider)> = self.providers.iter()
+        let mut candidates: Vec<(&String, &BoxedProvider)> = self
+            .providers
+            .iter()
             .filter(|(_, p)| self.satisfies(p.as_ref(), hint))
             .collect();
 
@@ -134,19 +136,23 @@ impl ProviderRegistry {
         let mut current_name = start_name.to_string();
 
         loop {
-            let provider = self.providers.get(&current_name)
-                .ok_or_else(|| ProviderError::Unavailable {
-                    provider: current_name.clone(),
-                    reason: "not found in registry".to_string(),
-                })?;
+            let provider =
+                self.providers
+                    .get(&current_name)
+                    .ok_or_else(|| ProviderError::Unavailable {
+                        provider: current_name.clone(),
+                        reason: "not found in registry".to_string(),
+                    })?;
 
             match provider.complete(request.clone()).await {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
                     eprintln!(
                         "[forge] provider '{}' failed: {}. {}",
-                        current_name, e,
-                        self.fallbacks.get(&current_name)
+                        current_name,
+                        e,
+                        self.fallbacks
+                            .get(&current_name)
                             .map(|f| format!("Trying fallback '{}'.", f))
                             .unwrap_or_else(|| "No fallback configured.".to_string())
                     );
@@ -180,9 +186,9 @@ impl ProviderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::llm::providers::mock::MockProvider;
     use crate::llm::{ProviderCapabilities, QualityTier};
+    use std::sync::Arc;
 
     /// A provider that always fails — used to test fallback chains
     struct FailingProvider {
@@ -201,8 +207,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LLMProvider for FailingProvider {
-        fn name(&self) -> &str { &self.name }
-        fn capabilities(&self) -> &ProviderCapabilities { &self.caps }
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn capabilities(&self) -> &ProviderCapabilities {
+            &self.caps
+        }
 
         async fn complete(
             &self,
@@ -270,13 +280,24 @@ mod tests {
         struct CloudProvider(ProviderCapabilities);
         #[async_trait::async_trait]
         impl LLMProvider for CloudProvider {
-            fn name(&self) -> &str { "cloud" }
-            fn capabilities(&self) -> &ProviderCapabilities { &self.0 }
-            async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
+            fn name(&self) -> &str {
+                "cloud"
+            }
+            fn capabilities(&self) -> &ProviderCapabilities {
+                &self.0
+            }
+            async fn complete(
+                &self,
+                _req: CompletionRequest,
+            ) -> Result<CompletionResponse, ProviderError> {
                 Ok(CompletionResponse {
-                    content: "cloud".to_string(), tokens_in: 1, tokens_out: 1,
-                    latency_ms: 1, model_used: "cloud".to_string(),
-                    provider_name: "cloud".to_string(), cost_usd: 0.01,
+                    content: "cloud".to_string(),
+                    tokens_in: 1,
+                    tokens_out: 1,
+                    latency_ms: 1,
+                    model_used: "cloud".to_string(),
+                    provider_name: "cloud".to_string(),
+                    cost_usd: 0.01,
                 })
             }
         }
@@ -317,6 +338,9 @@ mod tests {
         let result = registry
             .resolve_and_complete(CompletionRequest::simple("test"), Some(&hint))
             .await;
-        assert!(matches!(result, Err(ProviderError::NoSatisfyingProvider { .. })));
+        assert!(matches!(
+            result,
+            Err(ProviderError::NoSatisfyingProvider { .. })
+        ));
     }
 }

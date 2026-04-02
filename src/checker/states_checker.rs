@@ -140,17 +140,18 @@ fn extract_lifecycle_guard(expr: &Spanned<Expr>) -> Option<LifecycleGuard> {
 
 // ── Phase 1: Registry ─────────────────────────────────────────
 
+type StatesDecl = (HashSet<String>, HashSet<(String, String)>);
+
 struct StatesRegistry {
     /// states_name -> (set of state names, set of (from, to) edges)
-    decls: HashMap<String, (HashSet<String>, HashSet<(String, String)>)>,
+    decls: HashMap<String, StatesDecl>,
     /// decl name -> span of the declaration name
     spans: HashMap<String, Spanned<String>>,
 }
 
 impl StatesRegistry {
     fn build(program: &Program) -> Self {
-        let mut decls: HashMap<String, (HashSet<String>, HashSet<(String, String)>)> =
-            HashMap::new();
+        let mut decls: HashMap<String, StatesDecl> = HashMap::new();
         let mut spans: HashMap<String, Spanned<String>> = HashMap::new();
 
         for item in &program.items {
@@ -175,7 +176,7 @@ impl StatesRegistry {
         Self { decls, spans }
     }
 
-    fn get(&self, name: &str) -> Option<&(HashSet<String>, HashSet<(String, String)>)> {
+    fn get(&self, name: &str) -> Option<&StatesDecl> {
         self.decls.get(name)
     }
 }
@@ -235,13 +236,7 @@ fn check_agent(
 
     // Per-handler validation
     for handler in &agent.handlers {
-        check_handler(
-            &handler.node,
-            state_names,
-            edges,
-            file,
-            diagnostics,
-        );
+        check_handler(&handler.node, state_names, edges, file, diagnostics);
     }
 }
 
@@ -272,7 +267,10 @@ fn check_handler(
             diagnostics.push(
                 Diagnostic::error(
                     file,
-                    format!("conflicting lifecycle guards in handler `{}`", handler.event.node),
+                    format!(
+                        "conflicting lifecycle guards in handler `{}`",
+                        handler.event.node
+                    ),
                     start..end,
                     "multiple lifecycle guards found in the same handler",
                 )
@@ -363,9 +361,7 @@ fn check_handler(
                     target.span.start..target.span.end,
                     "transition without a lifecycle guard",
                 )
-                .with_help(
-                    "add `requires lifecycle == CurrentState` to guard this transition",
-                ),
+                .with_help("add `requires lifecycle == CurrentState` to guard this transition"),
             );
             continue;
         }
@@ -414,8 +410,11 @@ fn check_structural(
     let all_to: HashSet<&String> = edges.iter().map(|(_, to)| to).collect();
 
     // Initial states: appear as `from`, not as `to` (or simply: not pointed to by any edge)
-    let initial_states: HashSet<&String> =
-        all_from.iter().copied().filter(|s| !all_to.contains(*s)).collect();
+    let initial_states: HashSet<&String> = all_from
+        .iter()
+        .copied()
+        .filter(|s| !all_to.contains(*s))
+        .collect();
 
     let registry_span = registry.spans.get(states_name);
     let decl_span = registry_span

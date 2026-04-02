@@ -16,10 +16,7 @@ pub fn generate(spec: &str) -> anyhow::Result<FleetOutput> {
 
     // Self-validate: generated code must parse
     if let Err(e) = crate::parser::parse(&source) {
-        anyhow::bail!(
-            "internal error: generated code failed to parse: {}",
-            e
-        );
+        anyhow::bail!("internal error: generated code failed to parse: {}", e);
     }
 
     let filename = format!("{}.forge", model.system_name);

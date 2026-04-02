@@ -1,4 +1,11 @@
 /target
 .worktrees/
+.claude/
+.forge-security-allow
+docs/superpowers/
+forge-principles.md
+providers.md
+roadmap.md
+config/forge.config.toml
 config/claude.config.toml
 config/ollama.config.toml

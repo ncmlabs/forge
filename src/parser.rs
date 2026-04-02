@@ -51,7 +51,10 @@ fn decode_template_escape(pair: &Pair) -> anyhow::Result<char> {
         "\\t" => Ok('\t'),
         "\\\"" => Ok('"'),
         "\\\\" => Ok('\\'),
-        other => Err(parse_error(pair, &format!("unsupported escape sequence: {}", other))),
+        other => Err(parse_error(
+            pair,
+            &format!("unsupported escape sequence: {}", other),
+        )),
     }
 }
 
@@ -74,29 +77,26 @@ fn push_text_part(parts: &mut Vec<Spanned<TemplatePart>>, text: String, span: Sp
 fn build_template_string(pair: Pair) -> anyhow::Result<Vec<Spanned<TemplatePart>>> {
     let mut parts = Vec::new();
     for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::template_part => {
-                let inner = child.into_inner().next().unwrap();
-                match inner.as_rule() {
-                    Rule::template_text => {
-                        push_text_part(&mut parts, inner.as_str().to_string(), to_span(&inner));
-                    }
-                    Rule::template_escape => {
-                        let decoded = decode_template_escape(&inner)?;
-                        push_text_part(&mut parts, decoded.to_string(), to_span(&inner));
-                    }
-                    Rule::template_interp => {
-                        let expr_pair = inner.into_inner().next().unwrap();
-                        let expr = build_expr(expr_pair)?;
-                        parts.push(Spanned::new(
-                            TemplatePart::Interp(Box::new(expr.clone())),
-                            expr.span,
-                        ));
-                    }
-                    _ => {}
+        if child.as_rule() == Rule::template_part {
+            let inner = child.into_inner().next().unwrap();
+            match inner.as_rule() {
+                Rule::template_text => {
+                    push_text_part(&mut parts, inner.as_str().to_string(), to_span(&inner));
                 }
+                Rule::template_escape => {
+                    let decoded = decode_template_escape(&inner)?;
+                    push_text_part(&mut parts, decoded.to_string(), to_span(&inner));
+                }
+                Rule::template_interp => {
+                    let expr_pair = inner.into_inner().next().unwrap();
+                    let expr = build_expr(expr_pair)?;
+                    parts.push(Spanned::new(
+                        TemplatePart::Interp(Box::new(expr.clone())),
+                        expr.span,
+                    ));
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
     Ok(parts)
@@ -182,14 +182,14 @@ fn build_duration(pair: Pair) -> anyhow::Result<Spanned<Duration>> {
     let span = to_span(&pair);
     let s = pair.as_str();
 
-    let (value, unit) = if s.ends_with("min") {
-        (s[..s.len() - 3].parse::<u64>()?, DurationUnit::Minutes)
-    } else if s.ends_with('h') {
-        (s[..s.len() - 1].parse::<u64>()?, DurationUnit::Hours)
-    } else if s.ends_with('m') {
-        (s[..s.len() - 1].parse::<u64>()?, DurationUnit::Minutes)
-    } else if s.ends_with('s') {
-        (s[..s.len() - 1].parse::<u64>()?, DurationUnit::Seconds)
+    let (value, unit) = if let Some(stripped) = s.strip_suffix("min") {
+        (stripped.parse::<u64>()?, DurationUnit::Minutes)
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        (stripped.parse::<u64>()?, DurationUnit::Hours)
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        (stripped.parse::<u64>()?, DurationUnit::Minutes)
+    } else if let Some(stripped) = s.strip_suffix('s') {
+        (stripped.parse::<u64>()?, DurationUnit::Seconds)
     } else {
         return Err(anyhow::anyhow!("invalid duration: {}", s));
     };
@@ -262,16 +262,16 @@ fn build_atom(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
                 span,
             ))
         }
-        Rule::ident => Ok(Spanned::new(
-            Expr::Ident(inner.as_str().to_string()),
-            span,
-        )),
+        Rule::ident => Ok(Spanned::new(Expr::Ident(inner.as_str().to_string()), span)),
         Rule::expr => {
             // Parenthesized expression
             let inner_expr = build_expr(inner)?;
             Ok(Spanned::new(Expr::Paren(Box::new(inner_expr)), span))
         }
-        _ => Err(parse_error(&inner, &format!("unexpected atom rule: {:?}", inner.as_rule()))),
+        _ => Err(parse_error(
+            &inner,
+            &format!("unexpected atom rule: {:?}", inner.as_rule()),
+        )),
     }
 }
 
@@ -297,13 +297,7 @@ fn build_call_arg(pair: Pair) -> anyhow::Result<Spanned<CallArg>> {
 
     // Unlabeled — first is the expr
     let value = build_expr(first)?;
-    Ok(Spanned::new(
-        CallArg {
-            label: None,
-            value,
-        },
-        span,
-    ))
+    Ok(Spanned::new(CallArg { label: None, value }, span))
 }
 
 fn build_arg_list(pair: Pair) -> anyhow::Result<Vec<Spanned<CallArg>>> {
@@ -432,7 +426,10 @@ fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         Rule::constructor_expr => build_constructor_expr(inner),
         Rule::call_expr => build_call_expr(inner),
         Rule::atom => build_atom(inner),
-        _ => Err(parse_error(&inner, &format!("unexpected pipe_term rule: {:?}", inner.as_rule()))),
+        _ => Err(parse_error(
+            &inner,
+            &format!("unexpected pipe_term rule: {:?}", inner.as_rule()),
+        )),
     }
 }
 
@@ -456,10 +453,7 @@ fn build_postfix_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         if op_str.starts_with('[') {
             // Index: [expr]
             let idx_expr = build_expr(op_inner.next().unwrap())?;
-            result = Spanned::new(
-                Expr::Index(Box::new(result), Box::new(idx_expr)),
-                op_span,
-            );
+            result = Spanned::new(Expr::Index(Box::new(result), Box::new(idx_expr)), op_span);
         } else if op_str.starts_with('.') {
             if let Some(first_child) = op_inner.next() {
                 if first_child.as_rule() == Rule::ident {
@@ -563,11 +557,7 @@ fn build_multiplicative_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         };
         let right = build_unary_expr(inner.next().unwrap())?;
         left = Spanned::new(
-            Expr::BinOp(
-                Box::new(left),
-                spanned(op, &op_pair),
-                Box::new(right),
-            ),
+            Expr::BinOp(Box::new(left), spanned(op, &op_pair), Box::new(right)),
             span,
         );
     }
@@ -587,11 +577,7 @@ fn build_additive_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         };
         let right = build_multiplicative_expr(inner.next().unwrap())?;
         left = Spanned::new(
-            Expr::BinOp(
-                Box::new(left),
-                spanned(op, &op_pair),
-                Box::new(right),
-            ),
+            Expr::BinOp(Box::new(left), spanned(op, &op_pair), Box::new(right)),
             span,
         );
     }
@@ -615,11 +601,7 @@ fn build_comparison_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         };
         let right = build_additive_expr(inner.next().unwrap())?;
         Ok(Spanned::new(
-            Expr::BinOp(
-                Box::new(left),
-                spanned(op, &op_pair),
-                Box::new(right),
-            ),
+            Expr::BinOp(Box::new(left), spanned(op, &op_pair), Box::new(right)),
             span,
         ))
     } else {
@@ -632,7 +614,7 @@ fn build_and_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let mut inner = pair.into_inner();
     let mut left = build_comparison_expr(inner.next().unwrap())?;
 
-    while let Some(right_pair) = inner.next() {
+    for right_pair in inner {
         let right = build_comparison_expr(right_pair)?;
         left = Spanned::new(
             Expr::BinOp(
@@ -651,7 +633,7 @@ fn build_or_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let mut inner = pair.into_inner();
     let mut left = build_and_expr(inner.next().unwrap())?;
 
-    while let Some(right_pair) = inner.next() {
+    for right_pair in inner {
         let right = build_and_expr(right_pair)?;
         left = Spanned::new(
             Expr::BinOp(
@@ -964,7 +946,10 @@ fn build_if_else_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
     for (i, child) in children.into_iter().enumerate() {
         if i > 0 {
             // Check source text between previous child's end and this child's start
-            let prev_end = current_group.last().map(|p: &Pair| p.as_span().end()).unwrap();
+            let prev_end = current_group
+                .last()
+                .map(|p: &Pair| p.as_span().end())
+                .unwrap();
             let this_start = child.as_span().start();
             let gap = &source[(prev_end - base_offset)..(this_start - base_offset)];
 
@@ -1085,10 +1070,7 @@ fn build_use_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             capabilities.push(spanned(child.as_str().to_string(), &child));
         }
     }
-    Ok(Spanned::new(
-        TopLevel::Use(UseDecl { capabilities }),
-        span,
-    ))
+    Ok(Spanned::new(TopLevel::Use(UseDecl { capabilities }), span))
 }
 
 fn build_event_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
@@ -1102,7 +1084,10 @@ fn build_event_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     let mut i = 0;
     while i + 1 < remaining.len() {
         if remaining[i].as_rule() == Rule::ident && remaining[i + 1].as_rule() == Rule::type_name {
-            fields.push(build_field_def(remaining[i].clone(), remaining[i + 1].clone())?);
+            fields.push(build_field_def(
+                remaining[i].clone(),
+                remaining[i + 1].clone(),
+            )?);
             i += 2;
         } else {
             i += 1;
@@ -1157,7 +1142,10 @@ fn build_type_def_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     let mut i = 0;
     while i + 1 < remaining.len() {
         if remaining[i].as_rule() == Rule::ident && remaining[i + 1].as_rule() == Rule::type_name {
-            fields.push(build_field_def(remaining[i].clone(), remaining[i + 1].clone())?);
+            fields.push(build_field_def(
+                remaining[i].clone(),
+                remaining[i + 1].clone(),
+            )?);
             i += 2;
         } else {
             i += 1;
@@ -1428,10 +1416,7 @@ fn build_requires_clause(pair: Pair) -> anyhow::Result<Spanned<RequiresClause>> 
     let mut inner = pair.into_inner();
     let condition = build_expr(inner.next().unwrap())?;
     let on_fail = inner.next().map(|p| build_fail_policy(p)).transpose()?;
-    Ok(Spanned::new(
-        RequiresClause { condition, on_fail },
-        span,
-    ))
+    Ok(Spanned::new(RequiresClause { condition, on_fail }, span))
 }
 
 fn build_on_handler(pair: Pair) -> anyhow::Result<Spanned<OnHandler>> {
@@ -1539,13 +1524,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
                 let ev_pair = sl_inner.next().unwrap();
                 let event_name = spanned(ev_pair.as_str().to_string(), &ev_pair);
                 let filter = sl_inner.next().map(|p| build_expr(p)).transpose()?;
-                subscriptions.push(Spanned::new(
-                    SubscribeDecl {
-                        event_name,
-                        filter,
-                    },
-                    sl_span,
-                ));
+                subscriptions.push(Spanned::new(SubscribeDecl { event_name, filter }, sl_span));
             }
             Rule::on_handler => {
                 handlers.push(build_on_handler(child)?);
@@ -1676,7 +1655,12 @@ fn build_failure_type(pair: &Pair) -> anyhow::Result<Spanned<FailureType>> {
         "hallucination" => FailureType::Hallucination,
         "budget" => FailureType::Budget,
         "timeout" => FailureType::Timeout,
-        other => return Err(parse_error(pair, &format!("unknown failure type: {}", other))),
+        other => {
+            return Err(parse_error(
+                pair,
+                &format!("unknown failure type: {}", other),
+            ))
+        }
     };
     Ok(Spanned::new(ft, span))
 }
@@ -1688,7 +1672,12 @@ fn build_ward_response(pair: &Pair) -> anyhow::Result<Spanned<WardResponse>> {
         "restart" => WardResponse::Restart,
         "replace" => WardResponse::Replace,
         "escalate" => WardResponse::Escalate,
-        other => return Err(parse_error(pair, &format!("unknown ward response: {}", other))),
+        other => {
+            return Err(parse_error(
+                pair,
+                &format!("unknown ward response: {}", other),
+            ))
+        }
     };
     Ok(Spanned::new(wr, span))
 }
@@ -1723,12 +1712,17 @@ fn build_ward_policy(pair: Pair) -> anyhow::Result<Spanned<WardPolicy>> {
             let ac_span = to_span(&child);
             let mut ac_inner = child.into_inner();
             let count_pair = ac_inner.next().unwrap();
-            let count = count_pair.as_str().parse::<u64>()
+            let count = count_pair
+                .as_str()
+                .parse::<u64>()
                 .map_err(|e| parse_error(&count_pair, &format!("invalid count: {}", e)))?;
             let ac_resp_pair = ac_inner.next().unwrap();
             let ac_response = build_ward_response(&ac_resp_pair)?;
             after_clauses.push(Spanned::new(
-                AfterClause { count, response: ac_response },
+                AfterClause {
+                    count,
+                    response: ac_response,
+                },
                 ac_span,
             ));
         }
@@ -1775,8 +1769,9 @@ fn build_warden_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
                 let mr_span = to_span(&child);
                 let mut mr_inner = child.into_inner();
                 let count_pair = mr_inner.next().unwrap();
-                let count = count_pair.as_str().parse::<u64>()
-                    .map_err(|e| parse_error(&count_pair, &format!("invalid max_retries: {}", e)))?;
+                let count = count_pair.as_str().parse::<u64>().map_err(|e| {
+                    parse_error(&count_pair, &format!("invalid max_retries: {}", e))
+                })?;
                 let dur_pair = mr_inner.next().unwrap();
                 let window = build_duration(dur_pair)?;
                 max_retries = Some(Spanned::new(MaxRetries { count, window }, mr_span));
@@ -1913,10 +1908,7 @@ fn build_fn_main_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             body.push(build_statement(child)?);
         }
     }
-    Ok(Spanned::new(
-        TopLevel::FnMain(FnMainDecl { body }),
-        span,
-    ))
+    Ok(Spanned::new(TopLevel::FnMain(FnMainDecl { body }), span))
 }
 
 fn build_boundary_directive(pair: Pair) -> anyhow::Result<Spanned<BoundaryDirective>> {
@@ -1926,7 +1918,12 @@ fn build_boundary_directive(pair: Pair) -> anyhow::Result<Spanned<BoundaryDirect
         "server" => BoundaryKind::Server,
         "client" => BoundaryKind::Client,
         "shared" => BoundaryKind::Shared,
-        other => return Err(parse_error(&kind_pair, &format!("unknown boundary: {}", other))),
+        other => {
+            return Err(parse_error(
+                &kind_pair,
+                &format!("unknown boundary: {}", other),
+            ))
+        }
     };
     Ok(Spanned::new(
         BoundaryDirective {
@@ -2000,59 +1997,64 @@ pub enum ParseError {
 impl ParseError {
     pub fn to_diagnostic(&self, file: &str) -> crate::diagnostic::Diagnostic {
         match self {
-            ParseError::Syntax { message, span_start, span_end } => {
-                crate::diagnostic::Diagnostic::error(
-                    file,
-                    message.clone(),
-                    *span_start..*span_end,
-                    "parse error here",
-                )
-            }
+            ParseError::Syntax {
+                message,
+                span_start,
+                span_end,
+            } => crate::diagnostic::Diagnostic::error(
+                file,
+                message.clone(),
+                *span_start..*span_end,
+                "parse error here",
+            ),
             ParseError::Internal(msg) => {
-                crate::diagnostic::Diagnostic::error(
-                    file,
-                    msg.clone(),
-                    0..0,
-                    msg.clone(),
-                )
+                crate::diagnostic::Diagnostic::error(file, msg.clone(), 0..0, msg.clone())
             }
         }
     }
 }
 
 pub fn parse(source: &str) -> Result<Program, ParseError> {
-    let pairs = ForgeParser::parse(Rule::program, source)
-        .map_err(|e| {
-            let (start, end) = match e.location {
-                pest::error::InputLocation::Pos(p) => (p, (p + 1).min(source.len())),
-                pest::error::InputLocation::Span((s, e)) => (s, e),
-            };
-            // Extract just the variant description (e.g. "expected statement")
-            let message = match &e.variant {
-                pest::error::ErrorVariant::ParsingError { positives, negatives } => {
-                    let mut parts = Vec::new();
-                    if !positives.is_empty() {
-                        let names: Vec<String> = positives.iter()
-                            .map(|r| format!("{:?}", r).to_lowercase().replace('_', " "))
-                            .collect();
-                        parts.push(format!("expected {}", names.join(", ")));
-                    }
-                    if !negatives.is_empty() {
-                        let names: Vec<String> = negatives.iter()
-                            .map(|r| format!("{:?}", r).to_lowercase().replace('_', " "))
-                            .collect();
-                        parts.push(format!("unexpected {}", names.join(", ")));
-                    }
-                    if parts.is_empty() { "syntax error".to_string() } else { parts.join("; ") }
+    let pairs = ForgeParser::parse(Rule::program, source).map_err(|e| {
+        let (start, end) = match e.location {
+            pest::error::InputLocation::Pos(p) => (p, (p + 1).min(source.len())),
+            pest::error::InputLocation::Span((s, e)) => (s, e),
+        };
+        // Extract just the variant description (e.g. "expected statement")
+        let message = match &e.variant {
+            pest::error::ErrorVariant::ParsingError {
+                positives,
+                negatives,
+            } => {
+                let mut parts = Vec::new();
+                if !positives.is_empty() {
+                    let names: Vec<String> = positives
+                        .iter()
+                        .map(|r| format!("{:?}", r).to_lowercase().replace('_', " "))
+                        .collect();
+                    parts.push(format!("expected {}", names.join(", ")));
                 }
-                pest::error::ErrorVariant::CustomError { message } => message.clone(),
-            };
-            ParseError::Syntax {
-                message,
-                span_start: start,
-                span_end: end,
+                if !negatives.is_empty() {
+                    let names: Vec<String> = negatives
+                        .iter()
+                        .map(|r| format!("{:?}", r).to_lowercase().replace('_', " "))
+                        .collect();
+                    parts.push(format!("unexpected {}", names.join(", ")));
+                }
+                if parts.is_empty() {
+                    "syntax error".to_string()
+                } else {
+                    parts.join("; ")
+                }
             }
-        })?;
+            pest::error::ErrorVariant::CustomError { message } => message.clone(),
+        };
+        ParseError::Syntax {
+            message,
+            span_start: start,
+            span_end: end,
+        }
+    })?;
 
     build_program(pairs).map_err(|e| ParseError::Internal(e.to_string()))
 }

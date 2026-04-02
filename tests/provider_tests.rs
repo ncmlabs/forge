@@ -1,8 +1,8 @@
-use forge::llm::providers::mock::MockProvider;
-use forge::llm::{CompletionRequest, CompletionResponse, LLMProvider, CapabilityHint};
-use forge::llm::cost_tracker::{CostTracker, BudgetError};
-use forge::llm::registry::ProviderRegistry;
 use forge::config::ForgeConfig;
+use forge::llm::cost_tracker::{BudgetError, CostTracker};
+use forge::llm::providers::mock::MockProvider;
+use forge::llm::registry::ProviderRegistry;
+use forge::llm::{CapabilityHint, CompletionRequest, CompletionResponse, LLMProvider};
 
 // ── Mock provider tests ─────────────────────────────────────────────────────
 
@@ -16,9 +16,10 @@ fn mock() -> MockProvider {
 #[tokio::test]
 async fn mock_pattern_matching() {
     let m = mock();
-    let resp = m.complete(
-        CompletionRequest::simple("please classify this text")
-    ).await.unwrap();
+    let resp = m
+        .complete(CompletionRequest::simple("please classify this text"))
+        .await
+        .unwrap();
     assert_eq!(resp.content, "support");
     assert_eq!(resp.provider_name, "test");
     assert_eq!(resp.cost_usd, 0.0);
@@ -27,9 +28,10 @@ async fn mock_pattern_matching() {
 #[tokio::test]
 async fn mock_default_response() {
     let m = mock();
-    let resp = m.complete(
-        CompletionRequest::simple("something unrecognised")
-    ).await.unwrap();
+    let resp = m
+        .complete(CompletionRequest::simple("something unrecognised"))
+        .await
+        .unwrap();
     assert_eq!(resp.content, "I don't know");
 }
 
@@ -44,13 +46,13 @@ async fn mock_health_check() {
 #[test]
 fn estimate_confidence_no_hedging() {
     let resp = CompletionResponse {
-        content:       "The answer is 42.".to_string(),
-        tokens_in:     10,
-        tokens_out:    5,
-        latency_ms:    50,
-        model_used:    "test".to_string(),
+        content: "The answer is 42.".to_string(),
+        tokens_in: 10,
+        tokens_out: 5,
+        latency_ms: 50,
+        model_used: "test".to_string(),
         provider_name: "test".to_string(),
-        cost_usd:      0.0,
+        cost_usd: 0.0,
     };
     assert!((resp.estimate_confidence() - 0.85).abs() < 0.01);
 }
@@ -58,13 +60,13 @@ fn estimate_confidence_no_hedging() {
 #[test]
 fn estimate_confidence_with_hedging() {
     let resp = CompletionResponse {
-        content:       "I think it might be 42, but I'm not sure.".to_string(),
-        tokens_in:     10,
-        tokens_out:    10,
-        latency_ms:    50,
-        model_used:    "test".to_string(),
+        content: "I think it might be 42, but I'm not sure.".to_string(),
+        tokens_in: 10,
+        tokens_out: 10,
+        latency_ms: 50,
+        model_used: "test".to_string(),
         provider_name: "test".to_string(),
-        cost_usd:      0.0,
+        cost_usd: 0.0,
     };
     let conf = resp.estimate_confidence();
     assert!(conf < 0.85, "should be lower than baseline: {}", conf);
@@ -115,11 +117,18 @@ async fn registry_explicit_pin() {
 fn budget_exceeded() {
     let tracker = CostTracker::new(Some(0.001), 80);
     let resp = CompletionResponse {
-        cost_usd: 0.002, content: "hello".to_string(),
-        tokens_in: 100, tokens_out: 50, latency_ms: 1,
-        model_used: "mock".to_string(), provider_name: "mock".to_string(),
+        cost_usd: 0.002,
+        content: "hello".to_string(),
+        tokens_in: 100,
+        tokens_out: 50,
+        latency_ms: 1,
+        model_used: "mock".to_string(),
+        provider_name: "mock".to_string(),
     };
-    assert!(matches!(tracker.record(&resp), Err(BudgetError::Exceeded { .. })));
+    assert!(matches!(
+        tracker.record(&resp),
+        Err(BudgetError::Exceeded { .. })
+    ));
 }
 
 // ── Config tests ────────────────────────────────────────────────────────────

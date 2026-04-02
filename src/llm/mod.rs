@@ -1,9 +1,9 @@
 // FORGE LLM backend abstraction
 // See issue #8 and providers.md for full specification
 
+pub mod cost_tracker;
 pub mod providers;
 pub mod registry;
-pub mod cost_tracker;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -17,10 +17,10 @@ use thiserror::Error;
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityHint {
     pub min_context_tokens: Option<u32>,
-    pub quality:            Option<QualityTier>,
-    pub local_only:         bool,
-    pub max_cost_per_call:  Option<f32>,
-    pub provider_name:      Option<String>,
+    pub quality: Option<QualityTier>,
+    pub local_only: bool,
+    pub max_cost_per_call: Option<f32>,
+    pub provider_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Deserialize)]
@@ -35,29 +35,29 @@ pub enum QualityTier {
 
 #[derive(Debug, Clone)]
 pub struct ProviderCapabilities {
-    pub max_context_tokens:        u32,
-    pub quality_tier:              QualityTier,
-    pub local:                     bool,
-    pub cost_per_1k_input_tokens:  f32,
+    pub max_context_tokens: u32,
+    pub quality_tier: QualityTier,
+    pub local: bool,
+    pub cost_per_1k_input_tokens: f32,
     pub cost_per_1k_output_tokens: f32,
-    pub supports_streaming:        bool,
+    pub supports_streaming: bool,
     pub supports_function_calling: bool,
-    pub supports_json_mode:        bool,
-    pub max_output_tokens:         u32,
+    pub supports_json_mode: bool,
+    pub max_output_tokens: u32,
 }
 
 impl Default for ProviderCapabilities {
     fn default() -> Self {
         Self {
-            max_context_tokens:        8_192,
-            quality_tier:              QualityTier::Balanced,
-            local:                     false,
-            cost_per_1k_input_tokens:  0.001,
+            max_context_tokens: 8_192,
+            quality_tier: QualityTier::Balanced,
+            local: false,
+            cost_per_1k_input_tokens: 0.001,
             cost_per_1k_output_tokens: 0.001,
-            supports_streaming:        true,
+            supports_streaming: true,
             supports_function_calling: true,
-            supports_json_mode:        true,
-            max_output_tokens:         4_096,
+            supports_json_mode: true,
+            max_output_tokens: 4_096,
         }
     }
 }
@@ -66,23 +66,23 @@ impl Default for ProviderCapabilities {
 
 #[derive(Debug, Clone)]
 pub struct CompletionRequest {
-    pub prompt:         String,
-    pub system:         Option<String>,
-    pub max_tokens:     u32,
-    pub temperature:    f32,
+    pub prompt: String,
+    pub system: Option<String>,
+    pub max_tokens: u32,
+    pub temperature: f32,
     pub stop_sequences: Vec<String>,
-    pub json_mode:      bool,
+    pub json_mode: bool,
 }
 
 impl CompletionRequest {
     pub fn simple(prompt: impl Into<String>) -> Self {
         Self {
-            prompt:         prompt.into(),
-            system:         None,
-            max_tokens:     4096,
-            temperature:    0.7,
+            prompt: prompt.into(),
+            system: None,
+            max_tokens: 4096,
+            temperature: 0.7,
             stop_sequences: vec![],
-            json_mode:      false,
+            json_mode: false,
         }
     }
 
@@ -104,24 +104,31 @@ impl CompletionRequest {
 
 #[derive(Debug, Clone)]
 pub struct CompletionResponse {
-    pub content:       String,
-    pub tokens_in:     u32,
-    pub tokens_out:    u32,
-    pub latency_ms:    u64,
-    pub model_used:    String,
+    pub content: String,
+    pub tokens_in: u32,
+    pub tokens_out: u32,
+    pub latency_ms: u64,
+    pub model_used: String,
     pub provider_name: String,
-    pub cost_usd:      f32,
+    pub cost_usd: f32,
 }
 
 impl CompletionResponse {
     /// Heuristic confidence estimate for POC — replace with logprobs when available.
     pub fn estimate_confidence(&self) -> f32 {
         let hedging_phrases = [
-            "i'm not sure", "i think", "possibly", "might be",
-            "i cannot", "i don't know", "unclear", "it depends",
+            "i'm not sure",
+            "i think",
+            "possibly",
+            "might be",
+            "i cannot",
+            "i don't know",
+            "unclear",
+            "it depends",
         ];
         let lower = self.content.to_lowercase();
-        let hedge_count = hedging_phrases.iter()
+        let hedge_count = hedging_phrases
+            .iter()
             .filter(|p| lower.contains(*p))
             .count();
 
@@ -137,7 +144,10 @@ pub enum ProviderError {
     Unavailable { provider: String, reason: String },
 
     #[error("rate limited by '{provider}', retry after {retry_after_secs}s")]
-    RateLimited { provider: String, retry_after_secs: u64 },
+    RateLimited {
+        provider: String,
+        retry_after_secs: u64,
+    },
 
     #[error("request exceeded context window ({tokens} tokens, max {max})")]
     ContextTooLong { tokens: u32, max: u32 },
@@ -174,13 +184,14 @@ pub trait LLMProvider: Send + Sync {
     ) -> Result<CompletionResponse, ProviderError>;
 
     async fn health_check(&self) -> Result<(), ProviderError> {
-        self.complete(CompletionRequest::simple("ping").with_max_tokens(1)).await?;
+        self.complete(CompletionRequest::simple("ping").with_max_tokens(1))
+            .await?;
         Ok(())
     }
 
     fn estimate_cost(&self, prompt_tokens: u32, max_output_tokens: u32) -> f32 {
         let caps = self.capabilities();
-        let input_cost  = (prompt_tokens as f32 / 1000.0) * caps.cost_per_1k_input_tokens;
+        let input_cost = (prompt_tokens as f32 / 1000.0) * caps.cost_per_1k_input_tokens;
         let output_cost = (max_output_tokens as f32 / 1000.0) * caps.cost_per_1k_output_tokens;
         input_cost + output_cost
     }

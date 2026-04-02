@@ -14,27 +14,31 @@ fn sp<T>(node: T) -> Spanned<T> {
 fn basic_warden() -> WardenDecl {
     WardenDecl {
         name: sp("test_warden".to_string()),
-        manages: vec![
-            sp("agent_a".to_string()),
-            sp("agent_b".to_string()),
-        ],
+        manages: vec![sp("agent_a".to_string()), sp("agent_b".to_string())],
         policies: vec![
             sp(WardPolicy {
                 failure_type: sp(FailureType::Stuck),
                 response: sp(WardResponse::Nudge),
                 scope: sp(WardScope::This),
                 after_clauses: vec![
-                    sp(AfterClause { count: 3, response: sp(WardResponse::Restart) }),
-                    sp(AfterClause { count: 6, response: sp(WardResponse::Escalate) }),
+                    sp(AfterClause {
+                        count: 3,
+                        response: sp(WardResponse::Restart),
+                    }),
+                    sp(AfterClause {
+                        count: 6,
+                        response: sp(WardResponse::Escalate),
+                    }),
                 ],
             }),
             sp(WardPolicy {
                 failure_type: sp(FailureType::Crash),
                 response: sp(WardResponse::Restart),
                 scope: sp(WardScope::All),
-                after_clauses: vec![
-                    sp(AfterClause { count: 3, response: sp(WardResponse::Escalate) }),
-                ],
+                after_clauses: vec![sp(AfterClause {
+                    count: 3,
+                    response: sp(WardResponse::Escalate),
+                })],
             }),
             sp(WardPolicy {
                 failure_type: sp(FailureType::Hallucination),
@@ -57,7 +61,10 @@ fn basic_warden() -> WardenDecl {
         ],
         max_retries: Some(sp(MaxRetries {
             count: 5,
-            window: sp(Duration { value: 60, unit: DurationUnit::Seconds }),
+            window: sp(Duration {
+                value: 60,
+                unit: DurationUnit::Seconds,
+            }),
         })),
     }
 }
@@ -116,10 +123,14 @@ agent worker
     say "working"
 "#;
     let program = forge::parser::parse(src).expect("parse failed");
-    let w = program.items.iter().find_map(|item| match &item.node {
-        TopLevel::Warden(w) => Some(w),
-        _ => None,
-    }).unwrap();
+    let w = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Warden(w) => Some(w),
+            _ => None,
+        })
+        .unwrap();
 
     let stuck_policy = &w.policies[0].node;
     assert_eq!(stuck_policy.failure_type.node, FailureType::Stuck);
@@ -127,9 +138,15 @@ agent worker
     assert_eq!(stuck_policy.scope.node, WardScope::This);
     assert_eq!(stuck_policy.after_clauses.len(), 2);
     assert_eq!(stuck_policy.after_clauses[0].node.count, 3);
-    assert_eq!(stuck_policy.after_clauses[0].node.response.node, WardResponse::Restart);
+    assert_eq!(
+        stuck_policy.after_clauses[0].node.response.node,
+        WardResponse::Restart
+    );
     assert_eq!(stuck_policy.after_clauses[1].node.count, 6);
-    assert_eq!(stuck_policy.after_clauses[1].node.response.node, WardResponse::Escalate);
+    assert_eq!(
+        stuck_policy.after_clauses[1].node.response.node,
+        WardResponse::Escalate
+    );
 }
 
 #[test]
@@ -142,14 +159,24 @@ fn parse_agent_with_warden_override() {
     say "classifying"
 "#;
     let program = forge::parser::parse(src).expect("parse failed");
-    let agent = program.items.iter().find_map(|item| match &item.node {
-        TopLevel::Agent(a) => Some(a),
-        _ => None,
-    }).unwrap();
+    let agent = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a),
+            _ => None,
+        })
+        .unwrap();
 
     assert_eq!(agent.warden_override.len(), 1);
-    assert_eq!(agent.warden_override[0].node.failure_type.node, FailureType::Stuck);
-    assert_eq!(agent.warden_override[0].node.response.node, WardResponse::Replace);
+    assert_eq!(
+        agent.warden_override[0].node.failure_type.node,
+        FailureType::Stuck
+    );
+    assert_eq!(
+        agent.warden_override[0].node.response.node,
+        WardResponse::Replace
+    );
     assert_eq!(agent.warden_override[0].node.scope.node, WardScope::This);
 }
 
@@ -165,10 +192,14 @@ agent worker
     say "working"
 "#;
     let program = forge::parser::parse(src).expect("parse failed");
-    let w = program.items.iter().find_map(|item| match &item.node {
-        TopLevel::Warden(w) => Some(w),
-        _ => None,
-    }).unwrap();
+    let w = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Warden(w) => Some(w),
+            _ => None,
+        })
+        .unwrap();
 
     assert!(w.max_retries.is_none());
     assert_eq!(w.policies.len(), 1);
@@ -190,7 +221,8 @@ agent worker
     let program = forge::parser::parse(src).expect("parse failed");
     let diagnostics = warden_checker::check(&program, "test.forge");
 
-    let warnings: Vec<_> = diagnostics.iter()
+    let warnings: Vec<_> = diagnostics
+        .iter()
         .filter(|d| matches!(d.kind, forge::diagnostic::DiagnosticKind::Warning))
         .collect();
     assert_eq!(warnings.len(), 1);
@@ -208,7 +240,8 @@ fn checker_errors_on_unknown_managed_name() {
     let program = forge::parser::parse(src).expect("parse failed");
     let diagnostics = warden_checker::check(&program, "test.forge");
 
-    let errors: Vec<_> = diagnostics.iter()
+    let errors: Vec<_> = diagnostics
+        .iter()
         .filter(|d| matches!(d.kind, forge::diagnostic::DiagnosticKind::Error))
         .collect();
     assert_eq!(errors.len(), 1);
@@ -222,17 +255,18 @@ fn checker_errors_on_non_escalating_ladder() {
     let warden = WardenDecl {
         name: sp("bad_warden".to_string()),
         manages: vec![],
-        policies: vec![
-            sp(WardPolicy {
-                failure_type: sp(FailureType::Stuck),
-                response: sp(WardResponse::Restart),
-                scope: sp(WardScope::This),
-                after_clauses: vec![
-                    // De-escalation: Restart → Nudge (should error)
-                    sp(AfterClause { count: 3, response: sp(WardResponse::Nudge) }),
-                ],
-            }),
-        ],
+        policies: vec![sp(WardPolicy {
+            failure_type: sp(FailureType::Stuck),
+            response: sp(WardResponse::Restart),
+            scope: sp(WardScope::This),
+            after_clauses: vec![
+                // De-escalation: Restart → Nudge (should error)
+                sp(AfterClause {
+                    count: 3,
+                    response: sp(WardResponse::Nudge),
+                }),
+            ],
+        })],
         max_retries: None,
     };
 
@@ -242,10 +276,14 @@ fn checker_errors_on_non_escalating_ladder() {
     };
 
     let diagnostics = warden_checker::check(&program, "test.forge");
-    let errors: Vec<_> = diagnostics.iter()
+    let errors: Vec<_> = diagnostics
+        .iter()
         .filter(|d| matches!(d.kind, forge::diagnostic::DiagnosticKind::Error))
         .collect();
-    assert!(errors.len() >= 1, "expected error for de-escalating ladder");
+    assert!(
+        !errors.is_empty(),
+        "expected error for de-escalating ladder"
+    );
     assert!(errors[0].message.contains("increase severity"));
 }
 
@@ -267,10 +305,15 @@ agent worker
     let program = forge::parser::parse(src).expect("parse failed");
     let diagnostics = warden_checker::check(&program, "test.forge");
 
-    let warnings: Vec<_> = diagnostics.iter()
+    let warnings: Vec<_> = diagnostics
+        .iter()
         .filter(|d| matches!(d.kind, forge::diagnostic::DiagnosticKind::Warning))
         .collect();
-    assert_eq!(warnings.len(), 0, "full coverage should produce no warnings");
+    assert_eq!(
+        warnings.len(),
+        0,
+        "full coverage should produce no warnings"
+    );
 }
 
 // ── Runtime: Policy Resolution Tests ────────────────────────────────────────
@@ -290,14 +333,12 @@ fn resolve_policy_warden_defaults() {
 #[test]
 fn resolve_policy_agent_override() {
     let decl = basic_warden();
-    let overrides = vec![
-        sp(WardPolicy {
-            failure_type: sp(FailureType::Stuck),
-            response: sp(WardResponse::Replace),
-            scope: sp(WardScope::Downstream),
-            after_clauses: vec![],
-        }),
-    ];
+    let overrides = vec![sp(WardPolicy {
+        failure_type: sp(FailureType::Stuck),
+        response: sp(WardResponse::Replace),
+        scope: sp(WardScope::Downstream),
+        after_clauses: vec![],
+    })];
 
     let policy = resolve_policy(&decl, &overrides, FailureType::Stuck);
     assert!(policy.is_some());
@@ -330,8 +371,14 @@ fn effective_response_base_level() {
         response: sp(WardResponse::Nudge),
         scope: sp(WardScope::This),
         after_clauses: vec![
-            sp(AfterClause { count: 3, response: sp(WardResponse::Restart) }),
-            sp(AfterClause { count: 6, response: sp(WardResponse::Escalate) }),
+            sp(AfterClause {
+                count: 3,
+                response: sp(WardResponse::Restart),
+            }),
+            sp(AfterClause {
+                count: 6,
+                response: sp(WardResponse::Escalate),
+            }),
         ],
     };
 
@@ -348,8 +395,14 @@ fn effective_response_first_escalation() {
         response: sp(WardResponse::Nudge),
         scope: sp(WardScope::This),
         after_clauses: vec![
-            sp(AfterClause { count: 3, response: sp(WardResponse::Restart) }),
-            sp(AfterClause { count: 6, response: sp(WardResponse::Escalate) }),
+            sp(AfterClause {
+                count: 3,
+                response: sp(WardResponse::Restart),
+            }),
+            sp(AfterClause {
+                count: 6,
+                response: sp(WardResponse::Escalate),
+            }),
         ],
     };
 
@@ -366,8 +419,14 @@ fn effective_response_second_escalation() {
         response: sp(WardResponse::Nudge),
         scope: sp(WardScope::This),
         after_clauses: vec![
-            sp(AfterClause { count: 3, response: sp(WardResponse::Restart) }),
-            sp(AfterClause { count: 6, response: sp(WardResponse::Escalate) }),
+            sp(AfterClause {
+                count: 3,
+                response: sp(WardResponse::Restart),
+            }),
+            sp(AfterClause {
+                count: 6,
+                response: sp(WardResponse::Escalate),
+            }),
         ],
     };
 
@@ -492,14 +551,12 @@ fn warden_respects_agent_overrides() {
     let decl = basic_warden();
     let mut warden = Warden::new(decl, None);
 
-    let overrides = vec![
-        sp(WardPolicy {
-            failure_type: sp(FailureType::Stuck),
-            response: sp(WardResponse::Replace),
-            scope: sp(WardScope::Downstream),
-            after_clauses: vec![],
-        }),
-    ];
+    let overrides = vec![sp(WardPolicy {
+        failure_type: sp(FailureType::Stuck),
+        response: sp(WardResponse::Replace),
+        scope: sp(WardScope::Downstream),
+        after_clauses: vec![],
+    })];
 
     let signal = FailureSignal {
         agent_name: "agent_a".to_string(),

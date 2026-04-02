@@ -44,7 +44,9 @@ impl PoolExecutor {
         let worker_count = decl.worker_count.node as usize;
 
         // Resolve worker kind from program declarations
-        let worker_kind = program.items.iter()
+        let worker_kind = program
+            .items
+            .iter()
             .find_map(|item| match &item.node {
                 TopLevel::Task(t) if t.name.node == *worker_type => {
                     Some(WorkerKind::Task(t.clone()))
@@ -54,9 +56,12 @@ impl PoolExecutor {
                 }
                 _ => None,
             })
-            .ok_or_else(|| RuntimeError::PoolError(
-                format!("pool '{}': worker type '{}' not found as task or agent", decl.name.node, worker_type)
-            ))?;
+            .ok_or_else(|| {
+                RuntimeError::PoolError(format!(
+                    "pool '{}': worker type '{}' not found as task or agent",
+                    decl.name.node, worker_type
+                ))
+            })?;
 
         Ok(Self {
             decl,
@@ -77,7 +82,12 @@ impl PoolExecutor {
         let strategy_name = strategy_label(&self.decl.strategy.node);
 
         if let Some(ref tracer) = self.tracer {
-            tracer.pool_send(&self.decl.name.node, event, self.worker_count, &strategy_name);
+            tracer.pool_send(
+                &self.decl.name.node,
+                event,
+                self.worker_count,
+                &strategy_name,
+            );
         }
 
         // Spawn workers
@@ -85,22 +95,25 @@ impl PoolExecutor {
         self.spawn_workers(&mut join_set, event, &args);
 
         // Compute timeout
-        let timeout_dur = self.decl.timeout.as_ref().map(|t| ast_duration_to_tokio(&t.node));
+        let timeout_dur = self
+            .decl
+            .timeout
+            .as_ref()
+            .map(|t| ast_duration_to_tokio(&t.node));
 
         // Resolve via strategy
         let result = match timeout_dur {
-            Some(dur) => {
-                match tokio::time::timeout(dur, self.resolve(&mut join_set)).await {
-                    Ok(r) => r,
-                    Err(_) => {
-                        join_set.abort_all();
-                        Err(RuntimeError::PoolError(format!(
-                            "pool '{}': timeout after {}",
-                            self.decl.name.node, format_duration(&self.decl.timeout.as_ref().unwrap().node),
-                        )))
-                    }
+            Some(dur) => match tokio::time::timeout(dur, self.resolve(&mut join_set)).await {
+                Ok(r) => r,
+                Err(_) => {
+                    join_set.abort_all();
+                    Err(RuntimeError::PoolError(format!(
+                        "pool '{}': timeout after {}",
+                        self.decl.name.node,
+                        format_duration(&self.decl.timeout.as_ref().unwrap().node),
+                    )))
                 }
-            }
+            },
             None => self.resolve(&mut join_set).await,
         };
 
@@ -146,9 +159,7 @@ impl PoolExecutor {
                     );
                     let decl = task_decl.clone();
                     let args = args.to_vec();
-                    join_set.spawn(async move {
-                        executor.call_task(&decl, args).await
-                    });
+                    join_set.spawn(async move { executor.call_task(&decl, args).await });
                 }
                 WorkerKind::Agent(agent_decl) => {
                     let decl = agent_decl.clone();
@@ -163,7 +174,9 @@ impl PoolExecutor {
                         for (i, arg) in args.into_iter().enumerate() {
                             params.insert(format!("arg_{}", i), arg);
                         }
-                        process.dispatch(&event, params).await
+                        process
+                            .dispatch(&event, params)
+                            .await
                             .map(|opt| opt.unwrap_or(ConfidentValue::deterministic(Value::Unit)))
                     });
                 }
@@ -199,15 +212,18 @@ impl PoolExecutor {
                     return Ok(cv);
                 }
                 // Track highest confidence as fallback
-                if best.as_ref().map_or(true, |b| cv.confidence > b.confidence) {
+                if best.as_ref().is_none_or(|b| cv.confidence > b.confidence) {
                     best = Some(cv);
                 }
             }
         }
 
-        best.ok_or_else(|| RuntimeError::PoolError(
-            format!("pool '{}': all workers failed", self.decl.name.node)
-        ))
+        best.ok_or_else(|| {
+            RuntimeError::PoolError(format!(
+                "pool '{}': all workers failed",
+                self.decl.name.node
+            ))
+        })
     }
 
     /// Collect all results into an array.
@@ -226,14 +242,13 @@ impl PoolExecutor {
         }
 
         if results.is_empty() {
-            return Err(RuntimeError::PoolError(
-                format!("pool '{}': no results", self.decl.name.node)
-            ));
+            return Err(RuntimeError::PoolError(format!(
+                "pool '{}': no results",
+                self.decl.name.node
+            )));
         }
 
-        let min_conf = results.iter()
-            .map(|r| r.confidence)
-            .fold(1.0_f32, f32::min);
+        let min_conf = results.iter().map(|r| r.confidence).fold(1.0_f32, f32::min);
         Ok(ConfidentValue::derived(Value::Array(results), min_conf))
     }
 
@@ -247,19 +262,29 @@ impl PoolExecutor {
         let total = results.len();
 
         // Find largest cluster
-        let largest = clusters.iter()
-            .max_by_key(|c| c.len())
-            .ok_or_else(|| RuntimeError::PoolError(
-                format!("pool '{}': no results to compare", self.decl.name.node)
-            ))?;
+        let largest = clusters.iter().max_by_key(|c| c.len()).ok_or_else(|| {
+            RuntimeError::PoolError(format!(
+                "pool '{}': no results to compare",
+                self.decl.name.node
+            ))
+        })?;
 
         // Always return a consensus value — the agreement ratio determines
         // whether it's .sure(), .unsure(), or .conflicted() downstream.
         let agreement = largest.len() as f32 / total as f32;
-        let best_idx = *largest.iter()
-            .max_by(|&&a, &&b| results[a].confidence.partial_cmp(&results[b].confidence).unwrap())
+        let best_idx = *largest
+            .iter()
+            .max_by(|&&a, &&b| {
+                results[a]
+                    .confidence
+                    .partial_cmp(&results[b].confidence)
+                    .unwrap()
+            })
             .unwrap();
-        Ok(ConfidentValue::from_consensus(results[best_idx].value.clone(), agreement))
+        Ok(ConfidentValue::from_consensus(
+            results[best_idx].value.clone(),
+            agreement,
+        ))
     }
 
     /// Return when n workers agree on the same answer.
@@ -274,14 +299,24 @@ impl PoolExecutor {
         // Find any cluster with >= n members
         if let Some(cluster) = clusters.iter().find(|c| c.len() >= n) {
             let agreement = cluster.len() as f32 / results.len() as f32;
-            let best_idx = *cluster.iter()
-                .max_by(|&&a, &&b| results[a].confidence.partial_cmp(&results[b].confidence).unwrap())
+            let best_idx = *cluster
+                .iter()
+                .max_by(|&&a, &&b| {
+                    results[a]
+                        .confidence
+                        .partial_cmp(&results[b].confidence)
+                        .unwrap()
+                })
                 .unwrap();
-            Ok(ConfidentValue::from_consensus(results[best_idx].value.clone(), agreement))
-        } else {
-            Err(RuntimeError::PoolError(
-                format!("pool '{}': quorum of {} not reached", self.decl.name.node, n)
+            Ok(ConfidentValue::from_consensus(
+                results[best_idx].value.clone(),
+                agreement,
             ))
+        } else {
+            Err(RuntimeError::PoolError(format!(
+                "pool '{}': quorum of {} not reached",
+                self.decl.name.node, n
+            )))
         }
     }
 
@@ -301,11 +336,15 @@ impl PoolExecutor {
             }
         }
 
-        results.into_iter()
+        results
+            .into_iter()
             .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
-            .ok_or_else(|| RuntimeError::PoolError(
-                format!("pool '{}': fewer than {} workers succeeded", self.decl.name.node, n)
-            ))
+            .ok_or_else(|| {
+                RuntimeError::PoolError(format!(
+                    "pool '{}': fewer than {} workers succeeded",
+                    self.decl.name.node, n
+                ))
+            })
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -321,17 +360,15 @@ impl PoolExecutor {
             }
         }
         if results.is_empty() {
-            return Err(RuntimeError::PoolError(
-                format!("pool '{}': all workers failed", self.decl.name.node)
-            ));
+            return Err(RuntimeError::PoolError(format!(
+                "pool '{}': all workers failed",
+                self.decl.name.node
+            )));
         }
         Ok(results)
     }
 
-    async fn try_fallback(
-        &self,
-        args: &[ConfidentValue],
-    ) -> Option<ConfidentValue> {
+    async fn try_fallback(&self, args: &[ConfidentValue]) -> Option<ConfidentValue> {
         let fallback_name = self.decl.fallback.as_ref()?;
         let executor = TaskExecutor::new(
             self.program.clone(),
@@ -340,7 +377,10 @@ impl PoolExecutor {
         );
 
         // Look up the fallback as a task
-        let task = self.program.items.iter()
+        let task = self
+            .program
+            .items
+            .iter()
             .find_map(|item| match &item.node {
                 TopLevel::Task(t) if t.name.node == fallback_name.node => Some(t.clone()),
                 _ => None,
@@ -355,9 +395,7 @@ impl PoolExecutor {
 /// Group results into clusters where members have Jaccard similarity > 0.5
 /// on their text representation.
 fn cluster_by_similarity(results: &[ConfidentValue]) -> Vec<Vec<usize>> {
-    let texts: Vec<String> = results.iter()
-        .map(|r| format!("{}", r.value))
-        .collect();
+    let texts: Vec<String> = results.iter().map(|r| format!("{}", r.value)).collect();
 
     let mut clusters: Vec<Vec<usize>> = Vec::new();
 
@@ -432,8 +470,12 @@ mod tests {
     #[test]
     fn cluster_similar_texts() {
         let results = vec![
-            ConfidentValue::deterministic(Value::Text("the speed of light is about 300000 km/s".to_string())),
-            ConfidentValue::deterministic(Value::Text("the speed of light is approximately 300000 km/s".to_string())),
+            ConfidentValue::deterministic(Value::Text(
+                "the speed of light is about 300000 km/s".to_string(),
+            )),
+            ConfidentValue::deterministic(Value::Text(
+                "the speed of light is approximately 300000 km/s".to_string(),
+            )),
             ConfidentValue::deterministic(Value::Text("I don't know the answer".to_string())),
         ];
         let clusters = cluster_by_similarity(&results);
@@ -455,14 +497,32 @@ mod tests {
 
     #[test]
     fn duration_conversion() {
-        let d = Duration { value: 30, unit: DurationUnit::Seconds };
-        assert_eq!(ast_duration_to_tokio(&d), tokio::time::Duration::from_secs(30));
+        let d = Duration {
+            value: 30,
+            unit: DurationUnit::Seconds,
+        };
+        assert_eq!(
+            ast_duration_to_tokio(&d),
+            tokio::time::Duration::from_secs(30)
+        );
 
-        let d = Duration { value: 2, unit: DurationUnit::Minutes };
-        assert_eq!(ast_duration_to_tokio(&d), tokio::time::Duration::from_secs(120));
+        let d = Duration {
+            value: 2,
+            unit: DurationUnit::Minutes,
+        };
+        assert_eq!(
+            ast_duration_to_tokio(&d),
+            tokio::time::Duration::from_secs(120)
+        );
 
-        let d = Duration { value: 1, unit: DurationUnit::Hours };
-        assert_eq!(ast_duration_to_tokio(&d), tokio::time::Duration::from_secs(3600));
+        let d = Duration {
+            value: 1,
+            unit: DurationUnit::Hours,
+        };
+        assert_eq!(
+            ast_duration_to_tokio(&d),
+            tokio::time::Duration::from_secs(3600)
+        );
     }
 
     #[test]

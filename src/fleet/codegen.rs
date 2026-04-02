@@ -115,10 +115,7 @@ fn emit_handler(buf: &mut String, handler: &HandlerSpec, agent_name: &str) {
 
     // Stub body: a reason call + say so the handler parses.
     // TODO hint is inline because standalone comment lines don't parse inside handlers.
-    let hint = handler
-        .todo_hint
-        .as_deref()
-        .unwrap_or("implement logic");
+    let hint = handler.todo_hint.as_deref().unwrap_or("implement logic");
     let first_param = handler
         .params
         .first()
@@ -139,7 +136,11 @@ fn emit_flow(buf: &mut String, flow: &FlowSpec) {
     line(buf, 0, &format!("flow {}", flow.name));
 
     if let Some(input) = &flow.input {
-        line(buf, 1, &format!("needs {}: {}", input.name, input.type_name));
+        line(
+            buf,
+            1,
+            &format!("needs {}: {}", input.name, input.type_name),
+        );
     }
     line(buf, 1, "gives Text");
     blank(buf);

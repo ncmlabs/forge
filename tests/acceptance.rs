@@ -17,10 +17,9 @@ use forge::runtime::executor::TaskExecutor;
 // ── Helpers ──────────────────────────────────────────────────────
 
 fn parse_file(path: &str) -> Program {
-    let source = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("could not read {}: {}", path, e));
-    forge::parser::parse(&source)
-        .unwrap_or_else(|e| panic!("parse failed for {}: {:?}", path, e))
+    let source =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("could not read {}: {}", path, e));
+    forge::parser::parse(&source).unwrap_or_else(|e| panic!("parse failed for {}: {:?}", path, e))
 }
 
 fn check_file(path: &str) -> Vec<Diagnostic> {
@@ -56,10 +55,7 @@ fn check_files(paths: &[&str]) -> Vec<Diagnostic> {
         diags.extend(checker::check_all(program, filename));
     }
 
-    let refs: Vec<(&Program, &str)> = programs
-        .iter()
-        .map(|(p, f)| (p, f.as_str()))
-        .collect();
+    let refs: Vec<(&Program, &str)> = programs.iter().map(|(p, f)| (p, f.as_str())).collect();
     diags.extend(boundary_checker::check(&refs));
 
     diags
@@ -139,10 +135,7 @@ fn accept_boundary_error() {
         "examples/boundary_error_client.forge",
     ]);
     let errs = errors(&diags);
-    assert!(
-        !errs.is_empty(),
-        "should detect cross-boundary reference"
-    );
+    assert!(!errs.is_empty(), "should detect cross-boundary reference");
     assert!(
         errs.iter()
             .any(|d| d.message.contains("server-only symbol")),
@@ -159,7 +152,11 @@ async fn accept_hello_run() {
     let mock = MockProvider::new("mock").with_default("mock response");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
-    assert!(result.is_ok(), "hello.forge should run without error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "hello.forge should run without error: {:?}",
+        result.err()
+    );
     let outputs = executor.outputs();
     assert_eq!(outputs, vec!["Hello, World!"]);
 }
@@ -192,8 +189,7 @@ async fn accept_tictactoe_game() {
         .expect("could not read platform.forge");
 
     let room_program = forge::parser::parse(&room_source).expect("parse room_agent failed");
-    let platform_program =
-        forge::parser::parse(&platform_source).expect("parse platform failed");
+    let platform_program = forge::parser::parse(&platform_source).expect("parse platform failed");
 
     // Extract the agent declaration from room_agent.forge
     let agent_decl = room_program
@@ -285,8 +281,14 @@ async fn accept_tictactoe_game() {
             matches!(&count.value, Value::Number(n) if *n == 2.0),
             "player_count should be 2 after second join"
         );
-        let sm = ctx.state_machine.as_ref().expect("should have state machine");
-        assert_eq!(sm.current, "playing", "lifecycle should be 'playing' after 2 joins");
+        let sm = ctx
+            .state_machine
+            .as_ref()
+            .expect("should have state machine");
+        assert_eq!(
+            sm.current, "playing",
+            "lifecycle should be 'playing' after 2 joins"
+        );
     }
 
     // 3. Requires guard rejects third join
@@ -315,10 +317,7 @@ async fn accept_tictactoe_game() {
     let mut last_result = None;
     for (player, cell) in &moves {
         println!("=== Move: {} -> cell {} ===", player, cell);
-        let params = HashMap::from([
-            text_param("player", player),
-            number_param("cell", *cell),
-        ]);
+        let params = HashMap::from([text_param("player", player), number_param("cell", *cell)]);
         last_result = agent.dispatch("move", params).await.unwrap();
     }
 
@@ -329,17 +328,24 @@ async fn accept_tictactoe_game() {
     match &result.value {
         Value::Record(fields) => {
             // Result is a tagged record: { _type: "GameResult", _value: { winner, detail } }
-            let inner = fields.get("_value")
+            let inner = fields
+                .get("_value")
                 .and_then(|v| match &v.value {
                     Value::Record(inner) => Some(inner),
                     _ => None,
                 })
                 .or_else(|| {
                     // Or a flat record with winner directly
-                    if fields.contains_key("winner") { Some(fields) } else { None }
+                    if fields.contains_key("winner") {
+                        Some(fields)
+                    } else {
+                        None
+                    }
                 })
                 .expect("GameResult should have winner field (flat or tagged)");
-            let winner = inner.get("winner").expect("inner record should have winner");
+            let winner = inner
+                .get("winner")
+                .expect("inner record should have winner");
             assert!(
                 matches!(&winner.value, Value::Text(s) if s == "X"),
                 "winner should be X, got: {:?}",

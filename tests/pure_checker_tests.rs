@@ -7,11 +7,14 @@ use forge::parser::parse;
 
 #[test]
 fn pure_rejects_reason() {
-    let source = "pure bad\n  needs x: Text\n  gives Text\n  do\n    result = reason x\n    give result\n";
+    let source =
+        "pure bad\n  needs x: Text\n  gives Text\n  do\n    result = reason x\n    give result\n";
     let program = parse(source).unwrap();
     let errors = check(&program);
     assert_eq!(errors.len(), 1);
-    assert!(matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "reason"));
+    assert!(
+        matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "reason")
+    );
 }
 
 #[test]
@@ -20,16 +23,21 @@ fn pure_rejects_classify() {
     let program = parse(source).unwrap();
     let errors = check(&program);
     assert_eq!(errors.len(), 1);
-    assert!(matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "classify"));
+    assert!(
+        matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "classify")
+    );
 }
 
 #[test]
 fn pure_rejects_search() {
-    let source = "pure bad\n  needs q: Text\n  gives Text\n  do\n    result = search q\n    give result\n";
+    let source =
+        "pure bad\n  needs q: Text\n  gives Text\n  do\n    result = search q\n    give result\n";
     let program = parse(source).unwrap();
     let errors = check(&program);
     assert_eq!(errors.len(), 1);
-    assert!(matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "search"));
+    assert!(
+        matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "search")
+    );
 }
 
 #[test]
@@ -37,12 +45,15 @@ fn pure_rejects_try_or() {
     let source = "pure bad\n  needs x: Text\n  gives Text\n  do\n    result = try x or \"fallback\"\n    give result\n";
     let program = parse(source).unwrap();
     let errors = check(&program);
-    assert!(errors.iter().any(|e| matches!(e, CheckError::PureUsesTryOr { name, .. } if name == "bad")));
+    assert!(errors
+        .iter()
+        .any(|e| matches!(e, CheckError::PureUsesTryOr { name, .. } if name == "bad")));
 }
 
 #[test]
 fn pure_rejects_escalate() {
-    let source = "pure bad\n  needs x: Text\n  gives Text\n  do\n    escalate to human\n    give x\n";
+    let source =
+        "pure bad\n  needs x: Text\n  gives Text\n  do\n    escalate to human\n    give x\n";
     let program = parse(source).unwrap();
     let errors = check(&program);
     assert_eq!(errors.len(), 1);
@@ -57,7 +68,9 @@ task stochastic_thing\n  needs x: Text\n  gives Text\n  do\n    give reason x\n\
     let program = parse(source).unwrap();
     let errors = check(&program);
     assert_eq!(errors.len(), 1);
-    assert!(matches!(&errors[0], CheckError::PureCallsTask { name, callee, .. } if name == "bad" && callee == "stochastic_thing"));
+    assert!(
+        matches!(&errors[0], CheckError::PureCallsTask { name, callee, .. } if name == "bad" && callee == "stochastic_thing")
+    );
 }
 
 // ── Acceptance tests ────────────────────────────────────────
@@ -88,7 +101,9 @@ fn pure_rejects_reason_nested_in_if() {
     let program = parse(source).unwrap();
     let errors = check(&program);
     assert_eq!(errors.len(), 1);
-    assert!(matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "reason"));
+    assert!(
+        matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "reason")
+    );
 }
 
 #[test]
@@ -97,7 +112,9 @@ fn pure_rejects_reason_nested_in_for() {
     let program = parse(source).unwrap();
     let errors = check(&program);
     assert_eq!(errors.len(), 1);
-    assert!(matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "reason"));
+    assert!(
+        matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "reason")
+    );
 }
 
 #[test]
@@ -116,10 +133,13 @@ pure bad1\n  needs x: Text\n  gives Text\n  do\n    give reason x\n\
     let program = parse(source).unwrap();
     let errors = check(&program);
     assert_eq!(errors.len(), 2);
-    let names: Vec<&str> = errors.iter().map(|e| match e {
-        CheckError::PureUsesLlm { name, .. } => name.as_str(),
-        _ => "",
-    }).collect();
+    let names: Vec<&str> = errors
+        .iter()
+        .map(|e| match e {
+            CheckError::PureUsesLlm { name, .. } => name.as_str(),
+            _ => "",
+        })
+        .collect();
     assert!(names.contains(&"bad1"));
     assert!(names.contains(&"bad2"));
 }

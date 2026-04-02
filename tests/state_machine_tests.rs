@@ -1,5 +1,5 @@
-use forge::runtime::state_machine::{StateMachine, StateError};
-use forge::ast::{StatesDecl, StateTransition, Spanned, Span};
+use forge::ast::{Span, Spanned, StateTransition, StatesDecl};
+use forge::runtime::state_machine::{StateError, StateMachine};
 
 fn spanned<T>(node: T) -> Spanned<T> {
     Spanned::new(node, Span { start: 0, end: 0 })
@@ -41,8 +41,10 @@ fn legal_transition_succeeds() {
 fn illegal_transition_returns_error() {
     let mut sm = StateMachine::new(&game_phase_decl());
     let result = sm.transition("finished");
-    assert!(matches!(result, Err(StateError::IllegalTransition { ref from, ref to })
-        if from == "waiting" && to == "finished"));
+    assert!(
+        matches!(result, Err(StateError::IllegalTransition { ref from, ref to })
+        if from == "waiting" && to == "finished")
+    );
 }
 
 #[test]

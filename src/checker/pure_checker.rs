@@ -41,38 +41,58 @@ pub enum CheckError {
 impl CheckError {
     pub fn to_diagnostic(&self, file: &str) -> Diagnostic {
         match self {
-            CheckError::PureUsesLlm { name, op, span_start, span_end } => {
-                Diagnostic::error(
-                    file,
-                    format!("pure function `{}` cannot use `{}`", name, op),
-                    *span_start..*span_end,
-                    format!("`{}` is an LLM operation, not allowed in pure functions", op),
-                ).with_help("move this operation to a `task` instead")
-            }
-            CheckError::PureUsesTryOr { name, span_start, span_end } => {
-                Diagnostic::error(
-                    file,
-                    format!("pure function `{}` cannot use `try...or`", name),
-                    *span_start..*span_end,
-                    "`try...or` wraps stochastic operations, not allowed in pure functions",
-                ).with_help("pure functions are deterministic — remove the try/or fallback")
-            }
-            CheckError::PureEscalates { name, span_start, span_end } => {
-                Diagnostic::error(
-                    file,
-                    format!("pure function `{}` cannot use `escalate`", name),
-                    *span_start..*span_end,
-                    "`escalate` is a side effect, not allowed in pure functions",
-                ).with_help("move escalation logic to a `task` instead")
-            }
-            CheckError::PureCallsTask { name, callee, span_start, span_end } => {
-                Diagnostic::error(
-                    file,
-                    format!("pure function `{}` cannot call task `{}`", name, callee),
-                    *span_start..*span_end,
-                    format!("`{}` is a task (possibly stochastic), not callable from pure", callee),
-                ).with_help("pure functions can only call other pure functions")
-            }
+            CheckError::PureUsesLlm {
+                name,
+                op,
+                span_start,
+                span_end,
+            } => Diagnostic::error(
+                file,
+                format!("pure function `{}` cannot use `{}`", name, op),
+                *span_start..*span_end,
+                format!(
+                    "`{}` is an LLM operation, not allowed in pure functions",
+                    op
+                ),
+            )
+            .with_help("move this operation to a `task` instead"),
+            CheckError::PureUsesTryOr {
+                name,
+                span_start,
+                span_end,
+            } => Diagnostic::error(
+                file,
+                format!("pure function `{}` cannot use `try...or`", name),
+                *span_start..*span_end,
+                "`try...or` wraps stochastic operations, not allowed in pure functions",
+            )
+            .with_help("pure functions are deterministic — remove the try/or fallback"),
+            CheckError::PureEscalates {
+                name,
+                span_start,
+                span_end,
+            } => Diagnostic::error(
+                file,
+                format!("pure function `{}` cannot use `escalate`", name),
+                *span_start..*span_end,
+                "`escalate` is a side effect, not allowed in pure functions",
+            )
+            .with_help("move escalation logic to a `task` instead"),
+            CheckError::PureCallsTask {
+                name,
+                callee,
+                span_start,
+                span_end,
+            } => Diagnostic::error(
+                file,
+                format!("pure function `{}` cannot call task `{}`", name, callee),
+                *span_start..*span_end,
+                format!(
+                    "`{}` is a task (possibly stochastic), not callable from pure",
+                    callee
+                ),
+            )
+            .with_help("pure functions can only call other pure functions"),
         }
     }
 }

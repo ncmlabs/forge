@@ -100,9 +100,8 @@ impl WardedRuntime {
 
         let (signal_tx, signal_rx) = mpsc::channel::<AgentSignal>(64);
 
-        let event_bus: SharedEventBus = Arc::new(
-            tokio::sync::RwLock::new(EventBus::new(tracer.clone())),
-        );
+        let event_bus: SharedEventBus =
+            Arc::new(tokio::sync::RwLock::new(EventBus::new(tracer.clone())));
 
         Self {
             warden: Warden::new(warden_decl, tracer),
@@ -150,14 +149,15 @@ impl WardedRuntime {
 
         process = process.with_event_bus(self.event_bus.clone()).await;
 
-        let handle = tokio::spawn(async move {
-            process.run().await
-        });
+        let handle = tokio::spawn(async move { process.run().await });
 
-        self.agents.insert(name.to_string(), ManagedAgent {
-            blueprint: blueprint.clone(),
-            handle,
-        });
+        self.agents.insert(
+            name.to_string(),
+            ManagedAgent {
+                blueprint: blueprint.clone(),
+                handle,
+            },
+        );
 
         Ok(())
     }
@@ -242,7 +242,9 @@ impl WardedRuntime {
         let agent_name = signal.agent_name.clone();
 
         // Look up agent overrides
-        let overrides = self.blueprints.get(&agent_name)
+        let overrides = self
+            .blueprints
+            .get(&agent_name)
             .map(|bp| bp.decl.warden_override.as_slice())
             .unwrap_or(&[]);
 
@@ -293,7 +295,9 @@ impl WardedRuntime {
             WardScope::This => { /* already handled the failing agent */ }
             WardScope::Downstream | WardScope::All => {
                 // v1: downstream treated as all
-                let other_names: Vec<String> = self.agents.keys()
+                let other_names: Vec<String> = self
+                    .agents
+                    .keys()
                     .filter(|n| n.as_str() != failing_agent)
                     .cloned()
                     .collect();
@@ -311,7 +315,10 @@ impl WardedRuntime {
 /// This is a helper for use in `tokio::select!`.
 async fn poll_agents(
     agents: &mut HashMap<String, ManagedAgent>,
-) -> (String, Result<Result<(), RuntimeError>, tokio::task::JoinError>) {
+) -> (
+    String,
+    Result<Result<(), RuntimeError>, tokio::task::JoinError>,
+) {
     // We need to poll all JoinHandles. Use a simple approach:
     // find the first completed one.
     loop {

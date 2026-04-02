@@ -142,11 +142,9 @@ impl Warden {
     ) -> Option<WardAction> {
         let policy = resolve_policy(&self.decl, agent_overrides, signal.failure_type)?;
 
-        let retry_count = self.retry_tracker.record(
-            &signal.agent_name,
-            signal.failure_type,
-            timestamp_ms,
-        );
+        let retry_count =
+            self.retry_tracker
+                .record(&signal.agent_name, signal.failure_type, timestamp_ms);
 
         let response = effective_response(policy, retry_count);
 

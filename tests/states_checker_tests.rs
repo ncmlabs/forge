@@ -9,11 +9,17 @@ fn check(source: &str) -> Vec<Diagnostic> {
 }
 
 fn errors(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| matches!(d.kind, DiagnosticKind::Error)).collect()
+    diags
+        .iter()
+        .filter(|d| matches!(d.kind, DiagnosticKind::Error))
+        .collect()
 }
 
 fn warnings(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
-    diags.iter().filter(|d| matches!(d.kind, DiagnosticKind::Warning)).collect()
+    diags
+        .iter()
+        .filter(|d| matches!(d.kind, DiagnosticKind::Warning))
+        .collect()
 }
 
 // ── State existence checks ────────────────────────────────────
@@ -195,8 +201,11 @@ agent room
 ";
     let diags = check(source);
     let errs = errors(&diags);
-    assert!(errs.iter().any(|d| d.message.contains("conflicting")),
-        "expected conflicting guards error, got: {:?}", errs);
+    assert!(
+        errs.iter().any(|d| d.message.contains("conflicting")),
+        "expected conflicting guards error, got: {:?}",
+        errs
+    );
 }
 
 // ── Structural warnings ───────────────────────────────────────
@@ -346,8 +355,10 @@ states Linear
     let diags = check(source);
     let warns = warnings(&diags);
     // 'c' is terminal (no outgoing), but no state is unreachable
-    assert!(!warns.iter().any(|d| d.message.contains("unreachable")),
-        "no states should be unreachable in a linear chain");
+    assert!(
+        !warns.iter().any(|d| d.message.contains("unreachable")),
+        "no states should be unreachable in a linear chain"
+    );
 }
 
 #[test]
@@ -359,8 +370,12 @@ states Simple
     let diags = check(source);
     let warns = warnings(&diags);
     // 'begin' is initial — should NOT be flagged as unreachable
-    assert!(!warns.iter().any(|d| d.message.contains("begin") && d.message.contains("no incoming")),
-        "initial state 'begin' should not be flagged unreachable");
+    assert!(
+        !warns
+            .iter()
+            .any(|d| d.message.contains("begin") && d.message.contains("no incoming")),
+        "initial state 'begin' should not be flagged unreachable"
+    );
 }
 
 #[test]
@@ -377,6 +392,11 @@ agent room
 ";
     let diags = check(source);
     let warns = warnings(&diags);
-    assert!(warns.iter().any(|d| d.message.contains("complex") || d.message.contains("statically")),
-        "expected opaque guard warning, got: {:?}", warns);
+    assert!(
+        warns
+            .iter()
+            .any(|d| d.message.contains("complex") || d.message.contains("statically")),
+        "expected opaque guard warning, got: {:?}",
+        warns
+    );
 }

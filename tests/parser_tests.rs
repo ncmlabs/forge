@@ -497,12 +497,10 @@ fn parse_when_sure_with_threshold() {
     let src = "task t\n  do\n    when r.sure(above: 0.9) -> give r\n";
     let prog = parse(src).unwrap();
     match first_stmt(&prog) {
-        Stmt::When(block) => {
-            match &block.clauses[0].node.predicate.node.level.node {
-                ConfLevel::Sure(Some(t)) => assert!((t - 0.9).abs() < f64::EPSILON),
-                other => panic!("expected Sure with threshold, got {:?}", other),
-            }
-        }
+        Stmt::When(block) => match &block.clauses[0].node.predicate.node.level.node {
+            ConfLevel::Sure(Some(t)) => assert!((t - 0.9).abs() < f64::EPSILON),
+            other => panic!("expected Sure with threshold, got {:?}", other),
+        },
         other => panic!("expected When, got {:?}", other),
     }
 }
@@ -515,9 +513,16 @@ fn parse_match_statement() {
         Stmt::Match(block) => {
             assert!(matches!(&block.subject.node, Expr::Ident(n) if n == "status"));
             assert_eq!(block.arms.len(), 3);
-            assert!(matches!(&block.arms[0].node.pattern.node, Pattern::Constructor(n, _) if n == "Active"));
-            assert!(matches!(&block.arms[1].node.pattern.node, Pattern::Constructor(n, args) if n == "Inactive" && args.len() == 1));
-            assert!(matches!(&block.arms[2].node.pattern.node, Pattern::Wildcard));
+            assert!(
+                matches!(&block.arms[0].node.pattern.node, Pattern::Constructor(n, _) if n == "Active")
+            );
+            assert!(
+                matches!(&block.arms[1].node.pattern.node, Pattern::Constructor(n, args) if n == "Inactive" && args.len() == 1)
+            );
+            assert!(matches!(
+                &block.arms[2].node.pattern.node,
+                Pattern::Wildcard
+            ));
         }
         other => panic!("expected Match, got {:?}", other),
     }
@@ -557,7 +562,8 @@ fn parse_for_loop_stmt() {
 
 #[test]
 fn parse_memory_update() {
-    let src = "agent a\n  memory\n    count: Number\n  on tick\n    memory.count = memory.count + 1\n";
+    let src =
+        "agent a\n  memory\n    count: Number\n  on tick\n    memory.count = memory.count + 1\n";
     let prog = parse(src).unwrap();
     match &prog.items[0].node {
         TopLevel::Agent(a) => match &a.handlers[0].node.body[0].node {
@@ -772,7 +778,8 @@ fn parse_pool_declaration() {
 
 #[test]
 fn parse_contract_declaration() {
-    let src = "contract Greeter\n  can greet(name: Text) -> Text\n  can farewell(name: Text) -> Text\n";
+    let src =
+        "contract Greeter\n  can greet(name: Text) -> Text\n  can farewell(name: Text) -> Text\n";
     let prog = parse(src).unwrap();
     match &prog.items[0].node {
         TopLevel::Contract(c) => {
@@ -818,10 +825,7 @@ fn parse_boundary_directive() {
     let src = "#! boundary: server\ntask t\n  do\n    say \"hi\"\n";
     let prog = parse(src).unwrap();
     assert!(prog.boundary.is_some());
-    assert_eq!(
-        prog.boundary.unwrap().node.kind.node,
-        BoundaryKind::Server
-    );
+    assert_eq!(prog.boundary.unwrap().node.kind.node, BoundaryKind::Server);
 }
 
 // ── Full file tests ──────────────────────────────────────────
@@ -891,7 +895,11 @@ fn parse_error_includes_line_col() {
     let err = result.unwrap_err();
     // Verify it's a Syntax variant with span info
     match &err {
-        forge::parser::ParseError::Syntax { span_start, span_end, message } => {
+        forge::parser::ParseError::Syntax {
+            span_start,
+            span_end,
+            message,
+        } => {
             assert!(*span_start <= *span_end, "span should be valid");
             assert!(!message.is_empty(), "should have a message");
         }

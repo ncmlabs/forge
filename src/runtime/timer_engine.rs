@@ -74,12 +74,10 @@ impl TimerEngine {
     }
 
     /// Start a named timer. Spawns a tokio task that fires after the declared duration.
-    pub fn start(
-        &mut self,
-        name: &str,
-        context: Option<ConfidentValue>,
-    ) -> Result<(), TimerError> {
-        let duration = self.durations.get(name)
+    pub fn start(&mut self, name: &str, context: Option<ConfidentValue>) -> Result<(), TimerError> {
+        let duration = self
+            .durations
+            .get(name)
             .copied()
             .ok_or_else(|| TimerError::UnknownTimer(name.to_string()))?;
 
@@ -110,7 +108,10 @@ impl TimerEngine {
         });
 
         let instance = TimerInstance { context, cancel_tx };
-        self.active.entry(name.to_string()).or_default().push(instance);
+        self.active
+            .entry(name.to_string())
+            .or_default()
+            .push(instance);
         Ok(())
     }
 
@@ -156,11 +157,7 @@ impl TimerEngine {
     }
 
     /// Reset a named timer: cancel existing + start fresh with same duration.
-    pub fn reset(
-        &mut self,
-        name: &str,
-        context: Option<ConfidentValue>,
-    ) -> Result<(), TimerError> {
+    pub fn reset(&mut self, name: &str, context: Option<ConfidentValue>) -> Result<(), TimerError> {
         self.cancel(name, &context)?;
         self.start(name, context)
     }

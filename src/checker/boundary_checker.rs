@@ -133,7 +133,11 @@ impl BoundaryRegistry {
             }
         }
 
-        BoundaryRegistry { server_symbols, client_symbols, symbol_kinds }
+        BoundaryRegistry {
+            server_symbols,
+            client_symbols,
+            symbol_kinds,
+        }
     }
 }
 
@@ -254,13 +258,7 @@ fn check_cross_boundary_refs(
             }
             TopLevel::Agent(d) => {
                 for handler in &d.handlers {
-                    check_refs_in_stmts(
-                        &handler.node.body,
-                        boundary,
-                        registry,
-                        file,
-                        diagnostics,
-                    );
+                    check_refs_in_stmts(&handler.node.body, boundary, registry, file, diagnostics);
                 }
             }
             TopLevel::Endpoint(d) => {
@@ -356,7 +354,13 @@ fn check_refs_in_stmt(
                 check_refs_in_stmt(&clause.node.body, boundary, registry, file, diagnostics);
             }
             if let Some(else_clause) = &when.else_body {
-                check_refs_in_stmt(&else_clause.node.body, boundary, registry, file, diagnostics);
+                check_refs_in_stmt(
+                    &else_clause.node.body,
+                    boundary,
+                    registry,
+                    file,
+                    diagnostics,
+                );
             }
         }
         Stmt::Match(m) => {
