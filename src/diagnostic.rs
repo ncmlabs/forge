@@ -34,6 +34,22 @@ impl Diagnostic {
         }
     }
 
+    pub fn warning(
+        file: impl Into<String>,
+        message: impl Into<String>,
+        span: Range<usize>,
+        label: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: DiagnosticKind::Warning,
+            message: message.into(),
+            file: file.into(),
+            span,
+            label: label.into(),
+            help: None,
+        }
+    }
+
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
         self
@@ -70,5 +86,17 @@ impl Diagnostic {
 pub fn render_diagnostics(source: &str, diagnostics: &[Diagnostic]) {
     for diag in diagnostics {
         diag.render(source);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn warning_creates_warning_kind() {
+        let diag = Diagnostic::warning("test.forge", "unused state", 0..5, "not reachable");
+        assert!(matches!(diag.kind, DiagnosticKind::Warning));
+        assert_eq!(diag.message, "unused state");
     }
 }
