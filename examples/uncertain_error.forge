@@ -1,0 +1,9 @@
+use
+  llm.reason
+
+task analyze
+  needs topic: Text
+  gives Text
+  do
+    result = reason "analyze {topic}"
+    give result

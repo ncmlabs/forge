@@ -1,0 +1,5 @@
+#! boundary: client
+
+fn main
+  result = server_only_task("hello")
+  say result

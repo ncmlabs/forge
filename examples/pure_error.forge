@@ -1,0 +1,5 @@
+pure bad
+  needs x: Text
+  gives Text
+  do
+    give reason "think about {x}"

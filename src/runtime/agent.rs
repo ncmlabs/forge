@@ -309,10 +309,24 @@ impl AgentProcess {
                 env.bind(&param.node.name, val.clone());
             }
         }
-        // Bind memory as a record
+        // Bind memory as a record and lifecycle as current state name
         {
             let ctx = self.context.lock().unwrap();
             env.bind("memory", ConfidentValue::deterministic(ctx.memory.to_record()));
+            if let Some(ref sm) = ctx.state_machine {
+                env.bind(
+                    "lifecycle",
+                    ConfidentValue::deterministic(Value::Text(sm.current.clone())),
+                );
+                // Bind state names as self-referencing strings so
+                // `requires lifecycle == waiting` works as expected
+                for state_name in sm.graph.keys() {
+                    env.bind(
+                        state_name,
+                        ConfidentValue::deterministic(Value::Text(state_name.clone())),
+                    );
+                }
+            }
         }
 
         // Evaluate requires guards
