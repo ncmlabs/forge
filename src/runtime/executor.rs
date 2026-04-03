@@ -105,6 +105,7 @@ pub struct TaskExecutor {
     pure_map: HashMap<String, PureDecl>,
     flow_map: HashMap<String, FlowDecl>,
     pool_map: HashMap<String, PoolDecl>,
+    endpoint_map: HashMap<String, EndpointDecl>,
     output: Arc<Mutex<Vec<String>>>,
     agent_context: Option<Arc<Mutex<AgentContext>>>,
     timer_engine: Option<Arc<Mutex<TimerEngine>>>,
@@ -116,6 +117,7 @@ impl TaskExecutor {
         let mut pure_map = HashMap::new();
         let mut flow_map = HashMap::new();
         let mut pool_map = HashMap::new();
+        let mut endpoint_map = HashMap::new();
 
         for item in &program.items {
             match &item.node {
@@ -131,6 +133,9 @@ impl TaskExecutor {
                 TopLevel::Pool(pl) => {
                     pool_map.insert(pl.name.node.clone(), pl.clone());
                 }
+                TopLevel::Endpoint(e) => {
+                    endpoint_map.insert(e.name.node.clone(), e.clone());
+                }
                 _ => {}
             }
         }
@@ -143,6 +148,7 @@ impl TaskExecutor {
             pure_map,
             flow_map,
             pool_map,
+            endpoint_map,
             output: Arc::new(Mutex::new(Vec::new())),
             agent_context: None,
             timer_engine: None,
@@ -169,6 +175,41 @@ impl TaskExecutor {
     /// Get collected `say` output (for testing)
     pub fn outputs(&self) -> Vec<String> {
         self.output.lock().unwrap().clone()
+    }
+
+    /// Get the tracer, if enabled.
+    pub fn tracer(&self) -> Option<&Tracer> {
+        self.tracer.as_ref()
+    }
+
+    /// Get registered endpoints (for HTTP server).
+    pub fn endpoints(&self) -> &HashMap<String, EndpointDecl> {
+        &self.endpoint_map
+    }
+
+    /// Execute an endpoint body with the given arguments.
+    pub async fn exec_endpoint(
+        &self,
+        name: &str,
+        args: HashMap<String, ConfidentValue>,
+    ) -> Result<ConfidentValue, RuntimeError> {
+        let endpoint = self
+            .endpoint_map
+            .get(name)
+            .ok_or_else(|| RuntimeError::NotCallable {
+                name: name.to_string(),
+            })?;
+
+        let mut env = Env::new();
+        for (k, v) in args {
+            env.bind(&k, v);
+        }
+
+        match self.exec_stmts(&endpoint.body, &mut env).await {
+            Ok(val) => Ok(val),
+            Err(RuntimeError::GiveSignal(val)) => Ok(val),
+            Err(e) => Err(e),
+        }
     }
 
     /// Run the program starting from `fn main`

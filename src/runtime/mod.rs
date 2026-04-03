@@ -5,6 +5,7 @@ pub mod agent;
 pub mod confidence;
 pub mod event_bus;
 pub mod executor;
+pub mod http_server;
 pub mod memory;
 pub mod pool;
 pub mod state_machine;

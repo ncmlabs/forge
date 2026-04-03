@@ -7,6 +7,24 @@ use thiserror::Error;
 pub struct ForgeConfig {
     pub llm: LLMConfig,
     pub providers: HashMap<String, ProviderConfig>,
+    pub server: Option<ServerConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ServerConfig {
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub cors_origins: Option<Vec<String>>,
+}
+
+impl ServerConfig {
+    pub fn host_or_default(&self) -> &str {
+        self.host.as_deref().unwrap_or("127.0.0.1")
+    }
+
+    pub fn port_or_default(&self) -> u16 {
+        self.port.unwrap_or(3000)
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -119,6 +137,26 @@ impl ForgeConfig {
             config.llm.default = provider;
         }
 
+        // FORGE_HOST / FORGE_PORT overrides
+        if let Ok(host) = std::env::var("FORGE_HOST") {
+            let server = config.server.get_or_insert(ServerConfig {
+                host: None,
+                port: None,
+                cors_origins: None,
+            });
+            server.host = Some(host);
+        }
+        if let Ok(port) = std::env::var("FORGE_PORT") {
+            if let Ok(val) = port.parse::<u16>() {
+                let server = config.server.get_or_insert(ServerConfig {
+                    host: None,
+                    port: None,
+                    cors_origins: None,
+                });
+                server.port = Some(val);
+            }
+        }
+
         // FORGE_BUDGET override
         if let Ok(budget) = std::env::var("FORGE_BUDGET") {
             if let Ok(val) = budget.parse::<f32>() {
@@ -193,6 +231,7 @@ impl ForgeConfig {
                 budget: None,
             },
             providers,
+            server: None,
         }
     }
 }
@@ -242,6 +281,7 @@ mod tests {
                 budget: None,
             },
             providers: HashMap::new(),
+            server: None,
         };
         assert!(matches!(
             config.validate(),
@@ -285,6 +325,7 @@ mod tests {
                 budget: None,
             },
             providers,
+            server: None,
         };
         assert!(matches!(
             config.validate(),
