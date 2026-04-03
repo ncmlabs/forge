@@ -37,6 +37,7 @@ fn simple_agent(
     stuck_policy: Option<Spanned<StuckPolicy>>,
 ) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: spanned("test_agent".into()),
         lifecycle: None,
         memory: memory_fields,

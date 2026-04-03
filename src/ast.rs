@@ -49,6 +49,7 @@ pub enum TopLevel {
     Endpoint(EndpointDecl),
     TypeDef(TypeDefDecl),
     FnMain(FnMainDecl),
+    Import(ImportDecl),
 }
 
 // ── Boundary directive ────────────────────────────────────────
@@ -188,6 +189,7 @@ pub enum NeedsRefField {
 
 #[derive(Debug, Clone)]
 pub struct AgentDecl {
+    pub exportable: bool,
     pub name: Spanned<String>,
     pub lifecycle: Option<Spanned<String>>,
     pub memory: Vec<Spanned<FieldDef>>,
@@ -207,6 +209,22 @@ pub struct KnowledgeDecl {
     pub store_path: Spanned<Expr>,
     pub max_entries: Option<Spanned<f64>>,
     pub retention: Option<Spanned<Duration>>,
+    pub imports: Vec<Spanned<String>>,
+}
+
+/// Import declaration: `import knowledge from "pkg.forgepkg.json" as name`
+#[derive(Debug, Clone)]
+pub struct ImportDecl {
+    pub layers: Vec<Spanned<ImportLayer>>,
+    pub source: Spanned<Expr>,
+    pub alias: Spanned<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportLayer {
+    Knowledge,
+    Memory,
+    Config,
 }
 
 /// Source for a `learn` statement.

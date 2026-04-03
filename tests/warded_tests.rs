@@ -21,6 +21,7 @@ fn sp<T>(node: T) -> Spanned<T> {
 /// No subscriptions → agent exits immediately from run() (channels close).
 fn simple_agent(name: &str) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],
@@ -45,6 +46,7 @@ fn simple_agent(name: &str) -> AgentDecl {
 /// The handler body references an undefined variable → RuntimeError::UndefinedVariable.
 fn crashing_agent(name: &str) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],

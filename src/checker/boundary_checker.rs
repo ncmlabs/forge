@@ -157,7 +157,7 @@ fn top_level_name_and_kind(item: &TopLevel) -> Option<(String, SymbolKind)> {
         TopLevel::Contract(d) => Some((d.name.node.clone(), SymbolKind::Contract)),
         TopLevel::System(d) => Some((d.name.node.clone(), SymbolKind::System)),
         TopLevel::Warden(d) => Some((d.name.node.clone(), SymbolKind::System)),
-        TopLevel::Use(_) | TopLevel::FnMain(_) => None,
+        TopLevel::Use(_) | TopLevel::FnMain(_) | TopLevel::Import(_) => None,
     }
 }
 
@@ -275,7 +275,8 @@ fn check_cross_boundary_refs(
             | TopLevel::States(_)
             | TopLevel::TypeDef(_)
             | TopLevel::Contract(_)
-            | TopLevel::System(_) => {}
+            | TopLevel::System(_)
+            | TopLevel::Import(_) => {}
         }
     }
 }
