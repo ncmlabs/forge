@@ -11,9 +11,12 @@ use tokio::task::JoinHandle;
 
 use crate::ast::*;
 use crate::llm::registry::ProviderRegistry;
+use uuid::Uuid;
+
 use crate::runtime::agent::{AgentProcess, AgentSignal};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
+use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
 use crate::runtime::warden::{FailureSignal, WardAction, Warden};
 use crate::tracer::Tracer;
 
@@ -35,6 +38,7 @@ pub struct AgentBlueprint {
 pub struct ManagedAgent {
     pub blueprint: AgentBlueprint,
     pub handle: JoinHandle<Result<(), RuntimeError>>,
+    pub instance_id: Uuid,
 }
 
 // ── WardedRuntime ───────────────────────────────────────────────────────────
@@ -45,6 +49,7 @@ pub struct WardedRuntime {
     agents: HashMap<String, ManagedAgent>,
     blueprints: HashMap<String, AgentBlueprint>,
     event_bus: SharedEventBus,
+    instance_registry: SharedInstanceRegistry,
     signal_tx: mpsc::Sender<AgentSignal>,
     signal_rx: mpsc::Receiver<AgentSignal>,
     start: Instant,
@@ -103,11 +108,15 @@ impl WardedRuntime {
         let event_bus: SharedEventBus =
             Arc::new(tokio::sync::RwLock::new(EventBus::new(tracer.clone())));
 
+        let instance_registry: SharedInstanceRegistry =
+            Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+
         Self {
             warden: Warden::new(warden_decl, tracer),
             agents: HashMap::new(),
             blueprints,
             event_bus,
+            instance_registry,
             signal_tx,
             signal_rx,
             start: Instant::now(),
@@ -117,6 +126,11 @@ impl WardedRuntime {
     /// Get a reference to the shared event bus.
     pub fn event_bus(&self) -> &SharedEventBus {
         &self.event_bus
+    }
+
+    /// Get a reference to the shared instance registry.
+    pub fn instance_registry(&self) -> &SharedInstanceRegistry {
+        &self.instance_registry
     }
 
     fn timestamp_ms(&self) -> u64 {
@@ -145,10 +159,13 @@ impl WardedRuntime {
             blueprint.tracer.clone(),
             blueprint.program.clone(),
             None, // TODO: wire storage for warded agents
+            Some(self.instance_registry.clone()),
         )
         .with_warden_signal(self.signal_tx.clone());
 
         process = process.with_event_bus(self.event_bus.clone()).await;
+
+        let instance_id = self.instance_registry.write().await.register(name);
 
         let handle = tokio::spawn(async move { process.run().await });
 
@@ -157,15 +174,20 @@ impl WardedRuntime {
             ManagedAgent {
                 blueprint: blueprint.clone(),
                 handle,
+                instance_id,
             },
         );
 
         Ok(())
     }
 
-    /// Stop an agent by aborting its tokio task.
-    fn stop_agent(&mut self, name: &str) {
+    /// Stop an agent by aborting its tokio task and unregistering from the instance registry.
+    async fn stop_agent(&mut self, name: &str) {
         if let Some(agent) = self.agents.remove(name) {
+            self.instance_registry
+                .write()
+                .await
+                .unregister(&agent.instance_id);
             agent.handle.abort();
         }
     }
@@ -266,13 +288,13 @@ impl WardedRuntime {
         match action.response {
             WardResponse::Nudge | WardResponse::Restart | WardResponse::Replace => {
                 // v1: all three are restart (nudge with memory hint and replace with config deferred)
-                self.stop_agent(&agent_name);
+                self.stop_agent(&agent_name).await;
                 if self.blueprints.contains_key(&agent_name) {
                     self.spawn_one(&agent_name).await?;
                 }
             }
             WardResponse::Escalate => {
-                self.stop_agent(&agent_name);
+                self.stop_agent(&agent_name).await;
                 return Err(RuntimeError::Unsupported(format!(
                     "warden '{}' escalated for agent '{}'",
                     action.warden_name, agent_name
@@ -303,7 +325,7 @@ impl WardedRuntime {
                     .cloned()
                     .collect();
                 for name in other_names {
-                    self.stop_agent(&name);
+                    self.stop_agent(&name).await;
                     self.spawn_one(&name).await?;
                 }
             }

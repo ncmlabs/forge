@@ -6,6 +6,7 @@ pub mod confidence;
 pub mod event_bus;
 pub mod executor;
 pub mod http_server;
+pub mod instance_registry;
 pub mod knowledge_store;
 pub mod memory;
 pub mod pool;
