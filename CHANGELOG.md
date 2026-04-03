@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Development lifecycle workflow spec (`workflows/dev-cycle.forge`) — dogfoods FORGE to model the issue-to-merge cycle with 5 expert agents, 2 state machines, and warden supervision
+- `CLAUDE.md` with project development rules (branching, changelog, release conventions)
+- Pre-commit workflow gate hook (`scripts/check-workflow.sh`) — enforces branch ancestry, changelog staged, and tests passing
+- `forge-workflow` Claude Code skill for guided development sessions
 - Core language with 14 primitives: task, flow, agent, pool, system, uncertain, pure, event, states, timer, boundary, requires, warded, when
 - PEG parser with comprehensive error diagnostics
 - Semantic checkers: purity, boundary, states, requires, warden supervision
@@ -18,3 +22,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - End-to-end acceptance tests
 - Fleet code generation
 - Interactive agent REPL
+
