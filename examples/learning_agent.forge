@@ -6,7 +6,7 @@ states LearningPhase
   competent -> expert when score >= 70
   expert -> expert
 
-agent research_assistant
+exportable agent research_assistant
   lifecycle: LearningPhase
   memory
     interaction_count: Number
