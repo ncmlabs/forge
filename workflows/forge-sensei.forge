@@ -1,0 +1,206 @@
+use
+  llm.reason
+  llm.classify
+
+# ── Events ────────────────────────────────────────────────────
+
+event LearnedInsight
+  category: Text
+  content: Text
+  source: Text
+  confidence: Number
+
+event AssessmentCompleted
+  level: Text
+  score: Number
+  passed: Number
+  total: Number
+  failures: Text
+
+event KnowledgeGapFound
+  category: Text
+  question: Text
+
+# ── Lifecycle ─────────────────────────────────────────────────
+
+states MasteryLevel
+  novice -> apprentice when conformance_score >= 40
+  apprentice -> journeyman when conformance_score >= 70
+  journeyman -> expert when conformance_score >= 90
+  expert -> expert
+
+# ── Pure Functions ────────────────────────────────────────────
+
+pure compute_mastery_score
+  needs passed: Number, total: Number
+  gives Number
+  do
+    if total == 0
+      give 0
+    give (passed / total) * 100
+
+pure determine_level
+  needs score: Number
+  gives Text
+  do
+    if score >= 90
+      give "expert"
+    if score >= 70
+      give "journeyman"
+    if score >= 40
+      give "apprentice"
+    give "novice"
+
+pure format_status
+  needs level: Text, score: Number, interactions: Number
+  gives Text
+  do
+    give "forge-sensei | Level: {level} | Mastery: {score}% | Interactions: {interactions}"
+
+# ── Tasks ─────────────────────────────────────────────────────
+
+task answer_forge_question
+  needs question: Text, context: Text
+  gives Text
+  do
+    result = reason "You are forge-sensei, an expert on the FORGE programming language for oracle-augmented computation. Using this prior knowledge:\n{context}\n\nAnswer this FORGE question accurately and concisely: {question}\n\nIf the prior knowledge does not cover this topic, say so honestly."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "I could not answer this question confidently."
+
+task review_forge_code
+  needs code: Text, context: Text
+  gives Text
+  do
+    result = reason "You are forge-sensei, reviewing FORGE code for correctness. Using this knowledge of FORGE:\n{context}\n\nReview this FORGE code for errors, style issues, and principle violations:\n{code}\n\nList each issue with: line reference, issue description, fix suggestion."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Could not review this code confidently."
+
+task extract_lesson
+  needs question: Text, resolution: Text
+  gives Text
+  do
+    result = reason "A FORGE developer asked: {question}\nThe resolution was: {resolution}\n\nExtract a concise, reusable lesson about FORGE from this interaction. Format: [CATEGORY] lesson text. Categories: SYNTAX, TASKS, FLOWS, CONTROL, AGENTS, KNOWLEDGE, SUPERVISION, PRINCIPLES, PATTERNS, ERRORS."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Could not extract lesson."
+
+task evaluate_conformance
+  needs test_input: Text, expected_outcome: Text, knowledge_context: Text
+  gives Text
+  do
+    result = reason "You are forge-sensei assessing your own FORGE knowledge. Given this conformance test:\n\nInput:\n{test_input}\n\nExpected outcome: {expected_outcome}\n\nYour current knowledge:\n{knowledge_context}\n\nDo you understand WHY this test has this expected outcome? Explain briefly. If you cannot explain it, say GAP: followed by the topic."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "GAP: insufficient knowledge to evaluate this test"
+
+# ── The Sensei Agent ──────────────────────────────────────────
+#
+# A self-referential learning agent: written in FORGE to teach FORGE.
+# Uses knowledge, recall, learn, states, events, and exportable
+# primitives to progressively master the language.
+
+exportable agent forge_sensei
+  lifecycle: MasteryLevel
+  memory
+    interaction_count: Number
+    success_count: Number
+    last_assessment_score: Number
+    current_level: Text
+    gap_count: Number
+  knowledge store: ".forge-knowledge/sensei"
+    max_entries: 50000
+    retention: 365d
+  timer self_assess: 6h
+
+  on start
+    memory.current_level = "novice"
+    start self_assess
+    say "forge-sensei initialized. Level: novice. Ready to learn and teach FORGE."
+
+  # ── Pre-training: bulk document ingestion ───────────────────
+
+  on ingest(document_path: Text)
+    learn from document(document_path)
+    say "Ingested: {document_path}"
+
+  on ingest_fact(category: Text, fact: Text)
+    learn "[{category}] {fact}"
+    say "Learned [{category}]"
+    emit LearnedInsight(category: category, content: fact, source: "direct", confidence: 1.0)
+
+  # ── Query: answer FORGE questions ───────────────────────────
+
+  on query(question: Text)
+    memory.interaction_count = memory.interaction_count + 1
+    prior = recall "{question}"
+    answer = answer_forge_question(question, prior)
+    learn from interaction(question, answer, 0.7)
+    emit LearnedInsight(category: "interactions", content: answer, source: "query", confidence: 0.7)
+    give answer
+
+  # ── Review: check FORGE code for correctness ────────────────
+
+  on review(code: Text)
+    memory.interaction_count = memory.interaction_count + 1
+    prior = recall "FORGE syntax patterns errors"
+    result = review_forge_code(code, prior)
+    give result
+
+  # ── Learn: ingest insight from Claude Code interaction ──────
+
+  on learn_from_session(question: Text, resolution: Text)
+    lesson = extract_lesson(question, resolution)
+    learn "{lesson}"
+    emit LearnedInsight(category: "interactions", content: lesson, source: "session", confidence: 0.8)
+    say "Learned from session."
+
+  # ── Assess: self-evaluation against conformance knowledge ───
+
+  on assess_detailed(test_input: Text, expected: Text)
+    memory.interaction_count = memory.interaction_count + 1
+    prior = recall "{test_input}"
+    result = evaluate_conformance(test_input, expected, prior)
+    give result
+
+  # ── Status: report current mastery ──────────────────────────
+
+  on status
+    level = determine_level(memory.last_assessment_score)
+    status_text = format_status(level, memory.last_assessment_score, memory.interaction_count)
+    give status_text
+
+  # ── Timer: periodic self-assessment ─────────────────────────
+
+  on self_assess.expired
+    say "Running periodic self-assessment..."
+    prior = recall "FORGE conformance and principles"
+    when prior.sure -> say "Self-assessment complete. Knowledge base healthy."
+    when prior.unsure -> say "Knowledge coverage is thin. Consider re-ingesting documentation."
+    else -> say "Knowledge gaps detected. Run pretrain to restore baseline."
+    reset self_assess
+
+  if stuck for 3 turns
+    say "forge-sensei is stuck. Escalating for human guidance."
+    escalate to human
+
+# ── Warden ────────────────────────────────────────────────────
+
+warden sensei_warden
+  manages [forge_sensei]
+  on stuck: nudge, self
+    after 3: escalate
+  on hallucination: restart, self
+  on crash: restart, self
+  on timeout: restart, self
+  on budget: nudge, self
+    after 1: escalate
+  max_retries 3 per 1h then escalate
+
+# ── Entry Point ───────────────────────────────────────────────
+
+fn main
+  say "=== forge-sensei: FORGE Language Learning Agent ==="
+  say "Use 'forge send' to interact non-interactively."
+  say "Use 'forge agent' for interactive REPL mode."
