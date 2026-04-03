@@ -1440,6 +1440,14 @@ Writing: `memory.score = memory.score + 1`
 
 Array indexing: `memory.board[cell] = player`
 
+### Lifecycle and State Tracking
+
+When an agent declares `lifecycle: <StatesName>`, the compiler-verified way to change state is the `transition to <state>` statement, paired with `requires lifecycle == <state>` guards. This combination enables static analysis: the compiler checks that every transition is legal in the declared state machine and that handlers guard which state they operate in.
+
+Memory fields can track additional agent state (e.g., counters, flags, context), but memory writes are **not checked** against the state machine. Using `memory.status` to track phase instead of `transition to` bypasses all compiler guarantees — the states checker cannot verify transition legality, detect illegal transitions, or warn about unreachable states.
+
+**Rule:** If you declare a `lifecycle`, use `transition to` and `requires lifecycle ==` for state changes. Use memory for data that is orthogonal to the lifecycle (scores, names, accumulated context).
+
 ### Timers
 
 Timers are declared with a name and a duration. Duration suffixes are `s` (seconds), `m` or `min` (minutes), and `h` (hours).
@@ -1447,6 +1455,17 @@ Timers are declared with a name and a duration. Duration suffixes are `s` (secon
 ```forge
 timer session_timeout: 10m
 timer reconnect_window: 30s
+```
+
+Declaring a timer makes it available but **does not start it**. Timers are inert until a handler explicitly calls `start <timer>`. An un-started timer never fires. This is intentional — the agent controls exactly when the countdown begins.
+
+```forge
+on open(service: Text)
+  memory.service = service
+  start ack_deadline        # arms the 30s countdown
+
+on acknowledge(owner: Text)
+  cancel ack_deadline       # disarms — the timer will not fire
 ```
 
 Timer events are handled with the `on <timer_name>.expired` handler:
@@ -1461,11 +1480,11 @@ Timers can be controlled with statements:
 
 | Statement | Description |
 |-----------|-------------|
-| `start <timer>` | Starts the named timer |
-| `start <timer> for <expr>` | Starts the timer for a specific target |
-| `cancel <timer>` | Cancels the named timer |
-| `cancel <timer> for <expr>` | Cancels the timer for a specific target |
-| `reset <timer>` | Resets the named timer to its initial duration |
+| `start <timer>` | Arms the timer — begins the countdown from its declared duration |
+| `start <timer> for <expr>` | Arms the timer for a specific context (e.g., a player or session) |
+| `cancel <timer>` | Stops the timer — it will not fire unless started again |
+| `cancel <timer> for <expr>` | Cancels the timer for a specific context |
+| `reset <timer>` | Cancels and re-starts the timer from its full declared duration |
 
 ### Handlers
 
@@ -1506,6 +1525,8 @@ Inside handlers, agents have access to the following statements in addition to s
 | Forward | `forward <expr> to <expr>` | Forward a message to another agent |
 | Memory update | `memory.field = <expr>` | Update a persistent memory field |
 | Memory array update | `memory.field[idx] = <expr>` | Update a specific array element |
+
+The `escalate to <target>` target is an **unresolved name** — FORGE does not validate it at compile time. In a supervised context (under a warden), escalation signals are delivered to the warden, which decides how to respond. The target name is metadata the supervisor or runtime can use for routing. Common conventions: `human` (hand off to a human operator), a declared agent name (forward to that agent), or a domain-specific label like `oncall_manager`.
 
 ### Stuck Policy
 
@@ -1555,6 +1576,7 @@ agent support_bot
 
   on message(customer: Text, content: Text)
     memory.message_count = memory.message_count + 1
+    reset session_timeout
     intent = classify content into ["question", "complaint", "feedback", "urgent"]
     response = reason "Help this customer with their {intent} about: {content}"
     when response.sure -> say response
@@ -1562,6 +1584,7 @@ agent support_bot
     else -> escalate to human
 
   on resolve(customer: Text)
+    cancel session_timeout
     emit Resolved(customer: customer, summary: memory.topic)
     transition to resolved
 
@@ -1595,6 +1618,12 @@ agent room_agent
     if memory.player_count == 2
       transition to playing
 
+  on disconnect(player: Text)
+    start reconnect_window for player
+
+  on reconnect(player: Text)
+    cancel reconnect_window for player
+
   on move(player: Text, cell: Number)
     requires player == memory.current_turn on fail: silent
     requires memory.board[cell] == "_" on fail: give "cell taken"
@@ -1614,6 +1643,36 @@ agent room_agent
     escalate to lobby
 ```
 
+### Testing Agents with the REPL
+
+The `forge agent <file>` command launches an interactive REPL for manual handler testing. Type an event name with optional arguments to dispatch it:
+
+```
+$ forge agent examples/support_bot.forge
+FORGE Agent: support_bot
+  memory: topic, message_count, escalation_count
+  handlers: message, resolve, session_timeout.expired
+
+Type an event name with optional arguments. Examples:
+  message "alice" "I need help with billing"
+  resolve "alice"
+  quit
+
+> message "alice" "I need help with billing"
+→ Let me help you with your billing question...
+
+> quit
+bye!
+```
+
+The REPL is **dispatch-only**: it processes typed events through handlers but does not run the full agent event loop. This means:
+
+- **Timers** do not fire -- `start <timer>` is accepted but the countdown runs with no listener
+- **Event bus subscriptions** are inactive -- `subscribe` and `emit` have no bus to publish to
+- **Warden supervision** is not active -- stuck detection and failure policies do not apply
+
+For full runtime behavior including timers, subscriptions, and warden supervision, use `forge run` with a system that orchestrates the agent.
+
 ### Best Practices
 
 1. **Always declare a lifecycle** -- state machines make agent behavior predictable and verifiable
@@ -1621,6 +1680,7 @@ agent room_agent
 3. **Keep handlers focused** -- each handler should respond to one event with a clear purpose
 4. **Use `give` in fail policies** -- prefer `give <message>` over `silent` to provide callers with feedback
 5. **Define stuck policies** -- agents that interact with LLMs should have stuck recovery to prevent infinite loops
+6. **Start timers explicitly** -- declare the timer for its name and duration, then call `start` in the handler where the countdown should begin
 
 ---
 
