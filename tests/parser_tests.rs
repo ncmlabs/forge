@@ -790,6 +790,33 @@ fn parse_agent_declaration() {
 }
 
 #[test]
+fn parse_agent_persistent_memory() {
+    let src = "agent keeper\n  memory persistent\n    count: Number\n    label: Text\n\n  on tick()\n    memory.count = memory.count + 1\n";
+    let prog = parse(src).unwrap();
+    match &prog.items[0].node {
+        TopLevel::Agent(a) => {
+            assert_eq!(a.name.node, "keeper");
+            assert!(a.memory_persistent, "memory_persistent should be true");
+            assert_eq!(a.memory.len(), 2);
+        }
+        other => panic!("expected Agent, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_agent_non_persistent_memory() {
+    let src = "agent volatile\n  memory\n    count: Number\n\n  on tick()\n    say \"tick\"\n";
+    let prog = parse(src).unwrap();
+    match &prog.items[0].node {
+        TopLevel::Agent(a) => {
+            assert_eq!(a.name.node, "volatile");
+            assert!(!a.memory_persistent, "memory_persistent should be false");
+        }
+        other => panic!("expected Agent, got {:?}", other),
+    }
+}
+
+#[test]
 fn parse_pool_declaration() {
     let src = "pool workers\n  workers: helper * 5\n  strategy: majority\n  timeout: 30s\n  fallback: default_handler\n";
     let prog = parse(src).unwrap();

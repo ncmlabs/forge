@@ -70,7 +70,7 @@ pub struct CapabilitySignature {
 // ── Confidence source ────────────────────────────────────────
 
 /// Tags how a value's confidence was determined.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ConfidenceSource {
     /// Pure function — always 1.0
     Deterministic,

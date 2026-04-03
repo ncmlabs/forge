@@ -1625,6 +1625,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
 
     let mut lifecycle = None;
     let mut memory = Vec::new();
+    let mut memory_persistent = false;
     let mut knowledge = None;
     let mut timers = Vec::new();
     let mut subscriptions = Vec::new();
@@ -1645,6 +1646,10 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
                 knowledge = Some(build_knowledge_block(child)?);
             }
             Rule::memory_block => {
+                // Detect optional "persistent" keyword: grammar puts it on the
+                // first line right after "memory", before the newline.
+                let first_line = child.as_str().lines().next().unwrap_or("");
+                memory_persistent = first_line.contains("persistent");
                 let mem_children: Vec<Pair> = child.into_inner().collect();
                 let mut i = 0;
                 while i + 1 < mem_children.len() {
@@ -1722,6 +1727,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             name,
             lifecycle,
             memory,
+            memory_persistent,
             knowledge,
             timers,
             subscriptions,

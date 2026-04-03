@@ -710,6 +710,7 @@ async fn main() -> anyhow::Result<()> {{
         Arc::new(registry),
         None,
         program,
+        None, // build mode doesn't need persistent storage
     );
 
     match cli.command {{

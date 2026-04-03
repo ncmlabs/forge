@@ -62,6 +62,7 @@ fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>
         name: spanned(name.into()),
         lifecycle: None,
         memory: vec![],
+        memory_persistent: false,
         knowledge: None,
         timers: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
@@ -92,6 +93,7 @@ fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDec
         name: spanned(name.into()),
         lifecycle: None,
         memory: vec![],
+        memory_persistent: false,
         knowledge: None,
         timers: vec![],
         subscriptions: vec![],
@@ -207,7 +209,7 @@ async fn agent_registers_subscriptions_with_bus() {
     let decl = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let _agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
+    let _agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None)
         .with_event_bus(bus.clone())
         .await;
 
@@ -220,7 +222,7 @@ async fn agent_run_receives_and_dispatches_event() {
     let decl = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
+    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None)
         .with_event_bus(bus.clone())
         .await;
 
@@ -242,11 +244,11 @@ async fn agent_emit_drains_through_bus() {
     let decl_b = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let agent_a = AgentProcess::new(decl_a, None, mock_registry(), None, empty_program())
+    let agent_a = AgentProcess::new(decl_a, None, mock_registry(), None, empty_program(), None)
         .with_event_bus(bus.clone())
         .await;
 
-    let _agent_b = AgentProcess::new(decl_b, None, mock_registry(), None, empty_program())
+    let _agent_b = AgentProcess::new(decl_b, None, mock_registry(), None, empty_program(), None)
         .with_event_bus(bus.clone())
         .await;
 
@@ -277,7 +279,7 @@ async fn agent_filter_subscribe_with_matching_event() {
     let decl = subscribing_agent("listener", "MoveEvent", Some(filter));
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
+    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None)
         .with_event_bus(bus.clone())
         .await;
 
@@ -314,7 +316,7 @@ async fn agent_filter_subscribe_rejects_non_matching() {
     let decl = subscribing_agent("listener", "MoveEvent", Some(filter));
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
+    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None)
         .with_event_bus(bus.clone())
         .await;
 
@@ -353,6 +355,7 @@ async fn multi_agent_event_flow() {
             name: "player_count".into(),
             type_name: spanned(TypeName::Number),
         })],
+        memory_persistent: false,
         knowledge: None,
         timers: vec![],
         subscriptions: vec![],
@@ -404,14 +407,27 @@ async fn multi_agent_event_flow() {
     // ── Wire both agents to shared bus ──────────────────────────────────
     let bus = EventBus::new_shared(None);
 
-    let room_agent = AgentProcess::new(room_decl, None, mock_registry(), None, empty_program())
-        .with_event_bus(bus.clone())
-        .await;
+    let room_agent = AgentProcess::new(
+        room_decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
-    let mut observer =
-        AgentProcess::new(observer_decl, None, mock_registry(), None, empty_program())
-            .with_event_bus(bus.clone())
-            .await;
+    let mut observer = AgentProcess::new(
+        observer_decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Verify observer registered its subscription
     assert_eq!(bus.read().await.subscriber_count("PlayerJoined"), 1);

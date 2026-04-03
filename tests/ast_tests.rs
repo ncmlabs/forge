@@ -417,6 +417,7 @@ fn ast_agent() {
                 type_name: sp(TypeName::Profile),
             }),
         ],
+        memory_persistent: false,
         knowledge: None,
         timers: vec![],
         subscriptions: vec![],
@@ -985,6 +986,7 @@ fn ast_agent_v3() {
                 type_name: sp(TypeName::Number),
             }),
         ],
+        memory_persistent: false,
         knowledge: None,
         timers: vec![sp(TimerField {
             name: sp("reconnect_window".into()),

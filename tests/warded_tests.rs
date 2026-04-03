@@ -25,6 +25,7 @@ fn simple_agent(name: &str) -> AgentDecl {
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],
+        memory_persistent: false,
         knowledge: None,
         timers: vec![],
         subscriptions: vec![],
@@ -50,6 +51,7 @@ fn crashing_agent(name: &str) -> AgentDecl {
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],
+        memory_persistent: false,
         knowledge: None,
         timers: vec![],
         subscriptions: vec![sp(SubscribeDecl {

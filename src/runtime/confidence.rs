@@ -4,12 +4,14 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::types::ConfidenceSource;
 
 // ── Value ───────────────────────────────────────────────────
 
 /// Runtime value representation for FORGE.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Text(String),
     Number(f64),
@@ -64,7 +66,7 @@ impl fmt::Display for Value {
 // ── ConfidentValue ──────────────────────────────────────────
 
 /// A runtime value paired with confidence metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfidentValue {
     pub value: Value,
     pub confidence: f32,

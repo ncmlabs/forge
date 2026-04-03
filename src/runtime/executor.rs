@@ -117,6 +117,9 @@ pub struct TaskExecutor {
     output: Arc<Mutex<Vec<String>>>,
     agent_context: Option<Arc<Mutex<AgentContext>>>,
     timer_engine: Option<Arc<Mutex<TimerEngine>>>,
+    storage: Option<crate::runtime::storage::SharedStorage>,
+    agent_name: Option<String>,
+    memory_persistent: bool,
 }
 
 impl TaskExecutor {
@@ -160,6 +163,9 @@ impl TaskExecutor {
             output: Arc::new(Mutex::new(Vec::new())),
             agent_context: None,
             timer_engine: None,
+            storage: None,
+            agent_name: None,
+            memory_persistent: false,
         }
     }
 
@@ -172,6 +178,18 @@ impl TaskExecutor {
     /// Attach an async timer engine for timer operations (issue #20).
     pub fn with_timer_engine(mut self, engine: Arc<Mutex<TimerEngine>>) -> Self {
         self.timer_engine = Some(engine);
+        self
+    }
+
+    /// Configure persistent memory storage (issue #57).
+    pub fn with_persistent_memory(
+        mut self,
+        storage: crate::runtime::storage::SharedStorage,
+        agent_name: String,
+    ) -> Self {
+        self.storage = Some(storage);
+        self.agent_name = Some(agent_name);
+        self.memory_persistent = true;
         self
     }
 
@@ -570,6 +588,17 @@ impl TaskExecutor {
                             "memory",
                             ConfidentValue::deterministic(ctx.memory.to_record()),
                         );
+                        // Write-through for persistent memory (issue #57)
+                        if self.memory_persistent {
+                            if let (Some(ref storage), Some(ref name)) =
+                                (&self.storage, &self.agent_name)
+                            {
+                                let key = format!("agent:{}:memory", name);
+                                if let Ok(json) = ctx.memory.to_json() {
+                                    let _ = storage.store(&key, &json);
+                                }
+                            }
+                        }
                     } else {
                         return Err(RuntimeError::Unsupported(
                             "memory update outside agent".into(),

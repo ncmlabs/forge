@@ -426,6 +426,15 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Open the FORGE persistent storage database (issue #48/#57).
+fn open_forge_storage() -> anyhow::Result<forge::runtime::storage::SharedStorage> {
+    let db_path = std::path::Path::new(".forge-data").join("store.redb");
+    std::fs::create_dir_all(".forge-data")?;
+    let storage = forge::runtime::storage::ForgeStorage::open(&db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open storage: {}", e))?;
+    Ok(Arc::new(storage))
+}
+
 fn read_source(file: &PathBuf) -> anyhow::Result<String> {
     std::fs::read_to_string(file)
         .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))
@@ -749,12 +758,20 @@ async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
+    // Open persistent storage if any agent declares memory persistent
+    let storage = if agent_decl.memory_persistent {
+        Some(open_forge_storage()?)
+    } else {
+        None
+    };
+
     let agent = AgentProcess::new(
         agent_decl.clone(),
         states_decl.as_ref(),
         Arc::new(registry),
         None,
         program,
+        storage,
     );
 
     // Print banner
@@ -896,12 +913,20 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
+    // Open persistent storage if agent declares memory persistent
+    let storage = if agent_decl.memory_persistent {
+        Some(open_forge_storage()?)
+    } else {
+        None
+    };
+
     let agent = AgentProcess::new(
         agent_decl.clone(),
         states_decl.as_ref(),
         Arc::new(registry),
         None,
         program,
+        storage,
     );
 
     // Build params from positional args matching handler param names

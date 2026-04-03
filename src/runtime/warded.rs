@@ -144,6 +144,7 @@ impl WardedRuntime {
             blueprint.registry.clone(),
             blueprint.tracer.clone(),
             blueprint.program.clone(),
+            None, // TODO: wire storage for warded agents
         )
         .with_warden_signal(self.signal_tx.clone());
 

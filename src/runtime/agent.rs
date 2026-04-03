@@ -263,8 +263,19 @@ impl AgentProcess {
         registry: Arc<ProviderRegistry>,
         tracer: Option<Tracer>,
         program: Program,
+        storage: Option<crate::runtime::storage::SharedStorage>,
     ) -> Self {
-        let memory = AgentMemory::new(&decl.memory);
+        let mut memory = AgentMemory::new(&decl.memory);
+
+        // Load persistent memory from storage if available (issue #57)
+        if decl.memory_persistent {
+            if let Some(ref store) = storage {
+                let key = format!("agent:{}:memory", decl.name.node);
+                if let Ok(Some(json)) = store.get(&key) {
+                    let _ = memory.restore_from_json(&json);
+                }
+            }
+        }
         let state_machine = states.map(StateMachine::new);
         let timer_manager = TimerManager::new(&decl.timers);
         let stuck_threshold = decl
@@ -318,9 +329,16 @@ impl AgentProcess {
             tracer.clone(),
         )));
 
-        let executor = TaskExecutor::new(program, registry, tracer)
+        let mut executor = TaskExecutor::new(program, registry, tracer)
             .with_agent_context(context.clone())
             .with_timer_engine(timer_engine.clone());
+
+        // Wire persistent memory storage into executor (issue #57)
+        if decl.memory_persistent {
+            if let Some(ref store) = storage {
+                executor = executor.with_persistent_memory(store.clone(), decl.name.node.clone());
+            }
+        }
 
         Self {
             decl,

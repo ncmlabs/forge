@@ -194,7 +194,7 @@ agent_decl = {
 lifecycle_clause = { "lifecycle" ~ _s_opt ~ ":" ~ _s_opt ~ ident }
 
 memory_block = {
-    "memory" ~ nl ~
+    "memory" ~ (_s ~ "persistent")? ~ nl ~
     (i2 ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ type_name ~ nl)+
 }
 
