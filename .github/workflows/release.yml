@@ -66,7 +66,7 @@ jobs:
           $hash = (Get-FileHash forge-${{ matrix.target }}.zip -Algorithm SHA256).Hash.ToLower()
           "$hash  forge-${{ matrix.target }}.zip" | Out-File forge-${{ matrix.target }}.zip.sha256 -Encoding ascii
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: forge-${{ matrix.target }}
           path: forge-${{ matrix.target }}.*
