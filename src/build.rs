@@ -711,6 +711,7 @@ async fn main() -> anyhow::Result<()> {{
         None,
         program,
         None, // build mode doesn't need persistent storage
+        None, // no instance registry in build mode
     );
 
     match cli.command {{

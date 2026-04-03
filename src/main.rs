@@ -772,6 +772,7 @@ async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
         None,
         program,
         storage,
+        None,
     );
 
     // Print banner
@@ -927,6 +928,7 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
         None,
         program,
         storage,
+        None,
     );
 
     // Build params from positional args matching handler param names

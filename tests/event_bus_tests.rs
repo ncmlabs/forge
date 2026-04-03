@@ -209,9 +209,17 @@ async fn agent_registers_subscriptions_with_bus() {
     let decl = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let _agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None)
-        .with_event_bus(bus.clone())
-        .await;
+    let _agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     let bus_guard = bus.read().await;
     assert_eq!(bus_guard.subscriber_count("MoveEvent"), 1);
@@ -222,9 +230,17 @@ async fn agent_run_receives_and_dispatches_event() {
     let decl = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None)
-        .with_event_bus(bus.clone())
-        .await;
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Publish an event, then close the bus so channels close and run() terminates
     {
@@ -244,13 +260,29 @@ async fn agent_emit_drains_through_bus() {
     let decl_b = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let agent_a = AgentProcess::new(decl_a, None, mock_registry(), None, empty_program(), None)
-        .with_event_bus(bus.clone())
-        .await;
+    let agent_a = AgentProcess::new(
+        decl_a,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
-    let _agent_b = AgentProcess::new(decl_b, None, mock_registry(), None, empty_program(), None)
-        .with_event_bus(bus.clone())
-        .await;
+    let _agent_b = AgentProcess::new(
+        decl_b,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Trigger agent_a, which should emit MoveEvent
     let result = agent_a.dispatch("trigger", HashMap::new()).await.unwrap();
@@ -279,9 +311,17 @@ async fn agent_filter_subscribe_with_matching_event() {
     let decl = subscribing_agent("listener", "MoveEvent", Some(filter));
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None)
-        .with_event_bus(bus.clone())
-        .await;
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Publish matching event
     {
@@ -316,9 +356,17 @@ async fn agent_filter_subscribe_rejects_non_matching() {
     let decl = subscribing_agent("listener", "MoveEvent", Some(filter));
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None)
-        .with_event_bus(bus.clone())
-        .await;
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Publish NON-matching event (room-999)
     {
@@ -414,6 +462,7 @@ async fn multi_agent_event_flow() {
         None,
         empty_program(),
         None,
+        None,
     )
     .with_event_bus(bus.clone())
     .await;
@@ -424,6 +473,7 @@ async fn multi_agent_event_flow() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
     )
     .with_event_bus(bus.clone())

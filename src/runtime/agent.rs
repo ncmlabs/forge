@@ -264,6 +264,7 @@ impl AgentProcess {
         tracer: Option<Tracer>,
         program: Program,
         storage: Option<crate::runtime::storage::SharedStorage>,
+        instance_registry: Option<crate::runtime::instance_registry::SharedInstanceRegistry>,
     ) -> Self {
         let mut memory = AgentMemory::new(&decl.memory);
 
@@ -332,6 +333,11 @@ impl AgentProcess {
         let mut executor = TaskExecutor::new(program, registry, tracer)
             .with_agent_context(context.clone())
             .with_timer_engine(timer_engine.clone());
+
+        // Wire instance registry into executor (issue #82)
+        if let Some(ir) = instance_registry {
+            executor = executor.with_instance_registry(ir);
+        }
 
         // Wire persistent memory storage into executor (issue #57)
         if decl.memory_persistent {

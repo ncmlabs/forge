@@ -255,7 +255,15 @@ async fn timer_expired_dispatches_handler() {
 
     let timers = vec![timer_field("timeout", 2)];
     let decl = simple_agent_with_timers(timers, vec![start_handler, expired_handler]);
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None);
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
 
     // Start the timer via handler dispatch
     agent.dispatch("begin", HashMap::new()).await.unwrap();
@@ -326,7 +334,15 @@ async fn timer_expired_with_context_param() {
 
     let timers = vec![timer_field("reconnect", 30)];
     let decl = simple_agent_with_timers(timers, vec![start_handler, expired_handler]);
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None);
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
 
     // Start timer with context
     agent.dispatch("disconnect", HashMap::new()).await.unwrap();
@@ -372,7 +388,15 @@ async fn timer_cancel_in_handler_prevents_expiry() {
 
     let timers = vec![timer_field("timeout", 5)];
     let decl = simple_agent_with_timers(timers, vec![start_handler, cancel_handler]);
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program(), None);
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
 
     // Start then cancel
     agent.dispatch("begin", HashMap::new()).await.unwrap();

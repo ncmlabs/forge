@@ -118,6 +118,7 @@ pub struct TaskExecutor {
     agent_context: Option<Arc<Mutex<AgentContext>>>,
     timer_engine: Option<Arc<Mutex<TimerEngine>>>,
     storage: Option<crate::runtime::storage::SharedStorage>,
+    instance_registry: Option<crate::runtime::instance_registry::SharedInstanceRegistry>,
     agent_name: Option<String>,
     memory_persistent: bool,
 }
@@ -164,6 +165,7 @@ impl TaskExecutor {
             agent_context: None,
             timer_engine: None,
             storage: None,
+            instance_registry: None,
             agent_name: None,
             memory_persistent: false,
         }
@@ -178,6 +180,15 @@ impl TaskExecutor {
     /// Attach an async timer engine for timer operations (issue #20).
     pub fn with_timer_engine(mut self, engine: Arc<Mutex<TimerEngine>>) -> Self {
         self.timer_engine = Some(engine);
+        self
+    }
+
+    /// Attach the instance registry for runtime agent discovery (issue #82).
+    pub fn with_instance_registry(
+        mut self,
+        registry: crate::runtime::instance_registry::SharedInstanceRegistry,
+    ) -> Self {
+        self.instance_registry = Some(registry);
         self
     }
 
