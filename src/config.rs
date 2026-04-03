@@ -64,6 +64,14 @@ pub struct CapabilityOverride {
 }
 
 impl ForgeConfig {
+    /// Parse a ForgeConfig from a TOML string (used by embedded configs in built binaries).
+    pub fn from_toml_str(s: &str) -> Result<Self, ConfigError> {
+        let config: ForgeConfig =
+            toml::from_str(s).map_err(|e| ConfigError::ParseError(e.to_string()))?;
+        config.validate()?;
+        Ok(config)
+    }
+
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ConfigError::FileNotFound(path.display().to_string(), e.to_string()))?;
