@@ -382,7 +382,7 @@ FORGE is most valuable in systems where:
 
 Three things determine whether this reaches its potential:
 
-**Engineering:** Layer 1 is 4-6 months of serious compiler and runtime work. The bootstrap cannot be shortcut. The conformance suite must be written before claiming the language is stable. Error messages must be machine-readable from day one.
+**Engineering:** Layer 1 is substantially complete — parser, six semantic checkers, async runtime, LLM providers, and a 27-test conformance suite are operational. Layer 2 (toolkit agents that generate FORGE code) is the next frontier. Error messages are structured data designed for agent repair loops.
 
 **Capability:** The factory model depends on LLMs that can write reliable FORGE code. Today's models can handle simple programs. Complex multi-agent systems with subtle invariants require the repair loop to run multiple times. The factory becomes more powerful as models improve.
 
@@ -392,48 +392,36 @@ Three things determine whether this reaches its potential:
 
 ## Document index
 
-The following documents form the complete specification. Feed them together to any coding agent to begin implementation.
-
 | Document | Contents |
 |---|---|
-| `FORGE_PRINCIPLES_V2.md` | The nine principles — what FORGE believes and why |
-| `FORGE_POC_v3.md` | Full language spec: grammar, AST, type checker, runtime phases |
-| `FORGE_PROVIDERS.md` | Provider abstraction: trait, registry, implementations, config |
-| `FORGE_ROADMAP.md` | People, timeline, decisions, risks, 30-day start plan |
-| `FORGE_FIRST_PRINCIPLES.md` | Theoretical foundation: oracle machines, axioms, CS implications |
+| `forge-principles.md` | The nine principles — what FORGE believes and why |
+| `docs/forge-reference.md` | Complete language reference — syntax, semantics, and compiler enforcement for all 14 primitives |
+| `providers.md` | Provider abstraction: trait, registry, implementations, config |
+| `roadmap.md` | Architecture, requirements, and layer model |
+| `conformance/` | Language-agnostic JSON test suite — 27 tests covering parser, checkers, and runtime |
 
 ---
 
-## Starting
+## Current status
+
+Layer 1 — the substrate — is substantially complete:
+
+- **Parser**: PEG grammar covering all 14 language primitives with comprehensive error diagnostics
+- **Semantic checkers** (6): purity, boundary, states, requires, uncertain value taint tracking, warden supervision
+- **Runtime**: Async executor with LLM provider support (Anthropic, OpenAI-compatible, Ollama, Groq)
+- **Conformance suite**: 27 language-agnostic JSON tests covering parser, checkers, and runtime
+- **Acceptance tests**: End-to-end tests proving Layer 1 completeness, including a multi-agent tic-tac-toe game
+- **Token tracking**: Cost estimation and budget enforcement
+- **CLI**: `forge parse`, `forge check`, `forge run`, `forge trace`
 
 ```bash
-# Week 1: Decisions
-# Commit to: file-level boundary directives, tokio task agent model,
-# channel-based >> wiring, extern bridge for pure functions
-
-# Week 2: Grammar and parsing
-# Write grammar/forge.pest
-# Write src/ast.rs
-# Write src/parser.rs
-# Milestone: forge parse examples/hello.forge prints AST
-
-# Week 3: Type checker and providers
-# Write src/checker/uncertain.rs
-# Write src/checker/pure_checker.rs
-# Write src/llm/providers/
-# Milestone: forge check catches type errors, mock provider works
-
-# Week 4: Runtime
-# Write src/runtime/executor.rs
-# Write src/runtime/agent.rs
-# Write src/config.rs
-# Milestone: forge run examples/hello.forge calls a real LLM and returns
+# Try it
+cargo build
+cargo run -- parse examples/hello.forge    # parse and print AST
+cargo run -- check examples/hello.forge    # run semantic checkers
+cargo run -- run examples/hello.forge      # execute with configured LLM
+cargo test                                 # run all tests including conformance
 ```
-
-After week 4, follow `FORGE_POC_v3.md` phases 5–11.
-
-The conformance suite should be written in parallel with the grammar.
-Every construct has a positive and a negative test before the grammar is considered done.
 
 ---
 
@@ -443,5 +431,4 @@ FORGE is the language that makes it harder to build systems that are confidently
 
 ---
 
-*FORGE — Draft specification. All documents in the repository are working drafts.*
-*The language does not yet exist. This README describes what we are building and why.*
+*FORGE is under active development. Layer 1 (the substrate) is substantially complete. All documents in the repository are working drafts.*
