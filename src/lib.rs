@@ -7,6 +7,7 @@ pub mod fleet;
 pub mod llm;
 pub mod parser;
 pub mod planner;
+pub mod portability;
 pub mod resolver;
 pub mod runtime;
 pub mod tracer;

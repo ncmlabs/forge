@@ -50,6 +50,7 @@ fn simple_agent_with_timers(
     handlers: Vec<Spanned<OnHandler>>,
 ) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: spanned("test_agent".into()),
         lifecycle: None,
         memory: vec![],

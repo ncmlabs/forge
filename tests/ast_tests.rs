@@ -404,6 +404,7 @@ fn ast_pool_first() {
 #[test]
 fn ast_agent() {
     let agent = AgentDecl {
+        exportable: false,
         name: sp("support_bot".into()),
         lifecycle: None,
         memory: vec![
@@ -971,6 +972,7 @@ fn ast_requires_clause() {
 #[test]
 fn ast_agent_v3() {
     let agent = AgentDecl {
+        exportable: false,
         name: sp("room_agent".into()),
         lifecycle: Some(sp("RoomLifecycle".into())),
         memory: vec![

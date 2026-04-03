@@ -24,7 +24,7 @@ fn load_quiz_tutor() -> (
         .items
         .iter()
         .find_map(|item| match &item.node {
-            TopLevel::Agent(a) => Some(a.clone()),
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
             _ => None,
         })
         .expect("no agent in program");

@@ -10,7 +10,8 @@
 // --- Program structure ---
 program   = { SOI ~ (boundary_directive ~ nl)? ~ (blank_line | top_level)* ~ EOI }
 top_level = {
-    use_decl
+    import_decl
+  | use_decl
   | pure_decl
   | event_decl
   | states_decl
@@ -53,7 +54,8 @@ keyword = @{
     | "pure" | "event" | "states" | "timer" | "endpoint" | "type"
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
-    | "match" | "recall" | "learn" )
+    | "match" | "recall" | "learn"
+    | "exportable" | "import" | "from" | "as" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -90,6 +92,12 @@ use_decl = {
     (i1 ~ cap_path ~ nl)+
 }
 cap_path = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~ ("." ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*)+ }
+
+// --- import declaration ---
+import_decl = {
+    "import" ~ _s ~ import_layer_list ~ _s ~ "from" ~ _s ~ template_string ~ _s ~ "as" ~ _s ~ ident ~ nl
+}
+import_layer_list = { ident ~ (_s_opt ~ "," ~ _s_opt ~ ident)* }
 
 // --- task declaration ---
 task_decl = {
@@ -172,7 +180,7 @@ needs_ref      = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~ "." ~ ("
 
 // --- agent declaration ---
 agent_decl = {
-    "agent" ~ _s ~ ident ~ nl ~
+    ("exportable" ~ _s)? ~ "agent" ~ _s ~ ident ~ nl ~
     (i1 ~ lifecycle_clause ~ nl)? ~
     (i1 ~ memory_block)? ~
     (i1 ~ knowledge_block)? ~
@@ -197,6 +205,7 @@ knowledge_block = {
 knowledge_option = {
     "max_entries" ~ _s_opt ~ ":" ~ _s_opt ~ number_lit
   | "retention" ~ _s_opt ~ ":" ~ _s_opt ~ duration
+  | "import" ~ _s_opt ~ ":" ~ _s_opt ~ ident_list
 }
 
 timer_field = { "timer" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ duration }

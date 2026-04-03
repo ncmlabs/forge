@@ -196,7 +196,7 @@ async fn accept_tictactoe_game() {
         .items
         .iter()
         .find_map(|item| match &item.node {
-            TopLevel::Agent(a) => Some(a.clone()),
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
             _ => None,
         })
         .expect("no agent in room_agent.forge");

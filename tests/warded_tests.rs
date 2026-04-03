@@ -21,6 +21,7 @@ fn sp<T>(node: T) -> Spanned<T> {
 /// No subscriptions → agent exits immediately from run() (channels close).
 fn simple_agent(name: &str) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],
@@ -45,6 +46,7 @@ fn simple_agent(name: &str) -> AgentDecl {
 /// The handler body references an undefined variable → RuntimeError::UndefinedVariable.
 fn crashing_agent(name: &str) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],
@@ -120,8 +122,8 @@ async fn publish_trigger(bus: &forge::runtime::event_bus::SharedEventBus) {
 #[tokio::test]
 async fn constructs_blueprints_for_managed_agents() {
     let program = make_program(vec![
-        TopLevel::Agent(simple_agent("agent_a")),
-        TopLevel::Agent(simple_agent("agent_b")),
+        TopLevel::Agent(Box::new(simple_agent("agent_a"))),
+        TopLevel::Agent(Box::new(simple_agent("agent_b"))),
     ]);
 
     let runtime = WardedRuntime::new(
@@ -144,7 +146,7 @@ async fn constructs_blueprints_for_managed_agents() {
 
 #[tokio::test]
 async fn spawns_agents_as_tokio_tasks() {
-    let program = make_program(vec![TopLevel::Agent(simple_agent("worker"))]);
+    let program = make_program(vec![TopLevel::Agent(Box::new(simple_agent("worker")))]);
     let mut runtime = WardedRuntime::new(
         test_warden("boss", vec!["worker"], vec![crash_restart_policy()], None),
         &program,
@@ -159,7 +161,7 @@ async fn spawns_agents_as_tokio_tasks() {
 #[tokio::test]
 async fn agents_exit_cleanly_when_no_events() {
     // Agents with no subscriptions exit immediately (no events to receive)
-    let program = make_program(vec![TopLevel::Agent(simple_agent("worker"))]);
+    let program = make_program(vec![TopLevel::Agent(Box::new(simple_agent("worker")))]);
     let mut runtime = WardedRuntime::new(
         test_warden("boss", vec!["worker"], vec![crash_restart_policy()], None),
         &program,
@@ -200,7 +202,7 @@ async fn detects_agent_crash_and_restarts() {
     // Agent subscribes to "trigger", crashes when it receives it.
     // Warden policy: on crash → restart, self.
     // After restart, agent is alive again (subscribed to trigger again).
-    let program = make_program(vec![TopLevel::Agent(crashing_agent("crasher"))]);
+    let program = make_program(vec![TopLevel::Agent(Box::new(crashing_agent("crasher")))]);
 
     let warden_decl = test_warden(
         "boss",
@@ -258,8 +260,8 @@ async fn scope_self_only_restarts_crashed_agent() {
     // Policy: on crash → restart, self.
     // Only crasher should be affected; stable exits normally.
     let program = make_program(vec![
-        TopLevel::Agent(crashing_agent("crasher")),
-        TopLevel::Agent(simple_agent("stable")),
+        TopLevel::Agent(Box::new(crashing_agent("crasher"))),
+        TopLevel::Agent(Box::new(simple_agent("stable"))),
     ]);
 
     let warden_decl = test_warden(
@@ -303,8 +305,8 @@ async fn scope_self_only_restarts_crashed_agent() {
 async fn scope_all_restarts_entire_group() {
     // Policy: on crash → restart, all. When crasher crashes, ALL agents restart.
     let program = make_program(vec![
-        TopLevel::Agent(crashing_agent("crasher")),
-        TopLevel::Agent(simple_agent("bystander")),
+        TopLevel::Agent(Box::new(crashing_agent("crasher"))),
+        TopLevel::Agent(Box::new(simple_agent("bystander"))),
     ]);
 
     let warden_decl = test_warden(
@@ -517,7 +519,7 @@ async fn agent_override_takes_precedence() {
         after_clauses: vec![],
     })];
 
-    let program = make_program(vec![TopLevel::Agent(agent.clone())]);
+    let program = make_program(vec![TopLevel::Agent(Box::new(agent.clone()))]);
 
     let mut runtime = WardedRuntime::new(
         test_warden("boss", vec!["special"], vec![crash_restart_policy()], None),

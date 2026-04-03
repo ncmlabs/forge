@@ -18,7 +18,7 @@ use crate::tracer::Tracer;
 
 enum WorkerKind {
     Task(TaskDecl),
-    Agent(AgentDecl),
+    Agent(Box<AgentDecl>),
 }
 
 // ── Pool executor ────────────────────────────────────────────────────────────
@@ -162,7 +162,7 @@ impl PoolExecutor {
                     join_set.spawn(async move { executor.call_task(&decl, args).await });
                 }
                 WorkerKind::Agent(agent_decl) => {
-                    let decl = agent_decl.clone();
+                    let decl = agent_decl.as_ref().clone();
                     let providers = self.providers.clone();
                     let tracer = self.tracer.clone();
                     let program = self.program.clone();

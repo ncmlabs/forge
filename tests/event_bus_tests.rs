@@ -58,6 +58,7 @@ fn payload_with_fields(name: &str, source: &str, fields: Vec<(&str, &str)>) -> E
 /// Build a minimal agent with a handler that gives back event field values.
 fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: spanned(name.into()),
         lifecycle: None,
         memory: vec![],
@@ -87,6 +88,7 @@ fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>
 /// Build an agent that emits an event from its handler.
 fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: spanned(name.into()),
         lifecycle: None,
         memory: vec![],
@@ -344,6 +346,7 @@ async fn agent_filter_subscribe_rejects_non_matching() {
 async fn multi_agent_event_flow() {
     // ── room_agent: handles "join", emits PlayerJoined ──────────────────
     let room_decl = AgentDecl {
+        exportable: false,
         name: spanned("room_agent".into()),
         lifecycle: None,
         memory: vec![spanned(FieldDef {

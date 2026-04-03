@@ -213,6 +213,49 @@ fn build_field_def(ident_pair: Pair, type_pair: Pair) -> anyhow::Result<Spanned<
     ))
 }
 
+fn build_import_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+
+    let layer_list = inner.next().unwrap();
+    let mut layers = Vec::new();
+    for child in layer_list.into_inner() {
+        if child.as_rule() == Rule::ident {
+            let layer = match child.as_str() {
+                "knowledge" => ImportLayer::Knowledge,
+                "memory" => ImportLayer::Memory,
+                "config" => ImportLayer::Config,
+                other => {
+                    return Err(parse_error(
+                        &child,
+                        &format!("unknown import layer: {}", other),
+                    ))
+                }
+            };
+            layers.push(spanned(layer, &child));
+        }
+    }
+
+    let source_pair = inner.next().unwrap();
+    let source = {
+        let sp = to_span(&source_pair);
+        let parts = build_template_string(source_pair)?;
+        Spanned::new(Expr::Template(parts), sp)
+    };
+
+    let alias_pair = inner.next().unwrap();
+    let alias = spanned(alias_pair.as_str().to_string(), &alias_pair);
+
+    Ok(Spanned::new(
+        TopLevel::Import(ImportDecl {
+            layers,
+            source,
+            alias,
+        }),
+        span,
+    ))
+}
+
 fn build_knowledge_block(pair: Pair) -> anyhow::Result<Spanned<KnowledgeDecl>> {
     let span = to_span(&pair);
     let mut inner = pair.into_inner();
@@ -225,6 +268,7 @@ fn build_knowledge_block(pair: Pair) -> anyhow::Result<Spanned<KnowledgeDecl>> {
 
     let mut max_entries = None;
     let mut retention = None;
+    let mut imports = Vec::new();
 
     for child in inner {
         if child.as_rule() == Rule::knowledge_option {
@@ -237,6 +281,13 @@ fn build_knowledge_block(pair: Pair) -> anyhow::Result<Spanned<KnowledgeDecl>> {
                 Rule::duration => {
                     retention = Some(build_duration(opt_inner)?);
                 }
+                Rule::ident_list => {
+                    for id in opt_inner.into_inner() {
+                        if id.as_rule() == Rule::ident {
+                            imports.push(spanned(id.as_str().to_string(), &id));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -247,6 +298,7 @@ fn build_knowledge_block(pair: Pair) -> anyhow::Result<Spanned<KnowledgeDecl>> {
             store_path,
             max_entries,
             retention,
+            imports,
         },
         span,
     ))
@@ -1566,6 +1618,7 @@ fn build_on_handler(pair: Pair) -> anyhow::Result<Spanned<OnHandler>> {
 
 fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     let span = to_span(&pair);
+    let exportable = pair.as_str().starts_with("exportable");
     let mut inner = pair.into_inner();
     let name_pair = inner.next().unwrap();
     let name = spanned(name_pair.as_str().to_string(), &name_pair);
@@ -1664,7 +1717,8 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     }
 
     Ok(Spanned::new(
-        TopLevel::Agent(AgentDecl {
+        TopLevel::Agent(Box::new(AgentDecl {
+            exportable,
             name,
             lifecycle,
             memory,
@@ -1674,7 +1728,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             warden_override,
             handlers,
             stuck_policy,
-        }),
+        })),
         span,
     ))
 }
@@ -2054,6 +2108,7 @@ fn build_program(pairs: Pairs) -> anyhow::Result<Program> {
             Rule::top_level => {
                 let inner = pair.into_inner().next().unwrap();
                 let item = match inner.as_rule() {
+                    Rule::import_decl => build_import_decl(inner)?,
                     Rule::use_decl => build_use_decl(inner)?,
                     Rule::task_decl => build_task_decl(inner)?,
                     Rule::pure_decl => build_pure_decl(inner)?,

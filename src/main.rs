@@ -4,9 +4,14 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use forge::ast::TopLevel;
+use forge::ast::{Expr, TemplatePart, TopLevel};
+use forge::portability::{
+    build_package, inspect_package, load_package, prepare_imported_entries, verify_integrity,
+    AgentSchema, SchemaField, SchemaKnowledgeConfig,
+};
 use forge::runtime::agent::AgentProcess;
 use forge::runtime::confidence::{ConfidentValue, Value};
+use forge::runtime::knowledge_store::KnowledgeStore;
 
 #[derive(Parser)]
 #[command(
@@ -78,6 +83,36 @@ enum Command {
         /// Port to bind to (overrides config)
         #[arg(long)]
         port: Option<u16>,
+    },
+    /// Export an agent's knowledge and config as a .forgepkg.json package
+    Export {
+        /// Path to the .forge source file
+        file: PathBuf,
+        /// Name of the agent to export (if file has multiple agents)
+        #[arg(long)]
+        agent: Option<String>,
+        /// Layers to export (comma-separated: config,knowledge,memory)
+        #[arg(long, default_value = "config,knowledge")]
+        layers: String,
+        /// Output file path
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Import knowledge from a .forgepkg.json package into a local store
+    Import {
+        /// Path to the .forgepkg.json package
+        package: PathBuf,
+        /// Target knowledge store path
+        #[arg(long)]
+        into: String,
+        /// Confidence cap for imported entries (0.0-1.0)
+        #[arg(long, default_value = "0.7")]
+        confidence_cap: f32,
+    },
+    /// Inspect a .forgepkg.json package
+    Inspect {
+        /// Path to the .forgepkg.json package
+        package: PathBuf,
     },
     /// Generate skeleton FORGE code from a plain-text system description
     Fleet {
@@ -167,6 +202,152 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Serve { file, host, port } => {
             serve_program(&file, host, port).await?;
+        }
+        Command::Export {
+            file,
+            agent,
+            layers,
+            output,
+        } => {
+            let source = read_source(&file)?;
+            let program = parse_or_exit(&source, &file);
+
+            // Find the agent declaration
+            let agent_decl = if let Some(ref name) = agent {
+                program
+                    .items
+                    .iter()
+                    .find_map(|item| match &item.node {
+                        TopLevel::Agent(a) if a.name.node == *name => Some(a.as_ref().clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("no agent named '{}' found in {}", name, file.display())
+                    })?
+            } else {
+                program
+                    .items
+                    .iter()
+                    .find_map(|item| match &item.node {
+                        TopLevel::Agent(a) => Some(a.as_ref().clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("no agent declaration found in {}", file.display())
+                    })?
+            };
+
+            let layer_set: Vec<&str> = layers.split(',').map(|s| s.trim()).collect();
+
+            // Build schema from AST if "config" layer requested
+            let schema = if layer_set.contains(&"config") {
+                let fields: Vec<SchemaField> = agent_decl
+                    .memory
+                    .iter()
+                    .map(|f| SchemaField {
+                        name: f.node.name.clone(),
+                        field_type: format!("{:?}", f.node.type_name.node),
+                        default: None,
+                    })
+                    .collect();
+
+                let knowledge_config =
+                    agent_decl
+                        .knowledge
+                        .as_ref()
+                        .map(|k| SchemaKnowledgeConfig {
+                            max_entries: k.node.max_entries.as_ref().map(|m| m.node as usize),
+                            retention_days: k.node.retention.as_ref().map(|r| {
+                                use forge::ast::DurationUnit;
+                                let dur = &r.node;
+                                match dur.unit {
+                                    DurationUnit::Days => dur.value,
+                                    DurationUnit::Hours => dur.value / 24,
+                                    DurationUnit::Minutes => dur.value / 1440,
+                                    DurationUnit::Seconds => dur.value / 86400,
+                                }
+                            }),
+                        });
+
+                AgentSchema {
+                    fields,
+                    knowledge_config,
+                }
+            } else {
+                AgentSchema {
+                    fields: vec![],
+                    knowledge_config: None,
+                }
+            };
+
+            // Load knowledge entries if "knowledge" layer requested
+            let knowledge = if layer_set.contains(&"knowledge") {
+                if let Some(ref k) = agent_decl.knowledge {
+                    let store_path = match &k.node.store_path.node {
+                        Expr::Template(parts) => {
+                            let mut s = String::new();
+                            for p in parts {
+                                if let TemplatePart::Text(t) = &p.node {
+                                    s.push_str(t);
+                                }
+                            }
+                            s
+                        }
+                        _ => String::new(),
+                    };
+                    if !store_path.is_empty() {
+                        let store = KnowledgeStore::new(&store_path, None, None);
+                        store.export_entries()
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            };
+
+            let agent_name = agent_decl.name.node.clone();
+            let pkg = build_package(&agent_name, &agent_name, None, schema, knowledge);
+            let json = serde_json::to_string_pretty(&pkg)?;
+
+            match output {
+                Some(path) => {
+                    std::fs::write(&path, &json)?;
+                    println!("exported to {}", path.display());
+                }
+                None => {
+                    let default_path = format!("{}.forgepkg.json", agent_name);
+                    std::fs::write(&default_path, &json)?;
+                    println!("exported to {}", default_path);
+                }
+            }
+        }
+        Command::Import {
+            package,
+            into,
+            confidence_cap,
+        } => {
+            let json = std::fs::read_to_string(&package)
+                .map_err(|e| anyhow::anyhow!("could not read {}: {}", package.display(), e))?;
+            let pkg =
+                load_package(&json).map_err(|e| anyhow::anyhow!("invalid package: {:?}", e))?;
+            verify_integrity(&pkg)
+                .map_err(|e| anyhow::anyhow!("integrity check failed: {:?}", e))?;
+
+            let entries = prepare_imported_entries(&pkg, confidence_cap);
+            let mut store = KnowledgeStore::new(&into, None, None);
+            let count = store.merge_imported(entries);
+
+            println!("imported {} entries into {}", count, into);
+        }
+        Command::Inspect { package } => {
+            let json = std::fs::read_to_string(&package)
+                .map_err(|e| anyhow::anyhow!("could not read {}: {}", package.display(), e))?;
+            let pkg =
+                load_package(&json).map_err(|e| anyhow::anyhow!("invalid package: {:?}", e))?;
+            print!("{}", inspect_package(&pkg));
         }
         Command::Fleet { spec, output } => {
             let result = forge::fleet::generate(&spec)?;
@@ -318,7 +499,7 @@ async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
         .items
         .iter()
         .find_map(|item| match &item.node {
-            TopLevel::Agent(a) => Some(a.clone()),
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
             _ => None,
         })
         .ok_or_else(|| anyhow::anyhow!("no agent declaration found in {}", file.display()))?;

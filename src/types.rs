@@ -82,6 +82,8 @@ pub enum ConfidenceSource {
     Derived(f32),
     /// Retrieved from knowledge store (confidence = retrieval relevance)
     KnowledgeRecall(f32),
+    /// Imported from an external agent package (confidence = capped value)
+    ImportedKnowledge(f32),
 }
 
 // ── Conversions ──────────────────────────────────────────────
