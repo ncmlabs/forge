@@ -19,32 +19,32 @@ pub type SharedStorage = Arc<ForgeStorage>;
 impl ForgeStorage {
     /// Open (or create) a redb database at the given path.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
-        let db = Database::create(path).map_err(StorageError::Open)?;
+        let db = Database::create(path).map_err(|e| StorageError::Open(Box::new(e)))?;
 
         // Ensure the table exists by running an empty write transaction.
-        let txn = db.begin_write().map_err(StorageError::Transaction)?;
-        txn.open_table(FORGE_KV).map_err(StorageError::Table)?;
-        txn.commit().map_err(StorageError::Commit)?;
+        let txn = db.begin_write().map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        txn.open_table(FORGE_KV).map_err(|e| StorageError::Table(Box::new(e)))?;
+        txn.commit().map_err(|e| StorageError::Commit(Box::new(e)))?;
 
         Ok(Self { db })
     }
 
     /// Store a key-value pair. Overwrites any existing value.
     pub fn store(&self, key: &str, value: &str) -> Result<(), StorageError> {
-        let txn = self.db.begin_write().map_err(StorageError::Transaction)?;
+        let txn = self.db.begin_write().map_err(|e| StorageError::Transaction(Box::new(e)))?;
         {
-            let mut table = txn.open_table(FORGE_KV).map_err(StorageError::Table)?;
-            table.insert(key, value).map_err(StorageError::Write)?;
+            let mut table = txn.open_table(FORGE_KV).map_err(|e| StorageError::Table(Box::new(e)))?;
+            table.insert(key, value).map_err(|e| StorageError::Write(Box::new(e)))?;
         }
-        txn.commit().map_err(StorageError::Commit)?;
+        txn.commit().map_err(|e| StorageError::Commit(Box::new(e)))?;
         Ok(())
     }
 
     /// Get a value by key. Returns None if the key does not exist.
     pub fn get(&self, key: &str) -> Result<Option<String>, StorageError> {
-        let txn = self.db.begin_read().map_err(StorageError::Transaction)?;
-        let table = txn.open_table(FORGE_KV).map_err(StorageError::Table)?;
-        match table.get(key).map_err(StorageError::Read)? {
+        let txn = self.db.begin_read().map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        let table = txn.open_table(FORGE_KV).map_err(|e| StorageError::Table(Box::new(e)))?;
+        match table.get(key).map_err(|e| StorageError::Read(Box::new(e)))? {
             Some(val) => Ok(Some(val.value().to_string())),
             None => Ok(None),
         }
@@ -52,23 +52,23 @@ impl ForgeStorage {
 
     /// Delete a key. Returns true if the key existed.
     pub fn delete(&self, key: &str) -> Result<bool, StorageError> {
-        let txn = self.db.begin_write().map_err(StorageError::Transaction)?;
+        let txn = self.db.begin_write().map_err(|e| StorageError::Transaction(Box::new(e)))?;
         let existed;
         {
-            let mut table = txn.open_table(FORGE_KV).map_err(StorageError::Table)?;
-            existed = table.remove(key).map_err(StorageError::Write)?.is_some();
+            let mut table = txn.open_table(FORGE_KV).map_err(|e| StorageError::Table(Box::new(e)))?;
+            existed = table.remove(key).map_err(|e| StorageError::Write(Box::new(e)))?.is_some();
         }
-        txn.commit().map_err(StorageError::Commit)?;
+        txn.commit().map_err(|e| StorageError::Commit(Box::new(e)))?;
         Ok(existed)
     }
 
     /// List all keys that start with the given prefix.
     pub fn list(&self, prefix: &str) -> Result<Vec<String>, StorageError> {
-        let txn = self.db.begin_read().map_err(StorageError::Transaction)?;
-        let table = txn.open_table(FORGE_KV).map_err(StorageError::Table)?;
+        let txn = self.db.begin_read().map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        let table = txn.open_table(FORGE_KV).map_err(|e| StorageError::Table(Box::new(e)))?;
         let mut keys = Vec::new();
-        for entry in table.iter().map_err(StorageError::Read)? {
-            let (k, _v) = entry.map_err(StorageError::Read)?;
+        for entry in table.iter().map_err(|e| StorageError::Read(Box::new(e)))? {
+            let (k, _v) = entry.map_err(|e| StorageError::Read(Box::new(e)))?;
             let key = k.value();
             if key.starts_with(prefix) {
                 keys.push(key.to_string());
@@ -82,12 +82,12 @@ impl ForgeStorage {
 
 #[derive(Debug)]
 pub enum StorageError {
-    Open(redb::DatabaseError),
-    Transaction(redb::TransactionError),
-    Table(redb::TableError),
-    Commit(redb::CommitError),
-    Write(redb::StorageError),
-    Read(redb::StorageError),
+    Open(Box<redb::DatabaseError>),
+    Transaction(Box<redb::TransactionError>),
+    Table(Box<redb::TableError>),
+    Commit(Box<redb::CommitError>),
+    Write(Box<redb::StorageError>),
+    Read(Box<redb::StorageError>),
 }
 
 impl std::fmt::Display for StorageError {
