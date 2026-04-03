@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - forge-sensei now runs as a standalone binary (`bin/forge-sensei`) instead of `cargo run -- send` — faster hook, pre-training, and assessment (#77)
+- forge-sensei uses multi-hop recall: `categorize_for_recall` task identifies relevant knowledge categories before `recall`, improving retrieval accuracy from 97% to 100% on conformance tests (#79)
 - `forge send` CLI command for non-interactive agent message dispatch
 - Agent portability: `exportable` modifier, `import ... from ... as` declaration, `.forgepkg.json` package format with SHA-256 integrity, `forge export`/`import`/`inspect` CLI commands (#72)
 - Progressive learning agents: `knowledge`, `recall`, and `learn` language primitives for persistent, searchable knowledge stores that enable agents to accumulate expertise through use
