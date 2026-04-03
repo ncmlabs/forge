@@ -18,7 +18,7 @@ INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-inp = data.get('input', {})
+inp = data.get('tool_input', {})
 print(inp.get('file_path', ''))
 " 2>/dev/null || echo "")
 
@@ -31,7 +31,7 @@ fi
 CONTENT=$(echo "$INPUT" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-inp = data.get('input', {})
+inp = data.get('tool_input', {})
 text = inp.get('new_string', inp.get('content', ''))
 print(text[:500])
 " 2>/dev/null || echo "")
