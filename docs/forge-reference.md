@@ -17,6 +17,7 @@ FORGE uses fixed 2-space indentation levels to define code blocks. There are no 
 - **i1 (Level 1)**: 2 spaces
 - **i2 (Level 2)**: 4 spaces
 - **i3 (Level 3)**: 6 spaces
+- **i4 (Level 4)**: 8 spaces (maximum nesting depth)
 
 ```forge
 task process_order
@@ -44,7 +45,9 @@ task calculate_total
 
 FORGE has reserved keywords that define control flow, task definitions, and logic. These cannot be used as identifiers.
 
-Reserved keywords: `task`, `pure`, `flow`, `stage`, `fn`, `needs`, `gives`, `do`, `give`, `say`, `use`, `when`, `else`, `if`, `match`, `for`, `in`, `try`, `or`, `reason`, `classify`, `search`, `not`, `and`, `true`, `false`, `agent`, `event`, `states`, `emit`, `transition`, `escalate`, `forward`
+Reserved keywords: `task`, `pure`, `flow`, `stage`, `fn`, `needs`, `gives`, `do`, `is`, `give`, `say`, `use`, `when`, `else`, `if`, `match`, `for`, `in`, `try`, `or`, `with`, `above`, `reason`, `classify`, `search`, `into`, `not`, `and`, `true`, `false`, `agent`, `pool`, `warden`, `contract`, `system`, `event`, `states`, `type`, `endpoint`, `timer`, `emit`, `transition`, `escalate`, `forward`, `subscribe`, `start`, `cancel`, `reset`, `requires`
+
+Additional contextual keywords (reserved in specific contexts): `memory`, `lifecycle`, `manages`, `can`, `workers`, `strategy`, `on`, `fail`, `where`, `stuck`, `crash`, `hallucination`, `budget`, `timeout`, `nudge`, `restart`, `replace`, `self`, `downstream`, `all`, `after`, `max_retries`, `per`, `then`
 
 ```forge
 task validate_user
@@ -215,10 +218,10 @@ Tasks may use:
 - `reason` — invoke LLM reasoning with a prompt
 - `classify` — invoke LLM classification
 - `search` — invoke information retrieval
-- `call` — invoke other tasks
+- `task_name(args)` — invoke other tasks or pure functions
 - `give` — return a value
 - `say` — print to stdout
-- Control flow: `if/else`, `match`, `for`
+- Control flow: `if/else`, `when/else`, `match`, `for`
 
 ### Examples
 
@@ -239,19 +242,19 @@ task compare_documents
   needs doc1: Text, doc2: Text
   gives Text
   do
-    result = reason with "Compare these two documents and identify key differences: {doc1} and {doc2}"
+    result = reason "Compare these two documents and identify key differences: {doc1} and {doc2}"
     give result
 ```
 
 **Task calling another task:**
 
-```
+```forge
 task process_user_input
   needs user_text: Text
   gives Text
   do
-    cleaned = call normalize_text with user_text
-    analyzed = reason with "Analyze this text for sentiment: {cleaned}"
+    cleaned = normalize_text(user_text)
+    analyzed = reason "Analyze this text for sentiment: {cleaned}"
     give analyzed
 ```
 
@@ -265,7 +268,7 @@ task categorize_feedback
     if feedback == ""
       give "empty"
     else
-      category = classify with "Categorize as positive, negative, or neutral: {feedback}"
+      category = classify feedback into ["positive", "negative", "neutral"]
       give category
 ```
 
@@ -309,7 +312,8 @@ The following cause **compiler errors** in pure function bodies:
 - `reason`
 - `classify`
 - `search`
-- `call` (calling other tasks)
+- `escalate`
+- `try ... or` (error recovery implies non-determinism)
 
 ### Confidence
 
@@ -407,8 +411,9 @@ The FORGE compiler enforces strict separation between tasks and pure functions:
 | `reason` | ✓ | ✗ | Compiler error in pure function |
 | `classify` | ✓ | ✗ | Compiler error in pure function |
 | `search` | ✓ | ✗ | Compiler error in pure function |
-| `call` (task) | ✓ | ✗ | Compiler error in pure function |
-| `call` (pure) | ✓ | ✓ | Allowed |
+| `escalate` | ✓ | ✗ | Compiler error in pure function |
+| `try ... or` | ✓ | ✗ | Compiler error in pure function |
+| Call functions | ✓ | ✓ | Allowed (pure can call other pure functions) |
 | Arithmetic | ✓ | ✓ | Allowed |
 | `give` | ✓ | ✓ | Allowed |
 
@@ -420,6 +425,33 @@ The FORGE compiler enforces strict separation between tasks and pure functions:
 2. **Use tasks for LLM operations** — Reserve tasks for reasoning, classification, and search
 3. **Compose tasks and pure functions** — Tasks can call pure functions; pure functions cannot call tasks
 4. **Document confidence** — While pure functions always return 1.0, document task confidence expectations in comments
+
+---
+
+## Entry Point: `fn main`
+
+Every FORGE program needs a `fn main` declaration as its entry point. Unlike tasks and pure functions, `fn main` does not use a `do` block — its body is indented at i1 (2 spaces) directly.
+
+### Syntax
+
+```
+fn main
+  <statements at 2-space indent>
+```
+
+### Example
+
+```forge
+fn main
+  topic = "AI should be open source"
+  arguments = (argue_for(topic) | argue_against(topic))
+  say "FOR: {arguments[0]}"
+  say "AGAINST: {arguments[1]}"
+  verdict = judge(arguments[0], arguments[1])
+  say verdict
+```
+
+Note: `fn main` has no `needs`, `gives`, or `do` clauses.
 
 ---
 
@@ -559,6 +591,7 @@ else -> <statement>
 - **sure**: confidence ≥ 0.8
 - **unsure**: confidence 0.5–0.8
 - **unreliable**: confidence < 0.5
+- **conflicted**: conflicting predictions from the oracle
 
 ### Behavior
 
@@ -577,17 +610,15 @@ when result.sure(above: 0.9) -> give result
 ### Example
 
 ```forge
-sentiment = llm("Classify sentiment: " + text)
+sentiment = classify text into ["positive", "negative", "neutral"]
 
-when sentiment.sure -> 
-  update_database(sentiment)
-when sentiment.unsure -> 
-  flag_for_review(sentiment)
-when sentiment.unreliable -> 
-  request_clarification(text)
-else -> 
-  log_error("No confidence data available")
+when sentiment.sure -> give sentiment
+when sentiment.unsure -> give "needs review"
+when sentiment.unreliable -> give "unknown"
+else -> escalate to human
 ```
+
+Each `when`/`else` clause takes a single inline statement after the `->` arrow. Multiple `when` clauses appear at the same indentation level, one per line.
 
 ---
 
@@ -1174,3 +1205,995 @@ Execute a FORGE program and emit a detailed JSON trace to stderr for debugging.
 ```bash
 forge trace program.forge 2> trace.json
 ```
+
+---
+
+## 7. Events
+
+Events are named, typed messages that agents emit and subscribe to. They form the backbone of inter-agent communication in FORGE.
+
+### Syntax
+
+```
+event <Name>
+  <field>: <Type>
+  <field>: <Type>
+```
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| `event <Name>` | Declares an event with an uppercase identifier |
+| `<field>: <Type>` | One or more typed fields at 2-space indent (i1) |
+
+Event names must start with an uppercase letter. Each field occupies its own line at i1 indentation, with a name, colon, and type annotation.
+
+### Emitting Events
+
+Events are emitted from agent handlers using the `emit` statement with named arguments:
+
+```
+emit <EventName>(<field>: <expr>, <field>: <expr>)
+```
+
+### Subscribing to Events
+
+Agents receive events via the `subscribe` clause, with an optional `where` filter:
+
+```
+subscribe <EventName>
+subscribe <EventName> where <expr>
+```
+
+### Examples
+
+**Declaring events:**
+
+```forge
+event CustomerMessage
+  customer: Text
+  content: Text
+
+event Resolved
+  customer: Text
+  summary: Text
+```
+
+**Emitting an event from a handler:**
+
+```forge
+emit Resolved(customer: customer, summary: memory.topic)
+```
+
+**Subscribing with a filter:**
+
+```forge
+subscribe CustomerMessage where customer == memory.customer
+```
+
+**Events with numeric fields:**
+
+```forge
+event TopicCompleted
+  topic: Text
+  score: Number
+
+event SessionSummary
+  total_questions: Number
+  correct: Number
+  level: Text
+```
+
+### Best Practices
+
+1. **Name events as nouns or past-tense verbs** -- `CustomerMessage`, `Resolved`, `TopicCompleted`
+2. **Keep event payloads minimal** -- include only the data subscribers need
+3. **Use `where` filters to scope subscriptions** -- avoid processing irrelevant events
+
+---
+
+## 8. States
+
+States declare finite state machines that govern agent lifecycles. Each `states` block defines a set of named states and the legal transitions between them, with optional guard conditions.
+
+### Syntax
+
+```
+states <Name>
+  <from> -> <to>
+  <from> -> <to> when <expr>
+```
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| `states <Name>` | Declares a state machine with an uppercase identifier |
+| `<from> -> <to>` | Declares a legal transition between two states |
+| `when <expr>` | Optional guard condition for the transition |
+
+Each transition occupies its own line at i1 indentation. A state can have multiple outgoing transitions, and multiple transitions can target the same state (including self-transitions).
+
+### Binding to an Agent
+
+An agent binds to a state machine via the `lifecycle` clause:
+
+```forge
+agent my_agent
+  lifecycle: MyStates
+```
+
+The agent then uses `transition to <state>` to move between states. The compiler validates that all transitions are legal with respect to the declared state machine.
+
+### Compiler Enforcement
+
+The states checker produces **errors** for:
+
+| Error | Description |
+|-------|-------------|
+| Unknown lifecycle | Agent references a `states` block that does not exist |
+| Unknown state in guard | A `requires lifecycle == X` references a state not in the block |
+| Unknown state in transition | A `transition to X` targets a state not in the block |
+| Illegal transition | A `transition to X` from a guarded state has no matching edge in the block |
+| Unguarded transition | A handler contains `transition to X` without a `requires lifecycle == ...` guard |
+| Conflicting guards | A handler has more than one lifecycle guard |
+
+The states checker produces **warnings** for:
+
+| Warning | Description |
+|---------|-------------|
+| Terminal state | A state has no outgoing transitions (may be intentional) |
+| Unreachable state | A state has no incoming transitions and is not an initial state |
+| Opaque guard | A lifecycle guard is too complex for static analysis (e.g., `lifecycle != X`) |
+
+### Examples
+
+**Basic state machine:**
+
+```forge
+states SupportPhase
+  greeting -> active when message_count > 0
+  active -> resolved
+  active -> escalated
+```
+
+**Game lifecycle:**
+
+```forge
+states GamePhase
+  waiting -> playing when player_count == 2
+  playing -> finished
+```
+
+**Multi-level progression with self-transition:**
+
+```forge
+states TutorPhase
+  beginner -> intermediate when score >= 3
+  intermediate -> advanced when score >= 7
+  advanced -> advanced
+```
+
+### Best Practices
+
+1. **Declare all states explicitly** -- every state name must appear in at least one transition
+2. **Guard transitions that depend on conditions** -- use `when` clauses to document the invariant
+3. **Use `requires lifecycle == <state>` in handlers** -- this enables the compiler to verify transition legality
+4. **Terminal states are intentional** -- if a state has no outgoing edges, the compiler warns; this is correct for final states like `resolved` or `finished`
+
+---
+
+## 9. Agents
+
+Agents are long-lived, event-driven actors with persistent memory, lifecycle state, timers, and supervision. They are the primary construct for modeling autonomous behavior in FORGE.
+
+### Syntax
+
+```
+agent <name>
+  lifecycle: <StatesName>
+  memory
+    <field>: <Type>
+  timer <name>: <duration>
+  subscribe <EventName> where <expr>
+  warden_override
+    on <failure>: <response>, <scope>
+
+  on <event>(<param>: <Type>)
+    requires <expr> on fail: <policy>
+    <statements>
+
+  if stuck for <N> turns
+    <statements>
+```
+
+All clauses are optional except for at least one `on` handler.
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| `agent <name>` | Declares an agent with a lowercase identifier |
+| `lifecycle: <Name>` | Binds the agent to a `states` block for lifecycle management |
+| `memory` | Declares persistent fields that survive across handler invocations |
+| `timer <name>: <duration>` | Declares a named timer with a duration (e.g., `10m`, `30s`, `1h`) |
+| `subscribe <Event>` | Subscribes to events from the event bus |
+| `warden_override` | Overrides warden policies for this specific agent |
+| `on <event>` | Declares a handler that runs when the named event occurs |
+| `if stuck` | Declares a recovery policy when the agent is stuck |
+
+### Memory
+
+Memory fields persist across handler invocations within the same agent instance. They are accessed and updated using dot notation:
+
+```forge
+memory
+  score: Number
+  topic: Text
+  history: Text[]
+```
+
+Reading: `memory.score`, `memory.topic`
+
+Writing: `memory.score = memory.score + 1`
+
+Array indexing: `memory.board[cell] = player`
+
+### Timers
+
+Timers are declared with a name and a duration. Duration suffixes are `s` (seconds), `m` or `min` (minutes), and `h` (hours).
+
+```forge
+timer session_timeout: 10m
+timer reconnect_window: 30s
+```
+
+Timer events are handled with the `on <timer_name>.expired` handler:
+
+```forge
+on session_timeout.expired
+  say "Session timed out"
+  escalate to human
+```
+
+Timers can be controlled with statements:
+
+| Statement | Description |
+|-----------|-------------|
+| `start <timer>` | Starts the named timer |
+| `start <timer> for <expr>` | Starts the timer for a specific target |
+| `cancel <timer>` | Cancels the named timer |
+| `cancel <timer> for <expr>` | Cancels the timer for a specific target |
+| `reset <timer>` | Resets the named timer to its initial duration |
+
+### Handlers
+
+Handlers are the core of agent behavior. Each handler responds to a named event and may declare parameters and a return type.
+
+```forge
+on <event>(<param>: <Type>, <param>: <Type>): <ReturnType>
+  <statements>
+```
+
+Handler names support dot notation for scoped events (e.g., `session_timeout.expired`).
+
+#### Requires Guards
+
+Handlers can declare preconditions using `requires` clauses. Each guard specifies an expression that must be true and a fail policy for when it is not:
+
+```forge
+requires <expr> on fail: <policy>
+```
+
+| Fail Policy | Description |
+|-------------|-------------|
+| `silent` | Silently drop the event |
+| `log` | Log the failure and drop the event |
+| `escalate` | Escalate to the agent's supervisor |
+| `crash` | Crash the agent |
+| `give <expr>` | Return an expression as the handler result |
+
+### Agent Statements
+
+Inside handlers, agents have access to the following statements in addition to standard control flow:
+
+| Statement | Syntax | Description |
+|-----------|--------|-------------|
+| Emit | `emit Event(field: val)` | Publish an event to the bus |
+| Transition | `transition to <state>` | Move to a new lifecycle state |
+| Escalate | `escalate to <target>` | Escalate to a named supervisor or entity |
+| Forward | `forward <expr> to <expr>` | Forward a message to another agent |
+| Memory update | `memory.field = <expr>` | Update a persistent memory field |
+| Memory array update | `memory.field[idx] = <expr>` | Update a specific array element |
+
+### Stuck Policy
+
+The `if stuck` block defines recovery behavior when the agent cannot make progress. The optional `for N turns` clause specifies how many idle turns trigger the policy:
+
+```forge
+if stuck for 3 turns
+  say "Escalating after repeated stuck state"
+  escalate to human
+```
+
+Without a turn count, the stuck policy triggers on any stuck detection:
+
+```forge
+if stuck
+  escalate to human
+```
+
+### Warden Override
+
+An agent can override its warden's default policies using a `warden_override` block:
+
+```forge
+agent classifier
+  warden_override
+    on stuck: replace, self
+
+  on start
+    say "ready"
+```
+
+This takes precedence over the warden's policy for the specified failure type.
+
+### Examples
+
+**Support bot with lifecycle, memory, timers, and events:**
+
+```forge
+agent support_bot
+  lifecycle: SupportPhase
+  memory
+    topic: Text
+    message_count: Number
+    escalation_count: Number
+  timer session_timeout: 10m
+  subscribe CustomerMessage where customer == memory.customer
+
+  on message(customer: Text, content: Text)
+    memory.message_count = memory.message_count + 1
+    intent = classify content into ["question", "complaint", "feedback", "urgent"]
+    response = reason "Help this customer with their {intent} about: {content}"
+    when response.sure -> say response
+    when response.unsure -> say "Let me look into that for you."
+    else -> escalate to human
+
+  on resolve(customer: Text)
+    emit Resolved(customer: customer, summary: memory.topic)
+    transition to resolved
+
+  on session_timeout.expired
+    say "Session timed out"
+    escalate to human
+
+  if stuck for 3 turns
+    memory.escalation_count = memory.escalation_count + 1
+    say "Escalating after repeated stuck state"
+    escalate to human
+```
+
+**Game room with requires guards and pattern matching:**
+
+```forge
+agent room_agent
+  lifecycle: GamePhase
+  memory
+    board: Text[9]
+    current_turn: Text
+    player_count: Number
+  timer reconnect_window: 30s
+  subscribe PlayerJoined where room == memory.room
+
+  on join(player: Text)
+    requires lifecycle == waiting on fail: give "game already started"
+    requires memory.player_count < 2 on fail: give "room full"
+    memory.player_count = memory.player_count + 1
+    emit PlayerJoined(player: player, room: "main")
+    if memory.player_count == 2
+      transition to playing
+
+  on move(player: Text, cell: Number)
+    requires player == memory.current_turn on fail: silent
+    requires memory.board[cell] == "_" on fail: give "cell taken"
+    memory.board[cell] = player
+    result = check_winner(memory.board)
+    match result
+      Winner(who) -> give GameResult(winner: who, detail: "three in a row")
+      Draw -> give GameResult(winner: "none", detail: "draw")
+      _ -> say "next turn"
+    memory.current_turn = next_player(memory.current_turn)
+
+  on reconnect_window.expired
+    escalate to lobby
+
+  if stuck for 5 turns
+    say "game appears stuck"
+    escalate to lobby
+```
+
+### Best Practices
+
+1. **Always declare a lifecycle** -- state machines make agent behavior predictable and verifiable
+2. **Guard handlers with `requires`** -- use lifecycle guards (`requires lifecycle == waiting`) so the compiler can verify transition legality
+3. **Keep handlers focused** -- each handler should respond to one event with a clear purpose
+4. **Use `give` in fail policies** -- prefer `give <message>` over `silent` to provide callers with feedback
+5. **Define stuck policies** -- agents that interact with LLMs should have stuck recovery to prevent infinite loops
+
+---
+
+## 10. Type Definitions
+
+Type definitions declare named record types with typed fields. They are used as structured return values, event payloads, and handler results.
+
+### Syntax
+
+```
+type <Name>
+  <field>: <Type>
+  <field>: <Type>
+```
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| `type <Name>` | Declares a type with an uppercase identifier |
+| `<field>: <Type>` | One or more typed fields at 2-space indent (i1) |
+
+### Constructing Values
+
+Type instances are constructed using the type name with named arguments:
+
+```
+<TypeName>(<field>: <expr>, <field>: <expr>)
+```
+
+### Matching on Types
+
+Types work with `match` for structural pattern matching. Constructor patterns bind inner values to variables:
+
+```forge
+match result
+  Winner(who) -> give GameResult(winner: who, detail: "three in a row")
+  Draw -> give GameResult(winner: "none", detail: "draw")
+  _ -> say "next turn"
+```
+
+### Examples
+
+**Declaring and using a type:**
+
+```forge
+type GameResult
+  winner: Text
+  detail: Text
+```
+
+Used as a return value:
+
+```forge
+give GameResult(winner: who, detail: "three in a row")
+```
+
+### Best Practices
+
+1. **Use types for structured returns** -- prefer `give GameResult(winner: who, detail: msg)` over returning raw text
+2. **Name types as nouns** -- `GameResult`, `SessionSummary`, `Classification`
+3. **Keep types small** -- two to four fields is typical; split larger structures into separate types
+
+---
+
+## 11. Pools
+
+Pools manage groups of identical worker agents and dispatch work using a specified strategy. They provide built-in consensus, redundancy, and timeout handling.
+
+### Syntax
+
+```
+pool <name>
+  workers: <AgentOrTask> * <count>
+  strategy: <strategy>
+  timeout: <duration>
+  fallback: <handler>
+```
+
+### Components
+
+| Component | Required | Description |
+|-----------|----------|-------------|
+| `pool <name>` | Yes | Declares a pool with a lowercase identifier |
+| `workers: <Name> * <N>` | Yes | Specifies the worker type and instance count |
+| `strategy: <strategy>` | Yes | Specifies how results are aggregated |
+| `timeout: <duration>` | No | Maximum wait time before fallback (e.g., `15s`, `30s`) |
+| `fallback: <handler>` | No | Handler to invoke if all workers fail or timeout |
+
+### Strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `fastest` | Return the first result from any worker |
+| `all` | Wait for all workers and return all results |
+| `majority` | Return the result agreed upon by a majority of workers |
+| `quorum(N)` | Return when at least N workers agree |
+| `first(N)` | Return the first N results |
+
+### Sending Work to a Pool
+
+Invoke a pool using dot-method syntax:
+
+```
+result = <pool_name>.send(<method>, <args>)
+```
+
+### Examples
+
+**Fact-checking pool with majority consensus:**
+
+```forge
+task FactChecker
+  needs claim: Text
+  gives Text
+  do
+    result = reason "Is this claim factually accurate? Yes or no, explain briefly: {claim}"
+    when result.sure     -> give result
+    when result.unsure   -> give "uncertain"
+    else                 -> give "could not verify"
+
+pool fact_checkers
+  workers: FactChecker * 3
+  strategy: majority
+  timeout: 15s
+```
+
+Sending work:
+
+```forge
+verdict = fact_checkers.send("check", "The speed of light is 299,792 km/s")
+say "Verdict: {verdict}"
+```
+
+**Game room pool with fallback:**
+
+```forge
+pool rooms
+  workers: room_agent * 10
+  strategy: fastest
+  timeout: 30s
+  fallback: lobby_handler
+```
+
+### Best Practices
+
+1. **Use `majority` or `quorum` for correctness-critical decisions** -- multiple workers reduce hallucination risk
+2. **Use `fastest` for latency-sensitive work** -- when any single result is acceptable
+3. **Always set a timeout** -- prevent indefinite blocking when workers are slow
+4. **Provide a fallback** -- graceful degradation when the pool cannot produce a result
+
+---
+
+## 12. Wardens
+
+Wardens are supervision controllers that monitor agents and enforce failure recovery policies. They implement escalation ladders -- sequences of increasingly severe responses to repeated failures.
+
+### Syntax
+
+```
+warden <name>
+  manages [<agent1>, <agent2>]
+
+  on <failure_type>: <response>, <scope>
+    after <N>: <response>
+    after <M>: <response>
+
+  max_retries <N> per <duration> then escalate
+```
+
+### Components
+
+| Component | Required | Description |
+|-----------|----------|-------------|
+| `warden <name>` | Yes | Declares a warden with a lowercase identifier |
+| `manages [...]` | Yes | List of agent or task names this warden supervises |
+| `on <failure>: <response>, <scope>` | No | Policy for a specific failure type |
+| `after <N>: <response>` | No | Escalation step after N occurrences |
+| `max_retries <N> per <duration> then escalate` | No | Rate-limited retry cap |
+
+### Failure Types
+
+| Type | Description |
+|------|-------------|
+| `stuck` | Agent cannot make progress |
+| `crash` | Agent encountered an unrecoverable error |
+| `hallucination` | Agent produced output that failed validation |
+| `budget` | Agent exceeded its token or cost budget |
+| `timeout` | Agent did not respond within the allowed time |
+
+### Responses
+
+Responses are ordered by severity. Escalation ladders must increase in severity:
+
+| Response | Severity | Description |
+|----------|----------|-------------|
+| `nudge` | 1 (lowest) | Send a hint to the agent to retry |
+| `restart` | 2 | Restart the agent from its initial state |
+| `replace` | 3 | Replace the agent with a fresh instance |
+| `escalate` | 4 (highest) | Escalate to a higher-level supervisor or human |
+
+### Scopes
+
+| Scope | Description |
+|-------|-------------|
+| `self` | Apply the response only to the failing agent |
+| `downstream` | Apply to the failing agent and its dependents |
+| `all` | Apply to all agents managed by this warden |
+
+### Escalation Ladders
+
+The `after` clause defines progressive responses. Both the count and the severity must increase with each step:
+
+```forge
+on stuck: nudge, self
+  after 3: restart
+  after 5: escalate
+```
+
+This means: on first stuck, nudge the agent. After 3 stuck occurrences, restart it. After 5, escalate.
+
+### Compiler Enforcement
+
+The warden checker produces **errors** for:
+
+| Error | Description |
+|-------|-------------|
+| Unknown managed name | A name in the `manages` list does not match any declared agent, warden, flow, or pool |
+| Non-increasing `after` count | An `after` clause has a count less than or equal to the previous one |
+| Non-increasing severity | An `after` clause has a response that is not more severe than the previous one |
+
+The warden checker produces **warnings** for:
+
+| Warning | Description |
+|---------|-------------|
+| Incomplete failure coverage | The warden does not define policies for all five failure types |
+
+### Agent-Level Overrides
+
+Agents can override their warden's policies using a `warden_override` block inside the agent declaration. The override takes precedence for the specified failure type:
+
+```forge
+agent classifier
+  warden_override
+    on stuck: replace, self
+
+  on start
+    say "ready"
+```
+
+### Examples
+
+**Basic warden with escalation ladder:**
+
+```forge
+agent bot
+  on handle(msg: Text)
+    say msg
+
+warden supervisor
+  manages [bot]
+  on stuck: nudge, self
+    after 3: restart
+```
+
+**Comprehensive warden with rate limiting:**
+
+```forge
+warden supervisor
+  manages [bot]
+  on stuck: nudge, self
+    after 3: restart
+    after 5: escalate
+  on crash: restart, all
+    after 3: escalate
+  on hallucination: replace, downstream
+  on budget: escalate, self
+  on timeout: restart, self
+    after 2: replace
+  max_retries 10 per 60s then escalate
+```
+
+### Best Practices
+
+1. **Cover all five failure types** -- the compiler warns about incomplete coverage for a reason
+2. **Start with `nudge`** -- give agents a chance to self-correct before restarting or replacing
+3. **Use `after` for progressive escalation** -- a single severe response on first failure is usually too aggressive
+4. **Scope responses narrowly** -- prefer `self` over `all` unless the failure genuinely affects the entire group
+5. **Pair wardens with agent stuck policies** -- the agent's `if stuck` block handles local recovery; the warden handles systemic failure
+
+---
+
+## 13. Contracts
+
+Contracts define behavioral interfaces that agents or other implementations must satisfy. A contract declares a set of capabilities using `can` signatures.
+
+### Syntax
+
+```
+contract <Name>
+  can <method>(<param>: <Type>, ...) -> <ReturnType>
+  can <method>(<param>: <Type>, ...) -> <ReturnType>
+```
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| `contract <Name>` | Declares a named contract interface |
+| `can <method>(...)` | Declares a capability with typed parameters and return type |
+| `-> <ReturnType>` | Required return type for each capability |
+
+### Rules
+
+- A contract must contain at least one `can` signature
+- Each `can` signature requires an explicit return type after `->`
+- Parameters follow the same `name: Type` syntax as task and pure function parameters
+- Contracts do not contain implementation bodies -- they declare only the interface
+
+### Example
+
+```forge
+contract GameRoom
+  can join(player: Text) -> Text
+  can move(player: Text, cell: Number) -> GameResult
+```
+
+This contract declares that any implementation of `GameRoom` must provide a `join` capability that accepts a `Text` parameter and returns `Text`, and a `move` capability that accepts a player name and cell number and returns a `GameResult`.
+
+---
+
+## 14. Systems
+
+Systems are top-level composition units that wire named components together using the `use` block and the compose (`>>`) operator. A system declares which implementations to use and how data flows between them.
+
+### Syntax
+
+```
+system <name>
+  use
+    <alias>: <implementation>
+    <alias>: <implementation>
+  <alias> >> <alias>
+```
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| `system <name>` | Declares a named system |
+| `use` | Block that binds implementation names to local aliases |
+| `<alias>: <impl>` | Maps a local name to a concrete implementation (agent, handler, etc.) |
+| `<alias> >> <alias>` | Compose operator wiring data flow between components |
+
+### Rules
+
+- The `use` block is optional but typical -- it binds aliases to implementations
+- Each binding in `use` is indented at level 2 (4 spaces) and follows `alias: implementation` format
+- Compose expressions (`>>`) at level 1 (2 spaces) define the data flow topology between aliases
+- A system may contain zero or more compose expressions
+
+### Example
+
+```forge
+system tictactoe
+  use
+    game: room_agent
+    lobby: lobby_handler
+  game >> lobby
+```
+
+This system wires the `room_agent` implementation as `game` and `lobby_handler` as `lobby`, then declares that `game` feeds into `lobby` via the compose operator.
+
+---
+
+## 15. Endpoints
+
+Endpoints are server-side entry points that expose functionality over a network boundary. They follow function-like syntax with parameters and an optional return type, and contain a body of statements.
+
+### Syntax
+
+```
+endpoint <name>(<param>: <Type>, ...) -> <ReturnType>
+  <statements at 2-space indent>
+```
+
+### Components
+
+| Component | Description |
+|-----------|-------------|
+| `endpoint <name>` | Declares a named endpoint |
+| `(<param>: <Type>)` | Parameter list (may be empty) |
+| `-> <ReturnType>` | Optional return type |
+| Body | One or more statements at level 1 (2-space indent) |
+
+### Compiler Enforcement
+
+Endpoints are restricted by the boundary system:
+
+- Endpoints are **only allowed** in files with `#! boundary: server`
+- Declaring an endpoint in a `shared` boundary (the default) or a `client` boundary produces a compile error
+
+### Example
+
+```forge
+#! boundary: server
+
+endpoint login(user: Text, pass: Text) -> Text
+  give "ok"
+```
+
+---
+
+## 16. Boundary Directives
+
+Boundary directives declare which execution context a file belongs to: `server`, `client`, or `shared`. This controls which constructs are allowed and which cross-file references are valid.
+
+### Syntax
+
+```
+#! boundary: <kind>
+```
+
+Where `<kind>` is one of: `server`, `client`, `shared`.
+
+The boundary directive must appear on the first line of the file, before any other declarations.
+
+### Rules
+
+| Rule | Description |
+|------|-------------|
+| Default boundary | Files without a directive are `shared` |
+| `endpoint` restriction | Only allowed in `server` boundary |
+| Server-client isolation | Server code cannot reference client symbols |
+| Client-server isolation | Client code cannot reference server symbols |
+| Shared access | Both `server` and `client` code may reference `shared` symbols |
+| Serializable types in shared | Shared boundary must not contain agent, pool, or flow references -- only serializable types |
+
+### Cross-Boundary Reference Rules
+
+```
+server.forge  -->  shared.forge   OK
+client.forge  -->  shared.forge   OK
+server.forge  -->  client.forge   COMPILE ERROR
+client.forge  -->  server.forge   COMPILE ERROR
+shared.forge  -->  shared.forge   OK
+```
+
+### Examples
+
+**Shared boundary** (default -- no directive needed, or explicit):
+
+```forge
+#! boundary: shared
+
+pure is_api_key
+  needs line: Text
+  gives Bool
+  do
+    if line.contains("sk-ant-")
+      give true
+    give false
+```
+
+**Server boundary:**
+
+```forge
+#! boundary: server
+
+event PlayerJoined
+  player: Text
+  room: Text
+
+agent room_agent
+  lifecycle: GamePhase
+  memory
+    board: Text[9]
+  ...
+```
+
+---
+
+## 17. Uncertain Value Handling (Principle I: Honesty)
+
+FORGE enforces **taint tracking** on LLM oracle outputs to guarantee that uncertain values are never silently trusted. This is a core language invariant derived from Principle I (Honesty): the system must never present an LLM guess as a known fact.
+
+### Taint Rules
+
+| Rule | Description |
+|------|-------------|
+| Oracle expressions produce taint | `reason`, `classify`, and `search` return tainted (uncertain) values |
+| Taint blocks `give` | A tainted value **cannot** be passed directly to `give` -- this is a compile error |
+| Clearing taint | The value must be dispatched through `when` or `match` before it can be used in `give` |
+| Taint propagates through assignment | Assigning a tainted value to a new variable keeps it tainted |
+| Taint propagates through field access | Accessing a field on a tainted value remains tainted |
+| Reassignment clears taint | Reassigning a variable to a non-oracle expression clears its taint |
+
+### Compiler Enforcement
+
+The uncertain checker rejects any code path where a tainted value reaches `give` without passing through `when` or `match`. The compile error message contains: `unhandled uncertain`.
+
+### Correct Pattern: Taint Cleared via `when`
+
+The `when` construct dispatches on confidence levels, forcing the programmer to explicitly handle the uncertain nature of the oracle result:
+
+```forge
+task analyze
+  needs text: Text
+  gives Text
+  do
+    result = reason "analyze {text}"
+    when result.sure -> give result
+    when result.unsure -> give "uncertain"
+    else -> give "unknown"
+```
+
+This compiles successfully because every path through `when` explicitly acknowledges the confidence level before reaching `give`.
+
+### Incorrect Pattern: Tainted Value Given Directly
+
+```forge
+task bad_analyze
+  needs text: Text
+  gives Text
+  do
+    result = reason "analyze {text}"
+    give result
+```
+
+This produces: **compile error -- unhandled uncertain value**. The variable `result` carries taint from `reason` and has not been dispatched through `when` or `match`.
+
+### Incorrect Pattern: Inline Oracle in `give`
+
+```forge
+task also_bad
+  needs text: Text
+  gives Text
+  do
+    give reason "analyze {text}"
+```
+
+This also produces a compile error. The oracle result flows directly into `give` with no confidence dispatch.
+
+### Incorrect Pattern: Taint Survives Reassignment
+
+```forge
+task still_bad
+  needs text: Text
+  gives Text
+  do
+    result = reason "analyze {text}"
+    copy = result
+    give copy
+```
+
+This produces a compile error. Assigning a tainted value to another variable does not clear the taint -- `copy` inherits the taint from `result`.
+
+### Correct Pattern: Taint Cleared via `match`
+
+```forge
+task classify_text
+  needs text: Text
+  gives Text
+  do
+    result = classify text into ["positive", "negative", "neutral"]
+    match result
+      Positive -> give "positive"
+      Negative -> give "negative"
+      _ -> give "neutral"
+```
+
+The `match` construct forces structural dispatch, which clears the taint on each branch.
+
+### Design Rationale
+
+Without this enforcement, an LLM hallucination could propagate silently through a program and be returned as authoritative output. By requiring explicit confidence dispatch, FORGE guarantees that every oracle result is acknowledged as uncertain before it can influence program output. This is a compile-time guarantee, not a runtime check.
