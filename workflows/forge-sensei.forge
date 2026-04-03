@@ -95,6 +95,14 @@ task evaluate_conformance
     when result.unsure -> give result
     else -> give "GAP: insufficient knowledge to evaluate this test"
 
+task categorize_for_recall
+  needs context: Text
+  gives Text
+  do
+    result = reason "Given this FORGE-related input, identify the most relevant knowledge categories. Pick 1-3 from: SYNTAX, TASKS, FLOWS, CONTROL, AGENTS, KNOWLEDGE, SUPERVISION, PRINCIPLES, PATTERNS, ERRORS, CONFORMANCE, BOUNDARY. Reply with ONLY the category names separated by spaces.\n\nInput: {context}"
+    when result.sure -> give result
+    else -> give "CONFORMANCE SYNTAX"
+
 # ── The Sensei Agent ──────────────────────────────────────────
 #
 # A self-referential learning agent: written in FORGE to teach FORGE.
@@ -134,7 +142,8 @@ exportable agent forge_sensei
 
   on query(question: Text)
     memory.interaction_count = memory.interaction_count + 1
-    prior = recall "{question}"
+    categories = categorize_for_recall(question)
+    prior = recall "{categories} {question}"
     answer = answer_forge_question(question, prior)
     learn from interaction(question, answer, 0.7)
     emit LearnedInsight(category: "interactions", content: answer, source: "query", confidence: 0.7)
@@ -144,7 +153,8 @@ exportable agent forge_sensei
 
   on review(code: Text)
     memory.interaction_count = memory.interaction_count + 1
-    prior = recall "FORGE syntax patterns errors"
+    categories = categorize_for_recall(code)
+    prior = recall "{categories} FORGE syntax patterns errors"
     result = review_forge_code(code, prior)
     give result
 
@@ -160,7 +170,8 @@ exportable agent forge_sensei
 
   on assess_detailed(test_input: Text, expected: Text)
     memory.interaction_count = memory.interaction_count + 1
-    prior = recall "{test_input}"
+    categories = categorize_for_recall("{test_input} expects {expected}")
+    prior = recall "{categories} {test_input} {expected}"
     result = evaluate_conformance(test_input, expected, prior)
     give result
 
