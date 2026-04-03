@@ -4,7 +4,12 @@
 set -euo pipefail
 
 FORGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SENSEI="$FORGE_ROOT/workflows/forge-sensei.forge"
+SENSEI_BIN="$FORGE_ROOT/bin/forge-sensei"
+
+# Skip if binary not built yet
+if [ ! -x "$SENSEI_BIN" ]; then
+  exit 0
+fi
 
 # Read the hook input JSON from stdin
 INPUT=$(cat)
@@ -36,7 +41,7 @@ if [ -z "$CONTENT" ]; then
 fi
 
 # Query sensei for advice on this code
-ADVICE=$(cargo run -- send "$SENSEI" review "$CONTENT" 2>/dev/null || echo "")
+ADVICE=$("$SENSEI_BIN" review "$CONTENT" 2>/dev/null || echo "")
 
 if [ -n "$ADVICE" ] && [ "$ADVICE" != "null" ]; then
   # Inject sensei's advice as a non-blocking note
