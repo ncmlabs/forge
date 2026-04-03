@@ -1,0 +1,405 @@
+# ================================================================
+# FORGE Development Lifecycle — Dogfooding Workflow
+# ================================================================
+# Models the canonical contribution cycle:
+#   issue -> plan -> pull development -> branch -> implement ->
+#   test -> check acceptance -> iterate -> changelog -> commit ->
+#   push -> PR to development
+#
+# Five expert agents coordinate via events, governed by two state
+# machines, and supervised by a warden.
+# ================================================================
+
+use
+  llm.reason
+  llm.classify
+
+# ── Types ────────────────────────────────────────────────────────
+
+type Issue
+  id: Text
+  title: Text
+  acceptance_criteria: Text
+
+type TestReport
+  passed: Bool
+  failures: Text
+  coverage: Number
+
+type ChangelogEntry
+  category: Text
+  description: Text
+  issue_id: Text
+
+type PullRequest
+  branch: Text
+  title: Text
+  body: Text
+  target: Text
+
+type ReleaseInfo
+  version: Text
+  changelog: Text
+  tag: Text
+
+# ── Events ───────────────────────────────────────────────────────
+
+event IssueAssigned
+  issue_id: Text
+  assignee: Text
+
+event PlanApproved
+  issue_id: Text
+  plan: Text
+
+event ImplementationReady
+  issue_id: Text
+  branch: Text
+
+event TestsFailed
+  issue_id: Text
+  failures: Text
+
+event AcceptanceMet
+  issue_id: Text
+  report: Text
+
+event ChangelogUpdated
+  issue_id: Text
+  entry: Text
+
+event PRReady
+  issue_id: Text
+  pr_url: Text
+
+event PRMerged
+  issue_id: Text
+  branch: Text
+
+event ReleaseCut
+  version: Text
+  tag: Text
+
+# ── State Machines ───────────────────────────────────────────────
+# Note: Multiple agents share IssueLifecycle. The states checker
+# validates transitions per-agent which may flag false positives
+# when agents coordinate across a shared lifecycle.
+
+states IssueLifecycle
+  open -> planning
+  planning -> in_progress
+  in_progress -> in_progress when iteration_needed
+  in_progress -> testing
+  testing -> in_progress when not tests_passed
+  testing -> review_ready when tests_passed and changelog_updated
+  review_ready -> merged
+
+states ReleasePhase
+  unreleased -> freezing
+  freezing -> validating when all_prs_merged
+  validating -> released when release_tests_passed
+  validating -> freezing when not release_tests_passed
+  released -> unreleased
+
+# ── Tasks (LLM-augmented steps) ─────────────────────────────────
+
+task draft_plan
+  needs issue: Issue
+  gives Text
+  do
+    result = reason "You are a senior engineer planning work on FORGE. Given this issue, produce a concise implementation plan with numbered steps.\n\nTitle: {issue.title}\nAcceptance criteria: {issue.acceptance_criteria}"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Manual planning required."
+
+task check_acceptance
+  needs issue: Issue, report: TestReport
+  gives Text
+  do
+    failure_text = report.failures
+    result = classify failure_text into ["blocking", "minor", "none"]
+    when result.sure -> give result
+    when result.unsure -> give "needs_human_review"
+    else -> give "inconclusive"
+
+task draft_changelog_entry
+  needs issue: Issue, branch: Text
+  gives Text
+  do
+    result = reason "Write a Keep-a-Changelog entry.\n\nIssue: {issue.title}\nBranch: {branch}\nUse one of: Added, Changed, Fixed. Then a one-line description."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Changed: {issue.title}"
+
+task draft_pr_description
+  needs issue: Issue, changelog: Text
+  gives Text
+  do
+    result = reason "Write a concise PR description.\n\nIssue: {issue.title}\nAcceptance criteria: {issue.acceptance_criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Test plan section."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Summary: {issue.title}"
+
+# ── Pure Functions (deterministic checks) ────────────────────────
+
+pure branch_name
+  needs issue_id: Text, title: Text
+  gives Text
+  do
+    give "feature/{issue_id}-{title}"
+
+pure is_ready_for_pr
+  needs tests_passed: Bool, changelog_done: Bool
+  gives Bool
+  do
+    if tests_passed and changelog_done
+      give true
+    give false
+
+# ── Flow: Implementation Pipeline ───────────────────────────────
+#
+# DAG structure:
+#   setup -> plan -> implement -> test      --+
+#                              -> changelog --+
+#                                             +-> pr_ready
+#
+# test and changelog run in parallel after implement.
+# pr_ready gates on both completing successfully.
+
+flow implementation_pipeline
+  needs issue: Issue
+  gives PullRequest
+
+  stage setup
+    branch = branch_name(issue.id, issue.title)
+    say "Pulling development and creating branch: {branch}"
+
+  stage plan
+    needs setup.branch
+    plan_text = draft_plan(issue)
+    say "Plan:\n{plan_text}"
+
+  stage implement
+    needs plan.plan_text
+    say "Implementing on branch per plan"
+
+  stage test
+    needs implement.*
+    report = TestReport(passed: true, failures: "none", coverage: 85)
+    acceptance = check_acceptance(issue, report)
+    say "Tests complete. Acceptance: {acceptance}"
+
+  stage changelog
+    needs implement.*
+    entry = draft_changelog_entry(issue, setup.branch)
+    say "Changelog entry:\n{entry}"
+
+  stage pr_ready
+    needs test.acceptance, changelog.entry
+    ready = is_ready_for_pr(true, true)
+    if ready
+      body = draft_pr_description(issue, changelog.entry)
+      give PullRequest(branch: setup.branch, title: issue.title, body: body, target: "development")
+
+# ── Agent: Planner ───────────────────────────────────────────────
+# Reads issues, drafts implementation plans, identifies acceptance
+# criteria. Transitions: open -> planning
+
+agent planner
+  lifecycle: IssueLifecycle
+  memory
+    current_issue: Issue
+    plan_text: Text
+  subscribe IssueAssigned
+
+  on assigned(issue_id: Text, assignee: Text)
+    requires lifecycle == open on fail: give "already planning an issue"
+    memory.current_issue = Issue(id: issue_id, title: assignee, acceptance_criteria: "")
+    transition to planning
+    plan_text = draft_plan(memory.current_issue)
+    memory.plan_text = plan_text
+    say "Plan drafted for {issue_id}"
+    emit PlanApproved(issue_id: issue_id, plan: plan_text)
+
+  if stuck for 5 turns
+    say "Planner stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Implementer ──────────────────────────────────────────
+# Pulls development, creates feature branch, writes code per plan.
+# Transitions: planning -> in_progress
+
+agent implementer
+  lifecycle: IssueLifecycle
+  memory
+    issue_id: Text
+    branch: Text
+    plan: Text
+    iteration: Number
+  subscribe PlanApproved
+  subscribe TestsFailed
+
+  on plan_ready(issue_id: Text, plan: Text)
+    requires lifecycle == planning on fail: silent
+    memory.issue_id = issue_id
+    memory.plan = plan
+    memory.branch = branch_name(issue_id, "impl")
+    transition to in_progress
+    say "Branch created: {memory.branch}"
+    say "Implementing plan..."
+    emit ImplementationReady(issue_id: issue_id, branch: memory.branch)
+
+  on fix_needed(issue_id: Text, failures: Text)
+    requires lifecycle == in_progress on fail: silent
+    memory.iteration = memory.iteration + 1
+    say "Iteration {memory.iteration}: fixing failures"
+    say "Failures: {failures}"
+    emit ImplementationReady(issue_id: issue_id, branch: memory.branch)
+
+  if stuck for 5 turns
+    say "Implementer stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Tester ────────────────────────────────────────────────
+# Runs tests, checks acceptance criteria, triggers iteration loop
+# on failure. Transitions: in_progress -> testing, testing -> in_progress
+
+agent tester
+  lifecycle: IssueLifecycle
+  memory
+    issue_id: Text
+    test_report: TestReport
+    acceptance_result: Text
+  subscribe ImplementationReady
+
+  on code_ready(issue_id: Text, branch: Text)
+    requires lifecycle == in_progress on fail: silent
+    memory.issue_id = issue_id
+    transition to testing
+    say "Running tests on {branch}..."
+    report = TestReport(passed: true, failures: "none", coverage: 90)
+    memory.test_report = report
+    acceptance = check_acceptance(Issue(id: issue_id, title: branch, acceptance_criteria: "all tests pass"), report)
+    memory.acceptance_result = acceptance
+    if acceptance == "blocking"
+      say "Tests failed. Sending back to implementer."
+      transition to in_progress
+      emit TestsFailed(issue_id: issue_id, failures: report.failures)
+    if acceptance == "none"
+      say "All tests pass. Acceptance criteria met."
+      emit AcceptanceMet(issue_id: issue_id, report: "passed")
+
+  if stuck for 3 turns
+    say "Tester stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Reviewer ──────────────────────────────────────────────
+# Drafts changelog entry, writes PR description, validates all gates.
+# Transitions: testing -> review_ready
+
+agent reviewer
+  lifecycle: IssueLifecycle
+  memory
+    issue_id: Text
+    changelog_entry: Text
+    pr_body: Text
+    changelog_done: Bool
+  subscribe AcceptanceMet
+
+  on review_start(issue_id: Text, report: Text)
+    requires lifecycle == testing on fail: give "not ready for review"
+    memory.issue_id = issue_id
+    say "Drafting changelog entry..."
+    entry = draft_changelog_entry(Issue(id: issue_id, title: "change", acceptance_criteria: ""), "feature/{issue_id}")
+    memory.changelog_entry = entry
+    memory.changelog_done = true
+    emit ChangelogUpdated(issue_id: issue_id, entry: entry)
+    say "Drafting PR description..."
+    body = draft_pr_description(Issue(id: issue_id, title: "change", acceptance_criteria: ""), entry)
+    memory.pr_body = body
+    transition to review_ready
+    say "PR ready for review."
+    emit PRReady(issue_id: issue_id, pr_url: "pending")
+
+  if stuck for 3 turns
+    say "Reviewer stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Release Manager ───────────────────────────────────────
+# Coordinates releases: freeze, validate, tag, publish.
+# Owns the ReleasePhase state machine.
+
+agent release_manager
+  lifecycle: ReleasePhase
+  memory
+    version: Text
+    merged_count: Number
+    release_changelog: Text
+  subscribe PRMerged
+
+  on pr_landed(issue_id: Text, branch: Text)
+    memory.merged_count = memory.merged_count + 1
+    say "PR merged: {branch} (total: {memory.merged_count})"
+
+  on begin_release(version: Text)
+    requires lifecycle == unreleased on fail: give "release already in progress"
+    memory.version = version
+    transition to freezing
+    say "Release {version}: development frozen"
+
+  on validate_release
+    requires lifecycle == freezing on fail: silent
+    transition to validating
+    say "Running release validation for {memory.version}..."
+
+  on cut_release
+    requires lifecycle == validating on fail: give "validation not complete"
+    transition to released
+    say "Release {memory.version} cut and tagged"
+    emit ReleaseCut(version: memory.version, tag: "v{memory.version}")
+
+  on reset_cycle
+    requires lifecycle == released on fail: silent
+    transition to unreleased
+    memory.merged_count = 0
+    say "Release cycle reset. Ready for next iteration."
+
+  if stuck for 3 turns
+    say "Release manager stuck. Escalating."
+    escalate to lead
+
+# ── Warden: Dev Lead ─────────────────────────────────────────────
+
+warden dev_lead
+  manages [planner, implementer, tester, reviewer, release_manager]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 3: escalate
+  on budget: nudge, all
+    after 1: restart
+    after 3: escalate
+  max_retries 3 per 1h then escalate
+
+# ── System: FORGE Development ────────────────────────────────────
+
+system forge_dev
+  use
+    plan: planner
+    impl: implementer
+    test: tester
+    review: reviewer
+    release: release_manager
+  plan >> impl >> test >> review
+
+# ── Entry Point ──────────────────────────────────────────────────
+
+fn main
+  say "=== FORGE Development Lifecycle ==="
+  issue = Issue(id: "FORGE-42", title: "add-warden-retry-backoff", acceptance_criteria: "Warden retries use exponential backoff. Unit tests pass. Changelog updated.")
+  say "Starting development lifecycle for: {issue.title}"
+  result = implementation_pipeline(issue)
+  say "PR ready: {result.title} -> {result.target}"
+  say "Branch: {result.branch}"
