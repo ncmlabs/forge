@@ -376,7 +376,7 @@ impl AgentProcess {
         // Execute handler body
         let result = match self.executor.exec_stmts(&handler.node.body, &mut env).await {
             Ok(_) => None,
-            Err(RuntimeError::GiveSignal(val)) => Some(val),
+            Err(RuntimeError::GiveSignal(val, ..)) => Some(val),
             Err(e) => return Err(e),
         };
 
@@ -416,7 +416,7 @@ impl AgentProcess {
                 }
                 match self.executor.exec_stmts(&policy.node.body, &mut env).await {
                     Ok(_) => {}
-                    Err(RuntimeError::GiveSignal(val)) => return Ok(Some(val)),
+                    Err(RuntimeError::GiveSignal(val, ..)) => return Ok(Some(val)),
                     Err(e) => return Err(e),
                 }
             }

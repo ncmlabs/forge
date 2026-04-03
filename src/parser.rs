@@ -137,6 +137,9 @@ fn build_type_name(pair: Pair) -> anyhow::Result<Spanned<TypeName>> {
             "Conversation" => TypeName::Conversation,
             "Profile" => TypeName::Profile,
             "SearchResults" => TypeName::SearchResults,
+            "Request" => TypeName::Request,
+            "Response" => TypeName::Response,
+            "Headers" => TypeName::Headers,
             other => TypeName::Custom(other.to_string()),
         },
         Rule::ident => TypeName::Custom(first.as_str().to_string()),
@@ -252,6 +255,9 @@ fn build_atom(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
                 "Conversation" => TypeName::Conversation,
                 "Profile" => TypeName::Profile,
                 "SearchResults" => TypeName::SearchResults,
+                "Request" => TypeName::Request,
+                "Response" => TypeName::Response,
+                "Headers" => TypeName::Headers,
                 other => TypeName::Custom(other.to_string()),
             };
             Ok(Spanned::new(
@@ -340,6 +346,9 @@ fn build_constructor_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         "Conversation" => TypeName::Conversation,
         "Profile" => TypeName::Profile,
         "SearchResults" => TypeName::SearchResults,
+        "Request" => TypeName::Request,
+        "Response" => TypeName::Response,
+        "Headers" => TypeName::Headers,
         other => TypeName::Custom(other.to_string()),
     };
     let args = if let Some(arg_list) = inner.next() {
@@ -713,12 +722,22 @@ fn build_give_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
     let span = to_span(&pair);
     let mut inner = pair.into_inner();
     let expr = build_expr(inner.next().unwrap())?;
-    let with_expr = if let Some(call_pair) = inner.next() {
-        Some(build_call_expr(call_pair)?)
+    let metas = if let Some(meta_list) = inner.next() {
+        meta_list
+            .into_inner()
+            .map(|meta_pair| {
+                let meta_span = to_span(&meta_pair);
+                let mut parts = meta_pair.into_inner();
+                let key_pair = parts.next().unwrap();
+                let key = spanned(key_pair.as_str().to_string(), &key_pair);
+                let value = build_expr(parts.next().unwrap())?;
+                Ok(Spanned::new(GiveMeta { key, value }, meta_span))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?
     } else {
-        None
+        Vec::new()
     };
-    Ok(Spanned::new(Stmt::Give(expr, with_expr), span))
+    Ok(Spanned::new(Stmt::Give(expr, metas), span))
 }
 
 fn build_say_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {

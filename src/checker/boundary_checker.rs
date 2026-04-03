@@ -303,10 +303,10 @@ fn check_refs_in_stmt(
         Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
             check_refs_in_expr(expr, boundary, registry, file, diagnostics);
         }
-        Stmt::Give(expr, with_expr) => {
+        Stmt::Give(expr, metas) => {
             check_refs_in_expr(expr, boundary, registry, file, diagnostics);
-            if let Some(w) = with_expr {
-                check_refs_in_expr(w, boundary, registry, file, diagnostics);
+            for meta in metas {
+                check_refs_in_expr(&meta.node.value, boundary, registry, file, diagnostics);
             }
         }
         Stmt::Emit(name, args) => {

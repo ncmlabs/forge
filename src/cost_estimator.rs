@@ -136,8 +136,14 @@ impl CostWalker {
 
     fn walk_stmt(&mut self, stmt: &Spanned<Stmt>, context: &str, multiplier: u32) {
         match &stmt.node {
-            Stmt::Bind(_, expr) | Stmt::Give(expr, _) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
+            Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
                 self.walk_expr(expr, context, multiplier);
+            }
+            Stmt::Give(expr, metas) => {
+                self.walk_expr(expr, context, multiplier);
+                for meta in metas {
+                    self.walk_expr(&meta.node.value, context, multiplier);
+                }
             }
             Stmt::When(when) => {
                 for clause in &when.clauses {

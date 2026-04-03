@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -14,7 +14,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::config::ServerConfig;
 use crate::runtime::confidence::{ConfidentValue, Value};
-use crate::runtime::executor::TaskExecutor;
+use crate::runtime::executor::{EndpointResult, TaskExecutor};
 
 // ── Server ───────────────────────────────────────────────────────────────────
 
@@ -70,16 +70,20 @@ impl ForgeServer {
                 .route(
                     &get_path,
                     get(
-                        move |state: State<TaskExecutor>, query: Query<HashMap<String, String>>| {
-                            handle_get(state, Path(name_get), query)
+                        move |state: State<TaskExecutor>,
+                              query: Query<HashMap<String, String>>,
+                              headers: HeaderMap| {
+                            handle_get(state, Path(name_get), query, headers)
                         },
                     ),
                 )
                 .route(
                     &post_path,
                     post(
-                        move |state: State<TaskExecutor>, body: axum::Json<serde_json::Value>| {
-                            handle_post(state, Path(name_post), body)
+                        move |state: State<TaskExecutor>,
+                              headers: HeaderMap,
+                              body: axum::Json<serde_json::Value>| {
+                            handle_post(state, Path(name_post), headers, body)
                         },
                     ),
                 );
@@ -167,16 +171,20 @@ async fn handle_get(
     State(executor): State<TaskExecutor>,
     Path(endpoint_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
+    let request = build_request_record("GET", &endpoint_name, &params, &headers, "");
     let args = params_to_args(params);
-    dispatch_endpoint(executor, &endpoint_name, args).await
+    dispatch_endpoint(executor, &endpoint_name, args, request).await
 }
 
 async fn handle_post(
     State(executor): State<TaskExecutor>,
     Path(endpoint_name): Path<String>,
+    headers: HeaderMap,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Response {
+    let raw_body = body.to_string();
     let params = match body.as_object() {
         Some(map) => map
             .iter()
@@ -190,8 +198,9 @@ async fn handle_post(
             .collect(),
         None => HashMap::new(),
     };
+    let request = build_request_record("POST", &endpoint_name, &params, &headers, &raw_body);
     let args = params_to_args(params);
-    dispatch_endpoint(executor, &endpoint_name, args).await
+    dispatch_endpoint(executor, &endpoint_name, args, request).await
 }
 
 fn params_to_args(params: HashMap<String, String>) -> HashMap<String, ConfidentValue> {
@@ -205,6 +214,7 @@ async fn dispatch_endpoint(
     executor: TaskExecutor,
     endpoint_name: &str,
     args: HashMap<String, ConfidentValue>,
+    request: ConfidentValue,
 ) -> Response {
     let start = Instant::now();
 
@@ -213,10 +223,13 @@ async fn dispatch_endpoint(
         tracer.http_request(endpoint_name, "HTTP", &format!("/{endpoint_name}"));
     }
 
-    match executor.exec_endpoint(endpoint_name, args).await {
-        Ok(val) => {
+    match executor
+        .exec_endpoint(endpoint_name, args, Some(request))
+        .await
+    {
+        Ok(result) => {
             let duration_ms = start.elapsed().as_millis() as u64;
-            let response = value_to_response(val);
+            let response = endpoint_result_to_response(result);
             let status = response.status().as_u16();
             if let Some(tracer) = executor.tracer() {
                 tracer.http_response(endpoint_name, status, duration_ms);
@@ -237,17 +250,78 @@ async fn dispatch_endpoint(
     }
 }
 
-fn value_to_response(val: ConfidentValue) -> Response {
-    match &val.value {
-        Value::Text(s) => (StatusCode::OK, s.clone()).into_response(),
-        Value::Number(n) => (StatusCode::OK, n.to_string()).into_response(),
-        Value::Bool(b) => (StatusCode::OK, b.to_string()).into_response(),
-        Value::Unit => StatusCode::NO_CONTENT.into_response(),
+fn endpoint_result_to_response(result: EndpointResult) -> Response {
+    let default_status = if matches!(result.value.value, Value::Unit) {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::OK
+    };
+    let status_code = result
+        .status
+        .and_then(|s| StatusCode::from_u16(s).ok())
+        .unwrap_or(default_status);
+
+    let (default_content_type, body) = match &result.value.value {
+        Value::Text(s) => ("text/plain", s.clone()),
+        Value::Number(n) => ("text/plain", n.to_string()),
+        Value::Bool(b) => ("text/plain", b.to_string()),
+        Value::Unit => return status_code.into_response(),
         Value::List(_) | Value::Record(_) | Value::Array(_) => {
-            let json = value_to_json(&val);
-            axum::Json(json).into_response()
+            let json = value_to_json(&result.value);
+            let ct = result.content_type.as_deref().unwrap_or("application/json");
+            return (
+                status_code,
+                [(axum::http::header::CONTENT_TYPE, ct)],
+                serde_json::to_string(&json).unwrap_or_default(),
+            )
+                .into_response();
         }
-    }
+    };
+
+    let ct = result
+        .content_type
+        .as_deref()
+        .unwrap_or(default_content_type);
+    (status_code, [(axum::http::header::CONTENT_TYPE, ct)], body).into_response()
+}
+
+fn build_request_record(
+    method: &str,
+    endpoint_name: &str,
+    query_params: &HashMap<String, String>,
+    headers: &HeaderMap,
+    body: &str,
+) -> ConfidentValue {
+    let det = |v: Value| ConfidentValue::deterministic(v);
+
+    let query_record: HashMap<String, ConfidentValue> = query_params
+        .iter()
+        .map(|(k, v)| (k.clone(), det(Value::Text(v.clone()))))
+        .collect();
+
+    let header_record: HashMap<String, ConfidentValue> = headers
+        .iter()
+        .map(|(k, v)| {
+            let key = k.as_str().replace('-', "_");
+            let val = v.to_str().unwrap_or("").to_string();
+            (key, det(Value::Text(val)))
+        })
+        .collect();
+
+    let fields: HashMap<String, ConfidentValue> = [
+        ("method".to_string(), det(Value::Text(method.to_string()))),
+        (
+            "path".to_string(),
+            det(Value::Text(format!("/{endpoint_name}"))),
+        ),
+        ("query".to_string(), det(Value::Record(query_record))),
+        ("headers".to_string(), det(Value::Record(header_record))),
+        ("body".to_string(), det(Value::Text(body.to_string()))),
+    ]
+    .into_iter()
+    .collect();
+
+    ConfidentValue::deterministic(Value::Record(fields))
 }
 
 fn value_to_json(val: &ConfidentValue) -> serde_json::Value {

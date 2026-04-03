@@ -209,8 +209,14 @@ impl CheckContext {
 
     fn check_stmt_composition(&mut self, stmt: &Spanned<Stmt>) {
         match &stmt.node {
-            Stmt::Bind(_, expr) | Stmt::Give(expr, _) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
+            Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
                 self.check_expr_composition(expr);
+            }
+            Stmt::Give(expr, metas) => {
+                self.check_expr_composition(expr);
+                for meta in metas {
+                    self.check_expr_composition(&meta.node.value);
+                }
             }
             Stmt::When(when) => {
                 for clause in &when.clauses {

@@ -74,7 +74,7 @@ template_text   = @{ (!("\"" | "{" | "\\") ~ ANY)+ }
 builtin_type = @{
     ( "Text" | "Number" | "Bool" | "Results" | "Report" | "Intent"
     | "Summary" | "Failure" | "Classification" | "Conversation"
-    | "Profile" | "SearchResults" )
+    | "Profile" | "SearchResults" | "Request" | "Response" | "Headers" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 type_name    = { (builtin_type | ident) ~ array_suffix? }
@@ -317,7 +317,9 @@ statement = {
 }
 
 bind_stmt          = { ident ~ _s_opt ~ "=" ~ _s_opt ~ expr }
-give_stmt          = { "give" ~ _s ~ expr ~ (_s ~ "with" ~ _s ~ call_expr)? }
+give_stmt          = { "give" ~ _s ~ expr ~ (_s ~ "with" ~ _s ~ give_meta_list)? }
+give_meta_list     = { give_meta ~ (_s_opt ~ "," ~ _s_opt ~ give_meta)* }
+give_meta          = { ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 say_stmt           = { "say" ~ _s ~ expr }
 escalate_stmt      = { "escalate" ~ _s ~ "to" ~ _s ~ ident }
 memory_update_stmt = { "memory" ~ "." ~ ident ~ (_s_opt ~ "[" ~ _s_opt ~ expr ~ _s_opt ~ "]")? ~ _s_opt ~ "=" ~ _s_opt ~ expr }
