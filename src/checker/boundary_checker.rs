@@ -4,8 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BoundaryKind, Expr, FieldDef, Program, Spanned, Stmt, TaskBody, TemplatePart, TopLevel,
-    TypeName,
+    BoundaryKind, Expr, FieldDef, LearnSource, Program, Spanned, Stmt, TaskBody, TemplatePart,
+    TopLevel, TypeName,
 };
 use crate::diagnostic::Diagnostic;
 
@@ -379,6 +379,16 @@ fn check_refs_in_stmt(
             }
             check_refs_in_expr(expr, boundary, registry, file, diagnostics);
         }
+        Stmt::Learn(source) => match &source.node {
+            LearnSource::Direct(expr) | LearnSource::FromDocument(expr) => {
+                check_refs_in_expr(expr, boundary, registry, file, diagnostics);
+            }
+            LearnSource::FromInteraction(args) => {
+                for arg in args {
+                    check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
+                }
+            }
+        },
         // No expressions to walk
         Stmt::TransitionTo(_)
         | Stmt::StartTimer { .. }
@@ -436,7 +446,7 @@ fn check_refs_in_expr(
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
             }
         }
-        Expr::Reason(inner) | Expr::Search(inner) => {
+        Expr::Reason(inner) | Expr::Search(inner) | Expr::Recall(inner) => {
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
         }
         Expr::Classify(c) => {

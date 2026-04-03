@@ -53,6 +53,7 @@ fn simple_agent_with_timers(
         name: spanned("test_agent".into()),
         lifecycle: None,
         memory: vec![],
+        knowledge: None,
         timers,
         subscriptions: vec![],
         handlers,

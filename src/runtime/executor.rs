@@ -588,6 +588,67 @@ impl TaskExecutor {
                         return Err(RuntimeError::Unsupported("escalate outside agent".into()));
                     }
                 }
+                Stmt::Learn(source) => {
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        // Check knowledge store exists (quick lock/unlock)
+                        {
+                            let ctx = ctx_arc.lock().unwrap();
+                            if ctx.knowledge_store.is_none() {
+                                return Err(RuntimeError::Unsupported(
+                                    "learn requires agent with knowledge store".into(),
+                                ));
+                            }
+                        }
+
+                        match &source.node {
+                            LearnSource::Direct(expr) => {
+                                let val = self.eval_expr(expr, env).await?;
+                                let text = format!("{}", val.value);
+                                let mut ctx = ctx_arc.lock().unwrap();
+                                if let Some(ref mut ks) = ctx.knowledge_store {
+                                    ks.learn_direct(&text);
+                                }
+                            }
+                            LearnSource::FromInteraction(args) => {
+                                let mut arg_vals = Vec::new();
+                                for arg in args {
+                                    let val = self.eval_expr(&arg.node.value, env).await?;
+                                    arg_vals.push(val);
+                                }
+                                let question = arg_vals
+                                    .first()
+                                    .map(|v| format!("{}", v.value))
+                                    .unwrap_or_default();
+                                let answer = arg_vals
+                                    .get(1)
+                                    .map(|v| format!("{}", v.value))
+                                    .unwrap_or_default();
+                                let confidence = arg_vals
+                                    .get(2)
+                                    .and_then(|v| match &v.value {
+                                        Value::Number(n) => Some(*n as f32),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0.5);
+                                let mut ctx = ctx_arc.lock().unwrap();
+                                if let Some(ref mut ks) = ctx.knowledge_store {
+                                    ks.learn_from_interaction(&question, &answer, confidence);
+                                }
+                            }
+                            LearnSource::FromDocument(expr) => {
+                                let val = self.eval_expr(expr, env).await?;
+                                let path = format!("{}", val.value);
+                                let mut ctx = ctx_arc.lock().unwrap();
+                                if let Some(ref mut ks) = ctx.knowledge_store {
+                                    ks.learn_from_document(&path)
+                                        .map_err(RuntimeError::Unsupported)?;
+                                }
+                            }
+                        }
+                    } else {
+                        return Err(RuntimeError::Unsupported("learn outside agent".into()));
+                    }
+                }
             }
             Ok(())
         })
@@ -1098,6 +1159,26 @@ impl TaskExecutor {
                 }
 
                 Expr::Search(_) => Ok(ConfidentValue::deterministic(Value::List(vec![]))),
+
+                Expr::Recall(query_expr) => {
+                    let query_val = self.eval_expr(query_expr, env).await?;
+                    let query_text = format!("{}", query_val.value);
+
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        let mut ctx = ctx_arc.lock().unwrap();
+                        if let Some(ref mut ks) = ctx.knowledge_store {
+                            // Default token budget for recall: 2000 tokens
+                            let result = ks.recall(&query_text, 2000);
+                            Ok(result)
+                        } else {
+                            Err(RuntimeError::Unsupported(
+                                "recall requires agent with knowledge store".into(),
+                            ))
+                        }
+                    } else {
+                        Err(RuntimeError::Unsupported("recall outside agent".into()))
+                    }
+                }
 
                 // ── Composition ───────────────────────────────────────────────
                 Expr::TryOr(primary, fallback) => match self.eval_expr(primary, env).await {

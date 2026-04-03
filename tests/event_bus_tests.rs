@@ -61,6 +61,7 @@ fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>
         name: spanned(name.into()),
         lifecycle: None,
         memory: vec![],
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
             event_name: spanned(event_name.into()),
@@ -89,6 +90,7 @@ fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDec
         name: spanned(name.into()),
         lifecycle: None,
         memory: vec![],
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         handlers: vec![spanned(OnHandler {
@@ -348,6 +350,7 @@ async fn multi_agent_event_flow() {
             name: "player_count".into(),
             type_name: spanned(TypeName::Number),
         })],
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         handlers: vec![spanned(OnHandler {

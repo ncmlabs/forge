@@ -80,6 +80,17 @@ fn check_requires_expr(
                 .with_help("use a `pure` function instead"),
             );
         }
+        Expr::Recall(_) => {
+            diagnostics.push(
+                Diagnostic::warning(
+                    file,
+                    "requires clause uses knowledge operation `recall`",
+                    expr.span.start..expr.span.end,
+                    "knowledge retrieval is non-deterministic — preconditions should be deterministic",
+                )
+                .with_help("use a `pure` function instead"),
+            );
+        }
         Expr::TryOr(a, b) => {
             diagnostics.push(
                 Diagnostic::warning(

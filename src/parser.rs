@@ -191,6 +191,8 @@ fn build_duration(pair: Pair) -> anyhow::Result<Spanned<Duration>> {
         (stripped.parse::<u64>()?, DurationUnit::Hours)
     } else if let Some(stripped) = s.strip_suffix('m') {
         (stripped.parse::<u64>()?, DurationUnit::Minutes)
+    } else if let Some(stripped) = s.strip_suffix('d') {
+        (stripped.parse::<u64>()?, DurationUnit::Days)
     } else if let Some(stripped) = s.strip_suffix('s') {
         (stripped.parse::<u64>()?, DurationUnit::Seconds)
     } else {
@@ -208,6 +210,45 @@ fn build_field_def(ident_pair: Pair, type_pair: Pair) -> anyhow::Result<Spanned<
     Ok(Spanned::new(
         FieldDef { name, type_name },
         Span { start, end },
+    ))
+}
+
+fn build_knowledge_block(pair: Pair) -> anyhow::Result<Spanned<KnowledgeDecl>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let store_path_pair = inner.next().unwrap();
+    let store_path = {
+        let sp = to_span(&store_path_pair);
+        let parts = build_template_string(store_path_pair)?;
+        Spanned::new(Expr::Template(parts), sp)
+    };
+
+    let mut max_entries = None;
+    let mut retention = None;
+
+    for child in inner {
+        if child.as_rule() == Rule::knowledge_option {
+            let opt_inner = child.into_inner().next().unwrap();
+            match opt_inner.as_rule() {
+                Rule::number_lit => {
+                    let val = build_number_lit(opt_inner.clone())?;
+                    max_entries = Some(spanned(val, &opt_inner));
+                }
+                Rule::duration => {
+                    retention = Some(build_duration(opt_inner)?);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(Spanned::new(
+        KnowledgeDecl {
+            store_path,
+            max_entries,
+            retention,
+        },
+        span,
     ))
 }
 
@@ -392,6 +433,13 @@ fn build_search_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     Ok(Spanned::new(Expr::Search(Box::new(arg)), span))
 }
 
+fn build_recall_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let span = to_span(&pair);
+    let inner = pair.into_inner().next().unwrap();
+    let arg = build_string_arg(inner)?;
+    Ok(Spanned::new(Expr::Recall(Box::new(arg)), span))
+}
+
 fn build_classify_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let span = to_span(&pair);
     let mut inner = pair.into_inner();
@@ -431,6 +479,7 @@ fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         Rule::reason_expr => build_reason_expr(inner),
         Rule::classify_expr => build_classify_expr(inner),
         Rule::search_expr => build_search_expr(inner),
+        Rule::recall_expr => build_recall_expr(inner),
         Rule::try_or_expr => build_try_or_expr(inner),
         Rule::constructor_expr => build_constructor_expr(inner),
         Rule::call_expr => build_call_expr(inner),
@@ -840,6 +889,37 @@ fn build_forward_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
     Ok(Spanned::new(Stmt::Forward(what, to), span))
 }
 
+fn build_learn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
+    let span = to_span(&pair);
+    let child = pair.into_inner().next().unwrap();
+
+    let source = match child.as_rule() {
+        Rule::learn_from_interaction => {
+            let arg_list = child.into_inner().next().unwrap();
+            let args = build_arg_list(arg_list)?;
+            LearnSource::FromInteraction(args)
+        }
+        Rule::learn_from_document => {
+            let string_arg = child.into_inner().next().unwrap();
+            let expr = build_string_arg(string_arg)?;
+            LearnSource::FromDocument(expr)
+        }
+        Rule::learn_direct => {
+            let string_arg = child.into_inner().next().unwrap();
+            let expr = build_string_arg(string_arg)?;
+            LearnSource::Direct(expr)
+        }
+        _ => {
+            return Err(parse_error(
+                &child,
+                &format!("unexpected learn rule: {:?}", child.as_rule()),
+            ));
+        }
+    };
+
+    Ok(Spanned::new(Stmt::Learn(Spanned::new(source, span)), span))
+}
+
 // ── Control flow statements ──────────────────────────────────
 
 fn build_when_clause(pair: Pair) -> anyhow::Result<Spanned<WhenClause>> {
@@ -1066,6 +1146,7 @@ fn build_statement(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
         Rule::escalate_stmt => build_escalate_stmt(inner),
         Rule::memory_update_stmt => build_memory_update_stmt(inner),
         Rule::emit_stmt => build_emit_stmt(inner),
+        Rule::learn_stmt => build_learn_stmt(inner),
         Rule::transition_stmt => build_transition_stmt(inner),
         Rule::start_timer_stmt => build_start_timer_stmt(inner),
         Rule::cancel_timer_stmt => build_cancel_timer_stmt(inner),
@@ -1491,6 +1572,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
 
     let mut lifecycle = None;
     let mut memory = Vec::new();
+    let mut knowledge = None;
     let mut timers = Vec::new();
     let mut subscriptions = Vec::new();
     let mut warden_override = Vec::new();
@@ -1505,6 +1587,9 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             Rule::lifecycle_clause => {
                 let lc_ident = child.into_inner().next().unwrap();
                 lifecycle = Some(spanned(lc_ident.as_str().to_string(), &lc_ident));
+            }
+            Rule::knowledge_block => {
+                knowledge = Some(build_knowledge_block(child)?);
             }
             Rule::memory_block => {
                 let mem_children: Vec<Pair> = child.into_inner().collect();
@@ -1583,6 +1668,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             name,
             lifecycle,
             memory,
+            knowledge,
             timers,
             subscriptions,
             warden_override,

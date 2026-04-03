@@ -416,6 +416,7 @@ fn ast_agent() {
                 type_name: sp(TypeName::Profile),
             }),
         ],
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         handlers: vec![
@@ -982,6 +983,7 @@ fn ast_agent_v3() {
                 type_name: sp(TypeName::Number),
             }),
         ],
+        knowledge: None,
         timers: vec![sp(TimerField {
             name: sp("reconnect_window".into()),
             duration: sp(Duration {

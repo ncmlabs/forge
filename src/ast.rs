@@ -191,11 +191,33 @@ pub struct AgentDecl {
     pub name: Spanned<String>,
     pub lifecycle: Option<Spanned<String>>,
     pub memory: Vec<Spanned<FieldDef>>,
+    pub knowledge: Option<Spanned<KnowledgeDecl>>,
     pub timers: Vec<Spanned<TimerField>>,
     pub subscriptions: Vec<Spanned<SubscribeDecl>>,
     pub warden_override: Vec<Spanned<WardPolicy>>,
     pub handlers: Vec<Spanned<OnHandler>>,
     pub stuck_policy: Option<Spanned<StuckPolicy>>,
+}
+
+// ── knowledge ────────────────────────────────────────────────
+
+/// Persistent searchable knowledge store declaration inside an agent.
+#[derive(Debug, Clone)]
+pub struct KnowledgeDecl {
+    pub store_path: Spanned<Expr>,
+    pub max_entries: Option<Spanned<f64>>,
+    pub retention: Option<Spanned<Duration>>,
+}
+
+/// Source for a `learn` statement.
+#[derive(Debug, Clone)]
+pub enum LearnSource {
+    /// `learn "fact"`
+    Direct(Spanned<Expr>),
+    /// `learn from interaction(question, answer, confidence)`
+    FromInteraction(Vec<Spanned<CallArg>>),
+    /// `learn from document("path")`
+    FromDocument(Spanned<Expr>),
 }
 
 /// Timer declaration inside an agent.
@@ -275,6 +297,7 @@ pub enum DurationUnit {
     Seconds,
     Minutes,
     Hours,
+    Days,
 }
 
 // ── warden ───────────────────────────────────────────────────
@@ -426,6 +449,8 @@ pub enum Expr {
     Classify(ClassifyExpr),
     /// `search "query"`
     Search(Box<Spanned<Expr>>),
+    /// `recall "query"` — retrieve from agent knowledge store
+    Recall(Box<Spanned<Expr>>),
     /// `try expr or expr`
     TryOr(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     /// `A >> B >> C` — composition chain
@@ -540,6 +565,8 @@ pub enum Stmt {
     ResetTimer(Spanned<String>),
     /// `forward expr to expr`
     Forward(Spanned<Expr>, Spanned<Expr>),
+    /// `learn "fact"` / `learn from interaction(...)` / `learn from document(...)`
+    Learn(Spanned<LearnSource>),
     /// `match expr` with pattern arms
     Match(Box<MatchBlock>),
     /// `if`/`else if`/`else` block

@@ -1,0 +1,11 @@
+{
+  "name": "pure_no_recall",
+  "category": "checker",
+  "subcategory": "pure",
+  "description": "Pure function cannot use recall (knowledge retrieval is non-deterministic)",
+  "input": "pure bad\n  needs q: Text\n  gives Text\n  do\n    give recall \"{q}\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["cannot use", "recall"]
+  }
+}
