@@ -66,7 +66,7 @@ impl WardedRuntime {
         for item in &program.items {
             match &item.node {
                 TopLevel::Agent(a) => {
-                    agent_decls.insert(a.name.node.clone(), a.clone());
+                    agent_decls.insert(a.name.node.clone(), a.as_ref().clone());
                 }
                 TopLevel::States(s) => {
                     states_decls.insert(s.name.node.clone(), s.clone());

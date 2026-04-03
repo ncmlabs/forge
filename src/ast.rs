@@ -39,7 +39,7 @@ pub enum TopLevel {
     Task(TaskDecl),
     Pure(PureDecl),
     Flow(FlowDecl),
-    Agent(AgentDecl),
+    Agent(Box<AgentDecl>),
     Pool(PoolDecl),
     Warden(WardenDecl),
     Contract(ContractDecl),

@@ -1717,7 +1717,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     }
 
     Ok(Spanned::new(
-        TopLevel::Agent(AgentDecl {
+        TopLevel::Agent(Box::new(AgentDecl {
             exportable,
             name,
             lifecycle,
@@ -1728,7 +1728,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             warden_override,
             handlers,
             stuck_policy,
-        }),
+        })),
         span,
     ))
 }

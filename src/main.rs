@@ -218,7 +218,7 @@ async fn main() -> anyhow::Result<()> {
                     .items
                     .iter()
                     .find_map(|item| match &item.node {
-                        TopLevel::Agent(a) if a.name.node == *name => Some(a.clone()),
+                        TopLevel::Agent(a) if a.name.node == *name => Some(a.as_ref().clone()),
                         _ => None,
                     })
                     .ok_or_else(|| {
@@ -229,7 +229,7 @@ async fn main() -> anyhow::Result<()> {
                     .items
                     .iter()
                     .find_map(|item| match &item.node {
-                        TopLevel::Agent(a) => Some(a.clone()),
+                        TopLevel::Agent(a) => Some(a.as_ref().clone()),
                         _ => None,
                     })
                     .ok_or_else(|| {
@@ -499,7 +499,7 @@ async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
         .items
         .iter()
         .find_map(|item| match &item.node {
-            TopLevel::Agent(a) => Some(a.clone()),
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
             _ => None,
         })
         .ok_or_else(|| anyhow::anyhow!("no agent declaration found in {}", file.display()))?;
