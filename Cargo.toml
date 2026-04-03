@@ -26,7 +26,7 @@ ariadne = "0.6"
 thiserror = "2"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
-toml = "0.8"
+toml = "1.1"
 dirs = "6"
 axum = "0.7"
 tower-http = { version = "0.6", features = ["cors"] }
