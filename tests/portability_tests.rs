@@ -14,6 +14,7 @@ fn sample_entry(content: &str, confidence: f32) -> KnowledgeEntry {
         content: content.to_string(),
         source: KnowledgeSource::Direct,
         confidence,
+        category: None,
         created_at: chrono::Utc::now(),
         last_accessed: chrono::Utc::now(),
         access_count: 5,
