@@ -217,11 +217,7 @@ async fn dispatch_endpoint(
         Ok(val) => {
             let duration_ms = start.elapsed().as_millis() as u64;
             let response = value_to_response(val);
-            let status = if response.status().is_success() {
-                response.status().as_u16()
-            } else {
-                response.status().as_u16()
-            };
+            let status = response.status().as_u16();
             if let Some(tracer) = executor.tracer() {
                 tracer.http_response(endpoint_name, status, duration_ms);
             }
