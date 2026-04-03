@@ -168,3 +168,110 @@ fn interaction_learning_tracks_source() {
     let text = format!("{}", result.value);
     assert!(text.contains("vastai"), "should recall interaction content");
 }
+
+// ── Category and Filtered Export Tests ────────────────────────────
+
+#[test]
+fn categorized_learn_and_export_by_category() {
+    let tmp = TempDir::new().unwrap();
+    let store_path = tmp.path().join("knowledge").to_string_lossy().to_string();
+
+    let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+    store.learn_direct_categorized("FORGE uses indentation for blocks", "SYNTAX");
+    store.learn_direct_categorized("Tasks are pure functions", "TASKS");
+    store.learn_direct_categorized("Flows execute stages in parallel waves", "FLOWS");
+    store.learn_direct_categorized("Keywords are lowercase", "SYNTAX");
+
+    let syntax = store.export_by_category("SYNTAX");
+    assert_eq!(syntax.len(), 2);
+    assert!(syntax
+        .iter()
+        .all(|e| e.category.as_deref() == Some("SYNTAX")));
+
+    let tasks = store.export_by_category("TASKS");
+    assert_eq!(tasks.len(), 1);
+
+    let flows = store.export_by_category("FLOWS");
+    assert_eq!(flows.len(), 1);
+
+    // Non-existent category returns empty
+    let empty = store.export_by_category("NONEXISTENT");
+    assert!(empty.is_empty());
+}
+
+#[test]
+fn export_above_confidence_filters_correctly() {
+    let tmp = TempDir::new().unwrap();
+    let store_path = tmp.path().join("knowledge").to_string_lossy().to_string();
+
+    let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+    store.learn_direct("high confidence fact"); // confidence 1.0
+    store.learn_from_interaction("Q?", "A", 0.9);
+    store.learn_from_interaction("Q2?", "A2", 0.5);
+    store.learn_from_interaction("Q3?", "A3", 0.3);
+
+    let high = store.export_above_confidence(0.9);
+    assert_eq!(high.len(), 2); // 1.0 and 0.9
+
+    let medium = store.export_above_confidence(0.5);
+    assert_eq!(medium.len(), 3); // 1.0, 0.9, 0.5
+
+    let all = store.export_above_confidence(0.0);
+    assert_eq!(all.len(), 4);
+}
+
+#[test]
+fn export_filtered_with_custom_predicate() {
+    let tmp = TempDir::new().unwrap();
+    let store_path = tmp.path().join("knowledge").to_string_lossy().to_string();
+
+    let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+    store.learn_direct_categorized("Rust fact", "SYNTAX");
+    store.learn_direct_categorized("Python fact", "SYNTAX");
+    store.learn_direct("Uncategorized fact");
+
+    // Filter by content containing "Rust"
+    let rust_only = store.export_filtered(|e| e.content.contains("Rust"));
+    assert_eq!(rust_only.len(), 1);
+    assert!(rust_only[0].content.contains("Rust"));
+}
+
+#[test]
+fn category_persists_across_restarts() {
+    let tmp = TempDir::new().unwrap();
+    let store_path = tmp.path().join("knowledge").to_string_lossy().to_string();
+
+    {
+        let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+        store.learn_direct_categorized("persistent categorized fact", "AGENTS");
+        store.learn_direct("uncategorized fact");
+    }
+
+    // Reload
+    let store = KnowledgeStore::new(&store_path, Some(100), None);
+    let agents = store.export_by_category("AGENTS");
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].content, "persistent categorized fact");
+    assert_eq!(agents[0].category.as_deref(), Some("AGENTS"));
+}
+
+#[test]
+fn uncategorized_entries_excluded_from_category_export() {
+    let tmp = TempDir::new().unwrap();
+    let store_path = tmp.path().join("knowledge").to_string_lossy().to_string();
+
+    let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+    store.learn_direct("no category");
+    store.learn_direct_categorized("has category", "SYNTAX");
+
+    let syntax = store.export_by_category("SYNTAX");
+    assert_eq!(syntax.len(), 1);
+    assert_eq!(syntax[0].content, "has category");
+
+    // All entries still exported with export_entries
+    assert_eq!(store.export_entries().len(), 2);
+}

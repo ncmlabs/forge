@@ -21,6 +21,8 @@ pub struct KnowledgeEntry {
     pub content: String,
     pub source: KnowledgeSource,
     pub confidence: f32,
+    #[serde(default)]
+    pub category: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_accessed: DateTime<Utc>,
     pub access_count: u64,
@@ -81,6 +83,22 @@ impl KnowledgeStore {
             content: content.to_string(),
             source: KnowledgeSource::Direct,
             confidence: 1.0,
+            category: None,
+            created_at: Utc::now(),
+            last_accessed: Utc::now(),
+            access_count: 0,
+            success_associations: 0,
+        };
+        self.add_entry(entry);
+    }
+
+    pub fn learn_direct_categorized(&mut self, content: &str, category: &str) {
+        let entry = KnowledgeEntry {
+            id: Uuid::new_v4().to_string(),
+            content: content.to_string(),
+            source: KnowledgeSource::Direct,
+            confidence: 1.0,
+            category: Some(category.to_string()),
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             access_count: 0,
@@ -100,6 +118,7 @@ impl KnowledgeStore {
                 confidence,
             },
             confidence,
+            category: None,
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             access_count: 0,
@@ -123,6 +142,7 @@ impl KnowledgeStore {
                     path: path.to_string(),
                 },
                 confidence: 1.0,
+                category: None,
                 created_at: Utc::now(),
                 last_accessed: Utc::now(),
                 access_count: 0,
@@ -322,6 +342,25 @@ impl KnowledgeStore {
         self.entries.clone()
     }
 
+    pub fn export_filtered(
+        &self,
+        predicate: impl Fn(&KnowledgeEntry) -> bool,
+    ) -> Vec<KnowledgeEntry> {
+        self.entries
+            .iter()
+            .filter(|e| predicate(e))
+            .cloned()
+            .collect()
+    }
+
+    pub fn export_by_category(&self, category: &str) -> Vec<KnowledgeEntry> {
+        self.export_filtered(|e| e.category.as_deref() == Some(category))
+    }
+
+    pub fn export_above_confidence(&self, min_confidence: f32) -> Vec<KnowledgeEntry> {
+        self.export_filtered(|e| e.confidence >= min_confidence)
+    }
+
     pub fn merge_imported(&mut self, entries: Vec<KnowledgeEntry>) -> usize {
         let existing_contents: std::collections::HashSet<String> =
             self.entries.iter().map(|e| e.content.clone()).collect();
@@ -512,6 +551,7 @@ mod tests {
                 content: "existing fact".to_string(),
                 source: KnowledgeSource::Direct,
                 confidence: 1.0,
+                category: None,
                 created_at: Utc::now(),
                 last_accessed: Utc::now(),
                 access_count: 0,
@@ -522,6 +562,7 @@ mod tests {
                 content: "new imported fact".to_string(),
                 source: KnowledgeSource::Direct,
                 confidence: 1.0,
+                category: None,
                 created_at: Utc::now(),
                 last_accessed: Utc::now(),
                 access_count: 0,
