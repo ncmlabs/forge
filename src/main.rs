@@ -114,6 +114,16 @@ enum Command {
         /// Path to the .forgepkg.json package
         package: PathBuf,
     },
+    /// Send a single event to an agent non-interactively and print the result
+    Send {
+        /// Path to a .forge file containing an agent declaration
+        file: PathBuf,
+        /// Event name to dispatch (e.g., "query", "ingest", "status")
+        event: String,
+        /// Arguments for the event handler (positional, matching handler params)
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
     /// Generate skeleton FORGE code from a plain-text system description
     Fleet {
         /// Plain-text system description (e.g., "a chat system with moderator and logger")
@@ -348,6 +358,9 @@ async fn main() -> anyhow::Result<()> {
             let pkg =
                 load_package(&json).map_err(|e| anyhow::anyhow!("invalid package: {:?}", e))?;
             print!("{}", inspect_package(&pkg));
+        }
+        Command::Send { file, event, args } => {
+            send_to_agent(&file, &event, args).await?;
         }
         Command::Fleet { spec, output } => {
             let result = forge::fleet::generate(&spec)?;
@@ -635,4 +648,64 @@ fn parse_args(input: &str) -> Vec<String> {
     }
 
     args
+}
+
+/// Send a single event to an agent non-interactively, print the result, and exit.
+async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow::Result<()> {
+    let source = read_source(file)?;
+    let program = parse_or_exit(&source, file);
+
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("no agent declaration found in {}", file.display()))?;
+
+    let states_decl = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::States(s) => Some(s.clone()),
+        _ => None,
+    });
+
+    let config = forge::config::ForgeConfig::load_or_default();
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+
+    let agent = AgentProcess::new(
+        agent_decl.clone(),
+        states_decl.as_ref(),
+        Arc::new(registry),
+        None,
+        program,
+    );
+
+    // Build params from positional args matching handler param names
+    let handler = agent_decl
+        .handlers
+        .iter()
+        .find(|h| h.node.event.node == event);
+    let mut params = HashMap::new();
+    if let Some(h) = handler {
+        for (i, param) in h.node.params.iter().enumerate() {
+            if let Some(arg) = args.get(i) {
+                params.insert(
+                    param.node.name.clone(),
+                    ConfidentValue::deterministic(Value::Text(arg.clone())),
+                );
+            }
+        }
+    }
+
+    match agent.dispatch(event, params).await {
+        Ok(Some(val)) => println!("{}", val.value),
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
 }

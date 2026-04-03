@@ -6,6 +6,7 @@ docs/superpowers/
 forge-principles.md
 providers.md
 roadmap.md
+forge.config.toml
 config/forge.config.toml
 config/claude.config.toml
 config/ollama.config.toml
