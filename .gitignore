@@ -1,4 +1,5 @@
 /target
+/bin
 .worktrees/
 .claude/
 .forge-security-allow

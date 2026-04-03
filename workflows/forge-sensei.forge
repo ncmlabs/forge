@@ -198,9 +198,8 @@ warden sensei_warden
     after 1: escalate
   max_retries 3 per 1h then escalate
 
-# ── Entry Point ───────────────────────────────────────────────
-
-fn main
-  say "=== forge-sensei: FORGE Language Learning Agent ==="
-  say "Use 'forge send' to interact non-interactively."
-  say "Use 'forge agent' for interactive REPL mode."
+# ── Usage ─────────────────────────────────────────────────────
+# Build:  forge build workflows/forge-sensei.forge -o bin/forge-sensei
+# Run:    bin/forge-sensei query "how do flows work?"
+# REPL:   bin/forge-sensei repl
+# Help:   bin/forge-sensei --help

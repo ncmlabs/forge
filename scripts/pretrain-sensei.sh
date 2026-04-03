@@ -4,14 +4,19 @@
 set -euo pipefail
 
 FORGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SENSEI="$FORGE_ROOT/workflows/forge-sensei.forge"
-FORGE="${FORGE_BIN:-cargo run --}"
+SENSEI_BIN="${SENSEI_BIN:-$FORGE_ROOT/bin/forge-sensei}"
 COUNT=0
+
+if [ ! -x "$SENSEI_BIN" ]; then
+  echo "Error: forge-sensei binary not found at $SENSEI_BIN"
+  echo "Run: bash scripts/build-sensei.sh"
+  exit 1
+fi
 
 ingest() {
   local path="$1"
   if [ -f "$path" ]; then
-    $FORGE send "$SENSEI" ingest "$path" 2>/dev/null || true
+    "$SENSEI_BIN" ingest "$path" 2>/dev/null || true
     COUNT=$((COUNT + 1))
     echo "  [$COUNT] $path"
   fi
@@ -20,7 +25,7 @@ ingest() {
 ingest_fact() {
   local category="$1"
   local fact="$2"
-  $FORGE send "$SENSEI" ingest_fact "$category" "$fact" 2>/dev/null || true
+  "$SENSEI_BIN" ingest-fact "$category" "$fact" 2>/dev/null || true
   COUNT=$((COUNT + 1))
 }
 
