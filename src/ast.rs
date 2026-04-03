@@ -193,6 +193,7 @@ pub struct AgentDecl {
     pub name: Spanned<String>,
     pub lifecycle: Option<Spanned<String>>,
     pub memory: Vec<Spanned<FieldDef>>,
+    pub memory_persistent: bool,
     pub knowledge: Option<Spanned<KnowledgeDecl>>,
     pub timers: Vec<Spanned<TimerField>>,
     pub subscriptions: Vec<Spanned<SubscribeDecl>>,

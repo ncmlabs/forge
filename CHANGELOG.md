@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `memory persistent` keyword for agents — typed memory fields survive process restarts via write-through to ACID storage (#57)
+- `ForgeStorage`: redb-backed key-value store with ACID transactions — persistence foundation for agents and future `data.store`/`data.get` capabilities (#48)
 - `forge build` command: package FORGE programs as standalone CLI binaries with embedded sources and runtime (#74)
 - Multi-file composition: `forge.project.toml` manifest, `merge_programs()` engine, cross-file symbol dedup, single fn main/system enforcement
 - `forge run --manifest` for multi-file execution without building a binary

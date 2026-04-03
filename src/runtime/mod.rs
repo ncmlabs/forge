@@ -10,6 +10,7 @@ pub mod knowledge_store;
 pub mod memory;
 pub mod pool;
 pub mod state_machine;
+pub mod storage;
 pub mod timer_engine;
 pub mod warded;
 pub mod warden;

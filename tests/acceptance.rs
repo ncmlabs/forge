@@ -229,6 +229,7 @@ async fn accept_tictactoe_game() {
         mock_registry(mock),
         None,
         combined_program,
+        None,
     );
 
     // Initialize board with "_" markers (memory default is empty strings)
