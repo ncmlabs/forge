@@ -24,6 +24,7 @@ fn simple_agent(name: &str) -> AgentDecl {
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         warden_override: vec![],
@@ -47,6 +48,7 @@ fn crashing_agent(name: &str) -> AgentDecl {
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![sp(SubscribeDecl {
             event_name: sp("trigger".to_string()),

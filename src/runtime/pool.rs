@@ -424,6 +424,7 @@ fn ast_duration_to_tokio(d: &Duration) -> tokio::time::Duration {
         DurationUnit::Seconds => d.value,
         DurationUnit::Minutes => d.value * 60,
         DurationUnit::Hours => d.value * 3600,
+        DurationUnit::Days => d.value * 86400,
     };
     tokio::time::Duration::from_secs(secs)
 }
@@ -433,6 +434,7 @@ fn format_duration(d: &Duration) -> String {
         DurationUnit::Seconds => format!("{}s", d.value),
         DurationUnit::Minutes => format!("{}m", d.value),
         DurationUnit::Hours => format!("{}h", d.value),
+        DurationUnit::Days => format!("{}d", d.value),
     }
 }
 

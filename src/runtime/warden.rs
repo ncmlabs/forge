@@ -194,5 +194,6 @@ fn duration_to_ms(d: &Duration) -> u64 {
         DurationUnit::Seconds => d.value * 1000,
         DurationUnit::Minutes => d.value * 60 * 1000,
         DurationUnit::Hours => d.value * 3600 * 1000,
+        DurationUnit::Days => d.value * 86400 * 1000,
     }
 }

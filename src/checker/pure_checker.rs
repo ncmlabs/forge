@@ -199,6 +199,14 @@ fn check_pure_stmt(
                 check_pure_expr(fn_name, &arg.node.value, task_names, errors);
             }
         }
+        Stmt::Learn(_) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "learn",
+                span_start: stmt.span.start,
+                span_end: stmt.span.end,
+            });
+        }
         _ => {}
     }
 }
@@ -230,6 +238,14 @@ fn check_pure_expr(
             errors.push(CheckError::PureUsesLlm {
                 name: fn_name.to_string(),
                 op: "search",
+                span_start: expr.span.start,
+                span_end: expr.span.end,
+            });
+        }
+        Expr::Recall(_) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "recall",
                 span_start: expr.span.start,
                 span_end: expr.span.end,
             });

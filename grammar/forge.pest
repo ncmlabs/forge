@@ -53,7 +53,7 @@ keyword = @{
     | "pure" | "event" | "states" | "timer" | "endpoint" | "type"
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
-    | "match" )
+    | "match" | "recall" | "learn" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -175,6 +175,7 @@ agent_decl = {
     "agent" ~ _s ~ ident ~ nl ~
     (i1 ~ lifecycle_clause ~ nl)? ~
     (i1 ~ memory_block)? ~
+    (i1 ~ knowledge_block)? ~
     (i1 ~ timer_field ~ nl)* ~
     (i1 ~ subscribe_line ~ nl)* ~
     (i1 ~ warden_override_block)? ~
@@ -187,6 +188,15 @@ lifecycle_clause = { "lifecycle" ~ _s_opt ~ ":" ~ _s_opt ~ ident }
 memory_block = {
     "memory" ~ nl ~
     (i2 ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ type_name ~ nl)+
+}
+
+knowledge_block = {
+    "knowledge" ~ _s ~ "store" ~ _s_opt ~ ":" ~ _s_opt ~ template_string ~ nl ~
+    (i2 ~ knowledge_option ~ nl)*
+}
+knowledge_option = {
+    "max_entries" ~ _s_opt ~ ":" ~ _s_opt ~ number_lit
+  | "retention" ~ _s_opt ~ ":" ~ _s_opt ~ duration
 }
 
 timer_field = { "timer" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ duration }
@@ -236,7 +246,7 @@ pool_strategy = {
   | "quorum(" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
   | "first(" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
 }
-duration = @{ ASCII_DIGIT+ ~ ("min" | "s" | "m" | "h") }
+duration = @{ ASCII_DIGIT+ ~ ("min" | "s" | "m" | "h" | "d") }
 
 // --- warden declaration ---
 warden_decl = {
@@ -305,6 +315,7 @@ statement = {
   | give_stmt
   | say_stmt
   | emit_stmt
+  | learn_stmt
   | transition_stmt
   | start_timer_stmt
   | cancel_timer_stmt
@@ -332,6 +343,11 @@ cancel_timer_stmt  = { "cancel" ~ _s ~ ident ~ (_s ~ "for" ~ _s ~ expr)? }
 reset_timer_stmt   = { "reset" ~ _s ~ ident }
 forward_stmt       = { "forward" ~ _s ~ expr ~ _s ~ "to" ~ _s ~ expr }
 
+learn_stmt         = { "learn" ~ _s ~ (learn_from_interaction | learn_from_document | learn_direct) }
+learn_from_interaction = { "from" ~ _s ~ "interaction" ~ _s_opt ~ "(" ~ _s_opt ~ arg_list ~ _s_opt ~ ")" }
+learn_from_document    = { "from" ~ _s ~ "document" ~ _s_opt ~ "(" ~ _s_opt ~ string_arg ~ _s_opt ~ ")" }
+learn_direct           = { string_arg }
+
 // --- when block (confidence-only branching) ---
 when_block = {
     when_clause ~
@@ -349,7 +365,7 @@ else_clause = { "else" ~ _s_opt ~ "->" ~ _s_opt ~ statement_inline }
 
 statement_inline = {
     give_stmt | say_stmt | escalate_stmt
-  | emit_stmt | transition_stmt
+  | emit_stmt | learn_stmt | transition_stmt
   | start_timer_stmt | cancel_timer_stmt | reset_timer_stmt
   | forward_stmt | expr_stmt
 }
@@ -400,6 +416,7 @@ statement_i3 = {
   | give_stmt
   | say_stmt
   | emit_stmt
+  | learn_stmt
   | transition_stmt
   | start_timer_stmt
   | cancel_timer_stmt
@@ -442,6 +459,7 @@ statement_i4 = {
     give_stmt
   | say_stmt
   | emit_stmt
+  | learn_stmt
   | transition_stmt
   | start_timer_stmt
   | cancel_timer_stmt
@@ -498,6 +516,7 @@ pipe_term = {
     reason_expr
   | classify_expr
   | search_expr
+  | recall_expr
   | try_or_expr
   | constructor_expr
   | call_expr
@@ -507,6 +526,7 @@ pipe_term = {
 reason_expr   = { "reason" ~ _s ~ string_arg }
 classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list }
 search_expr   = { "search" ~ _s ~ string_arg }
+recall_expr   = { "recall" ~ _s ~ string_arg }
 try_or_expr   = { "try" ~ _s ~ and_expr ~ _s ~ "or" ~ _s ~ expr }
 
 string_arg = { template_string | ident }

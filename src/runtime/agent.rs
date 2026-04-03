@@ -12,6 +12,7 @@ use crate::llm::registry::ProviderRegistry;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::event_bus::{EventPayload, SharedEventBus};
 use crate::runtime::executor::{Env, RuntimeError, TaskExecutor};
+use crate::runtime::knowledge_store::KnowledgeStore;
 use crate::runtime::memory::AgentMemory;
 use crate::runtime::state_machine::StateMachine;
 use crate::runtime::timer_engine::{TimerEngine, TimerFired};
@@ -214,6 +215,7 @@ pub(crate) fn jaccard_similarity(a: &str, b: &str) -> f64 {
 #[derive(Debug, Clone)]
 pub struct AgentContext {
     pub memory: AgentMemory,
+    pub knowledge_store: Option<KnowledgeStore>,
     pub state_machine: Option<StateMachine>,
     pub timer_manager: TimerManager,
     pub event_sink: EventSink,
@@ -223,12 +225,14 @@ pub struct AgentContext {
 impl AgentContext {
     pub fn new(
         memory: AgentMemory,
+        knowledge_store: Option<KnowledgeStore>,
         state_machine: Option<StateMachine>,
         timer_manager: TimerManager,
         stuck_threshold: usize,
     ) -> Self {
         Self {
             memory,
+            knowledge_store,
             state_machine,
             timer_manager,
             event_sink: EventSink::new(),
@@ -269,8 +273,37 @@ impl AgentProcess {
             .and_then(|sp| sp.node.turns)
             .unwrap_or(3) as usize;
 
+        // Initialize knowledge store if declared
+        let knowledge_store = decl.knowledge.as_ref().map(|kd| {
+            let store_path = match &kd.node.store_path.node {
+                Expr::Template(parts) => {
+                    // Extract plain text from template (no interpolation at init time)
+                    parts
+                        .iter()
+                        .filter_map(|p| match &p.node {
+                            TemplatePart::Text(t) => Some(t.as_str()),
+                            _ => None,
+                        })
+                        .collect::<String>()
+                }
+                _ => ".forge-knowledge/default".to_string(),
+            };
+            let max_entries = kd.node.max_entries.as_ref().map(|m| m.node as usize);
+            let retention_days = kd.node.retention.as_ref().map(|r| {
+                let dur = &r.node;
+                match dur.unit {
+                    DurationUnit::Days => dur.value,
+                    DurationUnit::Hours => dur.value / 24,
+                    DurationUnit::Minutes => dur.value / (24 * 60),
+                    DurationUnit::Seconds => dur.value / (24 * 60 * 60),
+                }
+            });
+            KnowledgeStore::new(&store_path, max_entries, retention_days)
+        });
+
         let context = Arc::new(Mutex::new(AgentContext::new(
             memory,
+            knowledge_store,
             state_machine,
             timer_manager,
             stuck_threshold,

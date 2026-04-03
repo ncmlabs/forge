@@ -1,0 +1,39 @@
+use
+  llm.reason
+
+states LearningPhase
+  novice -> competent when score >= 30
+  competent -> expert when score >= 70
+  expert -> expert
+
+agent research_assistant
+  lifecycle: LearningPhase
+  memory
+    interaction_count: Number
+    success_count: Number
+  knowledge store: ".forge-knowledge/research"
+    max_entries: 5000
+    retention: 90d
+
+  on query(question: Text)
+    prior = recall "{question}"
+    when prior.sure -> give prior
+    else -> escalate to human
+
+  on query_and_learn(question: Text)
+    answer = reason "Answer: {question}"
+    when answer.sure -> learn from interaction(question, answer, 0.9)
+    when answer.unsure -> learn from interaction(question, answer, 0.5)
+    else -> escalate to human
+    memory.interaction_count = memory.interaction_count + 1
+
+  on ingest(document_path: Text)
+    learn from document(document_path)
+    say "Ingested: {document_path}"
+
+  on train(fact: Text)
+    learn "{fact}"
+    say "Learned: {fact}"
+
+  if stuck for 3 turns
+    escalate to human

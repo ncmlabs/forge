@@ -40,6 +40,7 @@ fn simple_agent(
         name: spanned("test_agent".into()),
         lifecycle: None,
         memory: memory_fields,
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         warden_override: Vec::new(),

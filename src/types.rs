@@ -80,6 +80,8 @@ pub enum ConfidenceSource {
     ConsensusAgreement(f32),
     /// Propagated from upstream
     Derived(f32),
+    /// Retrieved from knowledge store (confidence = retrieval relevance)
+    KnowledgeRecall(f32),
 }
 
 // ── Conversions ──────────────────────────────────────────────
