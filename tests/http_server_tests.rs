@@ -11,9 +11,7 @@ use forge::runtime::http_server::ForgeServer;
 
 fn mock_registry() -> Arc<ProviderRegistry> {
     let config = forge::config::ForgeConfig::default_mock_config();
-    Arc::new(
-        ProviderRegistry::from_config(config).expect("mock registry should build"),
-    )
+    Arc::new(ProviderRegistry::from_config(config).expect("mock registry should build"))
 }
 
 fn parse_and_build(source: &str) -> TaskExecutor {

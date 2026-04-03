@@ -69,9 +69,11 @@ impl ForgeServer {
             router = router
                 .route(
                     &get_path,
-                    get(move |state: State<TaskExecutor>, query: Query<HashMap<String, String>>| {
-                        handle_get(state, Path(name_get), query)
-                    }),
+                    get(
+                        move |state: State<TaskExecutor>, query: Query<HashMap<String, String>>| {
+                            handle_get(state, Path(name_get), query)
+                        },
+                    ),
                 )
                 .route(
                     &post_path,
@@ -118,8 +120,12 @@ impl ForgeServer {
                     .return_type
                     .as_ref()
                     .map(|t| {
-                        let types: Vec<String> =
-                            t.node.types.iter().map(|tn| format!("{:?}", tn.node)).collect();
+                        let types: Vec<String> = t
+                            .node
+                            .types
+                            .iter()
+                            .map(|tn| format!("{:?}", tn.node))
+                            .collect();
                         format!(" -> {}", types.join(", "))
                     })
                     .unwrap_or_default();
@@ -226,7 +232,11 @@ async fn dispatch_endpoint(
             if let Some(tracer) = executor.tracer() {
                 tracer.http_response(endpoint_name, 500, duration_ms);
             }
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("runtime error: {e}")).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("runtime error: {e}"),
+            )
+                .into_response()
         }
     }
 }
