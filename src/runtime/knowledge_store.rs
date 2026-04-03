@@ -315,6 +315,37 @@ impl KnowledgeStore {
     pub fn entry_count(&self) -> usize {
         self.entries.len()
     }
+
+    // ── Portability ───────────────────────────────────────
+
+    pub fn export_entries(&self) -> Vec<KnowledgeEntry> {
+        self.entries.clone()
+    }
+
+    pub fn merge_imported(&mut self, entries: Vec<KnowledgeEntry>) -> usize {
+        let existing_contents: std::collections::HashSet<String> =
+            self.entries.iter().map(|e| e.content.clone()).collect();
+
+        let mut added = 0;
+        for entry in entries {
+            if existing_contents.contains(&entry.content) {
+                continue;
+            }
+            // Evict LRU if at capacity
+            while self.entries.len() >= self.max_entries {
+                self.evict_lru();
+            }
+            self.entries.push(entry);
+            added += 1;
+        }
+
+        if added > 0 {
+            self.rebuild_index();
+            self.save();
+        }
+
+        added
+    }
 }
 
 // ── Utilities ──────────────────────────────────────────────
@@ -442,6 +473,65 @@ mod tests {
 
         let result = store.recall("anything", 1000);
         assert_eq!(result.confidence, 0.0);
+    }
+
+    #[test]
+    fn test_export_entries() {
+        let tmp = TempDir::new().unwrap();
+        let store_path = tmp
+            .path()
+            .join("test_knowledge")
+            .to_string_lossy()
+            .to_string();
+        let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+        store.learn_direct("fact alpha");
+        store.learn_direct("fact beta");
+
+        let exported = store.export_entries();
+        assert_eq!(exported.len(), 2);
+        assert!(exported.iter().any(|e| e.content == "fact alpha"));
+        assert!(exported.iter().any(|e| e.content == "fact beta"));
+    }
+
+    #[test]
+    fn test_merge_imported_deduplicates() {
+        let tmp = TempDir::new().unwrap();
+        let store_path = tmp
+            .path()
+            .join("test_knowledge")
+            .to_string_lossy()
+            .to_string();
+        let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+        store.learn_direct("existing fact");
+
+        let imported = vec![
+            KnowledgeEntry {
+                id: Uuid::new_v4().to_string(),
+                content: "existing fact".to_string(),
+                source: KnowledgeSource::Direct,
+                confidence: 1.0,
+                created_at: Utc::now(),
+                last_accessed: Utc::now(),
+                access_count: 0,
+                success_associations: 0,
+            },
+            KnowledgeEntry {
+                id: Uuid::new_v4().to_string(),
+                content: "new imported fact".to_string(),
+                source: KnowledgeSource::Direct,
+                confidence: 1.0,
+                created_at: Utc::now(),
+                last_accessed: Utc::now(),
+                access_count: 0,
+                success_associations: 0,
+            },
+        ];
+
+        let added = store.merge_imported(imported);
+        assert_eq!(added, 1);
+        assert_eq!(store.entry_count(), 2);
     }
 
     #[test]
