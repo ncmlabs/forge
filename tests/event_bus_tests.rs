@@ -75,7 +75,7 @@ fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>
                 spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                     "handled".into(),
                 ))])),
-                None,
+                vec![],
             ))],
         })],
         warden_override: Vec::new(),
@@ -102,7 +102,7 @@ fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDec
                     spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                         "emitted".into(),
                     ))])),
-                    None,
+                    vec![],
                 )),
             ],
         })],
@@ -384,7 +384,7 @@ async fn multi_agent_event_flow() {
                     spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                         "joined".into(),
                     ))])),
-                    None,
+                    vec![],
                 )),
             ],
         })],

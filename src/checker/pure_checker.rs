@@ -137,8 +137,14 @@ fn check_pure_stmt(
     errors: &mut Vec<CheckError>,
 ) {
     match &stmt.node {
-        Stmt::Bind(_, expr) | Stmt::Give(expr, _) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
+        Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
             check_pure_expr(fn_name, expr, task_names, errors);
+        }
+        Stmt::Give(expr, metas) => {
+            check_pure_expr(fn_name, expr, task_names, errors);
+            for meta in metas {
+                check_pure_expr(fn_name, &meta.node.value, task_names, errors);
+            }
         }
         Stmt::Escalate(_) => {
             errors.push(CheckError::PureEscalates {

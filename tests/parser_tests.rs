@@ -453,10 +453,40 @@ fn parse_array_literal() {
 fn parse_give_statement() {
     let prog = parse_task_with("give result");
     match first_stmt(&prog) {
-        Stmt::Give(expr, None) => {
+        Stmt::Give(expr, metas) if metas.is_empty() => {
             assert!(matches!(&expr.node, Expr::Ident(n) if n == "result"));
         }
         other => panic!("expected Give, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_give_with_status() {
+    let prog = parse_task_with("give \"not found\" with status: 404");
+    match first_stmt(&prog) {
+        Stmt::Give(expr, metas) => {
+            assert!(matches!(&expr.node, Expr::Template(_)));
+            assert_eq!(metas.len(), 1);
+            assert_eq!(metas[0].node.key.node, "status");
+            assert!(
+                matches!(&metas[0].node.value.node, Expr::NumberLit(n) if (*n - 404.0).abs() < f64::EPSILON)
+            );
+        }
+        other => panic!("expected Give with meta, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_give_with_multiple_metas() {
+    let prog = parse_task_with("give \"ok\" with status: 201, content_type: \"application/json\"");
+    match first_stmt(&prog) {
+        Stmt::Give(expr, metas) => {
+            assert!(matches!(&expr.node, Expr::Template(_)));
+            assert_eq!(metas.len(), 2);
+            assert_eq!(metas[0].node.key.node, "status");
+            assert_eq!(metas[1].node.key.node, "content_type");
+        }
+        other => panic!("expected Give with 2 metas, got {:?}", other),
     }
 }
 

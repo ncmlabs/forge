@@ -66,7 +66,7 @@ fn check_stmt(
                 tainted.remove(&name.node);
             }
         }
-        Stmt::Give(expr, _with) => {
+        Stmt::Give(expr, _metas) => {
             // Inline oracle in give: always an error
             if expr_is_oracle(expr) {
                 emit_inline_oracle_error(expr, file, diagnostics);

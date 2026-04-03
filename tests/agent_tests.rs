@@ -105,7 +105,7 @@ async fn dispatch_selects_correct_handler() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "hello".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
@@ -136,7 +136,7 @@ async fn dispatch_binds_params() {
         requires: vec![],
         body: vec![spanned(Stmt::Give(
             spanned(Expr::Ident("name".into())),
-            None,
+            vec![],
         ))],
     });
 
@@ -181,7 +181,7 @@ async fn memory_update_persists_across_dispatches() {
                 Box::new(spanned(Expr::Ident("memory".into()))),
                 spanned("topic".into()),
             )),
-            None,
+            vec![],
         ))],
     });
 
@@ -217,7 +217,7 @@ async fn requires_pass_executes_handler() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "ok".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
@@ -241,7 +241,7 @@ async fn requires_fail_silent_skips() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "should not reach".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
@@ -267,7 +267,7 @@ async fn requires_fail_give_returns_value() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "ok".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
@@ -310,7 +310,7 @@ async fn requires_fail_log_rejects() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "should not reach".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
@@ -348,7 +348,7 @@ async fn requires_short_circuits_on_first_failure() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "body_reached".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
@@ -553,7 +553,7 @@ async fn stuck_detection_triggers_policy() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "I cannot help with that".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 

@@ -48,7 +48,15 @@ pub enum RuntimeError {
 
     // Control flow — not a real error, used to propagate `give` values
     #[error("give signal (internal)")]
-    GiveSignal(ConfidentValue),
+    GiveSignal(ConfidentValue, Option<u16>, Option<String>),
+}
+
+/// Result from executing an endpoint, including optional response metadata.
+#[derive(Debug, Clone)]
+pub struct EndpointResult {
+    pub value: ConfidentValue,
+    pub status: Option<u16>,
+    pub content_type: Option<String>,
 }
 
 // ── Environment (scope stack) ─────────────────────────────────────────────────
@@ -187,12 +195,13 @@ impl TaskExecutor {
         &self.endpoint_map
     }
 
-    /// Execute an endpoint body with the given arguments.
+    /// Execute an endpoint body with the given arguments and optional request context.
     pub async fn exec_endpoint(
         &self,
         name: &str,
         args: HashMap<String, ConfidentValue>,
-    ) -> Result<ConfidentValue, RuntimeError> {
+        request: Option<ConfidentValue>,
+    ) -> Result<EndpointResult, RuntimeError> {
         let endpoint = self
             .endpoint_map
             .get(name)
@@ -201,13 +210,24 @@ impl TaskExecutor {
             })?;
 
         let mut env = Env::new();
+        if let Some(req) = request {
+            env.bind("request", req);
+        }
         for (k, v) in args {
             env.bind(&k, v);
         }
 
         match self.exec_stmts(&endpoint.body, &mut env).await {
-            Ok(val) => Ok(val),
-            Err(RuntimeError::GiveSignal(val)) => Ok(val),
+            Ok(val) => Ok(EndpointResult {
+                value: val,
+                status: None,
+                content_type: None,
+            }),
+            Err(RuntimeError::GiveSignal(val, status, content_type)) => Ok(EndpointResult {
+                value: val,
+                status,
+                content_type,
+            }),
             Err(e) => Err(e),
         }
     }
@@ -227,7 +247,7 @@ impl TaskExecutor {
         let mut env = Env::new();
         match self.exec_stmts(&main_decl.body, &mut env).await {
             Ok(val) => Ok(val),
-            Err(RuntimeError::GiveSignal(val)) => Ok(val),
+            Err(RuntimeError::GiveSignal(val, ..)) => Ok(val),
             Err(e) => Err(e),
         }
     }
@@ -272,9 +292,27 @@ impl TaskExecutor {
                     self.output.lock().unwrap().push(text);
                 }
 
-                Stmt::Give(expr, _with) => {
+                Stmt::Give(expr, metas) => {
                     let val = self.eval_expr(expr, env).await?;
-                    return Err(RuntimeError::GiveSignal(val));
+                    let mut status: Option<u16> = None;
+                    let mut content_type: Option<String> = None;
+                    for meta in metas {
+                        let meta_val = self.eval_expr(&meta.node.value, env).await?;
+                        match meta.node.key.node.as_str() {
+                            "status" => {
+                                if let Value::Number(n) = &meta_val.value {
+                                    status = Some(*n as u16);
+                                }
+                            }
+                            "content_type" => {
+                                if let Value::Text(s) = &meta_val.value {
+                                    content_type = Some(s.clone());
+                                }
+                            }
+                            _ => {} // ignore unknown keys
+                        }
+                    }
+                    return Err(RuntimeError::GiveSignal(val, status, content_type));
                 }
 
                 Stmt::ExprStmt(expr) => {
@@ -697,8 +735,13 @@ impl TaskExecutor {
                                 len: items.len(),
                             })
                         }
+                        (Value::Record(fields), Value::Text(key)) => {
+                            Ok(fields.get(key).cloned().unwrap_or_else(|| {
+                                ConfidentValue::deterministic(Value::Text(String::new()))
+                            }))
+                        }
                         _ => Err(RuntimeError::TypeError {
-                            expected: "Array[Number]".to_string(),
+                            expected: "Array[Number] or Record[Text]".to_string(),
                             got: format!("{}[{}]", obj.value, idx.value),
                         }),
                     }
@@ -1107,7 +1150,7 @@ impl TaskExecutor {
         match &decl.body.node {
             TaskBody::Do(stmts) => match self.exec_stmts(stmts, &mut env).await {
                 Ok(val) => Ok(val),
-                Err(RuntimeError::GiveSignal(val)) => Ok(val),
+                Err(RuntimeError::GiveSignal(val, ..)) => Ok(val),
                 Err(e) => Err(e),
             },
             TaskBody::Is(expr) => self.eval_expr(expr, &mut env).await,
@@ -1129,7 +1172,7 @@ impl TaskExecutor {
         }
         let result = match self.exec_stmts(&decl.body, &mut env).await {
             Ok(val) => val,
-            Err(RuntimeError::GiveSignal(val)) => val,
+            Err(RuntimeError::GiveSignal(val, ..)) => val,
             Err(e) => return Err(e),
         };
         // Pure functions always return deterministic confidence
@@ -1305,7 +1348,7 @@ impl TaskExecutor {
         // stage boundary so give values are captured correctly.
         let result = match self.exec_stmts(&stage_decl.body, &mut env).await {
             Ok(val) => val,
-            Err(RuntimeError::GiveSignal(val)) => val,
+            Err(RuntimeError::GiveSignal(val, ..)) => val,
             Err(e) => return Err(e),
         };
         let give_value = match &result.value {

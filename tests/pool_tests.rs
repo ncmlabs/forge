@@ -65,7 +65,10 @@ fn reason_task(name: &str) -> Spanned<TopLevel> {
                 ]))))),
             )),
             // give result
-            spanned(Stmt::Give(spanned(Expr::Ident("result".to_string())), None)),
+            spanned(Stmt::Give(
+                spanned(Expr::Ident("result".to_string())),
+                vec![],
+            )),
         ])),
         if_fails: None,
     }))

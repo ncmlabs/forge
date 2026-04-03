@@ -396,6 +396,9 @@ pub enum TypeName {
     Conversation,
     Profile,
     SearchResults,
+    Request,
+    Response,
+    Headers,
     Custom(String),
     /// Array type: `Text[9]` = Array(Text, Some(9)), `Player[]` = Array(Custom("Player"), None)
     Array(Box<TypeName>, Option<usize>),
@@ -507,8 +510,8 @@ pub enum UnaryOp {
 pub enum Stmt {
     /// `name = expr`
     Bind(Spanned<String>, Spanned<Expr>),
-    /// `give expr` with optional `with` clause
-    Give(Spanned<Expr>, Option<Spanned<Expr>>),
+    /// `give expr` with optional `with key: value` metadata
+    Give(Spanned<Expr>, Vec<Spanned<GiveMeta>>),
     /// `say expr`
     Say(Spanned<Expr>),
     /// `when`/`else` block (confidence-only branching)
@@ -600,6 +603,15 @@ pub struct ForLoop {
     pub binding: Spanned<String>,
     pub iterable: Spanned<Expr>,
     pub body: Vec<Spanned<Stmt>>,
+}
+
+// ── Give metadata ────────────────────────────────────────────
+
+/// Key-value metadata in `give expr with key: value, ...`
+#[derive(Debug, Clone)]
+pub struct GiveMeta {
+    pub key: Spanned<String>,
+    pub value: Spanned<Expr>,
 }
 
 // ── Confidence predicates ─────────────────────────────────────

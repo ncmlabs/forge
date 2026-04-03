@@ -164,3 +164,150 @@ async fn multiple_endpoints_registered() {
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text().await.unwrap(), "ok");
 }
+
+// ── Issue #44: Request injection and response metadata ──────────
+
+const REQUEST_ECHO_SERVER: &str = r#"#! boundary: server
+
+endpoint echo() -> Text
+  give request.method
+"#;
+
+#[tokio::test]
+async fn request_method_injected_get() {
+    let base = spawn_server(REQUEST_ECHO_SERVER).await;
+    let resp = reqwest::get(format!("{base}/echo"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "GET");
+}
+
+#[tokio::test]
+async fn request_method_injected_post() {
+    let base = spawn_server(REQUEST_ECHO_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/echo"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "POST");
+}
+
+const REQUEST_PATH_SERVER: &str = r#"#! boundary: server
+
+endpoint info() -> Text
+  give request.path
+"#;
+
+#[tokio::test]
+async fn request_path_injected() {
+    let base = spawn_server(REQUEST_PATH_SERVER).await;
+    let resp = reqwest::get(format!("{base}/info"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "/info");
+}
+
+const REQUEST_BODY_SERVER: &str = r#"#! boundary: server
+
+endpoint body_echo() -> Text
+  give request.body
+"#;
+
+#[tokio::test]
+async fn request_body_injected_post() {
+    let base = spawn_server(REQUEST_BODY_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/body_echo"))
+        .json(&serde_json::json!({"key": "value"}))
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("key"));
+    assert!(body.contains("value"));
+}
+
+const STATUS_SERVER: &str = r#"#! boundary: server
+
+endpoint not_found() -> Text
+  give "gone" with status: 404
+"#;
+
+#[tokio::test]
+async fn give_with_status_code() {
+    let base = spawn_server(STATUS_SERVER).await;
+    let resp = reqwest::get(format!("{base}/not_found"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 404);
+    assert_eq!(resp.text().await.unwrap(), "gone");
+}
+
+const CONTENT_TYPE_SERVER: &str = r#"#! boundary: server
+
+endpoint page() -> Text
+  give "<h1>Hi</h1>" with content_type: "text/html"
+"#;
+
+#[tokio::test]
+async fn give_with_content_type() {
+    let base = spawn_server(CONTENT_TYPE_SERVER).await;
+    let resp = reqwest::get(format!("{base}/page"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "text/html");
+    assert_eq!(resp.text().await.unwrap(), "<h1>Hi</h1>");
+}
+
+const MULTI_META_SERVER: &str = r#"#! boundary: server
+
+endpoint created() -> Text
+  give "done" with status: 201, content_type: "application/json"
+"#;
+
+#[tokio::test]
+async fn give_with_status_and_content_type() {
+    let base = spawn_server(MULTI_META_SERVER).await;
+    let resp = reqwest::get(format!("{base}/created"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 201);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "application/json");
+    assert_eq!(resp.text().await.unwrap(), "done");
+}
+
+const DEFAULT_STATUS_SERVER: &str = r#"#! boundary: server
+
+endpoint ok_endpoint() -> Text
+  give "all good"
+"#;
+
+#[tokio::test]
+async fn default_status_is_200() {
+    let base = spawn_server(DEFAULT_STATUS_SERVER).await;
+    let resp = reqwest::get(format!("{base}/ok_endpoint"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+}

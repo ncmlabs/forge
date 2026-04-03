@@ -99,7 +99,11 @@ fn default_for_type(ty: &TypeName) -> ConfidentValue {
         TypeName::Number => Value::Number(0.0),
         TypeName::Bool => Value::Bool(false),
         TypeName::Conversation => Value::List(vec![]),
-        TypeName::Profile | TypeName::Custom(_) => Value::Record(HashMap::new()),
+        TypeName::Profile
+        | TypeName::Request
+        | TypeName::Response
+        | TypeName::Headers
+        | TypeName::Custom(_) => Value::Record(HashMap::new()),
         TypeName::Results | TypeName::SearchResults => Value::List(vec![]),
         TypeName::Failure => Value::Text(String::new()),
         TypeName::Array(inner, size) => {
