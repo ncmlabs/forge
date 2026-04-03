@@ -1,0 +1,9 @@
+{
+  "name": "valid_import_decl",
+  "category": "parser",
+  "description": "Import declaration with knowledge layer parses successfully",
+  "input": "import knowledge from \"expert.forgepkg.json\" as expert_k\n\nagent assistant\n  knowledge store: \".forge-knowledge/mine\"\n    import: expert_k\n\n  on query(q: Text)\n    prior = recall \"{q}\"\n    when prior.sure -> give prior\n    else -> escalate to human\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}
