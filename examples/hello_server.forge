@@ -1,0 +1,11 @@
+#! boundary: server
+
+task greet
+  needs name: Text
+  gives Text
+  do
+    give "Hello, {name}!"
+
+endpoint hello(name: Text) -> Text
+  result = greet(name)
+  give result

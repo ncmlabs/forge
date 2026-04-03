@@ -68,6 +68,17 @@ enum Command {
         /// Path to the .forge source file
         file: PathBuf,
     },
+    /// Start an HTTP server for endpoint declarations
+    Serve {
+        /// Path to a .forge file containing endpoint declarations
+        file: PathBuf,
+        /// Host to bind to (overrides config)
+        #[arg(long)]
+        host: Option<String>,
+        /// Port to bind to (overrides config)
+        #[arg(long)]
+        port: Option<u16>,
+    },
     /// Generate skeleton FORGE code from a plain-text system description
     Fleet {
         /// Plain-text system description (e.g., "a chat system with moderator and logger")
@@ -154,6 +165,9 @@ async fn main() -> anyhow::Result<()> {
             let estimate = forge::cost_estimator::estimate(&program, &config);
             print!("{}", estimate);
         }
+        Command::Serve { file, host, port } => {
+            serve_program(&file, host, port).await?;
+        }
         Command::Fleet { spec, output } => {
             let result = forge::fleet::generate(&spec)?;
             match output {
@@ -236,6 +250,63 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn serve_program(
+    file: &PathBuf,
+    cli_host: Option<String>,
+    cli_port: Option<u16>,
+) -> anyhow::Result<()> {
+    let source = read_source(file)?;
+    let program = parse_or_exit(&source, file);
+    let fname = file.display().to_string();
+
+    // Validate before serving
+    let mut diagnostics = Vec::new();
+
+    let ctx = forge::resolver::CheckContext::new(&fname);
+    if let Err(errors) = ctx.check(&program) {
+        let registry = forge::resolver::CapabilityRegistry::builtin();
+        diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+    }
+
+    diagnostics.extend(forge::checker::check_all(&program, &fname));
+
+    let boundary_refs = vec![(&program, fname.as_str())];
+    diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
+
+    if !diagnostics.is_empty() {
+        forge::diagnostic::render_diagnostics(&source, &diagnostics);
+        std::process::exit(1);
+    }
+
+    let config = forge::config::ForgeConfig::load_or_default();
+
+    let tracer = if std::env::var("FORGE_TRACE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        Some(forge::tracer::Tracer::new())
+    } else {
+        None
+    };
+
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+
+    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer);
+
+    let mut server =
+        forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+
+    if let Some(host) = cli_host {
+        server = server.with_host(host);
+    }
+    if let Some(port) = cli_port {
+        server = server.with_port(port);
+    }
+
+    server.run().await
 }
 
 async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {

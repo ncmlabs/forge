@@ -289,6 +289,30 @@ impl Tracer {
         );
     }
 
+    // ── HTTP server tracing (issue #43) ─────────────────────────────────────
+
+    pub fn http_request(&self, endpoint: &str, method: &str, path: &str) {
+        self.emit(
+            "http_request",
+            serde_json::json!({
+                "endpoint": endpoint,
+                "method": method,
+                "path": path,
+            }),
+        );
+    }
+
+    pub fn http_response(&self, endpoint: &str, status: u16, duration_ms: u64) {
+        self.emit(
+            "http_response",
+            serde_json::json!({
+                "endpoint": endpoint,
+                "status": status,
+                "duration_ms": duration_ms,
+            }),
+        );
+    }
+
     pub fn ward_action(
         &self,
         warden: &str,
