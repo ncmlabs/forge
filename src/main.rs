@@ -56,7 +56,10 @@ enum Command {
     /// Execute a .forge program
     Run {
         /// Path to the .forge source file
-        file: PathBuf,
+        file: Option<PathBuf>,
+        /// Path to a forge.project.toml manifest for multi-file execution
+        #[arg(long, conflicts_with = "file")]
+        manifest: Option<PathBuf>,
     },
     /// Execute with full JSON trace output to stderr
     Trace {
@@ -123,6 +126,27 @@ enum Command {
         /// Arguments for the event handler (positional, matching handler params)
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
+    },
+    /// Build a standalone binary from a .forge project
+    Build {
+        /// Path to a .forge file or directory containing forge.project.toml
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Output binary name
+        #[arg(long, short)]
+        output: Option<String>,
+        /// Path to forge.project.toml (overrides auto-detection)
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Build with optimizations
+        #[arg(long)]
+        release: bool,
+        /// Embed a forge.config.toml as default config
+        #[arg(long)]
+        embed_config: Option<PathBuf>,
+        /// Validate without compiling
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Generate skeleton FORGE code from a plain-text system description
     Fleet {
@@ -194,8 +218,14 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
-        Command::Run { file } => {
-            run_program(&file, false).await?;
+        Command::Run { file, manifest } => {
+            if let Some(manifest_path) = manifest {
+                run_manifest(&manifest_path, false).await?;
+            } else if let Some(file) = file {
+                run_program(&file, false).await?;
+            } else {
+                anyhow::bail!("either a .forge file or --manifest is required");
+            }
         }
         Command::Trace { file } => {
             run_program(&file, true).await?;
@@ -362,6 +392,24 @@ async fn main() -> anyhow::Result<()> {
         Command::Send { file, event, args } => {
             send_to_agent(&file, &event, args).await?;
         }
+        Command::Build {
+            path,
+            output,
+            manifest,
+            release,
+            embed_config,
+            dry_run,
+        } => {
+            build_program(
+                &path,
+                output.as_deref(),
+                manifest.as_deref(),
+                release,
+                embed_config,
+                dry_run,
+            )
+            .await?;
+        }
         Command::Fleet { spec, output } => {
             let result = forge::fleet::generate(&spec)?;
             match output {
@@ -441,6 +489,181 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
             eprintln!("runtime error: {}", e);
             std::process::exit(1);
         }
+    }
+
+    Ok(())
+}
+
+async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
+    let manifest = forge::manifest::ProjectManifest::load(manifest_path)?;
+    let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let source_paths = manifest.resolve_sources(base_dir)?;
+
+    // Parse all source files
+    let mut source_files = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for path in &source_paths {
+        let source = read_source(&path.to_path_buf())?;
+        let fname = path.display().to_string();
+        let program = parse_or_exit(&source, path);
+
+        // Per-file validation
+        let ctx = forge::resolver::CheckContext::new(&fname);
+        if let Err(errors) = ctx.check(&program) {
+            let registry = forge::resolver::CapabilityRegistry::builtin();
+            diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+        }
+        diagnostics.extend(forge::checker::check_all(&program, &fname));
+
+        source_files.push(forge::compose::SourceFile {
+            path: fname,
+            source,
+            program,
+        });
+    }
+
+    // Cross-file boundary check
+    let boundary_refs: Vec<_> = source_files
+        .iter()
+        .map(|sf| (&sf.program, sf.path.as_str()))
+        .collect();
+    diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
+
+    if !diagnostics.is_empty() {
+        for diag in &diagnostics {
+            if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
+                diag.render(&sf.source);
+            }
+        }
+        std::process::exit(1);
+    }
+
+    // Merge and execute
+    let composed = forge::compose::merge_programs(&source_files).map_err(|errs| {
+        anyhow::anyhow!(
+            "{}",
+            errs.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    })?;
+
+    let config = forge::config::ForgeConfig::load_or_default();
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+
+    let tracer = if trace
+        || std::env::var("FORGE_TRACE")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    {
+        Some(forge::tracer::Tracer::new())
+    } else {
+        None
+    };
+
+    let executor =
+        forge::runtime::executor::TaskExecutor::new(composed.program, Arc::new(registry), tracer);
+
+    match executor.run().await {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("runtime error: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn build_program(
+    path: &Path,
+    output: Option<&str>,
+    manifest_path: Option<&Path>,
+    release: bool,
+    embed_config: Option<PathBuf>,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    // Resolve manifest: explicit path, directory with forge.project.toml, or single file
+    let (mut manifest, base_dir) = if let Some(mp) = manifest_path {
+        let manifest = forge::manifest::ProjectManifest::load(mp)?;
+        let base = mp.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+        (manifest, base)
+    } else if path.is_file() && path.extension().map(|e| e == "forge").unwrap_or(false) {
+        // Single-file shortcut — use file stem for crate name, not the output path
+        let manifest = forge::manifest::ProjectManifest::from_single_file(path, None);
+        let base = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        (manifest, base)
+    } else if path.is_dir() {
+        let manifest_file = path.join("forge.project.toml");
+        if !manifest_file.exists() {
+            anyhow::bail!("no forge.project.toml found in {}", path.display());
+        }
+        let manifest = forge::manifest::ProjectManifest::load(&manifest_file)?;
+        (manifest, path.to_path_buf())
+    } else {
+        anyhow::bail!(
+            "expected a .forge file, directory with forge.project.toml, or --manifest flag"
+        );
+    };
+
+    // Resolve output: if -o is a path with dir, split into dir + name
+    let (output_dir, output_name_override) = if let Some(out) = output {
+        let out_path = Path::new(out);
+        if let Some(parent) = out_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                (
+                    Some(parent.to_path_buf()),
+                    out_path
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string()),
+                )
+            } else {
+                (None, Some(out.to_string()))
+            }
+        } else {
+            (None, Some(out.to_string()))
+        }
+    } else {
+        (None, None)
+    };
+
+    // Override the manifest output name if -o was given
+    if let Some(name) = &output_name_override {
+        if let Some(ref mut build) = manifest.build {
+            build.output = Some(name.clone());
+        } else {
+            manifest.build = Some(forge::manifest::BuildConfig {
+                entry: None,
+                output: Some(name.clone()),
+                sources: None,
+            });
+        }
+    }
+
+    let output_display = manifest.output_name();
+    eprintln!("building {} ...", output_display);
+
+    let pipeline = forge::build::BuildPipeline::new(manifest, base_dir)
+        .dry_run(dry_run)
+        .release(release)
+        .embed_config(embed_config)
+        .output_dir(output_dir);
+
+    let result = pipeline.build()?;
+
+    if dry_run {
+        eprintln!(
+            "dry run complete — validation passed ({:?})",
+            result.program_kind
+        );
+    } else {
+        eprintln!("done: {}", result.binary_path.display());
     }
 
     Ok(())

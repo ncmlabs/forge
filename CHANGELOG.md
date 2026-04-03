@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `forge build` command: package FORGE programs as standalone CLI binaries with embedded sources and runtime (#74)
+- Multi-file composition: `forge.project.toml` manifest, `merge_programs()` engine, cross-file symbol dedup, single fn main/system enforcement
+- `forge run --manifest` for multi-file execution without building a binary
+- Generated agent binaries with clap subcommands per handler, interactive REPL, and `--help`
+- Config embedding: `--embed-config` bakes a `forge.config.toml` into built binaries with runtime override support
+- `--dry-run` mode for build validation without compilation
 - `forge-sensei`: FORGE language learning agent written in FORGE, with knowledge store, mastery progression (novice→expert), conformance-based assessment, and Claude Code integration via hook + skill
 - `forge send` CLI command for non-interactive agent message dispatch
 - Agent portability: `exportable` modifier, `import ... from ... as` declaration, `.forgepkg.json` package format with SHA-256 integrity, `forge export`/`import`/`inspect` CLI commands (#72)
