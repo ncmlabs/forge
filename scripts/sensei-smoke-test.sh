@@ -4,6 +4,11 @@ set -euo pipefail
 
 FORGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SENSEI_BIN="$FORGE_ROOT/bin/forge-sensei"
+
+# Auto-detect mock mode
+if [ "${FORGE_MOCK:-}" = "1" ] && [ -z "${FORGE_CONFIG:-}" ]; then
+  export FORGE_CONFIG="$FORGE_ROOT/config/mock.config.toml"
+fi
 PASSED=0
 TOTAL=0
 
