@@ -166,6 +166,22 @@ exportable agent forge_sensei
     emit LearnedInsight(category: "interactions", content: lesson, source: "session", confidence: 0.8)
     say "Learned from session."
 
+  # ── Deep Dive: spawn specialist for focused domain learning ──
+
+  on deep_dive(topic: Text)
+    memory.interaction_count = memory.interaction_count + 1
+    existing = find "specialist_{topic}"
+    if existing
+      say "Specialist for [{topic}] already active."
+      give existing
+    child = spawn specialist as "specialist_{topic}"
+      with knowledge where category == topic
+      with confidence_cap: 0.8
+      with memory topic: topic
+    say "Spawned specialist for [{topic}]."
+    emit LearnedInsight(category: topic, content: "Specialist spawned for deep dive", source: "deep_dive", confidence: 0.9)
+    give child
+
   # ── Assess: self-evaluation against conformance knowledge ───
 
   on assess_detailed(test_input: Text, expected: Text)
@@ -196,10 +212,39 @@ exportable agent forge_sensei
     say "forge-sensei is stuck. Escalating for human guidance."
     escalate to human
 
+# ── Specialist Agent (spawned by sensei for deep dives) ──────
+
+agent specialist
+  memory
+    topic: Text
+    query_count: Number
+  knowledge store: ".forge-knowledge/specialist"
+    max_entries: 10000
+    retention: 180d
+  subscribe LearnedInsight where category == memory.topic
+
+  on start
+    say "Specialist initialized for topic: {memory.topic}"
+
+  on LearnedInsight(category: Text, content: Text, source: Text, confidence: Number)
+    learn "{content}" category: category
+    say "Specialist [{memory.topic}] absorbed insight from {source}"
+
+  on query(question: Text)
+    memory.query_count = memory.query_count + 1
+    prior = recall "{memory.topic} {question}"
+    answer = answer_forge_question(question, prior)
+    learn from interaction(question, answer, 0.6) category: "{memory.topic}"
+    give answer
+
+  if stuck for 3 turns
+    say "Specialist stuck. Escalating."
+    escalate to human
+
 # ── Warden ────────────────────────────────────────────────────
 
 warden sensei_warden
-  manages [forge_sensei]
+  manages [forge_sensei, specialist]
   on stuck: nudge, self
     after 3: escalate
   on hallucination: restart, self
