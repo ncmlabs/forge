@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Rewrite forge-sensei as flagship FORGE application — fix 7 correctness bugs (recall dispatch, state transitions, degenerate confidence, dead events, timer no-op, fallback lie, specialist lifecycle), add 8 FORGE constructs (type records, flows, contract, match, requires, pipe, try/or, for loops), objective assessment via predict_outcome + check_prediction
+- Harden sensei scripts: build-sensei.sh (skip-if-unchanged, smoke test), pretrain-sensei.sh (error capture, jq, idempotency, --force/--dry-run), consult-sensei.sh (jq, content caching, thresholds), assess.sh (per-category scoring, trend tracking, --json)
+
+### Added
+- Exhaustive forge-sensei test suite: parser, checker, and runtime conformance tests + Rust integration tests
+- `scripts/sensei-smoke-test.sh` for end-to-end integration testing
+- `scripts/sensei-cache.sh` for knowledge store and cache management (clean/reset/stats)
+
 ### Added
 - `deep_dive(topic)` handler on forge-sensei — spawns specialist apprentice agents with filtered knowledge by category, find-before-spawn dedup, `LearnedInsight` subscription for ongoing learning, confidence cap on derived knowledge (#88)
 - `system` declaration runtime semantics — system blocks now serve as the orchestration root, creating shared event bus and instance registry, spawning initial agents from the use-block, wiring event routing from compose expressions (`a >> b`), integrating with wardens for supervised agents, and enforcing resource limits via `[system]` config section (#87)
