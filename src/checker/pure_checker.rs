@@ -207,6 +207,14 @@ fn check_pure_stmt(
                 span_end: stmt.span.end,
             });
         }
+        Stmt::Spawn(..) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "spawn",
+                span_start: stmt.span.start,
+                span_end: stmt.span.end,
+            });
+        }
         _ => {}
     }
 }

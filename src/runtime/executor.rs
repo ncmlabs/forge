@@ -712,6 +712,13 @@ impl TaskExecutor {
                         return Err(RuntimeError::Unsupported("learn outside agent".into()));
                     }
                 }
+
+                Stmt::Spawn(spawn) => {
+                    // Spawn execution is implemented in Step 6
+                    return Err(RuntimeError::Unsupported(
+                        "spawn statement not yet implemented at runtime".into(),
+                    ));
+                }
             }
             Ok(())
         })

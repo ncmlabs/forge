@@ -4,8 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BoundaryKind, Expr, FieldDef, LearnSource, Program, Spanned, Stmt, TaskBody, TemplatePart,
-    TopLevel, TypeName,
+    BoundaryKind, Expr, FieldDef, LearnSource, Program, SpawnOption, Spanned, Stmt, TaskBody,
+    TemplatePart, TopLevel, TypeName,
 };
 use crate::diagnostic::Diagnostic;
 
@@ -393,6 +393,19 @@ fn check_refs_in_stmt(
             }
             if let Some(cat_expr) = category {
                 check_refs_in_expr(cat_expr, boundary, registry, file, diagnostics);
+            }
+        }
+        Stmt::Spawn(s) => {
+            if let Some(ref alias) = s.alias {
+                check_refs_in_expr(alias, boundary, registry, file, diagnostics);
+            }
+            for opt in &s.options {
+                match &opt.node {
+                    SpawnOption::ConfidenceCap(expr) | SpawnOption::MemoryInit(_, expr) => {
+                        check_refs_in_expr(expr, boundary, registry, file, diagnostics);
+                    }
+                    SpawnOption::KnowledgeFilter(_) => {}
+                }
             }
         }
         // No expressions to walk

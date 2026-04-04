@@ -593,6 +593,8 @@ pub enum Stmt {
     IfElse(Box<IfElseBlock>),
     /// `for binding in iterable`
     For(Box<ForLoop>),
+    /// `[binding =] spawn template [as "alias"]` with optional knowledge/memory transfer
+    Spawn(Box<SpawnStmt>),
 }
 
 #[derive(Debug, Clone)]
@@ -650,6 +652,32 @@ pub struct ForLoop {
     pub binding: Spanned<String>,
     pub iterable: Spanned<Expr>,
     pub body: Vec<Spanned<Stmt>>,
+}
+
+// ── Spawn (runtime agent creation, issue #83) ───────────────
+
+/// `spawn agent_name as "alias"` with optional knowledge/memory transfer options.
+#[derive(Debug, Clone)]
+pub struct SpawnStmt {
+    /// Optional variable binding for the spawned instance UUID.
+    pub binding: Option<Spanned<String>>,
+    /// Name of the agent declaration to use as template.
+    pub template: Spanned<String>,
+    /// Optional alias for the spawned instance (template string).
+    pub alias: Option<Spanned<Expr>>,
+    /// Spawn options: knowledge filter, confidence cap, memory init.
+    pub options: Vec<Spanned<SpawnOption>>,
+}
+
+/// Options for the spawn statement.
+#[derive(Debug, Clone)]
+pub enum SpawnOption {
+    /// `with knowledge where category == "X"`
+    KnowledgeFilter(Spanned<String>),
+    /// `with confidence_cap: 0.8`
+    ConfidenceCap(Spanned<Expr>),
+    /// `with memory field: value`
+    MemoryInit(Spanned<String>, Spanned<Expr>),
 }
 
 // ── Give metadata ────────────────────────────────────────────

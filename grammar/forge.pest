@@ -54,7 +54,7 @@ keyword = @{
     | "pure" | "event" | "states" | "timer" | "endpoint" | "type"
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
-    | "match" | "recall" | "learn"
+    | "match" | "recall" | "learn" | "spawn"
     | "exportable" | "import" | "from" | "as" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
@@ -332,6 +332,7 @@ statement = {
   | forward_stmt
   | escalate_stmt
   | memory_update_stmt
+  | spawn_stmt
   | bind_stmt
   | expr_stmt
 }
@@ -357,6 +358,25 @@ learn_from_interaction = { "from" ~ _s ~ "interaction" ~ _s_opt ~ "(" ~ _s_opt ~
 learn_from_document    = { "from" ~ _s ~ "document" ~ _s_opt ~ "(" ~ _s_opt ~ string_arg ~ _s_opt ~ ")" }
 learn_direct           = { string_arg }
 category_clause        = { _s ~ "category" ~ _s_opt ~ ":" ~ _s_opt ~ string_arg }
+
+// --- spawn statement (create agent instances at runtime, issue #83) ---
+spawn_stmt = {
+    (ident ~ _s_opt ~ "=" ~ _s_opt)? ~
+    "spawn" ~ _s ~ ident ~ (_s ~ "as" ~ _s ~ string_arg)? ~
+    (nl ~ i3 ~ spawn_option)*
+}
+spawn_stmt_i3 = {
+    (ident ~ _s_opt ~ "=" ~ _s_opt)? ~
+    "spawn" ~ _s ~ ident ~ (_s ~ "as" ~ _s ~ string_arg)? ~
+    (nl ~ i4 ~ spawn_option)*
+}
+spawn_option = {
+    spawn_knowledge_option | spawn_confidence_cap_option | spawn_memory_option
+}
+spawn_knowledge_option      = { "with" ~ _s ~ "knowledge" ~ _s ~ "where" ~ _s ~ spawn_knowledge_pred }
+spawn_knowledge_pred        = { "category" ~ _s_opt ~ "==" ~ _s_opt ~ string_arg }
+spawn_confidence_cap_option = { "with" ~ _s ~ "confidence_cap" ~ _s_opt ~ ":" ~ _s_opt ~ expr }
+spawn_memory_option         = { "with" ~ _s ~ "memory" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 
 // --- when block (confidence-only branching) ---
 when_block = {
@@ -434,6 +454,7 @@ statement_i3 = {
   | forward_stmt
   | escalate_stmt
   | memory_update_stmt
+  | spawn_stmt_i3
   | bind_stmt
   | expr_stmt
 }
