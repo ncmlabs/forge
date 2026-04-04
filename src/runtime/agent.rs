@@ -498,7 +498,8 @@ impl AgentProcess {
                 receivers.push((sub.node.filter.clone(), rx));
             }
         }
-        self.event_bus = Some(bus);
+        self.event_bus = Some(bus.clone());
+        self.executor = self.executor.with_event_bus(bus);
         self.event_receivers = receivers;
         self
     }
