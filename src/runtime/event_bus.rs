@@ -34,6 +34,10 @@ pub struct Subscriber {
 /// Central event bus for inter-agent communication.
 pub struct EventBus {
     subscribers: HashMap<String, Vec<Subscriber>>,
+    /// Routing table for system wiring: source_agent → list of target agents.
+    /// When an event is published by a source agent, it is also forwarded
+    /// to all target agents in the routing table.
+    routes: HashMap<String, Vec<String>>,
     tracer: Option<Tracer>,
     channel_capacity: usize,
 }
@@ -48,6 +52,7 @@ impl EventBus {
     pub fn new(tracer: Option<Tracer>) -> Self {
         Self {
             subscribers: HashMap::new(),
+            routes: HashMap::new(),
             tracer,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
         }
@@ -76,7 +81,17 @@ impl EventBus {
         rx
     }
 
+    /// Add a routing rule: events from `source_agent` are forwarded to `target_agent`.
+    /// Used by SystemRuntime to implement wiring (e.g., `a >> b`).
+    pub fn add_route(&mut self, source_agent: &str, target_agent: &str) {
+        self.routes
+            .entry(source_agent.to_string())
+            .or_default()
+            .push(target_agent.to_string());
+    }
+
     /// Publish an event to all subscribers matching the event name.
+    /// Also applies routing rules to forward events to downstream agents.
     /// Filter evaluation is agent-side — the bus delivers to all name-matched subscribers.
     /// Returns the number of successful deliveries.
     pub fn publish(&self, payload: &EventPayload) -> usize {
@@ -113,6 +128,13 @@ impl EventBus {
                         );
                     }
                 }
+            }
+        }
+
+        // Apply routing rules: forward to downstream agents
+        if let Some(targets) = self.routes.get(&payload.source_agent) {
+            for target in targets {
+                delivered += if self.forward(payload, target) { 1 } else { 0 };
             }
         }
 

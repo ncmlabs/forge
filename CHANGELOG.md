@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `system` declaration runtime semantics — system blocks now serve as the orchestration root, creating shared event bus and instance registry, spawning initial agents from the use-block, wiring event routing from compose expressions (`a >> b`), integrating with wardens for supervised agents, and enforcing resource limits via `[system]` config section (#87)
 - `retire` statement for graceful agent lifecycle termination — `retire` (self), `retire "alias"` (by alias), with optional `with knowledge export: "path.json"` to preserve knowledge as ForgePackage before exit; unregisters from instance registry (Principle VIII — Accountability) (#86)
 - Dynamic warden `adopt()`/`release()` methods for runtime supervision management of spawned agents — `adopt` adds an agent to the manages list, `release` removes and clears retry state (#86)
 - `find` expression for runtime agent instance discovery — `find "alias"` returns a single Record, `find all template` returns an Array, `find all template where lifecycle == state` filters by lifecycle state; queries `InstanceRegistry`, forbidden in `pure` functions (#84)

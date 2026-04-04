@@ -8,6 +8,7 @@ pub struct ForgeConfig {
     pub llm: LLMConfig,
     pub providers: HashMap<String, ProviderConfig>,
     pub server: Option<ServerConfig>,
+    pub system: Option<SystemConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -15,6 +16,12 @@ pub struct ServerConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub cors_origins: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SystemConfig {
+    pub max_agents: Option<usize>,
+    pub max_memory_mb: Option<usize>,
 }
 
 impl ServerConfig {
@@ -165,6 +172,17 @@ impl ForgeConfig {
             }
         }
 
+        // FORGE_MAX_AGENTS override
+        if let Ok(val) = std::env::var("FORGE_MAX_AGENTS") {
+            if let Ok(n) = val.parse::<usize>() {
+                let system = config.system.get_or_insert(SystemConfig {
+                    max_agents: None,
+                    max_memory_mb: None,
+                });
+                system.max_agents = Some(n);
+            }
+        }
+
         // FORGE_BUDGET override
         if let Ok(budget) = std::env::var("FORGE_BUDGET") {
             if let Ok(val) = budget.parse::<f32>() {
@@ -240,6 +258,7 @@ impl ForgeConfig {
             },
             providers,
             server: None,
+            system: None,
         }
     }
 }
@@ -290,6 +309,7 @@ mod tests {
             },
             providers: HashMap::new(),
             server: None,
+            system: None,
         };
         assert!(matches!(
             config.validate(),
@@ -334,6 +354,7 @@ mod tests {
             },
             providers,
             server: None,
+            system: None,
         };
         assert!(matches!(
             config.validate(),

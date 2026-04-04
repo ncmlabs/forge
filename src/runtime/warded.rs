@@ -123,6 +123,69 @@ impl WardedRuntime {
         }
     }
 
+    /// Build a WardedRuntime that shares an existing event bus and instance registry,
+    /// used by SystemRuntime to coordinate across multiple wardens.
+    pub fn with_shared_infrastructure(
+        warden_decl: WardenDecl,
+        program: &Program,
+        registry: Arc<ProviderRegistry>,
+        tracer: Option<Tracer>,
+        event_bus: SharedEventBus,
+        instance_registry: SharedInstanceRegistry,
+    ) -> Self {
+        // Collect agent and states declarations from the program
+        let mut agent_decls: HashMap<String, AgentDecl> = HashMap::new();
+        let mut states_decls: HashMap<String, StatesDecl> = HashMap::new();
+
+        for item in &program.items {
+            match &item.node {
+                TopLevel::Agent(a) => {
+                    agent_decls.insert(a.name.node.clone(), a.as_ref().clone());
+                }
+                TopLevel::States(s) => {
+                    states_decls.insert(s.name.node.clone(), s.clone());
+                }
+                _ => {}
+            }
+        }
+
+        // Build blueprints for each managed agent
+        let mut blueprints = HashMap::new();
+        for managed_name in &warden_decl.manages {
+            if let Some(agent_decl) = agent_decls.get(&managed_name.node) {
+                let states = agent_decl
+                    .lifecycle
+                    .as_ref()
+                    .and_then(|lc| states_decls.get(&lc.node))
+                    .cloned();
+
+                blueprints.insert(
+                    managed_name.node.clone(),
+                    AgentBlueprint {
+                        decl: agent_decl.clone(),
+                        states,
+                        program: program.clone(),
+                        registry: registry.clone(),
+                        tracer: tracer.clone(),
+                    },
+                );
+            }
+        }
+
+        let (signal_tx, signal_rx) = mpsc::channel::<AgentSignal>(64);
+
+        Self {
+            warden: Warden::new(warden_decl, tracer),
+            agents: HashMap::new(),
+            blueprints,
+            event_bus,
+            instance_registry,
+            signal_tx,
+            signal_rx,
+            start: Instant::now(),
+        }
+    }
+
     /// Get a reference to the shared event bus.
     pub fn event_bus(&self) -> &SharedEventBus {
         &self.event_bus
