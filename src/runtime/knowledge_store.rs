@@ -108,6 +108,26 @@ impl KnowledgeStore {
     }
 
     pub fn learn_from_interaction(&mut self, question: &str, answer: &str, confidence: f32) {
+        self.learn_from_interaction_impl(question, answer, confidence, None);
+    }
+
+    pub fn learn_from_interaction_categorized(
+        &mut self,
+        question: &str,
+        answer: &str,
+        confidence: f32,
+        category: &str,
+    ) {
+        self.learn_from_interaction_impl(question, answer, confidence, Some(category.to_string()));
+    }
+
+    fn learn_from_interaction_impl(
+        &mut self,
+        question: &str,
+        answer: &str,
+        confidence: f32,
+        category: Option<String>,
+    ) {
         let content = format!("Q: {question}\nA: {answer}");
         let entry = KnowledgeEntry {
             id: Uuid::new_v4().to_string(),
@@ -118,7 +138,7 @@ impl KnowledgeStore {
                 confidence,
             },
             confidence,
-            category: None,
+            category,
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             access_count: 0,
@@ -128,6 +148,22 @@ impl KnowledgeStore {
     }
 
     pub fn learn_from_document(&mut self, path: &str) -> Result<usize, String> {
+        self.learn_from_document_impl(path, None)
+    }
+
+    pub fn learn_from_document_categorized(
+        &mut self,
+        path: &str,
+        category: &str,
+    ) -> Result<usize, String> {
+        self.learn_from_document_impl(path, Some(category.to_string()))
+    }
+
+    fn learn_from_document_impl(
+        &mut self,
+        path: &str,
+        category: Option<String>,
+    ) -> Result<usize, String> {
         let content = fs::read_to_string(path)
             .map_err(|e| format!("failed to read document '{}': {}", path, e))?;
 
@@ -142,7 +178,7 @@ impl KnowledgeStore {
                     path: path.to_string(),
                 },
                 confidence: 1.0,
-                category: None,
+                category: category.clone(),
                 created_at: Utc::now(),
                 last_accessed: Utc::now(),
                 access_count: 0,

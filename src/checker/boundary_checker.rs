@@ -380,16 +380,21 @@ fn check_refs_in_stmt(
             }
             check_refs_in_expr(expr, boundary, registry, file, diagnostics);
         }
-        Stmt::Learn(source) => match &source.node {
-            LearnSource::Direct(expr) | LearnSource::FromDocument(expr) => {
-                check_refs_in_expr(expr, boundary, registry, file, diagnostics);
-            }
-            LearnSource::FromInteraction(args) => {
-                for arg in args {
-                    check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
+        Stmt::Learn(source, category) => {
+            match &source.node {
+                LearnSource::Direct(expr) | LearnSource::FromDocument(expr) => {
+                    check_refs_in_expr(expr, boundary, registry, file, diagnostics);
+                }
+                LearnSource::FromInteraction(args) => {
+                    for arg in args {
+                        check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
+                    }
                 }
             }
-        },
+            if let Some(cat_expr) = category {
+                check_refs_in_expr(cat_expr, boundary, registry, file, diagnostics);
+            }
+        }
         // No expressions to walk
         Stmt::TransitionTo(_)
         | Stmt::StartTimer { .. }

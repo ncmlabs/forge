@@ -943,7 +943,8 @@ fn build_forward_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
 
 fn build_learn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
     let span = to_span(&pair);
-    let child = pair.into_inner().next().unwrap();
+    let mut inner = pair.into_inner();
+    let child = inner.next().unwrap();
 
     let source = match child.as_rule() {
         Rule::learn_from_interaction => {
@@ -969,7 +970,18 @@ fn build_learn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
         }
     };
 
-    Ok(Spanned::new(Stmt::Learn(Spanned::new(source, span)), span))
+    // Parse optional category clause
+    let category = if let Some(cat_pair) = inner.next() {
+        let string_arg = cat_pair.into_inner().next().unwrap();
+        Some(build_string_arg(string_arg)?)
+    } else {
+        None
+    };
+
+    Ok(Spanned::new(
+        Stmt::Learn(Spanned::new(source, span), category),
+        span,
+    ))
 }
 
 // ── Control flow statements ──────────────────────────────────

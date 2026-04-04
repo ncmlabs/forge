@@ -199,7 +199,7 @@ fn check_pure_stmt(
                 check_pure_expr(fn_name, &arg.node.value, task_names, errors);
             }
         }
-        Stmt::Learn(_) => {
+        Stmt::Learn(..) => {
             errors.push(CheckError::PureUsesLlm {
                 name: fn_name.to_string(),
                 op: "learn",

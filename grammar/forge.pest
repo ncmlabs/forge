@@ -352,10 +352,11 @@ cancel_timer_stmt  = { "cancel" ~ _s ~ ident ~ (_s ~ "for" ~ _s ~ expr)? }
 reset_timer_stmt   = { "reset" ~ _s ~ ident }
 forward_stmt       = { "forward" ~ _s ~ expr ~ _s ~ "to" ~ _s ~ expr }
 
-learn_stmt         = { "learn" ~ _s ~ (learn_from_interaction | learn_from_document | learn_direct) }
+learn_stmt         = { "learn" ~ _s ~ (learn_from_interaction | learn_from_document | learn_direct) ~ category_clause? }
 learn_from_interaction = { "from" ~ _s ~ "interaction" ~ _s_opt ~ "(" ~ _s_opt ~ arg_list ~ _s_opt ~ ")" }
 learn_from_document    = { "from" ~ _s ~ "document" ~ _s_opt ~ "(" ~ _s_opt ~ string_arg ~ _s_opt ~ ")" }
 learn_direct           = { string_arg }
+category_clause        = { _s ~ "category" ~ _s_opt ~ ":" ~ _s_opt ~ string_arg }
 
 // --- when block (confidence-only branching) ---
 when_block = {

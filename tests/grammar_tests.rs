@@ -769,3 +769,47 @@ do
 ";
     ForgeParser::parse(Rule::do_block, src).unwrap();
 }
+
+// ============================================================
+// learn_stmt with optional category clause (#85)
+// ============================================================
+
+#[test]
+fn learn_direct_without_category() {
+    ForgeParser::parse(Rule::learn_stmt, r#"learn "some fact""#).unwrap();
+}
+
+#[test]
+fn learn_direct_with_category() {
+    ForgeParser::parse(
+        Rule::learn_stmt,
+        r#"learn "endpoints need server boundary" category: "boundary""#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn learn_from_interaction_with_category() {
+    ForgeParser::parse(
+        Rule::learn_stmt,
+        r#"learn from interaction(q, a, 0.9) category: "troubleshooting""#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn learn_from_document_with_category() {
+    ForgeParser::parse(
+        Rule::learn_stmt,
+        r#"learn from document("api.md") category: "docs""#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn learn_category_is_optional() {
+    // All three variants without category should still parse
+    ForgeParser::parse(Rule::learn_stmt, r#"learn "fact""#).unwrap();
+    ForgeParser::parse(Rule::learn_stmt, r#"learn from interaction(q, a, 0.5)"#).unwrap();
+    ForgeParser::parse(Rule::learn_stmt, r#"learn from document("f.md")"#).unwrap();
+}
