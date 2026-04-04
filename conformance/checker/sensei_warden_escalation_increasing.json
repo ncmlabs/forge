@@ -1,0 +1,10 @@
+{
+  "name": "sensei_warden_escalation_increasing",
+  "category": "checker",
+  "subcategory": "warden",
+  "description": "Warden with properly increasing escalation ladder compiles cleanly",
+  "input": "agent bot\n  on start\n    say \"ready\"\n\n  if stuck for 3 turns\n    escalate to human\n\nwarden supervisor\n  manages [bot]\n  on stuck: nudge, self\n    after 3: escalate\n  on crash: restart, self\n  max_retries 3 per 1h then escalate\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

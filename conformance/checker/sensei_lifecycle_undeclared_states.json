@@ -1,0 +1,11 @@
+{
+  "name": "sensei_lifecycle_undeclared_states",
+  "category": "checker",
+  "subcategory": "states",
+  "description": "Agent referencing undeclared lifecycle states block is rejected",
+  "input": "agent broken\n  lifecycle: BogusStates\n  on start\n    say \"hello\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["unknown lifecycle"]
+  }
+}
