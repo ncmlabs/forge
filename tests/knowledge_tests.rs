@@ -275,3 +275,52 @@ fn uncategorized_entries_excluded_from_category_export() {
     // All entries still exported with export_entries
     assert_eq!(store.export_entries().len(), 2);
 }
+
+// ── Categorized Interaction and Document Tests (#85) ────────────
+
+#[test]
+fn learn_from_interaction_with_category() {
+    let tmp = TempDir::new().unwrap();
+    let store_path = tmp.path().join("knowledge").to_string_lossy().to_string();
+
+    let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+    store.learn_from_interaction("What is FORGE?", "A language for agents", 0.9);
+    store.learn_from_interaction_categorized(
+        "How do boundaries work?",
+        "Server boundary",
+        0.85,
+        "BOUNDARY",
+    );
+
+    let boundary = store.export_by_category("BOUNDARY");
+    assert_eq!(boundary.len(), 1);
+    assert_eq!(boundary[0].category.as_deref(), Some("BOUNDARY"));
+    assert!(boundary[0].content.contains("boundaries"));
+
+    // Uncategorized interaction excluded from category export
+    assert_eq!(store.export_entries().len(), 2);
+}
+
+#[test]
+fn learn_from_document_with_category() {
+    let tmp = TempDir::new().unwrap();
+    let store_path = tmp.path().join("knowledge").to_string_lossy().to_string();
+    let doc_path = tmp.path().join("test.txt");
+    std::fs::write(
+        &doc_path,
+        "This is a test document for categorized learning.",
+    )
+    .unwrap();
+
+    let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+    let count = store
+        .learn_from_document_categorized(doc_path.to_str().unwrap(), "DOCS")
+        .unwrap();
+    assert!(count > 0);
+
+    let docs = store.export_by_category("DOCS");
+    assert_eq!(docs.len(), count);
+    assert!(docs.iter().all(|e| e.category.as_deref() == Some("DOCS")));
+}

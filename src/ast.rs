@@ -585,7 +585,8 @@ pub enum Stmt {
     /// `forward expr to expr`
     Forward(Spanned<Expr>, Spanned<Expr>),
     /// `learn "fact"` / `learn from interaction(...)` / `learn from document(...)`
-    Learn(Spanned<LearnSource>),
+    /// Optional second field: `category: "name"` expression.
+    Learn(Spanned<LearnSource>, Option<Spanned<Expr>>),
     /// `match expr` with pattern arms
     Match(Box<MatchBlock>),
     /// `if`/`else if`/`else` block

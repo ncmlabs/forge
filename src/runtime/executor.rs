@@ -628,7 +628,7 @@ impl TaskExecutor {
                         return Err(RuntimeError::Unsupported("escalate outside agent".into()));
                     }
                 }
-                Stmt::Learn(source) => {
+                Stmt::Learn(source, category_expr) => {
                     if let Some(ref ctx_arc) = self.agent_context {
                         // Check knowledge store exists (quick lock/unlock)
                         {
@@ -640,13 +640,25 @@ impl TaskExecutor {
                             }
                         }
 
+                        // Evaluate optional category expression
+                        let category = if let Some(cat_expr) = category_expr {
+                            let val = self.eval_expr(cat_expr, env).await?;
+                            Some(format!("{}", val.value))
+                        } else {
+                            None
+                        };
+
                         match &source.node {
                             LearnSource::Direct(expr) => {
                                 let val = self.eval_expr(expr, env).await?;
                                 let text = format!("{}", val.value);
                                 let mut ctx = ctx_arc.lock().unwrap();
                                 if let Some(ref mut ks) = ctx.knowledge_store {
-                                    ks.learn_direct(&text);
+                                    if let Some(ref cat) = category {
+                                        ks.learn_direct_categorized(&text, cat);
+                                    } else {
+                                        ks.learn_direct(&text);
+                                    }
                                 }
                             }
                             LearnSource::FromInteraction(args) => {
@@ -672,7 +684,13 @@ impl TaskExecutor {
                                     .unwrap_or(0.5);
                                 let mut ctx = ctx_arc.lock().unwrap();
                                 if let Some(ref mut ks) = ctx.knowledge_store {
-                                    ks.learn_from_interaction(&question, &answer, confidence);
+                                    if let Some(ref cat) = category {
+                                        ks.learn_from_interaction_categorized(
+                                            &question, &answer, confidence, cat,
+                                        );
+                                    } else {
+                                        ks.learn_from_interaction(&question, &answer, confidence);
+                                    }
                                 }
                             }
                             LearnSource::FromDocument(expr) => {
@@ -680,8 +698,13 @@ impl TaskExecutor {
                                 let path = format!("{}", val.value);
                                 let mut ctx = ctx_arc.lock().unwrap();
                                 if let Some(ref mut ks) = ctx.knowledge_store {
-                                    ks.learn_from_document(&path)
-                                        .map_err(RuntimeError::Unsupported)?;
+                                    if let Some(ref cat) = category {
+                                        ks.learn_from_document_categorized(&path, cat)
+                                            .map_err(RuntimeError::Unsupported)?;
+                                    } else {
+                                        ks.learn_from_document(&path)
+                                            .map_err(RuntimeError::Unsupported)?;
+                                    }
                                 }
                             }
                         }
