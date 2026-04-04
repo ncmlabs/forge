@@ -91,6 +91,10 @@ fn check_stmt(
                 }
             }
         }
+        // Check find expressions in bind statements
+        Stmt::Bind(_, expr) | Stmt::ExprStmt(expr) => {
+            check_find_in_expr(expr, agents, file, diagnostics);
+        }
         // Recurse into nested statement bodies
         Stmt::IfElse(ie) => {
             check_stmts(&ie.then_body, agents, file, diagnostics);
@@ -105,5 +109,33 @@ fn check_stmt(
             check_stmts(&f.body, agents, file, diagnostics);
         }
         _ => {}
+    }
+}
+
+/// Warn when `find all X` references an unknown agent template.
+fn check_find_in_expr(
+    expr: &Spanned<Expr>,
+    agents: &HashMap<&str, &AgentDecl>,
+    file: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if let Expr::Find(f) = &expr.node {
+        let template = match &f.kind {
+            FindKind::AllByTemplate(t) | FindKind::AllByTemplateFiltered(t, _) => Some(t),
+            FindKind::ByAlias(_) => None,
+        };
+        if let Some(t) = template {
+            if !agents.contains_key(t.node.as_str()) {
+                diagnostics.push(
+                    Diagnostic::warning(
+                        file,
+                        format!("find references unknown agent template `{}`", t.node),
+                        t.span.start..t.span.end,
+                        "no agent declaration with this name exists in the program",
+                    )
+                    .with_help("check the agent name or ensure it is declared"),
+                );
+            }
+        }
     }
 }

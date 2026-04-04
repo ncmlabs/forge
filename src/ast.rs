@@ -470,6 +470,8 @@ pub enum Expr {
     Search(Box<Spanned<Expr>>),
     /// `recall "query"` — retrieve from agent knowledge store
     Recall(Box<Spanned<Expr>>),
+    /// `find "alias"` / `find all template [where lifecycle == state]`
+    Find(Box<FindExpr>),
     /// `try expr or expr`
     TryOr(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     /// `A >> B >> C` — composition chain
@@ -678,6 +680,25 @@ pub enum SpawnOption {
     ConfidenceCap(Spanned<Expr>),
     /// `with memory field: value`
     MemoryInit(Spanned<String>, Spanned<Expr>),
+}
+
+// ── Find expression (runtime instance discovery, issue #84) ─
+
+/// `find "alias"` or `find all template [where lifecycle == state]`
+#[derive(Debug, Clone)]
+pub struct FindExpr {
+    pub kind: FindKind,
+}
+
+/// The kind of find query.
+#[derive(Debug, Clone)]
+pub enum FindKind {
+    /// `find "alias"` — single lookup by alias
+    ByAlias(Spanned<Expr>),
+    /// `find all template` — all instances of a template
+    AllByTemplate(Spanned<String>),
+    /// `find all template where lifecycle == state`
+    AllByTemplateFiltered(Spanned<String>, Spanned<String>),
 }
 
 // ── Give metadata ────────────────────────────────────────────

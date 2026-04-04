@@ -315,6 +315,14 @@ fn check_pure_expr(
                 }
             }
         }
+        Expr::Find(_) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "find",
+                span_start: expr.span.start,
+                span_end: expr.span.end,
+            });
+        }
         // Leaves: literals, idents, type access — always pure
         Expr::NumberLit(_) | Expr::BoolLit(_) | Expr::Ident(_) | Expr::TypeAccess(_, _) => {}
     }

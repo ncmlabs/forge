@@ -54,7 +54,7 @@ keyword = @{
     | "pure" | "event" | "states" | "timer" | "endpoint" | "type"
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
-    | "match" | "recall" | "learn" | "spawn"
+    | "match" | "recall" | "learn" | "spawn" | "find"
     | "exportable" | "import" | "from" | "as" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
@@ -544,7 +544,8 @@ postfix_op   = {
 }
 
 pipe_term = {
-    reason_expr
+    find_expr
+  | reason_expr
   | classify_expr
   | search_expr
   | recall_expr
@@ -552,6 +553,12 @@ pipe_term = {
   | constructor_expr
   | call_expr
   | atom
+}
+
+// --- find expression (discover agent instances at runtime, issue #84) ---
+find_expr = {
+    "find" ~ _s ~ "all" ~ _s ~ ident ~ (_s ~ "where" ~ _s ~ "lifecycle" ~ _s_opt ~ "==" ~ _s_opt ~ ident)?
+  | "find" ~ _s ~ string_arg
 }
 
 reason_expr   = { "reason" ~ _s ~ string_arg }

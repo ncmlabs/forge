@@ -869,3 +869,46 @@ fn spawn_with_memory_init_only() {
     let src = "task run_it\n  do\n    spawn helper\n      with memory level: 3\n";
     ForgeParser::parse(Rule::task_decl, src).unwrap();
 }
+
+// find_expr (#84)
+
+#[test]
+fn find_by_alias() {
+    ForgeParser::parse(Rule::find_expr, r#"find "room_42_bot""#).unwrap();
+}
+
+#[test]
+fn find_by_alias_ident() {
+    ForgeParser::parse(Rule::find_expr, "find name").unwrap();
+}
+
+#[test]
+fn find_all_by_template() {
+    ForgeParser::parse(Rule::find_expr, "find all forge_sensei").unwrap();
+}
+
+#[test]
+fn find_all_with_lifecycle_filter() {
+    ForgeParser::parse(
+        Rule::find_expr,
+        "find all forge_sensei where lifecycle == expert",
+    )
+    .unwrap();
+}
+
+#[test]
+fn find_keyword_rejected_as_ident() {
+    assert!(ForgeParser::parse(Rule::ident, "find").is_err());
+}
+
+#[test]
+fn find_in_task_binding() {
+    let src = "task lookup\n  do\n    bot = find \"room_42_bot\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn find_all_in_task_binding() {
+    let src = "task lookup\n  do\n    experts = find all sensei where lifecycle == expert\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
