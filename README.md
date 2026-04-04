@@ -1,8 +1,12 @@
 # FORGE
 
-**The first programming language built for oracle-augmented computation.**
+[![CI](https://github.com/ncmlabs/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/ncmlabs/forge/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/status-Layer%201%20Active-brightgreen.svg)]()
 
-FORGE is a language where agents are the primary citizens, uncertainty is a type, and systems build themselves. You describe intent. The language handles the rest.
+**The programming language for oracle-augmented computation.**
+
+FORGE treats LLM calls as oracle queries — not function calls — with their own type system, execution model, and failure semantics. Uncertainty is a compile-time type. Deterministic logic is structurally separated from stochastic logic. Agents are first-class citizens with lifecycle management, knowledge systems, and supervision trees.
 
 ---
 
@@ -21,6 +25,29 @@ Every team building agent systems today is solving the same five problems indepe
 **Deterministic and stochastic logic mix.** Game rules, compliance checks, and dosage calculations sit in the same language level as AI reasoning. The compiler cannot distinguish between "this must be correct" and "this might be uncertain." The result: hallucinations reach places they must never reach.
 
 These are not hard problems. They are problems that exist because every existing language was designed before LLMs existed. They treat LLM calls as function calls. They are not.
+
+---
+
+## Quick start
+
+```bash
+# Build from source
+git clone https://github.com/ncmlabs/forge.git
+cd forge
+cargo build --release
+
+# Validate a FORGE program
+cargo run -- check examples/hello.forge
+
+# Run with configured LLM provider
+cargo run -- run examples/hello.forge
+
+# Build a standalone agent binary
+cargo run -- build workflows/forge-sensei.forge -o bin/forge-sensei
+
+# Run all tests (no API calls — uses mock provider)
+cargo test
+```
 
 ---
 
@@ -120,6 +147,55 @@ agent RoomAgent
 
 ---
 
+## The agent ecosystem
+
+Agents in FORGE are born, learn, specialize, discover each other, and gracefully retire — all as language primitives.
+
+```forge
+# A specialist agent that learns within a domain
+agent specialist
+  memory
+    topic: Text
+    query_count: Number
+  knowledge store: ".forge-knowledge/specialist"
+    max_entries: 10000
+    retention: 180d
+  subscribe LearnedInsight where category == memory.topic
+
+  on query(question: Text)
+    memory.query_count = memory.query_count + 1
+    prior = recall "{memory.topic} {question}"
+    answer = answer_forge_question(question, prior)
+    learn from interaction(question, answer, 0.6) category: "{memory.topic}"
+    give answer
+
+# The sensei spawns specialists on demand
+exportable agent forge_sensei
+  # ...
+  on deep_dive(topic: Text)
+    existing = find "specialist_{topic}"
+    if existing
+      give existing
+    child = spawn specialist as "specialist_{topic}"
+      with knowledge where category == topic
+      with confidence_cap: 0.8
+      with memory topic: topic
+    give child
+
+# Supervision — the warden watches everything
+warden sensei_warden
+  manages [forge_sensei, specialist]
+  on stuck: nudge, self
+    after 3: escalate
+  on hallucination: restart, self
+  on crash: restart, self
+  max_retries 3 per 1h then escalate
+```
+
+This is not a toy example — it is the actual `forge-sensei` program that teaches the FORGE language, compiled to a standalone binary at `bin/forge-sensei`.
+
+---
+
 ## The nine principles
 
 Every feature in FORGE traces to one of nine principles. Every design decision is a refusal or an affirmation of these beliefs.
@@ -199,28 +275,39 @@ Layer 1 is the only layer humans build from scratch. Everything above it is buil
 
 ---
 
-## The compilation model
+## The build system
 
-FORGE programs compile to native binaries via LLVM. The fleet compilation mode is the factory: describe a system in plain language, an agent fleet writes the LLVM IR modules in parallel, a verification layer gates compilation, and the result is a portable native binary.
+FORGE programs compile to standalone native binaries. Each agent becomes a CLI with subcommands for its handlers and an interactive REPL.
 
 ```bash
-forge fleet
-  spec: """
-    Real-time analytics pipeline for call center data.
-    Ingest at 50,000 events/sec. Aggregate by campaign.
-    Detect anomalies. Expose via REST API. HIPAA-compliant.
-  """
-  agents: 6
-  target: "wasm32-wasi"
-  verify: strict
-  budget: $2.00
+# Compile an agent to a binary
+forge build workflows/forge-sensei.forge -o bin/forge-sensei
+
+# The binary has subcommands for each handler
+bin/forge-sensei query "how do flows work?"
+bin/forge-sensei review "pure bad_fn\n  do\n    reason 'hello'"
+bin/forge-sensei status
+bin/forge-sensei repl    # interactive session
 ```
 
-The agents write the code. The compiler verifies it. LLVM optimizes it. The binary runs forever with zero ongoing LLM cost.
+Multi-file projects use a manifest:
 
-**LLM cost: one-time, ~$1-2 per system**
-**Runtime LLM cost: $0.00 (except agents that reason at runtime)**
-**Binary runs on: any WASM runtime — server, browser, edge, embedded**
+```toml
+# forge.project.toml
+[project]
+name = "my-system"
+version = "0.1.0"
+
+[sources]
+main = "src/main.forge"
+agents = "src/agents/*.forge"
+```
+
+```bash
+forge build --manifest forge.project.toml -o bin/my-system
+```
+
+**Future targets:** WASM compilation via Cranelift is planned — the same binary running on server, browser, and edge. See the [roadmap](roadmap.md) for details.
 
 ---
 
@@ -262,34 +349,58 @@ task analyze_contract
 
 ---
 
-## What gets built first
+## What's built — and what's next
 
-The language primitives needed to unlock the factory model, in order:
+### Working today (Layer 1 — ~90% complete)
 
 ```
-task + think + when          →  oracle reasoning with uncertainty
-pure                         →  deterministic logic, provably hallucination-free
-flow + stage + needs         →  parallel pipelines, automatic
-agent + states + requires    →  stateful systems with lifecycle enforcement
-event + timer                →  broadcast coordination and time-aware behavior
-boundary                     →  server/client separation, prompt injection prevention
->> composition               →  universal wiring between all primitives
-forge_check + forge_run      →  agents verify and execute their own output
+✅ task + reason + when         — oracle reasoning with uncertainty handling
+✅ pure                         — deterministic logic, provably hallucination-free
+✅ flow + stage + needs          — parallel pipelines, automatic DAG inference
+✅ agent + states + requires     — stateful systems with lifecycle enforcement
+✅ event + timer                 — broadcast coordination and time-aware behavior
+✅ boundary                      — server/client separation, prompt injection prevention
+✅ >> composition                — universal wiring between all primitives
+✅ spawn + find + retire         — agent lifecycle: birth, discovery, graceful shutdown
+✅ learn + recall + knowledge    — progressive learning with categorized knowledge stores
+✅ warden supervision            — crash recovery, stuck detection, escalation policies
+✅ system orchestration          — multi-agent wiring with shared event bus
+✅ forge build                   — standalone native binaries with CLI + REPL
+✅ forge-sensei                  — self-referential learning agent (FORGE teaching FORGE)
 ```
 
-When these eight capabilities exist, Layer 2 becomes possible. When Layer 2 exists, the factory runs. When the factory runs, the system builds itself.
+### Coming next
+
+```
+⬜ Web runtime                   — HTML templates, static serving, hot-reload
+⬜ HTTP client                   — web.fetch, webhooks, external integrations
+⬜ WASM compilation              — Cranelift backend, browser target
+⬜ Wiki showcase                 — first real FORGE application
+```
+
+### Future layers
+
+```
+⬜ Layer 2 — Toolkit agents      — agents that generate FORGE code from descriptions
+⬜ Layer 3 — Automation factory   — spec in → running system out
+⬜ Layer 4 — Self-improvement     — factory watches and optimizes itself
+```
+
+When Layer 1 is complete, Layer 2 becomes possible. When Layer 2 exists, the factory runs. When the factory runs, the system builds itself.
 
 ---
 
-## The deployment targets
+## Deployment targets
 
-One FORGE binary. Three environments.
+**Today:** FORGE programs compile to native binaries via `forge build`. Each agent becomes a standalone CLI with handler subcommands and interactive REPL.
 
-**Terminal/server:** Any WASM runtime executes the binary. Stdin, stdout, filesystem, sockets — standard OS interfaces. Deploy like any native binary.
+**Planned:** WASM compilation via Cranelift will enable three deployment environments from a single source:
 
-**Browser:** The browser's built-in WASM runtime loads the binary. Canvas, WebGL, WebSockets for real-time. The same game logic that runs on the server runs in the browser from the identical binary.
-
-**Desktop:** A thin native shell wraps the WASM binary. Native window, GPU access, filesystem — desktop feel with a single portable core.
+| Target | Runtime | Use case |
+|--------|---------|----------|
+| `--target native` | OS directly | CLI tools, servers, desktop apps |
+| `--target wasm32-wasi` | wasmtime / wasmer | Cloud functions, edge, embedded |
+| `--target wasm32-browser` | Browser WASM | Web applications |
 
 The FORGE source code does not change between targets. One compiler flag selects the deployment environment.
 
@@ -395,33 +506,40 @@ Three things determine whether this reaches its potential:
 | Document | Contents |
 |---|---|
 | `forge-principles.md` | The nine principles — what FORGE believes and why |
-| `docs/forge-reference.md` | Complete language reference — syntax, semantics, and compiler enforcement for all 14 primitives |
+| `docs/forge-reference.md` | Complete language reference — syntax, semantics, and compiler enforcement |
+| `roadmap.md` | Architecture, milestones, track progress, and layer model |
+| `CHANGELOG.md` | All notable changes in Keep a Changelog format |
 | `providers.md` | Provider abstraction: trait, registry, implementations, config |
-| `roadmap.md` | Architecture, requirements, and layer model |
-| `conformance/` | Language-agnostic JSON test suite — 27 tests covering parser, checkers, and runtime |
+| `examples/` | 17 example programs demonstrating all language primitives |
+| `workflows/` | Real FORGE programs: dev-cycle workflow, forge-sensei learning agent |
+| `conformance/` | Language-agnostic JSON test suite — 36 tests covering parser, checkers, and runtime |
 
 ---
 
 ## Current status
 
-Layer 1 — the substrate — is substantially complete:
+**Layer 1 — the substrate — is approximately 90% complete.** 56 of 72 tracked issues are closed.
 
-- **Parser**: PEG grammar covering all 14 language primitives with comprehensive error diagnostics
-- **Semantic checkers** (6): purity, boundary, states, requires, uncertain value taint tracking, warden supervision
-- **Runtime**: Async executor with LLM provider support (Anthropic, OpenAI-compatible, Ollama, Groq)
-- **Conformance suite**: 27 language-agnostic JSON tests covering parser, checkers, and runtime
-- **Acceptance tests**: End-to-end tests proving Layer 1 completeness, including a multi-agent tic-tac-toe game
-- **Token tracking**: Cost estimation and budget enforcement
-- **CLI**: `forge parse`, `forge check`, `forge run`, `forge trace`
+- **Parser**: PEG grammar (609 rules) covering all language primitives with comprehensive error diagnostics
+- **Semantic checkers** (7): purity, boundary, states, requires, uncertain, spawn, warden
+- **Runtime**: 15-module async execution engine — agents, flows, pools, events, timers, knowledge, supervision
+- **Agent ecosystem**: spawn/find/retire lifecycle, knowledge stores with categories, instance registry, system orchestration
+- **Build system**: `forge build` compiles agents to standalone CLI binaries with handler subcommands and interactive REPL
+- **Providers**: Anthropic, OpenAI-compatible, Ollama, Groq — swap with a config line
+- **forge-sensei**: Self-referential learning agent written in FORGE that teaches FORGE, with mastery progression and specialist spawning
+- **Test suite**: 30 unit tests + 36 conformance tests (all run with mock provider — no API calls)
+- **CLI**: `forge parse`, `forge check`, `forge run`, `forge build`, `forge trace`, `forge cost`
 
 ```bash
 # Try it
 cargo build
-cargo run -- parse examples/hello.forge    # parse and print AST
-cargo run -- check examples/hello.forge    # run semantic checkers
-cargo run -- run examples/hello.forge      # execute with configured LLM
-cargo test                                 # run all tests including conformance
+cargo run -- check examples/hello.forge       # semantic validation
+cargo run -- run examples/hello.forge          # execute with LLM
+cargo run -- build examples/hello.forge -o bin/hello  # standalone binary
+cargo test                                     # all tests, no API calls
 ```
+
+See the [roadmap](roadmap.md) for milestone tracking and detailed progress.
 
 ---
 
@@ -431,4 +549,21 @@ FORGE is the language that makes it harder to build systems that are confidently
 
 ---
 
-*FORGE is under active development. Layer 1 (the substrate) is substantially complete. All documents in the repository are working drafts.*
+## Contributing
+
+FORGE is open source under the Apache 2.0 license. We welcome contributions — see the [issues](https://github.com/ncmlabs/forge/issues) for what's being worked on.
+
+```bash
+# Development workflow
+cargo fmt --check && cargo clippy -- -D warnings && cargo test
+```
+
+---
+
+## License
+
+[Apache License 2.0](LICENSE)
+
+---
+
+*FORGE is under active development. Layer 1 is ~90% complete with 56/72 issues closed. Track A (Ecosystem Core) is 100% done. See the [roadmap](roadmap.md) for details.*
