@@ -4,8 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BoundaryKind, Expr, FieldDef, LearnSource, Program, Spanned, SpawnOption, Stmt, TaskBody,
-    TemplatePart, TopLevel, TypeName,
+    BoundaryKind, Expr, FieldDef, FindKind, LearnSource, Program, Spanned, SpawnOption, Stmt,
+    TaskBody, TemplatePart, TopLevel, TypeName,
 };
 use crate::diagnostic::Diagnostic;
 
@@ -503,6 +503,11 @@ fn check_refs_in_expr(
                 if let TemplatePart::Interp(inner) = &part.node {
                     check_refs_in_expr(inner, boundary, registry, file, diagnostics);
                 }
+            }
+        }
+        Expr::Find(f) => {
+            if let FindKind::ByAlias(inner) = &f.kind {
+                check_refs_in_expr(inner, boundary, registry, file, diagnostics);
             }
         }
         // Leaves: literals, type access — no symbol references

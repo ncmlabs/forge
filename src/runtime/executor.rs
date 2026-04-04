@@ -10,6 +10,7 @@ use crate::llm::registry::ProviderRegistry;
 use crate::llm::CompletionRequest;
 use crate::runtime::agent::{AgentContext, EmittedEvent};
 use crate::runtime::confidence::{ConfidentValue, Value};
+use crate::runtime::instance_registry::{InstanceInfo, InstanceStatus};
 use crate::runtime::timer_engine::TimerEngine;
 use crate::tracer::{LLMResponseInfo, Tracer};
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -866,8 +867,13 @@ impl TaskExecutor {
                     }
 
                     // 8. Register in instance registry
+                    let alias = if instance_name != *template_name {
+                        Some(instance_name.as_str())
+                    } else {
+                        None
+                    };
                     let instance_id = if let Some(ref ir) = self.instance_registry {
-                        let id = ir.write().await.register(&instance_name);
+                        let id = ir.write().await.register(template_name, alias);
                         Some(id)
                     } else {
                         None
@@ -1420,6 +1426,44 @@ impl TaskExecutor {
                     }
                 }
 
+                // ── Find (instance discovery, issue #84) ─────────────────────
+                Expr::Find(find) => {
+                    let ir = self.instance_registry.as_ref().ok_or_else(|| {
+                        RuntimeError::Unsupported("find requires instance registry".into())
+                    })?;
+                    let registry = ir.read().await;
+                    match &find.kind {
+                        FindKind::ByAlias(alias_expr) => {
+                            let alias_val = self.eval_expr(alias_expr, env).await?;
+                            let alias_str = format!("{}", alias_val.value);
+                            match registry.find_by_alias(&alias_str) {
+                                Some(info) => Ok(instance_info_to_record(&info)),
+                                None => Err(RuntimeError::FlowError(format!(
+                                    "no agent instance found with alias \"{}\"",
+                                    alias_str
+                                ))),
+                            }
+                        }
+                        FindKind::AllByTemplate(template) => {
+                            let instances = registry.find_by_name(&template.node);
+                            let records: Vec<ConfidentValue> =
+                                instances.iter().map(instance_info_to_record).collect();
+                            Ok(ConfidentValue::deterministic(Value::Array(records)))
+                        }
+                        FindKind::AllByTemplateFiltered(template, state) => {
+                            let instances = registry.find_by_name(&template.node);
+                            let records: Vec<ConfidentValue> = instances
+                                .iter()
+                                .filter(|info| {
+                                    info.lifecycle_state.as_deref() == Some(state.node.as_str())
+                                })
+                                .map(instance_info_to_record)
+                                .collect();
+                            Ok(ConfidentValue::deterministic(Value::Array(records)))
+                        }
+                    }
+                }
+
                 // ── Composition ───────────────────────────────────────────────
                 Expr::TryOr(primary, fallback) => match self.eval_expr(primary, env).await {
                     Ok(val) => Ok(val),
@@ -1688,6 +1732,41 @@ impl TaskExecutor {
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────
+
+/// Convert an `InstanceInfo` into a deterministic `Value::Record` for the `find` expression.
+fn instance_info_to_record(info: &InstanceInfo) -> ConfidentValue {
+    let mut fields = HashMap::new();
+    fields.insert(
+        "id".to_string(),
+        ConfidentValue::deterministic(Value::Text(info.instance_id.to_string())),
+    );
+    fields.insert(
+        "name".to_string(),
+        ConfidentValue::deterministic(Value::Text(info.agent_name.clone())),
+    );
+    fields.insert(
+        "alias".to_string(),
+        match &info.alias {
+            Some(a) => ConfidentValue::deterministic(Value::Text(a.clone())),
+            None => ConfidentValue::deterministic(Value::Unit),
+        },
+    );
+    fields.insert(
+        "status".to_string(),
+        ConfidentValue::deterministic(Value::Text(match info.status {
+            InstanceStatus::Running => "running".to_string(),
+            InstanceStatus::Stopping => "stopping".to_string(),
+        })),
+    );
+    fields.insert(
+        "lifecycle".to_string(),
+        match &info.lifecycle_state {
+            Some(s) => ConfidentValue::deterministic(Value::Text(s.clone())),
+            None => ConfidentValue::deterministic(Value::Unit),
+        },
+    );
+    ConfidentValue::deterministic(Value::Record(fields))
+}
 
 fn truthy(cv: &ConfidentValue) -> bool {
     truthy_val(&cv.value)

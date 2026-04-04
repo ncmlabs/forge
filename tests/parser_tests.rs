@@ -1082,3 +1082,72 @@ fn parse_spawn_knowledge_filter_only() {
         other => panic!("expected Spawn, got {:?}", other),
     }
 }
+
+// ── Find expression tests (#84) ─────────────────────────────
+
+#[test]
+fn parse_find_by_alias() {
+    let prog = parse_task_with(r#"bot = find "room_42_bot""#);
+    let expr = bind_expr(first_stmt(&prog));
+    match expr {
+        Expr::Find(f) => match &f.kind {
+            FindKind::ByAlias(alias) => match &alias.node {
+                Expr::Template(parts) => {
+                    assert_eq!(parts.len(), 1);
+                    match &parts[0].node {
+                        TemplatePart::Text(s) => assert_eq!(s, "room_42_bot"),
+                        other => panic!("expected Text, got {:?}", other),
+                    }
+                }
+                other => panic!("expected Template, got {:?}", other),
+            },
+            other => panic!("expected ByAlias, got {:?}", other),
+        },
+        other => panic!("expected Find, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_find_by_alias_ident() {
+    let prog = parse_task_with("bot = find name");
+    let expr = bind_expr(first_stmt(&prog));
+    match expr {
+        Expr::Find(f) => match &f.kind {
+            FindKind::ByAlias(alias) => match &alias.node {
+                Expr::Ident(s) => assert_eq!(s, "name"),
+                other => panic!("expected Ident, got {:?}", other),
+            },
+            other => panic!("expected ByAlias, got {:?}", other),
+        },
+        other => panic!("expected Find, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_find_all_by_template() {
+    let prog = parse_task_with("experts = find all forge_sensei");
+    let expr = bind_expr(first_stmt(&prog));
+    match expr {
+        Expr::Find(f) => match &f.kind {
+            FindKind::AllByTemplate(t) => assert_eq!(t.node, "forge_sensei"),
+            other => panic!("expected AllByTemplate, got {:?}", other),
+        },
+        other => panic!("expected Find, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_find_all_with_lifecycle_filter() {
+    let prog = parse_task_with("experts = find all forge_sensei where lifecycle == expert");
+    let expr = bind_expr(first_stmt(&prog));
+    match expr {
+        Expr::Find(f) => match &f.kind {
+            FindKind::AllByTemplateFiltered(t, s) => {
+                assert_eq!(t.node, "forge_sensei");
+                assert_eq!(s.node, "expert");
+            }
+            other => panic!("expected AllByTemplateFiltered, got {:?}", other),
+        },
+        other => panic!("expected Find, got {:?}", other),
+    }
+}

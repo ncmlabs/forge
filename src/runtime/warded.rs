@@ -165,7 +165,7 @@ impl WardedRuntime {
 
         process = process.with_event_bus(self.event_bus.clone()).await;
 
-        let instance_id = self.instance_registry.write().await.register(name);
+        let instance_id = self.instance_registry.write().await.register(name, None);
 
         let handle = tokio::spawn(async move { process.run().await });
 

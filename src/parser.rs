@@ -528,6 +528,7 @@ fn build_try_or_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
 fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
+        Rule::find_expr => build_find_expr(inner),
         Rule::reason_expr => build_reason_expr(inner),
         Rule::classify_expr => build_classify_expr(inner),
         Rule::search_expr => build_search_expr(inner),
@@ -539,6 +540,43 @@ fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         _ => Err(parse_error(
             &inner,
             &format!("unexpected pipe_term rule: {:?}", inner.as_rule()),
+        )),
+    }
+}
+
+fn build_find_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let first = inner.next().unwrap();
+
+    // If the first child is an ident, this is `find all <template> [where lifecycle == <state>]`
+    // If the first child is a string_arg, this is `find <alias>`
+    match first.as_rule() {
+        Rule::ident => {
+            // `find all <template>` — first ident is the template name
+            let template = spanned(first.as_str().to_string(), &first);
+            let kind = if let Some(state_pair) = inner.next() {
+                // `find all <template> where lifecycle == <state>`
+                let state = spanned(state_pair.as_str().to_string(), &state_pair);
+                FindKind::AllByTemplateFiltered(template, state)
+            } else {
+                FindKind::AllByTemplate(template)
+            };
+            Ok(Spanned::new(Expr::Find(Box::new(FindExpr { kind })), span))
+        }
+        Rule::string_arg => {
+            // `find <alias>`
+            let alias = build_string_arg(first)?;
+            Ok(Spanned::new(
+                Expr::Find(Box::new(FindExpr {
+                    kind: FindKind::ByAlias(alias),
+                })),
+                span,
+            ))
+        }
+        _ => Err(parse_error(
+            &first,
+            &format!("unexpected find_expr child: {:?}", first.as_rule()),
         )),
     }
 }
