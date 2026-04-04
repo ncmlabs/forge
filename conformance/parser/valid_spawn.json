@@ -1,0 +1,9 @@
+{
+  "name": "valid_spawn_statement",
+  "category": "parser",
+  "description": "Spawn statement with binding, alias, and options parses successfully",
+  "input": "agent opponent\n  knowledge store: \".forge-knowledge/opponent\"\n\n  on start(msg: Text)\n    say msg\n\ntask run_game\n  do\n    child = spawn opponent as \"room_1\"\n      with knowledge where category == \"moves\"\n      with confidence_cap: 0.8\n      with memory difficulty: \"hard\"\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

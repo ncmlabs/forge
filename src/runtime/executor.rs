@@ -119,6 +119,7 @@ pub struct TaskExecutor {
     timer_engine: Option<Arc<Mutex<TimerEngine>>>,
     storage: Option<crate::runtime::storage::SharedStorage>,
     instance_registry: Option<crate::runtime::instance_registry::SharedInstanceRegistry>,
+    event_bus: Option<crate::runtime::event_bus::SharedEventBus>,
     agent_name: Option<String>,
     memory_persistent: bool,
 }
@@ -166,6 +167,7 @@ impl TaskExecutor {
             timer_engine: None,
             storage: None,
             instance_registry: None,
+            event_bus: None,
             agent_name: None,
             memory_persistent: false,
         }
@@ -189,6 +191,12 @@ impl TaskExecutor {
         registry: crate::runtime::instance_registry::SharedInstanceRegistry,
     ) -> Self {
         self.instance_registry = Some(registry);
+        self
+    }
+
+    /// Attach the event bus for inter-agent communication (issue #83).
+    pub fn with_event_bus(mut self, bus: crate::runtime::event_bus::SharedEventBus) -> Self {
+        self.event_bus = Some(bus);
         self
     }
 
@@ -710,6 +718,175 @@ impl TaskExecutor {
                         }
                     } else {
                         return Err(RuntimeError::Unsupported("learn outside agent".into()));
+                    }
+                }
+
+                Stmt::Spawn(spawn) => {
+                    // 1. Find agent declaration by template name
+                    let template_name = &spawn.template.node;
+                    let mut agent_decl: Option<AgentDecl> = None;
+                    let mut states_decl: Option<StatesDecl> = None;
+
+                    for item in &self.program.items {
+                        match &item.node {
+                            TopLevel::Agent(a) if a.name.node == *template_name => {
+                                agent_decl = Some(a.as_ref().clone());
+                            }
+                            TopLevel::States(s) => {
+                                // Collect states decls for lifecycle lookup
+                                if states_decl.is_none() {
+                                    if let Some(ref ad) = agent_decl {
+                                        if ad.lifecycle.as_ref().map(|l| &l.node)
+                                            == Some(&s.name.node)
+                                        {
+                                            states_decl = Some(s.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let agent_decl = agent_decl.ok_or_else(|| {
+                        RuntimeError::Unsupported(format!(
+                            "spawn: no agent declaration found for '{}'",
+                            template_name
+                        ))
+                    })?;
+
+                    // Re-scan for states if we found the agent after states were processed
+                    if states_decl.is_none() {
+                        if let Some(ref lc) = agent_decl.lifecycle {
+                            for item in &self.program.items {
+                                if let TopLevel::States(s) = &item.node {
+                                    if s.name.node == lc.node {
+                                        states_decl = Some(s.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Evaluate alias (for registry name)
+                    let instance_name = if let Some(ref alias_expr) = spawn.alias {
+                        let val = self.eval_expr(alias_expr, env).await?;
+                        format!("{}", val.value)
+                    } else {
+                        template_name.clone()
+                    };
+
+                    // 3. Process spawn options
+                    let mut knowledge_category: Option<String> = None;
+                    let mut confidence_cap: Option<f32> = None;
+                    let mut memory_inits: Vec<(String, ConfidentValue)> = Vec::new();
+
+                    for opt in &spawn.options {
+                        match &opt.node {
+                            SpawnOption::KnowledgeFilter(cat) => {
+                                knowledge_category = Some(cat.node.clone());
+                            }
+                            SpawnOption::ConfidenceCap(expr) => {
+                                let val = self.eval_expr(expr, env).await?;
+                                match &val.value {
+                                    Value::Number(n) => {
+                                        confidence_cap = Some(*n as f32);
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::TypeError {
+                                            expected: "Number".to_string(),
+                                            got: format!("{:?}", val.value),
+                                        });
+                                    }
+                                }
+                            }
+                            SpawnOption::MemoryInit(field, expr) => {
+                                let val = self.eval_expr(expr, env).await?;
+                                memory_inits.push((field.node.clone(), val));
+                            }
+                        }
+                    }
+
+                    // 4. Create the child agent process
+                    let mut child_process = crate::runtime::agent::AgentProcess::new(
+                        agent_decl,
+                        states_decl.as_ref(),
+                        self.providers.clone(),
+                        self.tracer.clone(),
+                        self.program.clone(),
+                        self.storage.clone(),
+                        self.instance_registry.clone(),
+                    );
+
+                    // 5. Transfer knowledge from parent to child
+                    if let Some(ref cat) = knowledge_category {
+                        // Get filtered entries from parent's knowledge store
+                        let mut transferred_entries = Vec::new();
+                        if let Some(ref ctx_arc) = self.agent_context {
+                            let ctx = ctx_arc.lock().unwrap();
+                            if let Some(ref ks) = ctx.knowledge_store {
+                                transferred_entries = ks.export_by_category(cat);
+                            }
+                        }
+
+                        // Apply confidence cap (Principle I — Honesty)
+                        let cap = confidence_cap.unwrap_or(1.0);
+                        for entry in &mut transferred_entries {
+                            entry.confidence = entry.confidence.min(cap);
+                            entry.source =
+                                crate::runtime::knowledge_store::KnowledgeSource::AgentTransfer {
+                                    source_agent: self
+                                        .agent_name
+                                        .clone()
+                                        .unwrap_or_else(|| "unknown".to_string()),
+                                };
+                        }
+
+                        // Merge into child's knowledge store
+                        if !transferred_entries.is_empty() {
+                            let child_ctx = child_process.context();
+                            let mut ctx = child_ctx.lock().unwrap();
+                            if let Some(ref mut ks) = ctx.knowledge_store {
+                                ks.merge_imported(transferred_entries);
+                            }
+                        }
+                    }
+
+                    // 6. Set initial memory values
+                    for (field, val) in memory_inits {
+                        let child_ctx = child_process.context();
+                        let mut ctx = child_ctx.lock().unwrap();
+                        ctx.memory.set(&field, val);
+                    }
+
+                    // 7. Wire event bus
+                    if let Some(ref bus) = self.event_bus {
+                        child_process = child_process.with_event_bus(bus.clone()).await;
+                    }
+
+                    // 8. Register in instance registry
+                    let instance_id = if let Some(ref ir) = self.instance_registry {
+                        let id = ir.write().await.register(&instance_name);
+                        Some(id)
+                    } else {
+                        None
+                    };
+
+                    // 9. Spawn as tokio task
+                    tokio::spawn(async move {
+                        let _ = child_process.run().await;
+                    });
+
+                    // 10. Bind instance UUID to variable if requested
+                    if let Some(ref binding) = spawn.binding {
+                        let uuid_str = instance_id
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "no-registry".to_string());
+                        env.bind(
+                            &binding.node,
+                            ConfidentValue::deterministic(Value::Text(uuid_str)),
+                        );
                     }
                 }
             }

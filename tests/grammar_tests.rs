@@ -813,3 +813,59 @@ fn learn_category_is_optional() {
     ForgeParser::parse(Rule::learn_stmt, r#"learn from interaction(q, a, 0.5)"#).unwrap();
     ForgeParser::parse(Rule::learn_stmt, r#"learn from document("f.md")"#).unwrap();
 }
+
+// ============================================================
+// spawn_stmt (#83)
+// ============================================================
+
+#[test]
+fn spawn_basic() {
+    ForgeParser::parse(Rule::spawn_stmt, "spawn worker").unwrap();
+}
+
+#[test]
+fn spawn_with_binding() {
+    ForgeParser::parse(Rule::spawn_stmt, r#"child = spawn worker"#).unwrap();
+}
+
+#[test]
+fn spawn_with_alias() {
+    ForgeParser::parse(Rule::spawn_stmt, r#"child = spawn worker as "room_1""#).unwrap();
+}
+
+#[test]
+fn spawn_keyword_rejected_as_ident() {
+    assert!(ForgeParser::parse(Rule::ident, "spawn").is_err());
+}
+
+#[test]
+fn spawn_with_options_in_task() {
+    // spawn with options requires newline + deeper indent (i3 = 6 spaces inside do at i2)
+    let src = "task run_it\n  do\n    child = spawn opponent as \"room_1\"\n      with knowledge where category == \"moves\"\n      with confidence_cap: 0.8\n      with memory difficulty: \"hard\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn spawn_no_options_in_do_block() {
+    // Test within a full task to ensure proper newline handling
+    let src = "task run_it\n  do\n    spawn worker\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn spawn_with_knowledge_only() {
+    let src = "task run_it\n  do\n    id = spawn specialist\n      with knowledge where category == \"syntax\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn spawn_with_confidence_cap_only() {
+    let src = "task run_it\n  do\n    spawn helper\n      with confidence_cap: 0.5\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn spawn_with_memory_init_only() {
+    let src = "task run_it\n  do\n    spawn helper\n      with memory level: 3\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}

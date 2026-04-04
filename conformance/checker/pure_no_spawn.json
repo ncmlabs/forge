@@ -1,0 +1,11 @@
+{
+  "name": "pure_no_spawn",
+  "category": "checker",
+  "description": "Spawn is forbidden inside pure functions (side effect)",
+  "input": "agent worker\n  on start(msg: Text)\n    say msg\n\npure no_spawn\n  do\n    spawn worker\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["spawn"],
+    "error_kind": "error"
+  }
+}

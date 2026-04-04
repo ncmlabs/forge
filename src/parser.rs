@@ -984,6 +984,103 @@ fn build_learn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
     ))
 }
 
+fn build_spawn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
+    let span = to_span(&pair);
+    let inner = pair.into_inner();
+
+    // Peek at the structure to determine if there's a binding prefix.
+    // Grammar: (ident ~ "=" ~)? ~ "spawn" ~ ident ~ ("as" ~ string_arg)? ~ (spawn_option)*
+    // The children are: optional binding ident, template ident, optional alias, zero+ options.
+    let mut binding: Option<Spanned<String>> = None;
+    let mut template: Option<Spanned<String>> = None;
+    let mut alias: Option<Spanned<Expr>> = None;
+    let mut options: Vec<Spanned<SpawnOption>> = Vec::new();
+
+    for child in inner {
+        match child.as_rule() {
+            Rule::ident => {
+                // First ident could be binding or template.
+                // If we haven't set template yet and binding is already set, this is template.
+                // If neither is set, we tentatively store as template;
+                // but if another ident follows, the first was binding.
+                if template.is_none() {
+                    if binding.is_none() {
+                        // Could be binding or template — store tentatively
+                        template = Some(spanned(child.as_str().to_string(), &child));
+                    } else {
+                        template = Some(spanned(child.as_str().to_string(), &child));
+                    }
+                } else {
+                    // We already have a template, so the previous template was actually binding
+                    binding = template.take();
+                    template = Some(spanned(child.as_str().to_string(), &child));
+                }
+            }
+            Rule::string_arg => {
+                // This is the alias after "as"
+                alias = Some(build_string_arg(child)?);
+            }
+            Rule::spawn_option => {
+                let opt_span = to_span(&child);
+                let opt_inner = child.into_inner().next().unwrap();
+                let option = match opt_inner.as_rule() {
+                    Rule::spawn_knowledge_option => {
+                        let pred = opt_inner.into_inner().next().unwrap(); // spawn_knowledge_pred
+                        let cat_str_arg = pred.into_inner().next().unwrap(); // string_arg
+                        let cat_expr = build_string_arg(cat_str_arg)?;
+                        // Extract the string value from the template expression
+                        let cat_name = match &cat_expr.node {
+                            Expr::Template(parts) => parts
+                                .iter()
+                                .filter_map(|p| match &p.node {
+                                    TemplatePart::Text(t) => Some(t.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<String>(),
+                            _ => String::new(),
+                        };
+                        SpawnOption::KnowledgeFilter(Spanned::new(cat_name, cat_expr.span))
+                    }
+                    Rule::spawn_confidence_cap_option => {
+                        let expr_pair = opt_inner.into_inner().next().unwrap();
+                        let expr = build_expr(expr_pair)?;
+                        SpawnOption::ConfidenceCap(expr)
+                    }
+                    Rule::spawn_memory_option => {
+                        let mut mem_inner = opt_inner.into_inner();
+                        let field_pair = mem_inner.next().unwrap();
+                        let field = spanned(field_pair.as_str().to_string(), &field_pair);
+                        let expr_pair = mem_inner.next().unwrap();
+                        let val = build_expr(expr_pair)?;
+                        SpawnOption::MemoryInit(field, val)
+                    }
+                    _ => {
+                        return Err(parse_error(
+                            &opt_inner,
+                            &format!("unexpected spawn option: {:?}", opt_inner.as_rule()),
+                        ));
+                    }
+                };
+                options.push(Spanned::new(option, opt_span));
+            }
+            _ => {}
+        }
+    }
+
+    let template =
+        template.ok_or_else(|| anyhow::anyhow!("spawn statement missing template agent name"))?;
+
+    Ok(Spanned::new(
+        Stmt::Spawn(Box::new(SpawnStmt {
+            binding,
+            template,
+            alias,
+            options,
+        })),
+        span,
+    ))
+}
+
 // ── Control flow statements ──────────────────────────────────
 
 fn build_when_clause(pair: Pair) -> anyhow::Result<Spanned<WhenClause>> {
@@ -1204,6 +1301,7 @@ fn build_statement(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
         Rule::match_stmt | Rule::match_stmt_i3 => build_match_stmt(inner),
         Rule::if_else_stmt | Rule::if_else_stmt_i3 => build_if_else_stmt(inner),
         Rule::for_loop | Rule::for_loop_i3 => build_for_loop(inner),
+        Rule::spawn_stmt | Rule::spawn_stmt_i3 => build_spawn_stmt(inner),
         Rule::bind_stmt => build_bind_stmt(inner),
         Rule::give_stmt => build_give_stmt(inner),
         Rule::say_stmt => build_say_stmt(inner),
