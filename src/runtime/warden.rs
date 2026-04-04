@@ -187,6 +187,32 @@ impl Warden {
     pub fn managed_names(&self) -> Vec<&str> {
         self.decl.manages.iter().map(|m| m.node.as_str()).collect()
     }
+
+    /// Dynamically add an agent name to the manages list.
+    pub fn adopt(&mut self, agent_name: &str) {
+        // Avoid duplicates
+        if !self.decl.manages.iter().any(|m| m.node == agent_name) {
+            self.decl.manages.push(Spanned::new(
+                agent_name.to_string(),
+                Span { start: 0, end: 0 },
+            ));
+        }
+    }
+
+    /// Remove an agent name from the manages list and clear its retry state.
+    pub fn release(&mut self, agent_name: &str) {
+        self.decl.manages.retain(|m| m.node != agent_name);
+        // Clear all retry tracker state for the released agent
+        for ft in [
+            FailureType::Stuck,
+            FailureType::Crash,
+            FailureType::Hallucination,
+            FailureType::Budget,
+            FailureType::Timeout,
+        ] {
+            self.retry_tracker.reset_agent(agent_name, ft);
+        }
+    }
 }
 
 fn duration_to_ms(d: &Duration) -> u64 {

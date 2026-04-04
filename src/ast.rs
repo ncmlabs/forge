@@ -597,6 +597,8 @@ pub enum Stmt {
     For(Box<ForLoop>),
     /// `[binding =] spawn template [as "alias"]` with optional knowledge/memory transfer
     Spawn(Box<SpawnStmt>),
+    /// `retire ["alias"]` with optional knowledge export
+    Retire(Box<RetireStmt>),
 }
 
 #[derive(Debug, Clone)]
@@ -699,6 +701,17 @@ pub enum FindKind {
     AllByTemplate(Spanned<String>),
     /// `find all template where lifecycle == state`
     AllByTemplateFiltered(Spanned<String>, Spanned<String>),
+}
+
+// ── Retire (graceful agent termination, issue #86) ──────────
+
+/// `retire ["alias"]` with optional knowledge export.
+#[derive(Debug, Clone)]
+pub struct RetireStmt {
+    /// Optional target alias — `None` means retire self.
+    pub target: Option<Spanned<Expr>>,
+    /// Optional knowledge export file path.
+    pub knowledge_export: Option<Spanned<Expr>>,
 }
 
 // ── Give metadata ────────────────────────────────────────────

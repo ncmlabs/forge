@@ -912,3 +912,45 @@ fn find_all_in_task_binding() {
     let src = "task lookup\n  do\n    experts = find all sensei where lifecycle == expert\n";
     ForgeParser::parse(Rule::task_decl, src).unwrap();
 }
+
+// retire_stmt (#86)
+
+#[test]
+fn retire_self() {
+    ForgeParser::parse(Rule::retire_stmt, "retire").unwrap();
+}
+
+#[test]
+fn retire_with_alias() {
+    ForgeParser::parse(Rule::retire_stmt, r#"retire "old_bot""#).unwrap();
+}
+
+#[test]
+fn retire_keyword_rejected_as_ident() {
+    assert!(ForgeParser::parse(Rule::ident, "retire").is_err());
+}
+
+#[test]
+fn retire_in_task() {
+    let src = "task cleanup\n  do\n    retire\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn retire_alias_in_task() {
+    let src = "task cleanup\n  do\n    retire \"old_bot\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn retire_with_knowledge_export() {
+    let src = "task cleanup\n  do\n    retire\n      with knowledge export: \"backup.json\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn retire_alias_with_knowledge_export() {
+    let src =
+        "task cleanup\n  do\n    retire \"old_bot\"\n      with knowledge export: \"backup.json\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `retire` statement for graceful agent lifecycle termination — `retire` (self), `retire "alias"` (by alias), with optional `with knowledge export: "path.json"` to preserve knowledge as ForgePackage before exit; unregisters from instance registry (Principle VIII — Accountability) (#86)
+- Dynamic warden `adopt()`/`release()` methods for runtime supervision management of spawned agents — `adopt` adds an agent to the manages list, `release` removes and clears retry state (#86)
 - `find` expression for runtime agent instance discovery — `find "alias"` returns a single Record, `find all template` returns an Array, `find all template where lifecycle == state` filters by lifecycle state; queries `InstanceRegistry`, forbidden in `pure` functions (#84)
 - `spawn` statement for creating agent instances at runtime — `child = spawn agent as "alias"` with `with knowledge where category == "X"`, `with confidence_cap: 0.8`, `with memory field: value` options; registers in instance registry, transfers filtered knowledge with confidence decay (Principle I), warns on missing failure policy (Principle VII) (#83)
 - `category:` suffix on `learn` statements for categorized knowledge storage — `learn "fact" category: "boundary"`, `learn from interaction(...) category: "troubleshooting"`, `learn from document(...) category: "docs"` (#85)

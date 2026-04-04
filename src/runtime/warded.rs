@@ -308,6 +308,18 @@ impl WardedRuntime {
         Ok(())
     }
 
+    /// Adopt a running agent into warden supervision.
+    pub fn adopt(&mut self, name: &str, blueprint: AgentBlueprint) {
+        self.warden.adopt(name);
+        self.blueprints.insert(name.to_string(), blueprint);
+    }
+
+    /// Release an agent from warden supervision (does NOT stop the agent).
+    pub fn release(&mut self, name: &str) {
+        self.warden.release(name);
+        self.blueprints.remove(name);
+    }
+
     /// Apply scope: restart affected agents beyond the failing one.
     async fn apply_scope(
         &mut self,

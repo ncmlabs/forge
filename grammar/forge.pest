@@ -54,7 +54,7 @@ keyword = @{
     | "pure" | "event" | "states" | "timer" | "endpoint" | "type"
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
-    | "match" | "recall" | "learn" | "spawn" | "find"
+    | "match" | "recall" | "learn" | "spawn" | "find" | "retire"
     | "exportable" | "import" | "from" | "as" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
@@ -333,6 +333,7 @@ statement = {
   | escalate_stmt
   | memory_update_stmt
   | spawn_stmt
+  | retire_stmt
   | bind_stmt
   | expr_stmt
 }
@@ -378,6 +379,18 @@ spawn_knowledge_pred        = { "category" ~ _s_opt ~ "==" ~ _s_opt ~ string_arg
 spawn_confidence_cap_option = { "with" ~ _s ~ "confidence_cap" ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 spawn_memory_option         = { "with" ~ _s ~ "memory" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 
+// --- retire statement (graceful agent termination, issue #86) ---
+retire_stmt = {
+    "retire" ~ (_s ~ string_arg)? ~ (nl ~ i3 ~ retire_option)*
+}
+retire_stmt_i3 = {
+    "retire" ~ (_s ~ string_arg)? ~ (nl ~ i4 ~ retire_option)*
+}
+retire_option = {
+    retire_knowledge_export
+}
+retire_knowledge_export = { "with" ~ _s ~ "knowledge" ~ _s ~ "export" ~ _s_opt ~ ":" ~ _s_opt ~ string_arg }
+
 // --- when block (confidence-only branching) ---
 when_block = {
     when_clause ~
@@ -397,7 +410,7 @@ statement_inline = {
     give_stmt | say_stmt | escalate_stmt
   | emit_stmt | learn_stmt | transition_stmt
   | start_timer_stmt | cancel_timer_stmt | reset_timer_stmt
-  | forward_stmt | expr_stmt
+  | forward_stmt | retire_stmt | expr_stmt
 }
 
 // --- match statement (structural pattern matching) ---
@@ -455,6 +468,7 @@ statement_i3 = {
   | escalate_stmt
   | memory_update_stmt
   | spawn_stmt_i3
+  | retire_stmt_i3
   | bind_stmt
   | expr_stmt
 }
