@@ -59,6 +59,19 @@ A function call is deterministic. Same input, same output, every time. An oracle
 
 FORGE is the first language that treats oracle calls as the first-class primitives they are — with their own syntax, their own type system, their own execution model, and their own failure semantics.
 
+```
+  Traditional Code                    FORGE
+  ─────────────────                   ─────────────────
+  result = llm.chat(prompt)           result = reason prompt
+  # result is a string                # result is uncertain<T>
+  # confidence? unknown               # confidence: tracked
+  # hallucination? invisible          # hallucination: type error
+  # cost? check dashboard later       # cost: forge cost <file>
+  # failure? try/catch somewhere      # failure: declared policy
+  return result                       when result.sure -> give result
+                                      else -> escalate to human
+```
+
 The result is a language where:
 - Uncertainty is tracked at compile time, not discovered at runtime
 - Deterministic logic is structurally separated from stochastic logic
@@ -147,6 +160,174 @@ agent RoomAgent
 
 ---
 
+## How it works
+
+### The compiler pipeline
+
+```
+                          ┌─────────────────┐
+                          │  source.forge    │
+                          └────────┬────────┘
+                                   │ parse
+                                   ▼
+                          ┌─────────────────┐
+                          │    AST (typed,   │
+                          │    spanned)      │
+                          └────────┬────────┘
+                                   │ check
+                    ┌──────────────┼──────────────┐
+                    ▼              ▼               ▼
+             ┌───────────┐ ┌───────────┐  ┌────────────┐
+             │   pure     │ │  states   │  │  boundary  │
+             │  checker   │ │  checker  │  │  checker   │
+             └───────────┘ └───────────┘  └────────────┘
+                    ▼              ▼               ▼
+             ┌───────────┐ ┌───────────┐  ┌────────────┐
+             │ uncertain  │ │  requires │  │   spawn    │
+             │  checker   │ │  checker  │  │  checker   │
+             └───────────┘ └───────────┘  └────────────┘
+                    │              │          │
+                    └──────────────┼──────────┘
+                                   │    ┌────────────┐
+                                   ├───▶│  warden    │
+                                   │    │  checker   │
+                                   │    └────────────┘
+                                   ▼
+                    ┌──────────────────────────┐
+                    │     Runtime Executor      │
+                    │  ┌──────┐ ┌──────┐       │
+                    │  │agents│ │flows │ ...    │
+                    │  └──────┘ └──────┘       │
+                    └─────────────┬────────────┘
+                                  │
+                    ┌─────────────┼─────────────┐
+                    ▼             ▼              ▼
+              ┌──────────┐ ┌──────────┐  ┌───────────┐
+              │forge run │ │forge     │  │forge build│
+              │ (interpret│ │ serve   │  │ (binary)  │
+              └──────────┘ └──────────┘  └───────────┘
+```
+
+Seven semantic checkers catch errors at compile time — before any LLM call is made, before any token is spent.
+
+### The confidence flow
+
+The core of FORGE: every oracle call returns `uncertain<T>`. You must handle it.
+
+```
+  reason "analyze this document"
+         │
+         ▼
+  ┌──────────────────────────┐
+  │    uncertain<T>           │
+  │    confidence: 0.0 - 1.0  │
+  └──────────┬───────────────┘
+             │
+    ┌────────┼─────────┬──────────────┐
+    ▼        ▼         ▼              ▼
+  ┌──────┐ ┌──────┐ ┌──────────┐ ┌────────┐
+  │ .sure │ │.unsure│ │.unreliable│ │  else  │
+  │ ≥0.8  │ │ ≥0.5 │ │   <0.5   │ │        │
+  └──┬───┘ └──┬───┘ └─────┬────┘ └───┬────┘
+     │        │            │          │
+     ▼        ▼            ▼          ▼
+   act     ask for      discard    escalate
+            more info               to human
+```
+
+No `force_unwrap`. No implicit promotion. You cannot pretend to know what you don't know.
+
+### Flow parallelism
+
+The compiler analyzes stage dependencies and builds a DAG. Independent stages run in parallel automatically.
+
+```
+  flow research
+    stage gather          stage synthesize       stage verify
+    ┌───────────────┐     ┌───────────────┐     ┌──────────────┐
+    │ web = search  │     │               │     │              │
+    │ papers = search├────▶│ draft = reason├────▶│ give reason  │
+    │ news = search │     │ "synthesize"  │     │ "fact-check" │
+    └───────────────┘     └───────────────┘     └──────────────┘
+
+    Wave 1 (parallel)      Wave 2 (sequential)   Wave 3 (sequential)
+    ┌─────┐ ┌──────┐      ┌──────────────┐      ┌──────────────┐
+    │ web │ │papers│      │  synthesize   │      │    verify     │
+    │     │ │      │      │              │      │              │
+    │     │ │      │      └──────────────┘      └──────────────┘
+    │     │ │      │
+    │     │ └──────┘
+    │     │ ┌─────┐
+    │     │ │news │
+    └─────┘ └─────┘
+      3 calls parallel       1 call                1 call
+      = 1x latency           = 1x latency          = 1x latency
+```
+
+You write stages and declare dependencies. The compiler figures out the parallelism.
+
+### The agent lifecycle
+
+```
+  ┌─────────┐    spawn specialist as "syntax_expert"
+  │  Sensei  │    with knowledge where category == "SYNTAX"
+  │  Agent   │──────────────────────────────────────────────┐
+  └────┬─────┘                                              │
+       │ find "syntax_expert"                               ▼
+       │◄──────────────────────────────── ┌──────────────────────┐
+       │                                  │  Specialist Agent     │
+       │ emit LearnedInsight ────────────▶│  ┌────────────────┐  │
+       │                                  │  │ knowledge store │  │
+       │                                  │  │ learn + recall  │  │
+       │                                  │  └────────────────┘  │
+       │                                  │  subscribe            │
+       │                                  │   LearnedInsight      │
+       │                                  └──────────┬───────────┘
+       │                                             │
+       │             ┌─────────────┐                 │ retire
+       │◄────────────│   Warden    │◄────────────────┘ with knowledge
+       │  supervises │  on stuck   │  monitors         export
+       │             │  on crash   │
+       │             │  on timeout │
+       │             └─────────────┘
+```
+
+Agents are born (`spawn`), learn (`learn`/`recall`), discover each other (`find`), communicate (`emit`/`subscribe`), get supervised (`warden`), and gracefully exit (`retire`) — preserving their knowledge.
+
+### System orchestration
+
+```
+  ┌─────────────────────────────────────────────────────┐
+  │  system customer_support                             │
+  │                                                      │
+  │  ┌──────────┐    events    ┌──────────────────┐     │
+  │  │ triage   │─────────────▶│ tech_specialist   │     │
+  │  │ agent    │              └──────────────────┘     │
+  │  │          │    events    ┌──────────────────┐     │
+  │  │          │─────────────▶│ billing_specialist│     │
+  │  └──────────┘              └──────────────────┘     │
+  │       │                           │                  │
+  │       └───────────┬───────────────┘                  │
+  │                   ▼                                  │
+  │          ┌─────────────────┐                         │
+  │          │   Shared Event   │                         │
+  │          │      Bus         │                         │
+  │          └─────────────────┘                         │
+  │                   │                                  │
+  │          ┌────────┴────────┐                         │
+  │          ▼                 ▼                          │
+  │  ┌──────────────┐ ┌───────────────┐                  │
+  │  │ Instance     │ │ Knowledge     │                  │
+  │  │ Registry     │ │ Stores        │                  │
+  │  │ (find/spawn) │ │ (learn/recall)│                  │
+  │  └──────────────┘ └───────────────┘                  │
+  └─────────────────────────────────────────────────────┘
+```
+
+A `system` declaration wires agents together with a shared event bus, instance registry, and knowledge infrastructure. Wardens supervise the fleet.
+
+---
+
 ## The agent ecosystem
 
 Agents in FORGE are born, learn, specialize, discover each other, and gracefully retire — all as language primitives.
@@ -200,6 +381,23 @@ This is not a toy example — it is the actual `forge-sensei` program that teach
 
 Every feature in FORGE traces to one of nine principles. Every design decision is a refusal or an affirmation of these beliefs.
 
+```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                    THE NINE PRINCIPLES                          │
+  │                                                                 │
+  │  SAFETY                    ARCHITECTURE          OPERATIONS     │
+  │  ┌───────────────────┐     ┌──────────────┐     ┌───────────┐  │
+  │  │ I   Honesty       │     │ IV  Compose  │     │ VII Human  │  │
+  │  │ II  Determinism   │     │ V   Supervise│     │     Ceiling│  │
+  │  │ III Token Economy │     │ VI  Self-Ref │     │VIII Account│  │
+  │  │ IX  Boundary      │     │              │     │     ability│  │
+  │  └───────────────────┘     └──────────────┘     └───────────┘  │
+  │         │                        │                     │        │
+  │         ▼                        ▼                     ▼        │
+  │  "What can go wrong?"    "How does it fit?"    "Who's watching?"│
+  └─────────────────────────────────────────────────────────────────┘
+```
+
 ### I — The Honesty Principle
 *A system that hides uncertainty is more dangerous than one that knows nothing.*
 
@@ -207,6 +405,26 @@ Every oracle call returns `uncertain<T>`. The compiler enforces that `uncertain<
 
 ### II — The Determinism Boundary
 *Two kinds of computation exist. They must never be mixed invisibly.*
+
+```
+  ┌──────────────────────────┐    ┌──────────────────────────┐
+  │   DETERMINISTIC ZONE     │    │    STOCHASTIC ZONE       │
+  │   (pure functions)       │    │    (tasks with LLM)      │
+  │                          │    │                          │
+  │   game rules             │    │   intent classification  │
+  │   compliance checks      │    │   summarization          │
+  │   dosage calculations    │    │   code generation        │
+  │   validation logic       │    │   reasoning              │
+  │                          │    │                          │
+  │   confidence: always 1.0 │    │   confidence: 0.0 - 1.0  │
+  │   hallucination: IMPOSSIBLE│   │   hallucination: possible │
+  │                          │    │                          │
+  │   pure check_winner      │    │   task classify_intent   │
+  │     gives WinResult  ◄───┼─NO─┼──  reason "..."         │
+  │                          │    │                          │
+  └──────────────────────────┘    └──────────────────────────┘
+         compile error if pure calls an oracle ───▶ ✕
+```
 
 `pure` functions cannot call oracles. `think` tasks cannot be guaranteed deterministic. This boundary is enforced at compile time. The deterministic core of any FORGE system — rules, constraints, validations — is provably free of hallucination.
 
@@ -493,7 +711,7 @@ FORGE is most valuable in systems where:
 
 Three things determine whether this reaches its potential:
 
-**Engineering:** Layer 1 is substantially complete — parser, six semantic checkers, async runtime, LLM providers, and a 27-test conformance suite are operational. Layer 2 (toolkit agents that generate FORGE code) is the next frontier. Error messages are structured data designed for agent repair loops.
+**Engineering:** Layer 1 is ~90% complete — parser, seven semantic checkers, async runtime with 15 modules, agent lifecycle (spawn/find/retire), knowledge system, system orchestration, and a 36-test conformance suite are operational. Layer 2 (toolkit agents that generate FORGE code) is the next frontier. Error messages are structured data designed for agent repair loops.
 
 **Capability:** The factory model depends on LLMs that can write reliable FORGE code. Today's models can handle simple programs. Complex multi-agent systems with subtle invariants require the repair loop to run multiple times. The factory becomes more powerful as models improve.
 
