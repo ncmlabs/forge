@@ -987,3 +987,94 @@ fn spans_are_preserved() {
         _ => panic!("expected task"),
     }
 }
+
+// ── Spawn statement tests (#83) ──────────────────────────────
+
+/// Wrap multi-line statements at i2 level, with explicit newlines.
+fn parse_task_multiline(lines: &[&str]) -> Program {
+    let body = lines.join("\n    ");
+    let src = format!("task test_task\n  do\n    {}\n", body);
+    parse(&src).unwrap_or_else(|e| panic!("parse failed:\n{}\nsource:\n{}", e, src))
+}
+
+#[test]
+fn parse_spawn_basic() {
+    let prog = parse_task_with("spawn worker");
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert!(s.binding.is_none());
+            assert_eq!(s.template.node, "worker");
+            assert!(s.alias.is_none());
+            assert!(s.options.is_empty());
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_with_binding() {
+    let prog = parse_task_with(r#"child = spawn worker"#);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.binding.as_ref().unwrap().node, "child");
+            assert_eq!(s.template.node, "worker");
+            assert!(s.alias.is_none());
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_with_alias() {
+    let prog = parse_task_with(r#"child = spawn worker as "room_42""#);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.binding.as_ref().unwrap().node, "child");
+            assert_eq!(s.template.node, "worker");
+            assert!(s.alias.is_some());
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_with_all_options() {
+    let prog = parse_task_multiline(&[
+        r#"child = spawn opponent as "room_1""#,
+        r#"  with knowledge where category == "moves""#,
+        r#"  with confidence_cap: 0.8"#,
+        r#"  with memory difficulty: "hard""#,
+    ]);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.binding.as_ref().unwrap().node, "child");
+            assert_eq!(s.template.node, "opponent");
+            assert!(s.alias.is_some());
+            assert_eq!(s.options.len(), 3);
+            // Check option types
+            assert!(matches!(&s.options[0].node, SpawnOption::KnowledgeFilter(cat) if cat.node == "moves"));
+            assert!(matches!(&s.options[1].node, SpawnOption::ConfidenceCap(_)));
+            assert!(matches!(&s.options[2].node, SpawnOption::MemoryInit(field, _) if field.node == "difficulty"));
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_knowledge_filter_only() {
+    let prog = parse_task_multiline(&[
+        r#"id = spawn specialist"#,
+        r#"  with knowledge where category == "syntax""#,
+    ]);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.template.node, "specialist");
+            assert_eq!(s.options.len(), 1);
+            match &s.options[0].node {
+                SpawnOption::KnowledgeFilter(cat) => assert_eq!(cat.node, "syntax"),
+                other => panic!("expected KnowledgeFilter, got {:?}", other),
+            }
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
