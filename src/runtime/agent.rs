@@ -544,7 +544,11 @@ impl AgentProcess {
                                         Value::Record(payload.fields.clone()),
                                     ));
 
-                                let _ = self.dispatch(&event_name, params).await?;
+                                match self.dispatch(&event_name, params).await {
+                                    Ok(_) => {}
+                                    Err(RuntimeError::RetireSignal) => break,
+                                    Err(e) => return Err(e),
+                                }
                                 self.drain_event_sink().await?;
                             }
                         }
@@ -553,7 +557,11 @@ impl AgentProcess {
                 }
                 fired = self.timer_rx.recv() => {
                     if let Some(timer_event) = fired {
-                        self.handle_timer_fired(timer_event).await?;
+                        match self.handle_timer_fired(timer_event).await {
+                            Ok(()) => {}
+                            Err(RuntimeError::RetireSignal) => break,
+                            Err(e) => return Err(e),
+                        }
                         self.drain_event_sink().await?;
                     }
                 }

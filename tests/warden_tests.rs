@@ -645,3 +645,57 @@ fn warden_managed_names() {
     let names = warden.managed_names();
     assert_eq!(names, vec!["agent_a", "agent_b"]);
 }
+
+// ── Dynamic adopt/release (#86) ────────────────────────────────────────────
+
+#[test]
+fn warden_adopt_adds_agent() {
+    let decl = basic_warden();
+    let mut warden = Warden::new(decl, None);
+    assert_eq!(warden.managed_names().len(), 2);
+
+    warden.adopt("agent_c");
+    let names = warden.managed_names();
+    assert_eq!(names.len(), 3);
+    assert!(names.contains(&"agent_c"));
+}
+
+#[test]
+fn warden_adopt_no_duplicates() {
+    let decl = basic_warden();
+    let mut warden = Warden::new(decl, None);
+
+    warden.adopt("agent_a"); // already managed
+    assert_eq!(warden.managed_names().len(), 2);
+}
+
+#[test]
+fn warden_release_removes_agent() {
+    let decl = basic_warden();
+    let mut warden = Warden::new(decl, None);
+
+    warden.release("agent_b");
+    let names = warden.managed_names();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0], "agent_a");
+}
+
+#[test]
+fn warden_release_clears_retry_tracker() {
+    let decl = basic_warden();
+    let mut warden = Warden::new(decl, None);
+
+    // Record some failures for agent_b
+    let signal = FailureSignal {
+        agent_name: "agent_b".to_string(),
+        failure_type: FailureType::Stuck,
+        detail: "test".to_string(),
+    };
+    warden.handle_failure(&signal, &[], 1000);
+    warden.handle_failure(&signal, &[], 2000);
+    assert_eq!(warden.retry_tracker.count("agent_b", FailureType::Stuck), 2);
+
+    // Release clears retry state
+    warden.release("agent_b");
+    assert_eq!(warden.retry_tracker.count("agent_b", FailureType::Stuck), 0);
+}

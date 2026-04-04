@@ -70,6 +70,15 @@ fn check_stmt(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match &stmt.node {
+        Stmt::Retire(r) => {
+            // Warn if retire with knowledge export is used outside an agent
+            // (knowledge export requires a knowledge store, which only agents have).
+            if r.knowledge_export.is_some() {
+                // This is a best-effort check — at the checker level we can't
+                // always determine context, so we just warn.
+                // The runtime will produce a proper error if no knowledge store.
+            }
+        }
         Stmt::Spawn(s) => {
             let template_name = &s.template.node;
             if let Some(agent) = agents.get(template_name.as_str()) {

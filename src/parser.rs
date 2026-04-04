@@ -1119,6 +1119,41 @@ fn build_spawn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
     ))
 }
 
+fn build_retire_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
+    let span = to_span(&pair);
+    let inner = pair.into_inner();
+
+    let mut target: Option<Spanned<Expr>> = None;
+    let mut knowledge_export: Option<Spanned<Expr>> = None;
+
+    for child in inner {
+        match child.as_rule() {
+            Rule::string_arg => {
+                // First string_arg is the target alias
+                if target.is_none() {
+                    target = Some(build_string_arg(child)?);
+                }
+            }
+            Rule::retire_option => {
+                let opt_inner = child.into_inner().next().unwrap();
+                if opt_inner.as_rule() == Rule::retire_knowledge_export {
+                    let path_arg = opt_inner.into_inner().next().unwrap();
+                    knowledge_export = Some(build_string_arg(path_arg)?);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Spanned::new(
+        Stmt::Retire(Box::new(RetireStmt {
+            target,
+            knowledge_export,
+        })),
+        span,
+    ))
+}
+
 // ── Control flow statements ──────────────────────────────────
 
 fn build_when_clause(pair: Pair) -> anyhow::Result<Spanned<WhenClause>> {
@@ -1340,6 +1375,7 @@ fn build_statement(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
         Rule::if_else_stmt | Rule::if_else_stmt_i3 => build_if_else_stmt(inner),
         Rule::for_loop | Rule::for_loop_i3 => build_for_loop(inner),
         Rule::spawn_stmt | Rule::spawn_stmt_i3 => build_spawn_stmt(inner),
+        Rule::retire_stmt | Rule::retire_stmt_i3 => build_retire_stmt(inner),
         Rule::bind_stmt => build_bind_stmt(inner),
         Rule::give_stmt => build_give_stmt(inner),
         Rule::say_stmt => build_say_stmt(inner),

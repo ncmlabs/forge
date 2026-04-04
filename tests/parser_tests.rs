@@ -1151,3 +1151,68 @@ fn parse_find_all_with_lifecycle_filter() {
         other => panic!("expected Find, got {:?}", other),
     }
 }
+
+// ── Retire statement (#86) ──────────────────────────────────
+
+#[test]
+fn parse_retire_self() {
+    let prog = parse_task_with("retire");
+    match first_stmt(&prog) {
+        Stmt::Retire(r) => {
+            assert!(r.target.is_none());
+            assert!(r.knowledge_export.is_none());
+        }
+        other => panic!("expected Retire, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_retire_with_target() {
+    let prog = parse_task_with(r#"retire "old_bot""#);
+    match first_stmt(&prog) {
+        Stmt::Retire(r) => {
+            assert!(r.target.is_some());
+            assert!(r.knowledge_export.is_none());
+        }
+        other => panic!("expected Retire, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_retire_with_knowledge_export() {
+    let src = "task cleanup\n  do\n    retire\n      with knowledge export: \"backup.json\"\n";
+    let prog = parse(src).unwrap();
+    match &prog.items[0].node {
+        TopLevel::Task(t) => match &t.body.node {
+            TaskBody::Do(stmts) => match &stmts[0].node {
+                Stmt::Retire(r) => {
+                    assert!(r.target.is_none());
+                    assert!(r.knowledge_export.is_some());
+                }
+                other => panic!("expected Retire, got {:?}", other),
+            },
+            _ => panic!("expected do block"),
+        },
+        _ => panic!("expected task"),
+    }
+}
+
+#[test]
+fn parse_retire_alias_with_export() {
+    let src =
+        "task cleanup\n  do\n    retire \"old_bot\"\n      with knowledge export: \"backup.json\"\n";
+    let prog = parse(src).unwrap();
+    match &prog.items[0].node {
+        TopLevel::Task(t) => match &t.body.node {
+            TaskBody::Do(stmts) => match &stmts[0].node {
+                Stmt::Retire(r) => {
+                    assert!(r.target.is_some());
+                    assert!(r.knowledge_export.is_some());
+                }
+                other => panic!("expected Retire, got {:?}", other),
+            },
+            _ => panic!("expected do block"),
+        },
+        _ => panic!("expected task"),
+    }
+}

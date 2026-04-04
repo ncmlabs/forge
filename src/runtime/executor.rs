@@ -50,6 +50,10 @@ pub enum RuntimeError {
     // Control flow — not a real error, used to propagate `give` values
     #[error("give signal (internal)")]
     GiveSignal(ConfidentValue, Option<u16>, Option<String>),
+
+    // Control flow — not a real error, used to signal graceful agent retirement
+    #[error("retire signal (internal)")]
+    RetireSignal,
 }
 
 /// Result from executing an endpoint, including optional response metadata.
@@ -286,6 +290,7 @@ impl TaskExecutor {
         match self.exec_stmts(&main_decl.body, &mut env).await {
             Ok(val) => Ok(val),
             Err(RuntimeError::GiveSignal(val, ..)) => Ok(val),
+            Err(RuntimeError::RetireSignal) => Ok(ConfidentValue::deterministic(Value::Unit)),
             Err(e) => Err(e),
         }
     }
@@ -894,6 +899,76 @@ impl TaskExecutor {
                             ConfidentValue::deterministic(Value::Text(uuid_str)),
                         );
                     }
+                }
+
+                Stmt::Retire(retire) => {
+                    // 1. Resolve target
+                    let target_alias = if let Some(ref target_expr) = retire.target {
+                        let val = self.eval_expr(target_expr, env).await?;
+                        Some(format!("{}", val.value))
+                    } else {
+                        None
+                    };
+
+                    // 2. Export knowledge if requested (Principle VIII — Accountability)
+                    if let Some(ref export_path_expr) = retire.knowledge_export {
+                        let path_val = self.eval_expr(export_path_expr, env).await?;
+                        let export_path = format!("{}", path_val.value);
+
+                        if let Some(ref ctx_arc) = self.agent_context {
+                            let ctx = ctx_arc.lock().unwrap();
+                            if let Some(ref ks) = ctx.knowledge_store {
+                                let entries = ks.export_entries();
+                                let agent_name = self
+                                    .agent_name
+                                    .clone()
+                                    .unwrap_or_else(|| "unknown".to_string());
+
+                                let schema = crate::portability::AgentSchema {
+                                    fields: Vec::new(),
+                                    knowledge_config: None,
+                                };
+
+                                let pkg = crate::portability::build_package(
+                                    &agent_name,
+                                    &agent_name,
+                                    None,
+                                    schema,
+                                    entries,
+                                );
+
+                                let json = serde_json::to_string_pretty(&pkg).map_err(|e| {
+                                    RuntimeError::FlowError(format!(
+                                        "retire: failed to serialize knowledge: {}",
+                                        e
+                                    ))
+                                })?;
+
+                                std::fs::write(&export_path, json).map_err(|e| {
+                                    RuntimeError::FlowError(format!(
+                                        "retire: failed to write {}: {}",
+                                        export_path, e
+                                    ))
+                                })?;
+                            }
+                        }
+                    }
+
+                    // 3. Unregister from instance registry
+                    if let Some(ref ir) = self.instance_registry {
+                        let mut registry = ir.write().await;
+                        if let Some(ref alias) = target_alias {
+                            // Retire a specific instance by alias
+                            if let Some(info) = registry.find_by_alias(alias) {
+                                registry.unregister(&info.instance_id);
+                            }
+                        }
+                        // If no target, self-retirement — unregister happens via
+                        // the RetireSignal propagation in the agent event loop.
+                    }
+
+                    // 4. Signal termination
+                    return Err(RuntimeError::RetireSignal);
                 }
             }
             Ok(())

@@ -408,6 +408,14 @@ fn check_refs_in_stmt(
                 }
             }
         }
+        Stmt::Retire(r) => {
+            if let Some(ref target) = r.target {
+                check_refs_in_expr(target, boundary, registry, file, diagnostics);
+            }
+            if let Some(ref export_path) = r.knowledge_export {
+                check_refs_in_expr(export_path, boundary, registry, file, diagnostics);
+            }
+        }
         // No expressions to walk
         Stmt::TransitionTo(_)
         | Stmt::StartTimer { .. }
