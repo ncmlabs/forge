@@ -204,7 +204,6 @@ exportable agent forge_sensei
   # ── Pre-training: bulk document ingestion ───────────────────
 
   on ingest(document_path: Text)
-    result = try recall document_path or "No prior document found"
     learn from document(document_path)
     say "Ingested: {document_path}"
 
