@@ -1,0 +1,9 @@
+{
+  "name": "sensei_pure_check_prediction",
+  "category": "parser",
+  "description": "Pure function with .contains() call and Bool return parses successfully",
+  "input": "pure check_prediction\n  needs predicted: Text, expected: Text\n  gives Bool\n  do\n    if predicted.contains(expected)\n      give true\n    give false\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "sensei_type_assessment_result",
+  "category": "parser",
+  "description": "Type declaration with Bool and Text fields parses successfully",
+  "input": "type AssessmentResult\n  passed: Bool\n  prediction: Text\n  expected: Text\n  gap_topic: Text\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

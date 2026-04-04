@@ -1,0 +1,9 @@
+{
+  "name": "sensei_agent_spawn_with_knowledge",
+  "category": "parser",
+  "description": "Spawn with knowledge where clause and with memory parses successfully",
+  "input": "agent specialist\n  memory\n    topic: Text\n  knowledge store: \".forge-knowledge/specialist\"\n\n  on start\n    say \"Specialist initialized\"\n\nexportable agent forge_sensei\n  memory\n    interaction_count: Number\n  knowledge store: \".forge-knowledge/sensei\"\n\n  on deep_dive(topic: Text)\n    memory.interaction_count = memory.interaction_count + 1\n    existing = find \"specialist_{topic}\"\n    if existing\n      say \"Specialist already active.\"\n      give existing\n    child = spawn specialist as \"specialist_{topic}\"\n      with knowledge where category == topic\n      with memory topic: topic\n    say \"Spawned specialist.\"\n    give child\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

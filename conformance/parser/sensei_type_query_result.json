@@ -1,0 +1,9 @@
+{
+  "name": "sensei_type_query_result",
+  "category": "parser",
+  "description": "Type declaration with 3 fields (Text, Text, Number) parses successfully",
+  "input": "type QueryResult\n  answer: Text\n  confidence_tier: Text\n  sources_used: Number\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

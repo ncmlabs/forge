@@ -1,0 +1,9 @@
+{
+  "name": "sensei_contract_forge_tutor",
+  "category": "parser",
+  "description": "Contract with 4 can-signatures including parameterless and typed returns parses successfully",
+  "input": "type QueryResult\n  answer: Text\n  confidence_tier: Text\n  sources_used: Number\n\ntype AssessmentResult\n  passed: Bool\n  prediction: Text\n  expected: Text\n  gap_topic: Text\n\ncontract ForgeTutor\n  can query(question: Text) -> QueryResult\n  can review(code: Text) -> Text\n  can status() -> Text\n  can assess_detailed(test_input: Text, expected: Text) -> AssessmentResult\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}
