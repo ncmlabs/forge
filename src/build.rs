@@ -704,14 +704,20 @@ async fn main() -> anyhow::Result<()> {{
     let lifecycle_name = agent_decl.lifecycle.as_ref().map(|l| l.node.as_str());
     let states_decl = forge::compose::find_states(&program, lifecycle_name);
 
+    // Create instance registry for find/spawn support
+    let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry =
+        std::sync::Arc::new(tokio::sync::RwLock::new(
+            forge::runtime::instance_registry::InstanceRegistry::new(),
+        ));
+
     let agent = forge::runtime::agent::AgentProcess::new(
         agent_decl.clone(),
         states_decl.as_ref(),
         Arc::new(registry),
         None,
         program,
-        None, // build mode doesn't need persistent storage
-        None, // no instance registry in build mode
+        None,
+        Some(instance_registry),
     );
 
     match cli.command {{

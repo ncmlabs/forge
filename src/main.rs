@@ -925,6 +925,12 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
         None
     };
 
+    // Create instance registry for find/spawn support
+    let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry =
+        Arc::new(tokio::sync::RwLock::new(
+            forge::runtime::instance_registry::InstanceRegistry::new(),
+        ));
+
     let agent = AgentProcess::new(
         agent_decl.clone(),
         states_decl.as_ref(),
@@ -932,7 +938,7 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
         None,
         program,
         storage,
-        None,
+        Some(instance_registry),
     );
 
     // Build params from positional args matching handler param names
