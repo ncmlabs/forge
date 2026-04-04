@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BoundaryKind, Expr, FieldDef, LearnSource, Program, SpawnOption, Spanned, Stmt, TaskBody,
+    BoundaryKind, Expr, FieldDef, LearnSource, Program, Spanned, SpawnOption, Stmt, TaskBody,
     TemplatePart, TopLevel, TypeName,
 };
 use crate::diagnostic::Diagnostic;

@@ -1052,9 +1052,13 @@ fn parse_spawn_with_all_options() {
             assert!(s.alias.is_some());
             assert_eq!(s.options.len(), 3);
             // Check option types
-            assert!(matches!(&s.options[0].node, SpawnOption::KnowledgeFilter(cat) if cat.node == "moves"));
+            assert!(
+                matches!(&s.options[0].node, SpawnOption::KnowledgeFilter(cat) if cat.node == "moves")
+            );
             assert!(matches!(&s.options[1].node, SpawnOption::ConfidenceCap(_)));
-            assert!(matches!(&s.options[2].node, SpawnOption::MemoryInit(field, _) if field.node == "difficulty"));
+            assert!(
+                matches!(&s.options[2].node, SpawnOption::MemoryInit(field, _) if field.node == "difficulty")
+            );
         }
         other => panic!("expected Spawn, got {:?}", other),
     }

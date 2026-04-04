@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `spawn` statement for creating agent instances at runtime — `child = spawn agent as "alias"` with `with knowledge where category == "X"`, `with confidence_cap: 0.8`, `with memory field: value` options; registers in instance registry, transfers filtered knowledge with confidence decay (Principle I), warns on missing failure policy (Principle VII) (#83)
 - `category:` suffix on `learn` statements for categorized knowledge storage — `learn "fact" category: "boundary"`, `learn from interaction(...) category: "troubleshooting"`, `learn from document(...) category: "docs"` (#85)
 - Agent instance registry: `InstanceRegistry` tracks living agent instances at runtime for discovery and composition — register/unregister/find_by_name/find_all, shared via `Arc<RwLock>`, integrated into `WardedRuntime` and `TaskExecutor` (#82)
 - Knowledge categories: `category` field on `KnowledgeEntry`, `learn_direct_categorized()`, `export_by_category()`, `export_above_confidence()`, and `export_filtered()` for domain-specific knowledge transfer (#81)
