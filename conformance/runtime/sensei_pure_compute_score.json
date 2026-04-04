@@ -1,0 +1,11 @@
+{
+  "name": "sensei_pure_compute_score",
+  "category": "runtime",
+  "description": "Pure function compute_mastery_score returns percentage from passed and total",
+  "input": "pure compute_mastery_score\n  needs passed: Number, total: Number\n  gives Number\n  do\n    if total == 0\n      give 0\n    give (passed / total) * 100\n\nfn main\n  result = compute_mastery_score(36, 40)\n  say result\n",
+  "mock_responses": [],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": []
+  }
+}

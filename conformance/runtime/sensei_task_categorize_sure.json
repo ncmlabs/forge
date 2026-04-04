@@ -1,0 +1,13 @@
+{
+  "name": "sensei_task_categorize_sure",
+  "category": "runtime",
+  "description": "Task categorize_for_recall dispatches on sure confidence from classify",
+  "input": "use\n  llm.classify\n\ntask categorize_for_recall\n  needs context: Text\n  gives Text\n  do\n    result = classify context into [\"SYNTAX\", \"TASKS\", \"FLOWS\", \"CONTROL\", \"AGENTS\", \"KNOWLEDGE\", \"SUPERVISION\", \"PRINCIPLES\", \"PATTERNS\", \"ERRORS\", \"CONFORMANCE\", \"BOUNDARY\"]\n    when result.sure -> give result\n    when result.unsure -> give result\n    else -> give \"GENERAL\"\n\nfn main\n  result = categorize_for_recall(\"How do you define a task with needs and gives?\")\n  say result\n",
+  "mock_responses": [
+    {"text": "TASKS", "confidence": 0.91}
+  ],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": ["task_call", "llm_request", "llm_response", "when_dispatch", "task_return"]
+  }
+}
