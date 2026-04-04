@@ -710,13 +710,22 @@ async fn main() -> anyhow::Result<()> {{
             forge::runtime::instance_registry::InstanceRegistry::new(),
         ));
 
+    // Open persistent storage for memory across invocations
+    let storage = {{
+        let db_path = std::path::Path::new(".forge-data").join("store.redb");
+        std::fs::create_dir_all(".forge-data").ok();
+        forge::runtime::storage::ForgeStorage::open(&db_path)
+            .ok()
+            .map(|s| std::sync::Arc::new(s))
+    }};
+
     let agent = forge::runtime::agent::AgentProcess::new(
         agent_decl.clone(),
         states_decl.as_ref(),
         Arc::new(registry),
         None,
         program,
-        None,
+        storage,
         Some(instance_registry),
     );
 

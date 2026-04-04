@@ -253,6 +253,7 @@ pub struct AgentProcess {
     timer_engine: Arc<Mutex<TimerEngine>>,
     pub timer_rx: mpsc::Receiver<TimerFired>,
     warden_tx: Option<mpsc::Sender<AgentSignal>>,
+    storage: Option<crate::runtime::storage::SharedStorage>,
 }
 
 impl AgentProcess {
@@ -268,13 +269,13 @@ impl AgentProcess {
     ) -> Self {
         let mut memory = AgentMemory::new(&decl.memory);
 
-        // Load persistent memory from storage if available (issue #57)
-        if decl.memory_persistent {
-            if let Some(ref store) = storage {
-                let key = format!("agent:{}:memory", decl.name.node);
-                if let Ok(Some(json)) = store.get(&key) {
-                    let _ = memory.restore_from_json(&json);
-                }
+        // Load memory from storage if available
+        // For persistent agents: always load (ACID guarantee, issue #57)
+        // For non-persistent agents: load if storage provided (CLI mode persistence)
+        if let Some(ref store) = storage {
+            let key = format!("agent:{}:memory", decl.name.node);
+            if let Ok(Some(json)) = store.get(&key) {
+                let _ = memory.restore_from_json(&json);
             }
         }
         let state_machine = states.map(StateMachine::new);
@@ -355,6 +356,7 @@ impl AgentProcess {
             timer_engine,
             timer_rx,
             warden_tx: None,
+            storage,
         }
     }
 
@@ -451,6 +453,18 @@ impl AgentProcess {
                 confidence,
                 memory_hash,
             });
+        }
+
+        // Persist memory state after handler execution
+        // Ensures memory survives across CLI invocations (forge send / binary)
+        {
+            let ctx = self.context.lock().unwrap();
+            if let Some(ref store) = self.storage {
+                let key = format!("agent:{}:memory", self.decl.name.node);
+                if let Ok(json) = ctx.memory.to_json() {
+                    let _ = store.store(&key, &json);
+                }
+            }
         }
 
         // Check stuck detection and execute stuck policy if needed

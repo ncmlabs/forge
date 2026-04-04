@@ -918,12 +918,9 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
-    // Open persistent storage if agent declares memory persistent
-    let storage = if agent_decl.memory_persistent {
-        Some(open_forge_storage()?)
-    } else {
-        None
-    };
+    // Always open storage in CLI mode — even non-persistent agents need
+    // memory to survive across forge-send invocations
+    let storage = Some(open_forge_storage()?);
 
     // Create instance registry for find/spawn support
     let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry =
