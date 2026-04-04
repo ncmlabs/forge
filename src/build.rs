@@ -143,7 +143,7 @@ impl BuildPipeline {
 
         if kind == ProgramKind::System {
             anyhow::bail!(
-                "system binaries are not yet supported — system runtime is under development"
+                "system binaries are not yet supported — use `forge run` to execute system programs"
             );
         }
 

@@ -127,6 +127,7 @@ pub struct TaskExecutor {
     event_bus: Option<crate::runtime::event_bus::SharedEventBus>,
     agent_name: Option<String>,
     memory_persistent: bool,
+    config: Option<crate::config::ForgeConfig>,
 }
 
 impl TaskExecutor {
@@ -175,7 +176,14 @@ impl TaskExecutor {
             event_bus: None,
             agent_name: None,
             memory_persistent: false,
+            config: None,
         }
+    }
+
+    /// Attach a ForgeConfig for system runtime configuration.
+    pub fn with_config(mut self, config: crate::config::ForgeConfig) -> Self {
+        self.config = Some(config);
+        self
     }
 
     /// Attach an agent context for agent statement execution.
@@ -274,25 +282,45 @@ impl TaskExecutor {
         }
     }
 
-    /// Run the program starting from `fn main`
+    /// Run the program starting from `fn main`, or from a `system` declaration
+    /// if no `fn main` is present.
     pub async fn run(&self) -> Result<ConfidentValue, RuntimeError> {
-        let main_decl = self
-            .program
-            .items
-            .iter()
-            .find_map(|item| match &item.node {
-                TopLevel::FnMain(m) => Some(m),
-                _ => None,
-            })
-            .ok_or(RuntimeError::NoMainFunction)?;
+        // Try fn main first
+        let main_decl = self.program.items.iter().find_map(|item| match &item.node {
+            TopLevel::FnMain(m) => Some(m),
+            _ => None,
+        });
 
-        let mut env = Env::new();
-        match self.exec_stmts(&main_decl.body, &mut env).await {
-            Ok(val) => Ok(val),
-            Err(RuntimeError::GiveSignal(val, ..)) => Ok(val),
-            Err(RuntimeError::RetireSignal) => Ok(ConfidentValue::deterministic(Value::Unit)),
-            Err(e) => Err(e),
+        if let Some(main_decl) = main_decl {
+            let mut env = Env::new();
+            return match self.exec_stmts(&main_decl.body, &mut env).await {
+                Ok(val) => Ok(val),
+                Err(RuntimeError::GiveSignal(val, ..)) => Ok(val),
+                Err(RuntimeError::RetireSignal) => Ok(ConfidentValue::deterministic(Value::Unit)),
+                Err(e) => Err(e),
+            };
         }
+
+        // Fall back to system declaration
+        let system_decl = self.program.items.iter().find_map(|item| match &item.node {
+            TopLevel::System(s) => Some(s),
+            _ => None,
+        });
+
+        if let Some(system_decl) = system_decl {
+            let system_config = self.config.as_ref().and_then(|c| c.system.as_ref());
+            let system_runtime = crate::runtime::system::SystemRuntime::new(
+                system_decl,
+                &self.program,
+                self.providers.clone(),
+                self.tracer.clone(),
+                system_config,
+            )?;
+            system_runtime.start().await?;
+            return Ok(ConfidentValue::deterministic(Value::Unit));
+        }
+
+        Err(RuntimeError::NoMainFunction)
     }
 
     // ── Statement execution ───────────────────────────────────────────────────

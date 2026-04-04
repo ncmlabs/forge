@@ -477,6 +477,7 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
     }
 
     let config = forge::config::ForgeConfig::load_or_default();
+    let config_clone = config.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
@@ -490,7 +491,8 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
         None
     };
 
-    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer);
+    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer)
+        .with_config(config_clone);
 
     match executor.run().await {
         Ok(_) => {}
@@ -560,6 +562,7 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     })?;
 
     let config = forge::config::ForgeConfig::load_or_default();
+    let config_clone = config.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
@@ -574,7 +577,8 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     };
 
     let executor =
-        forge::runtime::executor::TaskExecutor::new(composed.program, Arc::new(registry), tracer);
+        forge::runtime::executor::TaskExecutor::new(composed.program, Arc::new(registry), tracer)
+            .with_config(config_clone);
 
     match executor.run().await {
         Ok(_) => {}
