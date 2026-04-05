@@ -808,8 +808,7 @@ async fn serve_with_watch(
 
         tokio::select! {
             result = server.run() => {
-                // Server stopped (SIGINT) — cancel watcher and exit
-                watcher_handle.abort();
+                // Server stopped (SIGINT) — watcher task is dropped and cancelled
                 return result;
             }
             watch_result = watcher_handle => {
