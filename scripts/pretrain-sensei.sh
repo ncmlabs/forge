@@ -208,3 +208,16 @@ fi
 # Save manifest for idempotency
 mkdir -p "$(dirname "$MANIFEST_FILE")"
 printf '%s\n' "${FILES[@]}" "${CONF_FILES[@]}" | sort | xargs shasum -a 256 2>/dev/null | shasum -a 256 | cut -d' ' -f1 > "$MANIFEST_FILE"
+
+# ── Phase 7: Mastery Assessment ──────────────────────────────
+echo ""
+echo "Phase 7: Mastery assessment..."
+ASSESS_SCRIPT="${HOME}/.claude/skills/forge-sensei/assess.sh"
+if [ -f "$ASSESS_SCRIPT" ]; then
+  bash "$ASSESS_SCRIPT" 2>&1
+else
+  echo "  (skipping: assess.sh not found at $ASSESS_SCRIPT)"
+fi
+
+echo ""
+"$SENSEI_BIN" status 2>/dev/null || true
