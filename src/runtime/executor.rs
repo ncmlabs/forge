@@ -277,7 +277,7 @@ impl TaskExecutor {
 
     /// Check if an OutputType includes Html.
     fn returns_html_output(gives: &Option<Spanned<OutputType>>) -> bool {
-        gives.as_ref().map_or(false, |ot| {
+        gives.as_ref().is_some_and(|ot| {
             ot.node
                 .types
                 .iter()
@@ -436,7 +436,7 @@ impl TaskExecutor {
                                 }
                             }
                             "content_type" => {
-                                if let Value::Text(s) = &meta_val.value {
+                                if let Value::Text(s) | Value::Html(s) = &meta_val.value {
                                     content_type = Some(s.clone());
                                 }
                             }
