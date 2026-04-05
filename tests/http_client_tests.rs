@@ -231,7 +231,7 @@ async fn search_returns_error_for_unsupported_provider() {
 #[tokio::test]
 async fn search_returns_error_when_server_unavailable() {
     let config = WebConfig {
-        timeout_secs: Some(1),
+        timeout_secs: Some(2),
         max_redirects: None,
         search_provider: Some("searxng".to_string()),
         search_api_key: None,
@@ -242,9 +242,10 @@ async fn search_returns_error_when_server_unavailable() {
     let result = search(&client, "test", Some(&config)).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
+    // On Linux/macOS connection is refused immediately; on Windows it may timeout instead
     assert!(
-        err.contains("connection failed"),
-        "expected connection error, got: {}",
+        err.contains("connection failed") || err.contains("timeout"),
+        "expected connection or timeout error, got: {}",
         err
     );
 }
