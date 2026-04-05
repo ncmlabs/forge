@@ -224,6 +224,7 @@ exportable agent forge_sensei
   # ── Review: check FORGE code via flow ───────────────────────
 
   on review(code: Text)
+    requires lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: give "Sensei is still at novice level. Code review unlocks at apprentice. Run assessment first."
     memory.interaction_count = memory.interaction_count + 1
     give review_code(code)
 
@@ -238,6 +239,7 @@ exportable agent forge_sensei
   # ── Deep Dive: spawn specialist for focused domain learning ──
 
   on deep_dive(topic: Text)
+    requires lifecycle == journeyman or lifecycle == expert on fail: give "Deep dive requires journeyman level. Run assessment to advance."
     memory.interaction_count = memory.interaction_count + 1
     existing = find "specialist_{topic}"
     if existing
