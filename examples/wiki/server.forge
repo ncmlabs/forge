@@ -50,7 +50,7 @@ pure docs_sidebar
   needs active_slug: Text
   gives Html
   do
-    give "<aside class=\"w-64 shrink-0 hidden lg:block\"><ul class=\"menu bg-base-200 rounded-box w-full\"><li class=\"menu-title\">Getting Started</li><li><a href=\"/docs?slug=getting-started\" class=\"{!active_slug}\">Quick Start</a></li><li><a href=\"/docs?slug=principles\">First Principles</a></li><li class=\"menu-title\">Reference</li><li><a href=\"/docs?slug=task\">task</a></li><li><a href=\"/docs?slug=agent\">agent</a></li><li><a href=\"/docs?slug=flow\">flow</a></li><li><a href=\"/docs?slug=pool\">pool</a></li><li><a href=\"/docs?slug=system\">system</a></li><li><a href=\"/docs?slug=event\">event</a></li><li><a href=\"/docs?slug=states\">states</a></li><li><a href=\"/docs?slug=when\">when</a></li><li><a href=\"/docs?slug=pure\">pure</a></li><li><a href=\"/docs?slug=boundary\">boundary</a></li><li><a href=\"/docs?slug=requires\">requires</a></li><li><a href=\"/docs?slug=warden\">warden</a></li><li class=\"menu-title\">About</li><li><a href=\"/docs?slug=roadmap\">Roadmap</a></li></ul></aside>"
+    give "<aside class=\"w-64 shrink-0 hidden lg:block\"><ul class=\"menu bg-base-200 rounded-box w-full\"><li class=\"menu-title\">Getting Started</li><li><a href=\"/docs?slug=getting-started\" class=\"{!active_slug}\">Quick Start</a></li><li><a href=\"/docs?slug=principles\">First Principles</a></li><li class=\"menu-title\">Reference</li><li><a href=\"/docs?slug=task\">task</a></li><li><a href=\"/docs?slug=agent\">agent</a></li><li><a href=\"/docs?slug=flow\">flow</a></li><li><a href=\"/docs?slug=pool\">pool</a></li><li><a href=\"/docs?slug=system\">system</a></li><li><a href=\"/docs?slug=event\">event</a></li><li><a href=\"/docs?slug=states\">states</a></li><li><a href=\"/docs?slug=when\">when</a></li><li><a href=\"/docs?slug=pure\">pure</a></li><li><a href=\"/docs?slug=boundary\">boundary</a></li><li><a href=\"/docs?slug=requires\">requires</a></li><li><a href=\"/docs?slug=warden\">warden</a></li><li class=\"menu-title\">Generated</li><li><a href=\"/docs?slug=auto-reference\">Auto Reference</a></li><li class=\"menu-title\">About</li><li><a href=\"/docs?slug=roadmap\">Roadmap</a></li></ul></aside>"
 
 pure hero_section
   gives Html
@@ -273,24 +273,59 @@ agent search_agent
   on stats
     give "Index v{memory.index_version}, {memory.query_count} queries processed"
 
-# ── Stub Flow ────────────────────────────────────────────────────
+# ── Doc Generation Flow ─────────────────────────────────────────
 #
-# Demonstrates: flow with stages. Full implementation in issue #62.
+# Auto-generates reference docs from FORGE source files (issue #62).
+# DAG: scan_files -> [extract_tasks | extract_agents | extract_flows] -> generate_reference -> publish
+#
+# Parallelism:
+#   Wave 0: scan_files
+#   Wave 1: extract_tasks, extract_agents, extract_flows  (parallel)
+#   Wave 2: generate_reference
+#   Wave 3: publish
 
-flow doc_gen_flow
-  needs source: Text
+flow generate_docs
+  needs sources: Text[]
   gives Text
 
-  stage scan
-    summary = reason "Summarize the key concepts in this FORGE source code:\n{source}"
+  stage scan_files
+    file_contents = sources
+    say "Scanning {sources.len()} source files..."
+    give file_contents
 
-  stage generate
-    needs scan.summary
-    doc = reason "Generate reference documentation from this summary: {scan.summary}"
+  stage extract_tasks
+    needs scan_files.*
+    signatures = reason "Extract all task declarations from this FORGE source code.\nFor each task, provide: name, parameters, return type, and a one-line description.\nSource: {scan_files}"
+    when signatures.sure -> give signatures
+    when signatures.unsure -> give signatures
+    else -> give "No task declarations found."
 
-  stage format
-    needs generate.doc
-    give generate.doc
+  stage extract_agents
+    needs scan_files.*
+    signatures = reason "Extract all agent declarations from this FORGE source code.\nFor each agent: name, states, memory fields, handlers, and a one-line description.\nSource: {scan_files}"
+    when signatures.sure -> give signatures
+    when signatures.unsure -> give signatures
+    else -> give "No agent declarations found."
+
+  stage extract_flows
+    needs scan_files.*
+    signatures = reason "Extract all flow declarations from this FORGE source code.\nFor each flow: name, stages, dependencies, and a one-line description.\nSource: {scan_files}"
+    when signatures.sure -> give signatures
+    when signatures.unsure -> give signatures
+    else -> give "No flow declarations found."
+
+  stage generate_reference
+    needs extract_tasks.*, extract_agents.*, extract_flows.*
+    reference = reason "Generate a comprehensive reference document in Markdown format.\nOrganize by category: Tasks, Agents, Flows.\nInclude code examples for each item.\n\nTasks: {extract_tasks}\nAgents: {extract_agents}\nFlows: {extract_flows}"
+    when reference.sure -> give reference
+    when reference.unsure -> give reference
+    else -> give "Could not generate reference documentation."
+
+  stage publish
+    needs generate_reference.*
+    data.store("page:auto-reference", generate_reference)
+    emit PageUpdated(slug: "auto-reference")
+    give "Reference documentation generated and published"
 
 # ── Stub Pool ────────────────────────────────────────────────────
 #
@@ -373,6 +408,13 @@ endpoint ask(question: Text) -> Html
 endpoint api_search(q: Text) -> Text
   results = search_docs(q)
   give results
+
+endpoint admin_generate_docs() -> Html
+  nav = nav_bar("")
+  sources = data.list("page:")
+  result = generate_docs(sources)
+  body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Doc Generation</h1><div class=\"alert alert-success\"><span>{result}</span></div><a href=\"/docs?slug=auto-reference\" class=\"btn btn-primary mt-4\">View Generated Reference</a></div>"
+  give page_layout("Admin — Generate Docs", nav, body)
 
 # -- Entry Point --
 
