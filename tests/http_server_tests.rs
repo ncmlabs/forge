@@ -70,8 +70,8 @@ async fn spawn_server_with_full_config(
     forge_config: forge::config::ForgeConfig,
 ) -> String {
     let program = forge::parser::parse(source).expect("parse failed");
-    let executor = TaskExecutor::new(program, mock_registry(), None)
-        .with_config(forge_config.clone());
+    let executor =
+        TaskExecutor::new(program, mock_registry(), None).with_config(forge_config.clone());
     let server = ForgeServer::new(executor, forge_config.server.as_ref());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

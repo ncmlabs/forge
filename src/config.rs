@@ -439,11 +439,7 @@ root = "public"
 prefix = "/assets"
 "#;
         let config: ForgeConfig = toml::from_str(toml_str).unwrap();
-        let static_cfg = config
-            .server
-            .unwrap()
-            .static_files
-            .unwrap();
+        let static_cfg = config.server.unwrap().static_files.unwrap();
         assert_eq!(static_cfg.root_or_default(), "public");
         assert_eq!(static_cfg.prefix_or_default(), "/assets");
     }

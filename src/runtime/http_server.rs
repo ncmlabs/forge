@@ -113,10 +113,7 @@ impl ForgeServer {
         };
 
         let router = if let Some(ref root) = self.static_root {
-            let prefix = self
-                .static_prefix
-                .as_deref()
-                .unwrap_or("/static");
+            let prefix = self.static_prefix.as_deref().unwrap_or("/static");
             router
                 .nest_service(prefix, ServeDir::new(root))
                 .fallback(fallback_handler)
@@ -124,9 +121,7 @@ impl ForgeServer {
             router.fallback(fallback_handler)
         };
 
-        router
-            .layer(cors)
-            .with_state(self.executor.clone())
+        router.layer(cors).with_state(self.executor.clone())
     }
 
     /// Print startup banner listing registered endpoints.

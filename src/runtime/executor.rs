@@ -1512,9 +1512,9 @@ impl TaskExecutor {
                         } else {
                             format!("/{path}")
                         };
-                        return Ok(ConfidentValue::deterministic(Value::Text(format!(
+                        Ok(ConfidentValue::deterministic(Value::Text(format!(
                             "{prefix}{path}"
-                        ))));
+                        ))))
                     } else if name.starts_with(|c: char| c.is_uppercase()) {
                         // Uppercase names not in task/pure/flow/pool maps are type constructors
                         let mut fields = HashMap::new();
