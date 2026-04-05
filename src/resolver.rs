@@ -139,6 +139,13 @@ impl CapabilityRegistry {
             },
         );
         caps.insert(
+            "markdown.render".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Html,
+            },
+        );
+        caps.insert(
             "asset".into(),
             CapabilitySignature {
                 inputs: vec![ForgeType::Text],

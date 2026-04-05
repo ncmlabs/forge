@@ -35,6 +35,7 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 redb = "2"
 notify = { version = "7", default-features = false, features = ["macos_kqueue"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden sensei scripts: build-sensei.sh (skip-if-unchanged, smoke test), pretrain-sensei.sh (error capture, jq, idempotency, --force/--dry-run), consult-sensei.sh (jq, content caching, thresholds), assess.sh (per-category scoring, trend tracking, --json)
 
 ### Added
+- **`markdown.render(content)` built-in capability** — converts Markdown to HTML using pulldown-cmark with tables, footnotes, strikethrough, and task lists; `forge` code blocks get `class="language-forge"` for Prism.js syntax highlighting (#49)
 - **Hot-reload development mode** via `forge serve --watch` — watches `.forge` files for changes and hot-swaps the endpoint handler without dropping connections; parse/check errors display in terminal while server keeps running with previous version; config file changes trigger full server restart (#47)
 - **Static file serving** with configurable root directory and URL prefix via `[server.static]` config, powered by tower-http `ServeDir` (#46)
 - **`asset()` built-in function** returns prefixed URL path for static assets, e.g. `asset("css/style.css")` → `/static/css/style.css` (#46)
