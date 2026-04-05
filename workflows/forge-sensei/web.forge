@@ -1,0 +1,80 @@
+#! boundary: server
+
+# ── HTML Helpers ──────────────────────────────────────────────
+
+pure render_nav
+  gives Html
+  do
+    give "<nav class=\"navbar bg-base-200 shadow-sm mb-6\"><div class=\"container mx-auto\"><a href=\"/status\" class=\"btn btn-ghost text-xl\">forge-sensei</a><div class=\"flex gap-2\"><a href=\"/status\" class=\"btn btn-sm btn-ghost\">Status</a><a href=\"/ask\" class=\"btn btn-sm btn-ghost\">Ask</a><a href=\"/review\" class=\"btn btn-sm btn-ghost\">Review</a></div></div></nav>"
+
+pure render_page
+  needs title: Text, body: Html
+  gives Html
+  do
+    nav = render_nav()
+    content = "<div class=\"container mx-auto px-4 max-w-4xl\">{!nav}{!body}</div>"
+    give html.layout(title, content)
+
+pure render_ask_form
+  gives Html
+  do
+    give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Ask forge-sensei</h2><form method=\"POST\" action=\"/ask\"><textarea name=\"question\" class=\"textarea textarea-bordered w-full\" rows=\"3\" placeholder=\"Ask about FORGE...\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Ask</button></form></div></div>"
+
+pure render_review_form
+  gives Html
+  do
+    give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Code Review</h2><form method=\"POST\" action=\"/review\"><textarea name=\"code\" class=\"textarea textarea-bordered w-full font-mono\" rows=\"10\" placeholder=\"Paste FORGE code...\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Review</button></form></div></div>"
+
+pure render_answer
+  needs answer: Text, confidence_tier: Text
+  gives Html
+  do
+    rendered = markdown.render(answer)
+    give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Answer</h2><span class=\"badge badge-outline\">{confidence_tier}</span><div class=\"prose max-w-none mt-4\">{!rendered}</div><div class=\"divider\"></div><a href=\"/ask\" class=\"btn btn-ghost btn-sm\">Ask another</a></div></div>"
+
+pure render_review_result
+  needs review_text: Text
+  gives Html
+  do
+    rendered = markdown.render(review_text)
+    give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Review Results</h2><div class=\"prose max-w-none\">{!rendered}</div><div class=\"divider\"></div><a href=\"/review\" class=\"btn btn-ghost btn-sm\">Review more</a></div></div>"
+
+# ── Endpoints ─────────────────────────────────────────────────
+
+endpoint status() -> Html
+  level = determine_level(0)
+  card = "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Sensei Status</h2><p>Level: {level}</p></div></div>"
+  give render_page("forge-sensei | Status", card)
+
+endpoint ask_form() -> Html
+  form = render_ask_form()
+  give render_page("forge-sensei | Ask", form)
+
+endpoint ask(question: Text) -> Html
+  result = answer_query(question)
+  body = render_answer(result.answer, result.confidence_tier)
+  give render_page("forge-sensei | Answer", body)
+
+endpoint review_form() -> Html
+  form = render_review_form()
+  give render_page("forge-sensei | Review", form)
+
+endpoint review(code: Text) -> Html
+  review_result = review_code(code)
+  body = render_review_result(review_result)
+  give render_page("forge-sensei | Review", body)
+
+# ── Webhook Endpoints ─────────────────────────────────────────
+
+endpoint webhook_ingest(category: Text, fact: Text) -> Text
+  emit LearnedInsight(category: category, content: fact, source: "webhook", confidence: 1.0)
+  give "ok"
+
+endpoint webhook_learn(question: Text, resolution: Text) -> Text
+  lesson = extract_lesson(question, resolution)
+  emit LearnedInsight(category: "interactions", content: lesson, source: "webhook", confidence: 0.8)
+  give "ok"
+
+# ── Usage ─────────────────────────────────────────────────────
+# Dev:    forge serve workflows/forge-sensei/web.forge --watch
+# Build:  forge build workflows/forge-sensei/ --entry web.forge -o bin/forge-sensei-web

@@ -1,0 +1,10 @@
+/*
+ * Tailwind CSS input file — used by the standalone CLI for production builds.
+ *
+ * Usage:
+ *   ./tailwindcss -i static/css/input.css -o static/css/style.css --minify
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
