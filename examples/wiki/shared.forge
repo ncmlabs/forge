@@ -29,8 +29,8 @@ event PagePublished
 # ── Lifecycle ────────────────────────────────────────────────────
 
 states PageLifecycle
-  draft -> review
-  review -> published
-  review -> draft
-  published -> archived
-  archived -> draft
+  draft -> review when content_complete
+  review -> published when approved
+  review -> draft when needs_revision
+  published -> archived when archive_requested
+  archived -> draft when restore_requested

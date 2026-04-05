@@ -153,32 +153,80 @@ task answer_question
     when answer.unsure -> give answer
     else -> give "I could not generate a confident answer for this question."
 
-# ── Stub Agents ──────────────────────────────────────────────────
+# ── Content Agent ────────────────────────────────────────────────
 #
-# Minimal agent declarations to demonstrate the primitive.
-# Full implementations in issues #60 and #61.
+# Full CRUD content manager with lifecycle states (issue #60).
+# Manages page lifecycle through typed state machine transitions,
+# with persistent memory, requires guards, and event emission.
 
 agent content_manager
   lifecycle: PageLifecycle
-  memory
-    page_count: Number
-    last_updated: Text
-  subscribe PageCreated
-  subscribe PageUpdated
+  memory persistent
+    pages: Text[]
+    edit_history: Text[]
+    total_edits: Number
 
   on start
     say "ContentAgent ready."
-    memory.page_count = 0
 
-  on page_update(slug: Text)
-    requires slug != "" on fail: give "slug required"
-    memory.page_count = memory.page_count + 1
-    memory.last_updated = slug
+  on create_page(slug: Text, title: Text, content: Text)
+    requires slug.length > 0 on fail: give "slug required"
+    requires title.length > 0 on fail: give "title required"
+    page_data = "{title}\n---\n{content}"
+    data.store("page:{slug}", page_data)
+    memory.pages = memory.pages + [slug]
+    memory.total_edits = memory.total_edits + 1
+    emit PageCreated(slug: slug, title: title)
+    give "Created: {slug}"
+
+  on update_page(slug: Text, content: Text)
+    requires slug.length > 0 on fail: give "slug required"
+    existing = data.get("page:{slug}")
+    if existing == ""
+      give "page not found: {slug}"
+    data.store("page:{slug}", content)
+    memory.edit_history = memory.edit_history + [slug]
+    memory.total_edits = memory.total_edits + 1
     emit PageUpdated(slug: slug)
-    say "Updated: {slug}"
+    give "Updated: {slug}"
 
-  on PageCreated
-    memory.page_count = memory.page_count + 1
+  on submit_for_review(slug: Text)
+    requires lifecycle == draft on fail: give "page must be in draft to submit for review"
+    existing = data.get("page:{slug}")
+    if existing == ""
+      give "page not found: {slug}"
+    transition to review
+    give "Submitted for review: {slug}"
+
+  on publish_page(slug: Text)
+    requires lifecycle == review on fail: give "page must be in review to publish"
+    existing = data.get("page:{slug}")
+    if existing == ""
+      give "page not found: {slug}"
+    transition to published
+    emit PagePublished(slug: slug)
+    give "Published: {slug}"
+
+  on reject_page(slug: Text)
+    requires lifecycle == review on fail: give "page must be in review to reject"
+    transition to draft
+    give "Rejected, back to draft: {slug}"
+
+  on archive_page(slug: Text)
+    requires lifecycle == published on fail: give "page must be published to archive"
+    transition to archived
+    give "Archived: {slug}"
+
+  on restore_page(slug: Text)
+    requires lifecycle == archived on fail: give "page must be archived to restore"
+    transition to draft
+    give "Restored to draft: {slug}"
+
+  on list_pages
+    give memory.pages
+
+  on stats
+    give "Total pages: {memory.pages.length}, Total edits: {memory.total_edits}"
 
 agent search_agent
   memory
