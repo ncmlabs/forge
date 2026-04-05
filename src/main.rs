@@ -888,6 +888,16 @@ async fn serve_program(
     cli_port: Option<u16>,
     watch: bool,
 ) -> anyhow::Result<()> {
+    // Auto-discover forge.config.toml next to the served file when FORGE_CONFIG is not set.
+    if std::env::var("FORGE_CONFIG").is_err() {
+        if let Some(parent) = file.parent() {
+            let local_config = parent.join("forge.config.toml");
+            if local_config.exists() {
+                std::env::set_var("FORGE_CONFIG", &local_config);
+            }
+        }
+    }
+
     if watch {
         serve_with_watch(file, cli_host, cli_port).await
     } else {
@@ -910,6 +920,8 @@ async fn serve_program(
         }
         let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
             Ok(storage) => {
+                // Seed content/ directory into storage (#59)
+                seed_content_dir(file, &storage);
                 let shared = std::sync::Arc::new(storage);
                 executor.with_storage(shared)
             }
@@ -944,6 +956,55 @@ async fn serve_program(
     }
 }
 
+/// Seed markdown files from `content/` directory into storage.
+/// Files are stored as `page:<slug>` keys (e.g., `content/getting-started.md` → `page:getting-started`).
+/// Subdirectories use the filename only (e.g., `content/reference/task.md` → `page:task`).
+fn seed_content_dir(file: &Path, storage: &forge::runtime::storage::ForgeStorage) {
+    let content_dir = file
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("content");
+    if !content_dir.is_dir() {
+        return;
+    }
+    let mut count = 0;
+    seed_content_recursive(&content_dir, storage, &mut count);
+    if count > 0 {
+        eprintln!(
+            "  Seeded {count} content pages from {}",
+            content_dir.display()
+        );
+    }
+}
+
+fn seed_content_recursive(
+    dir: &Path,
+    storage: &forge::runtime::storage::ForgeStorage,
+    count: &mut usize,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            seed_content_recursive(&path, storage, count);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            let slug = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if slug.is_empty() {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let key = format!("page:{slug}");
+                if storage.store(&key, &content).is_ok() {
+                    *count += 1;
+                }
+            }
+        }
+    }
+}
+
 async fn serve_with_watch(
     file: &Path,
     cli_host: Option<String>,
@@ -970,6 +1031,7 @@ async fn serve_with_watch(
         }
         let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
             Ok(storage) => {
+                seed_content_dir(file, &storage);
                 let shared = std::sync::Arc::new(storage);
                 executor.with_storage(shared)
             }
