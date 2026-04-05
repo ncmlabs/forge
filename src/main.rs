@@ -443,7 +443,7 @@ fn open_forge_storage() -> anyhow::Result<forge::runtime::storage::SharedStorage
     Ok(Arc::new(storage))
 }
 
-fn read_source(file: &PathBuf) -> anyhow::Result<String> {
+fn read_source(file: &Path) -> anyhow::Result<String> {
     std::fs::read_to_string(file)
         .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))
 }
@@ -458,7 +458,7 @@ fn parse_or_exit(source: &str, file: &Path) -> forge::ast::Program {
     }
 }
 
-async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
+async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     let source = read_source(file)?;
     let program = parse_or_exit(&source, file);
     let fname = file.display().to_string();
@@ -701,7 +701,7 @@ fn try_build_executor(
     ),
     anyhow::Error,
 > {
-    let source = read_source(&file.to_path_buf())?;
+    let source = read_source(file)?;
     let fname = file.display().to_string();
 
     let program = match forge::parser::parse(&source) {
@@ -751,7 +751,7 @@ fn try_build_executor(
 }
 
 async fn serve_program(
-    file: &PathBuf,
+    file: &Path,
     cli_host: Option<String>,
     cli_port: Option<u16>,
     watch: bool,
@@ -836,7 +836,7 @@ async fn serve_with_watch(
     }
 }
 
-async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
+async fn run_agent(file: &Path) -> anyhow::Result<()> {
     let source = read_source(file)?;
     let program = parse_or_exit(&source, file);
 
@@ -993,7 +993,7 @@ fn parse_args(input: &str) -> Vec<String> {
 }
 
 /// Send a single event to an agent non-interactively, print the result, and exit.
-async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow::Result<()> {
+async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::Result<()> {
     let source = read_source(file)?;
     let program = parse_or_exit(&source, file);
 
