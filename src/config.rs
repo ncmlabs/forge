@@ -19,6 +19,9 @@ pub struct ServerConfig {
     pub cors_origins: Option<Vec<String>>,
     #[serde(rename = "static")]
     pub static_files: Option<StaticConfig>,
+    /// HMAC secrets for webhook signature verification, keyed by endpoint name.
+    /// Example: `webhook_secrets = { github_push = "my-secret" }`
+    pub webhook_secrets: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -217,6 +220,7 @@ impl ForgeConfig {
                 port: None,
                 cors_origins: None,
                 static_files: None,
+                webhook_secrets: None,
             });
             server.host = Some(host);
         }
@@ -227,6 +231,7 @@ impl ForgeConfig {
                     port: None,
                     cors_origins: None,
                     static_files: None,
+                    webhook_secrets: None,
                 });
                 server.port = Some(val);
             }
@@ -239,6 +244,7 @@ impl ForgeConfig {
                 port: None,
                 cors_origins: None,
                 static_files: None,
+                webhook_secrets: None,
             });
             let static_cfg = server.static_files.get_or_insert(StaticConfig {
                 root: None,
