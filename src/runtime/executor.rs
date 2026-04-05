@@ -89,6 +89,14 @@ impl Env {
     }
 
     pub(crate) fn bind(&mut self, name: &str, value: ConfidentValue) {
+        // If the variable already exists in an outer scope, update it there
+        // (reassignment semantics). Otherwise, create in the current scope.
+        for scope in self.scopes.iter_mut().rev() {
+            if scope.contains_key(name) {
+                scope.insert(name.to_string(), value);
+                return;
+            }
+        }
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), value);
         }
@@ -1248,6 +1256,9 @@ impl TaskExecutor {
                         (Value::Array(v) | Value::List(v), "len" | "length" | "count") => {
                             Ok(ConfidentValue::deterministic(Value::Number(v.len() as f64)))
                         }
+                        (Value::Text(s) | Value::Html(s), "len" | "length") => {
+                            Ok(ConfidentValue::deterministic(Value::Number(s.len() as f64)))
+                        }
                         // Record field access — transparently unwrap _type/_value wrapper
                         (Value::Record(fields), _) => {
                             // Direct field access
@@ -1677,11 +1688,11 @@ impl TaskExecutor {
                             }
                             let delim_val = self.eval_expr(&args[0].node.value, env).await?;
                             let delimiter = match &delim_val.value {
-                                Value::Text(s) => s.clone(),
+                                Value::Text(s) | Value::Html(s) => s.clone(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text delimiter".to_string(),
-                                        got: format!("{}", delim_val.value),
+                                        got: format!("{:?}", delim_val.value),
                                     })
                                 }
                             };
@@ -1711,11 +1722,11 @@ impl TaskExecutor {
                             }
                             let delim_val = self.eval_expr(&args[0].node.value, env).await?;
                             let delimiter = match &delim_val.value {
-                                Value::Text(s) => s.clone(),
+                                Value::Text(s) | Value::Html(s) => s.clone(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text delimiter".to_string(),
-                                        got: format!("{}", delim_val.value),
+                                        got: format!("{:?}", delim_val.value),
                                     })
                                 }
                             };
@@ -2427,10 +2438,11 @@ fn eval_binop(left: &Value, op: &BinOp, right: &Value) -> Result<Value, RuntimeE
             }
             Ok(Value::Number(a / b))
         }
-        // String concatenation
+        // String concatenation (Text + Text → Text, Html + Html → Html, mixed → Text)
         (Value::Text(a), BinOp::Add, Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
-        // Html concatenation
         (Value::Html(a), BinOp::Add, Value::Html(b)) => Ok(Value::Html(format!("{}{}", a, b))),
+        (Value::Text(a), BinOp::Add, Value::Html(b)) => Ok(Value::Text(format!("{}{}", a, b))),
+        (Value::Html(a), BinOp::Add, Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
         // Numeric comparison
         (Value::Number(a), BinOp::Lt, Value::Number(b)) => Ok(Value::Bool(a < b)),
         (Value::Number(a), BinOp::Gt, Value::Number(b)) => Ok(Value::Bool(a > b)),

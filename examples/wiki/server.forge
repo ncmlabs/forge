@@ -372,6 +372,11 @@ pool fact_check_panel
   timeout: 30s
   fallback: fact_check_fallback
 
+pool fact_check_detail
+  workers: fact_checker * 3
+  strategy: all
+  timeout: 30s
+
 task classify_verdict
   needs verdict: Text
   gives Text
@@ -394,7 +399,9 @@ task verify_document
       if trimmed.length > 0
         verdict = fact_check_panel("check", trimmed)
         label = classify_verdict(verdict)
-        report = report + "- " + label + ": " + trimmed + "\n"
+        individual = fact_check_detail("check", trimmed)
+        verdicts_text = individual.join(" | ")
+        report = report + "- " + label + ": " + trimmed + "\n  Verdicts: [" + verdicts_text + "]\n"
     if report == ""
       give "No verifiable claims found."
     give report.trim()
