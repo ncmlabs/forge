@@ -9,6 +9,7 @@ pub struct ForgeConfig {
     pub providers: HashMap<String, ProviderConfig>,
     pub server: Option<ServerConfig>,
     pub system: Option<SystemConfig>,
+    pub web: Option<WebConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -40,6 +41,25 @@ impl StaticConfig {
 pub struct SystemConfig {
     pub max_agents: Option<usize>,
     pub max_memory_mb: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WebConfig {
+    pub timeout_secs: Option<u64>,
+    pub max_redirects: Option<usize>,
+    pub search_provider: Option<String>,
+    pub search_api_key: Option<String>,
+    pub search_url: Option<String>,
+}
+
+impl WebConfig {
+    pub fn timeout_or_default(&self) -> u64 {
+        self.timeout_secs.unwrap_or(30)
+    }
+
+    pub fn max_redirects_or_default(&self) -> usize {
+        self.max_redirects.unwrap_or(10)
+    }
 }
 
 impl ServerConfig {
@@ -288,6 +308,14 @@ impl ForgeConfig {
                 config.base_url = Some(expand_env_var(url));
             }
         }
+        if let Some(ref mut web) = self.web {
+            if let Some(key) = &web.search_api_key {
+                web.search_api_key = Some(expand_env_var(key));
+            }
+            if let Some(url) = &web.search_url {
+                web.search_url = Some(expand_env_var(url));
+            }
+        }
     }
 
     pub fn default_mock_config() -> Self {
@@ -314,6 +342,7 @@ impl ForgeConfig {
             providers,
             server: None,
             system: None,
+            web: None,
         }
     }
 }
@@ -365,6 +394,7 @@ mod tests {
             providers: HashMap::new(),
             server: None,
             system: None,
+            web: None,
         };
         assert!(matches!(
             config.validate(),
@@ -410,6 +440,7 @@ mod tests {
             providers,
             server: None,
             system: None,
+            web: None,
         };
         assert!(matches!(
             config.validate(),

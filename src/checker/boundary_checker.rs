@@ -473,7 +473,26 @@ fn check_refs_in_expr(
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
             }
         }
-        Expr::Reason(inner) | Expr::Search(inner) | Expr::Recall(inner) => {
+        Expr::Reason(inner) | Expr::Recall(inner) => {
+            check_refs_in_expr(inner, boundary, registry, file, diagnostics);
+        }
+        Expr::Search(inner) => {
+            if boundary != BoundaryKind::Server {
+                let boundary_name = match boundary {
+                    BoundaryKind::Client => "client",
+                    BoundaryKind::Shared => "shared",
+                    _ => unreachable!(),
+                };
+                diagnostics.push(
+                    Diagnostic::error(
+                        file,
+                        format!("search is not allowed in {} boundary", boundary_name),
+                        expr.span.start..expr.span.end,
+                        "search makes network requests and can only be used in server boundary files",
+                    )
+                    .with_help("move this code to a file with `#! boundary: server`"),
+                );
+            }
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
         }
         Expr::Classify(c) => {
@@ -495,7 +514,35 @@ fn check_refs_in_expr(
         Expr::UnaryOp(_, a) | Expr::Paren(a) | Expr::FieldAccess(a, _) | Expr::GlobAccess(a) => {
             check_refs_in_expr(a, boundary, registry, file, diagnostics);
         }
-        Expr::MethodCall(inner, _, args) => {
+        Expr::MethodCall(inner, method, args) => {
+            // Boundary enforcement: web.fetch and web.post are server-only
+            if let Expr::Ident(ref ns) = inner.node {
+                if ns == "web"
+                    && (method.node == "fetch" || method.node == "post")
+                    && boundary != BoundaryKind::Server
+                {
+                    let boundary_name = match boundary {
+                        BoundaryKind::Client => "client",
+                        BoundaryKind::Shared => "shared",
+                        _ => unreachable!(),
+                    };
+                    diagnostics.push(
+                        Diagnostic::error(
+                            file,
+                            format!(
+                                "web.{}() is not allowed in {} boundary",
+                                method.node, boundary_name
+                            ),
+                            inner.span.start..method.span.end,
+                            format!(
+                                "web.{}() can only be used in server boundary files",
+                                method.node
+                            ),
+                        )
+                        .with_help("move this code to a file with `#! boundary: server`"),
+                    );
+                }
+            }
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
             for arg in args {
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);

@@ -414,3 +414,92 @@ task noop
     let diags = check_boundary(&[(source, "minimal.forge")]);
     assert!(diags.is_empty());
 }
+
+// ── HTTP client boundary enforcement (issue #51) ────────────
+
+#[test]
+fn web_fetch_in_client_boundary_is_error() {
+    let source = "\
+#! boundary: client
+
+fn main
+  page = web.fetch(\"https://example.com\")
+  give page
+";
+    let diags = check_boundary(&[(source, "client.forge")]);
+    let errs = errors(&diags);
+    assert_eq!(errs.len(), 1);
+    assert!(errs[0].message.contains("web.fetch()"));
+    assert!(errs[0].message.contains("client"));
+}
+
+#[test]
+fn web_post_in_client_boundary_is_error() {
+    let source = "\
+#! boundary: client
+
+fn main
+  resp = web.post(\"https://example.com\", \"body\")
+  give resp
+";
+    let diags = check_boundary(&[(source, "client.forge")]);
+    let errs = errors(&diags);
+    assert_eq!(errs.len(), 1);
+    assert!(errs[0].message.contains("web.post()"));
+    assert!(errs[0].message.contains("client"));
+}
+
+#[test]
+fn web_fetch_in_server_boundary_is_ok() {
+    let source = "\
+#! boundary: server
+
+fn main
+  page = web.fetch(\"https://example.com\")
+  give page
+";
+    let diags = check_boundary(&[(source, "server.forge")]);
+    assert!(diags.is_empty());
+}
+
+#[test]
+fn web_post_in_server_boundary_is_ok() {
+    let source = "\
+#! boundary: server
+
+fn main
+  resp = web.post(\"https://example.com\", \"body\")
+  give resp
+";
+    let diags = check_boundary(&[(source, "server.forge")]);
+    assert!(diags.is_empty());
+}
+
+#[test]
+fn search_in_client_boundary_is_error() {
+    let source = "\
+#! boundary: client
+
+fn main
+  results = search \"rust programming\"
+  give results
+";
+    let diags = check_boundary(&[(source, "client.forge")]);
+    let errs = errors(&diags);
+    assert_eq!(errs.len(), 1);
+    assert!(errs[0].message.contains("search"));
+    assert!(errs[0].message.contains("client"));
+}
+
+#[test]
+fn search_in_server_boundary_is_ok() {
+    let source = "\
+#! boundary: server
+
+fn main
+  results = search \"rust programming\"
+  give results
+";
+    let diags = check_boundary(&[(source, "server.forge")]);
+    assert!(diags.is_empty());
+}

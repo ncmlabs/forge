@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden sensei scripts: build-sensei.sh (skip-if-unchanged, smoke test), pretrain-sensei.sh (error capture, jq, idempotency, --force/--dry-run), consult-sensei.sh (jq, content caching, thresholds), assess.sh (per-category scoring, trend tracking, --json)
 
 ### Added
+- **HTTP client capabilities** — `web.fetch(url)` for GET requests and `web.post(url, body)` for POST requests, returning response body as Text; errors produce catchable failures for use with `try ... or` (#51)
+- **Web search implementation** — `search "query"` now dispatches to a configurable search provider (SearXNG) instead of returning an empty list; results include title, url, and snippet fields (#51)
+- **`[web]` config section** — configurable timeout, max redirects, search provider, API key, and search URL with env var expansion (#51)
+- **Boundary enforcement for HTTP** — `web.fetch()`, `web.post()`, and `search` are restricted to `boundary: server` files (#51)
 - **`markdown.render(content)` built-in capability** — converts Markdown to HTML using pulldown-cmark with tables, footnotes, strikethrough, and task lists; `forge` code blocks get `class="language-forge"` for Prism.js syntax highlighting (#49)
 - **Hot-reload development mode** via `forge serve --watch` — watches `.forge` files for changes and hot-swaps the endpoint handler without dropping connections; parse/check errors display in terminal while server keeps running with previous version; config file changes trigger full server restart (#47)
 - **Static file serving** with configurable root directory and URL prefix via `[server.static]` config, powered by tower-http `ServeDir` (#46)

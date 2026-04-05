@@ -110,6 +110,20 @@ impl CapabilityRegistry {
             },
         );
         caps.insert(
+            "web.fetch".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "web.post".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
             "data.store".into(),
             CapabilitySignature {
                 inputs: vec![ForgeType::Text, ForgeType::Text],
