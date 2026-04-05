@@ -153,8 +153,11 @@ fn check_requires_expr(
         }
         Expr::Template(parts) => {
             for part in parts {
-                if let TemplatePart::Interp(inner) = &part.node {
-                    check_requires_expr(inner, task_names, file, diagnostics);
+                match &part.node {
+                    TemplatePart::Interp(inner) | TemplatePart::RawInterp(inner) => {
+                        check_requires_expr(inner, task_names, file, diagnostics);
+                    }
+                    _ => {}
                 }
             }
         }

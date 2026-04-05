@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `Html` builtin type with automatic `text/html` Content-Type inference from endpoint return type annotations (#44)
 - Safe record field access — missing fields return `Unit` instead of crashing, enabling graceful handling of optional request query/header parameters (#44)
+- Auto-escaping template interpolation in Html context for XSS prevention (#45)
+- `{!expr}` raw interpolation syntax for trusted HTML insertion — bypasses auto-escaping in Html context (#45)
+- `html.layout(title, body)` and `html.escape(text)` built-in capabilities for HTML document composition (#45)
 - Exhaustive forge-sensei test suite: parser, checker, and runtime conformance tests + Rust integration tests
 - `scripts/sensei-smoke-test.sh` for end-to-end integration testing
 - `scripts/sensei-cache.sh` for knowledge store and cache management (clean/reset/stats)

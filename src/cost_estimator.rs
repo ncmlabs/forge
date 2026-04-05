@@ -259,8 +259,11 @@ impl CostWalker {
             }
             Expr::Template(parts) => {
                 for part in parts {
-                    if let TemplatePart::Interp(inner) = &part.node {
-                        self.walk_expr(inner, context, multiplier);
+                    match &part.node {
+                        TemplatePart::Interp(inner) | TemplatePart::RawInterp(inner) => {
+                            self.walk_expr(inner, context, multiplier);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -276,7 +279,7 @@ fn estimate_prompt_tokens(expr: &Spanned<Expr>) -> u32 {
                 .iter()
                 .map(|p| match &p.node {
                     TemplatePart::Text(s) => s.len(),
-                    TemplatePart::Interp(_) => 50, // assume ~50 chars for interpolated values
+                    TemplatePart::Interp(_) | TemplatePart::RawInterp(_) => 50, // assume ~50 chars for interpolated values
                 })
                 .sum();
             // ~4 chars per token

@@ -508,8 +508,11 @@ fn check_refs_in_expr(
         }
         Expr::Template(parts) => {
             for part in parts {
-                if let TemplatePart::Interp(inner) = &part.node {
-                    check_refs_in_expr(inner, boundary, registry, file, diagnostics);
+                match &part.node {
+                    TemplatePart::Interp(inner) | TemplatePart::RawInterp(inner) => {
+                        check_refs_in_expr(inner, boundary, registry, file, diagnostics);
+                    }
+                    _ => {}
                 }
             }
         }

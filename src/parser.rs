@@ -95,6 +95,14 @@ fn build_template_string(pair: Pair) -> anyhow::Result<Vec<Spanned<TemplatePart>
                         expr.span,
                     ));
                 }
+                Rule::template_interp_raw => {
+                    let expr_pair = inner.into_inner().next().unwrap();
+                    let expr = build_expr(expr_pair)?;
+                    parts.push(Spanned::new(
+                        TemplatePart::RawInterp(Box::new(expr.clone())),
+                        expr.span,
+                    ));
+                }
                 _ => {}
             }
         }
@@ -108,7 +116,7 @@ fn build_plain_template_string(pair: Pair) -> anyhow::Result<String> {
     for part in parts {
         match part.node {
             TemplatePart::Text(part_text) => text.push_str(&part_text),
-            TemplatePart::Interp(_) => {
+            TemplatePart::Interp(_) | TemplatePart::RawInterp(_) => {
                 return Err(anyhow::anyhow!(
                     "classify labels must be plain strings without interpolation"
                 ));

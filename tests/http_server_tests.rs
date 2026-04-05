@@ -334,7 +334,8 @@ async fn html_return_type_infers_content_type() {
         .to_str()
         .unwrap();
     assert_eq!(ct, "text/html");
-    assert_eq!(resp.text().await.unwrap(), "<h1>Hello</h1>");
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<h1>Hello</h1>"));
 }
 
 const HTML_OVERRIDE_SERVER: &str = r#"#! boundary: server
@@ -393,4 +394,106 @@ async fn missing_header_field_returns_unit() {
         .expect("request failed");
     // Unit maps to 204 No Content
     assert_eq!(resp.status(), 204);
+}
+
+// ── Issue #45: Html auto-escaping and composition ──────────────
+
+const HTML_ESCAPE_SERVER: &str = r#"#! boundary: server
+
+endpoint safe(name: Text) -> Html
+  give "<p>Hello, {name}</p>"
+"#;
+
+#[tokio::test]
+async fn html_auto_escapes_interpolation() {
+    let base = spawn_server(HTML_ESCAPE_SERVER).await;
+    let resp = reqwest::get(format!("{base}/safe?name=<script>alert(1)</script>"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    // The interpolated value should be escaped
+    assert!(body.contains("&lt;script&gt;"));
+    assert!(!body.contains("<script>alert"));
+}
+
+const HTML_RAW_SERVER: &str = r#"#! boundary: server
+
+pure nav
+  gives Html
+  do
+    give "<nav>Home</nav>"
+
+endpoint page() -> Html
+  n = nav()
+  give "<div>{!n}</div>"
+"#;
+
+#[tokio::test]
+async fn html_raw_interp_bypasses_escaping() {
+    let base = spawn_server(HTML_RAW_SERVER).await;
+    let resp = reqwest::get(format!("{base}/page"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    // {!n} should insert raw HTML without escaping
+    assert!(body.contains("<nav>Home</nav>"));
+}
+
+const HTML_LAYOUT_SERVER: &str = r#"#! boundary: server
+
+endpoint doc() -> Html
+  give html.layout("My Page", "<p>content</p>")
+"#;
+
+#[tokio::test]
+async fn html_layout_produces_document() {
+    let base = spawn_server(HTML_LAYOUT_SERVER).await;
+    let resp = reqwest::get(format!("{base}/doc"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "text/html");
+    let body = resp.text().await.unwrap();
+    assert!(body.starts_with("<!DOCTYPE html>"));
+    assert!(body.contains("<title>My Page</title>"));
+    assert!(body.contains("<p>content</p>"));
+}
+
+const HTML_COMPOSE_SERVER: &str = r#"#! boundary: server
+
+pure header
+  gives Html
+  do
+    give "<header>FORGE</header>"
+
+pure footer
+  gives Html
+  do
+    give "<footer>2026</footer>"
+
+endpoint composed() -> Html
+  h = header()
+  f = footer()
+  give "<div>{!h}<main>body</main>{!f}</div>"
+"#;
+
+#[tokio::test]
+async fn html_composition_via_pure_functions() {
+    let base = spawn_server(HTML_COMPOSE_SERVER).await;
+    let resp = reqwest::get(format!("{base}/composed"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<header>FORGE</header>"));
+    assert!(body.contains("<main>body</main>"));
+    assert!(body.contains("<footer>2026</footer>"));
 }

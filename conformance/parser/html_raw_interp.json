@@ -1,0 +1,9 @@
+{
+  "name": "html_raw_interpolation_parses",
+  "category": "parser",
+  "description": "Raw interpolation syntax {!expr} parses inside template strings",
+  "input": "#! boundary: server\n\npure wrap\n  needs content: Html\n  gives Html\n  do\n    give \"<div>{!content}</div>\"\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}
