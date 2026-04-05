@@ -5,6 +5,7 @@ pub mod agent;
 pub mod confidence;
 pub mod event_bus;
 pub mod executor;
+pub mod html;
 pub mod http_server;
 pub mod instance_registry;
 pub mod knowledge_store;

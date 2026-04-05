@@ -761,7 +761,7 @@ impl AgentProcess {
 fn truthy(cv: &ConfidentValue) -> bool {
     match &cv.value {
         Value::Bool(b) => *b,
-        Value::Text(s) => !s.is_empty(),
+        Value::Text(s) | Value::Html(s) => !s.is_empty(),
         Value::Number(n) => *n != 0.0,
         Value::Unit => false,
         Value::List(v) | Value::Array(v) => !v.is_empty(),

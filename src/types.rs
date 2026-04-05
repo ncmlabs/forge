@@ -128,6 +128,10 @@ pub fn is_compatible(from: &ForgeType, to: &ForgeType) -> bool {
     if *from == ForgeType::Text {
         return true;
     }
+    // Html is compatible with Text (Html can flow where Text is expected)
+    if *from == ForgeType::Html && *to == ForgeType::Text {
+        return true;
+    }
     // Arrays: compatible if element types match (ignore size)
     if let (ForgeType::Array(a, _), ForgeType::Array(b, _)) = (from, to) {
         return is_compatible(a, b);

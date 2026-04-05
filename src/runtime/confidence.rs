@@ -14,6 +14,7 @@ use crate::types::ConfidenceSource;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
     Text(String),
+    Html(String),
     Number(f64),
     Bool(bool),
     Unit,
@@ -26,6 +27,7 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Text(s) => write!(f, "{s}"),
+            Value::Html(s) => write!(f, "{s}"),
             Value::Number(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Unit => write!(f, "()"),

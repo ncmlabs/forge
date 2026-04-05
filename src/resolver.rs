@@ -124,6 +124,21 @@ impl CapabilityRegistry {
             },
         );
 
+        caps.insert(
+            "html.layout".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Html],
+                output: ForgeType::Html,
+            },
+        );
+        caps.insert(
+            "html.escape".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+
         Self { capabilities: caps }
     }
 

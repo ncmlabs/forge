@@ -310,8 +310,11 @@ fn check_pure_expr(
         }
         Expr::Template(parts) => {
             for part in parts {
-                if let TemplatePart::Interp(inner) = &part.node {
-                    check_pure_expr(fn_name, inner, task_names, errors);
+                match &part.node {
+                    TemplatePart::Interp(inner) | TemplatePart::RawInterp(inner) => {
+                        check_pure_expr(fn_name, inner, task_names, errors);
+                    }
+                    _ => {}
                 }
             }
         }

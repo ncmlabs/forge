@@ -503,6 +503,8 @@ pub enum Expr {
 pub enum TemplatePart {
     Text(String),
     Interp(Box<Spanned<Expr>>),
+    /// `{!expr}` — raw interpolation, skips HTML escaping in Html context.
+    RawInterp(Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, Clone)]
