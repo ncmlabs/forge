@@ -946,9 +946,22 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
     if let Some(h) = handler {
         for (i, param) in h.node.params.iter().enumerate() {
             if let Some(arg) = args.get(i) {
+                // Coerce CLI string args to declared parameter types
+                use forge::ast::TypeName;
+                let value = match &param.node.type_name.node {
+                    TypeName::Number => {
+                        if let Ok(n) = arg.parse::<f64>() {
+                            Value::Number(n)
+                        } else {
+                            Value::Text(arg.clone())
+                        }
+                    }
+                    TypeName::Bool => Value::Bool(arg == "true" || arg == "1"),
+                    _ => Value::Text(arg.clone()),
+                };
                 params.insert(
                     param.node.name.clone(),
-                    ConfidentValue::deterministic(Value::Text(arg.clone())),
+                    ConfidentValue::deterministic(value),
                 );
             }
         }

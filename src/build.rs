@@ -532,11 +532,24 @@ fn generate_agent_cli_main(
             let param_inserts: Vec<String> = handler
                 .params
                 .iter()
-                .map(|(name, _)| {
-                    format!(
-                        r#"            params.insert("{name}".to_string(), forge::runtime::confidence::ConfidentValue::deterministic(forge::runtime::confidence::Value::Text({name})));"#,
-                        name = name,
-                    )
+                .map(|(name, type_dbg)| {
+                    // Coerce CLI string args to declared parameter types
+                    if type_dbg.contains("Number") {
+                        format!(
+                            r#"            params.insert("{name}".to_string(), forge::runtime::confidence::ConfidentValue::deterministic(if let Ok(n) = {name}.parse::<f64>() {{ forge::runtime::confidence::Value::Number(n) }} else {{ forge::runtime::confidence::Value::Text({name}) }}));"#,
+                            name = name,
+                        )
+                    } else if type_dbg.contains("Bool") {
+                        format!(
+                            r#"            params.insert("{name}".to_string(), forge::runtime::confidence::ConfidentValue::deterministic(forge::runtime::confidence::Value::Bool({name} == "true" || {name} == "1")));"#,
+                            name = name,
+                        )
+                    } else {
+                        format!(
+                            r#"            params.insert("{name}".to_string(), forge::runtime::confidence::ConfidentValue::deterministic(forge::runtime::confidence::Value::Text({name})));"#,
+                            name = name,
+                        )
+                    }
                 })
                 .collect();
 
