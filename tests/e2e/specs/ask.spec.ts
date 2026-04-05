@@ -19,4 +19,12 @@ test.describe('Q&A', () => {
     const text = await answerCard.textContent();
     expect(text!.length).toBeGreaterThan(5);
   });
+
+  test('answer page shows confidence badge', async ({ page }) => {
+    const ask = new AskPage(page);
+    await page.goto('/ask?question=What+is+a+pool');
+    await expect(ask.confidenceBadge).toBeVisible();
+    const badge = await ask.confidenceBadge.textContent();
+    expect(badge).toMatch(/confidence/);
+  });
 });

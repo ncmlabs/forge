@@ -27,6 +27,14 @@ test.describe('Search', () => {
     await search.expectResultsVisible();
   });
 
+  test('search results contain content', async ({ page }) => {
+    const search = new SearchPage(page);
+    await search.goto('agent');
+
+    const results = await search.results.textContent();
+    expect(results!.length).toBeGreaterThan(10);
+  });
+
   test('Cmd+K shortcut navigates to search', async ({ page }) => {
     await page.goto('/home');
     await page.keyboard.press('Meta+k');
