@@ -6,6 +6,10 @@ on:
   push:
     paths: [Cargo.lock]
 
+permissions:
+  checks: write
+  contents: read
+
 jobs:
   audit:
     name: Audit
