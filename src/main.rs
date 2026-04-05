@@ -89,6 +89,9 @@ enum Command {
         /// Watch for file changes and hot-reload (dev mode)
         #[arg(long)]
         watch: bool,
+        /// Additional source files to merge (for multi-file projects)
+        #[arg(long = "source", short = 's')]
+        sources: Vec<PathBuf>,
     },
     /// Export an agent's knowledge and config as a .forgepkg.json package
     Export {
@@ -248,8 +251,9 @@ async fn main() -> anyhow::Result<()> {
             host,
             port,
             watch,
+            sources,
         } => {
-            serve_program(&file, host, port, watch).await?;
+            serve_program(&file, &sources, host, port, watch).await?;
         }
         Command::Export {
             file,
@@ -690,7 +694,94 @@ async fn build_program(
     Ok(())
 }
 
-/// Try to parse, validate, and build an executor from a .forge file.
+/// Try to build executor from entry file + optional additional sources.
+/// When sources are provided, merges them before building (multi-file project support).
+fn try_build_executor_multi(
+    file: &Path,
+    sources: &[PathBuf],
+) -> Result<
+    (
+        forge::runtime::executor::TaskExecutor,
+        forge::config::ForgeConfig,
+    ),
+    anyhow::Error,
+> {
+    if sources.is_empty() {
+        return try_build_executor(file);
+    }
+
+    // Multi-file: parse all, merge, then build
+    let mut all_paths = vec![file.to_path_buf()];
+    all_paths.extend(sources.iter().cloned());
+
+    let mut source_files = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for path in &all_paths {
+        let source = read_source(path)?;
+        let fname = path.display().to_string();
+        let program = match forge::parser::parse(&source) {
+            Ok(p) => p,
+            Err(e) => {
+                e.to_diagnostic(&fname).render(&source);
+                return Err(anyhow::anyhow!("parse error in {}", fname));
+            }
+        };
+        source_files.push(forge::compose::SourceFile {
+            path: fname,
+            source,
+            program,
+        });
+    }
+
+    // Cross-file boundary check
+    let boundary_refs: Vec<_> = source_files
+        .iter()
+        .map(|sf| (&sf.program, sf.path.as_str()))
+        .collect();
+    diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
+
+    if !diagnostics.is_empty() {
+        for diag in &diagnostics {
+            if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
+                diag.render(&sf.source);
+            }
+        }
+        return Err(anyhow::anyhow!("{} diagnostic error(s)", diagnostics.len()));
+    }
+
+    // Merge programs
+    let composed = forge::compose::merge_programs(&source_files).map_err(|errs| {
+        anyhow::anyhow!(
+            "{}",
+            errs.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    })?;
+
+    let config = forge::config::ForgeConfig::load_or_default();
+    let tracer = if std::env::var("FORGE_TRACE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        Some(forge::tracer::Tracer::new())
+    } else {
+        None
+    };
+
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+
+    let executor =
+        forge::runtime::executor::TaskExecutor::new(composed.program, Arc::new(registry), tracer)
+            .with_config(config.clone());
+
+    Ok((executor, config))
+}
+
+/// Try to parse, validate, and build an executor from a single .forge file.
 /// Returns the executor and config on success, or renders diagnostics and returns an error.
 fn try_build_executor(
     file: &Path,
@@ -752,6 +843,7 @@ fn try_build_executor(
 
 async fn serve_program(
     file: &Path,
+    sources: &[PathBuf],
     cli_host: Option<String>,
     cli_port: Option<u16>,
     watch: bool,
@@ -760,7 +852,7 @@ async fn serve_program(
         serve_with_watch(file, cli_host, cli_port).await
     } else {
         // Non-watch mode: build once and serve. Exits on errors.
-        let (executor, config) = match try_build_executor(file) {
+        let (executor, config) = match try_build_executor_multi(file, sources) {
             Ok(r) => r,
             Err(_) => std::process::exit(1),
         };

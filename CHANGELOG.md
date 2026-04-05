@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Webhook support** — `POST /webhook/{endpoint}` routes dispatch inbound HTTP requests to endpoint handlers with JSON body parsing, Content-Type validation (must be `application/json`), and optional HMAC-SHA256 signature verification via `X-Hub-Signature-256` header (#52)
 - **`emit` in endpoint handlers** — `emit` statements now work outside agent context when an event bus is attached, enabling webhook endpoints to publish events that agents subscribe to (#52)
 - **`[server.webhook_secrets]` config** — per-endpoint HMAC secrets for webhook signature verification with constant-time comparison (#52)
+- **Multi-file `forge serve`** — `forge serve entry.forge -s dep1.forge -s dep2.forge` merges source files before serving, enabling multi-file projects with endpoint declarations
+- **forge-sensei web interface** — multi-file project (`workflows/forge-sensei/`) with status dashboard, query form, code review, and webhook endpoints using DaisyUI-styled HTML rendering
 
 ### Changed
 - Rewrite forge-sensei as flagship FORGE application — fix 7 correctness bugs (recall dispatch, state transitions, degenerate confidence, dead events, timer no-op, fallback lie, specialist lifecycle), add 8 FORGE constructs (type records, flows, contract, match, requires, pipe, try/or, for loops), objective assessment via predict_outcome + check_prediction
