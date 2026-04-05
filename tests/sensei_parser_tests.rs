@@ -91,6 +91,7 @@ fn parse_sensei_agent_handlers_complete() {
         "deep_dive",
         "assess_detailed",
         "batch_assess",
+        "update_mastery",
         "status",
         "self_assess.expired",
     ];

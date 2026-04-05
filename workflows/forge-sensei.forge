@@ -185,7 +185,7 @@ contract ForgeTutor
 
 exportable agent forge_sensei
   lifecycle: MasteryLevel
-  memory
+  memory persistent
     interaction_count: Number
     success_count: Number
     last_assessment_score: Number
@@ -288,6 +288,21 @@ exportable agent forge_sensei
     emit AssessmentCompleted(level: level, score: score, passed: passed, total: total, failures: gaps)
     give AssessmentResult(passed: score >= 40, prediction: "{passed}/{total}", expected: ">=40%", gap_topic: gaps)
 
+  # ── Update Mastery: externalized assessment trigger ──────────
+
+  on update_mastery(score: Number)
+    requires lifecycle == novice or lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: silent
+    memory.last_assessment_score = score
+    level = determine_level(score)
+    memory.current_level = level
+    if score >= 90 and lifecycle == journeyman
+      transition to expert
+    if score >= 70 and lifecycle == apprentice
+      transition to journeyman
+    if score >= 40 and lifecycle == novice
+      transition to apprentice
+    say "Mastery updated: {level} ({score}%)"
+
   # ── Status: report current mastery ──────────────────────────
 
   on status
@@ -298,19 +313,7 @@ exportable agent forge_sensei
   # ── Timer: periodic self-assessment ─────────────────────────
 
   on self_assess.expired
-    requires lifecycle == novice or lifecycle == apprentice or lifecycle == journeyman on fail: silent
-    say "Running periodic self-assessment..."
-    prior = recall "FORGE conformance and principles"
-    when prior.sure -> say "Self-assessment complete. Knowledge base healthy."
-    when prior.unsure -> say "Knowledge coverage is thin. Consider re-ingesting documentation."
-    else -> say "Knowledge gaps detected. Run pretrain to restore baseline."
-    score = memory.last_assessment_score
-    if score >= 90 and lifecycle != expert
-      transition to expert
-    if score >= 70 and lifecycle == apprentice
-      transition to journeyman
-    if score >= 40 and lifecycle == novice
-      transition to apprentice
+    say "Self-assess timer fired. Run 'assess.sh' for full mastery evaluation."
     reset self_assess
 
   if stuck for 3 turns
