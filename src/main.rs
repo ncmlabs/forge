@@ -923,10 +923,9 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
     let storage = Some(open_forge_storage()?);
 
     // Create instance registry for find/spawn support
-    let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry =
-        Arc::new(tokio::sync::RwLock::new(
-            forge::runtime::instance_registry::InstanceRegistry::new(),
-        ));
+    let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+        tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+    );
 
     let agent = AgentProcess::new(
         agent_decl.clone(),
