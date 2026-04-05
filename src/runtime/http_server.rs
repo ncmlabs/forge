@@ -123,8 +123,7 @@ impl ForgeServer {
     fn build_router(&self) -> Router<()> {
         // Dynamic catch-all routing: endpoint lookup happens at request time,
         // so new/removed endpoints are visible immediately after hot-reload.
-        let mut router = Router::new()
-            .route("/{endpoint}", get(handle_get).post(handle_post));
+        let mut router = Router::new().route("/{endpoint}", get(handle_get).post(handle_post));
 
         // SSE reload endpoint (watch mode only)
         if self.watch_mode {
@@ -244,7 +243,14 @@ async fn handle_get(
     }
     let request = build_request_record("GET", &endpoint_name, &params, &headers, "");
     let args = params_to_args(params);
-    dispatch_endpoint(executor, &endpoint_name, args, request, state.is_watch_mode()).await
+    dispatch_endpoint(
+        executor,
+        &endpoint_name,
+        args,
+        request,
+        state.is_watch_mode(),
+    )
+    .await
 }
 
 async fn handle_post(
@@ -273,7 +279,14 @@ async fn handle_post(
     };
     let request = build_request_record("POST", &endpoint_name, &params, &headers, &raw_body);
     let args = params_to_args(params);
-    dispatch_endpoint(executor, &endpoint_name, args, request, state.is_watch_mode()).await
+    dispatch_endpoint(
+        executor,
+        &endpoint_name,
+        args,
+        request,
+        state.is_watch_mode(),
+    )
+    .await
 }
 
 /// SSE endpoint for browser auto-reload in watch mode.

@@ -694,7 +694,13 @@ async fn build_program(
 /// Returns the executor and config on success, or renders diagnostics and returns an error.
 fn try_build_executor(
     file: &Path,
-) -> Result<(forge::runtime::executor::TaskExecutor, forge::config::ForgeConfig), anyhow::Error> {
+) -> Result<
+    (
+        forge::runtime::executor::TaskExecutor,
+        forge::config::ForgeConfig,
+    ),
+    anyhow::Error,
+> {
     let source = read_source(&file.to_path_buf())?;
     let fname = file.display().to_string();
 
@@ -738,9 +744,8 @@ fn try_build_executor(
     let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
-    let executor =
-        forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer)
-            .with_config(config.clone());
+    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer)
+        .with_config(config.clone());
 
     Ok((executor, config))
 }

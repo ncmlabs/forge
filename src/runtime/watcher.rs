@@ -102,12 +102,10 @@ pub async fn watch_and_reload(
             return Ok(WatchAction::RestartServer);
         }
 
-        if forge_changed {
-            if attempt_reload(&file, &swappable) {
-                // Notify connected browsers to reload
-                if let Some(ref tx) = reload_tx {
-                    let _ = tx.send(());
-                }
+        if forge_changed && attempt_reload(&file, &swappable) {
+            // Notify connected browsers to reload
+            if let Some(ref tx) = reload_tx {
+                let _ = tx.send(());
             }
         }
     }
@@ -132,9 +130,7 @@ fn is_config_path(path: &Path, config_path: Option<&Path>) -> bool {
 }
 
 fn is_forge_file(path: &Path) -> bool {
-    path.extension()
-        .map(|ext| ext == "forge")
-        .unwrap_or(false)
+    path.extension().map(|ext| ext == "forge").unwrap_or(false)
 }
 
 /// Attempt to reload the executor from the source file.
