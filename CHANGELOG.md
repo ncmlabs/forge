@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden sensei scripts: build-sensei.sh (skip-if-unchanged, smoke test), pretrain-sensei.sh (error capture, jq, idempotency, --force/--dry-run), consult-sensei.sh (jq, content caching, thresholds), assess.sh (per-category scoring, trend tracking, --json)
 
 ### Added
+- **Static file serving** with configurable root directory and URL prefix via `[server.static]` config, powered by tower-http `ServeDir` (#46)
+- **`asset()` built-in function** returns prefixed URL path for static assets, e.g. `asset("css/style.css")` → `/static/css/style.css` (#46)
+- **Default static directory scaffold** with Tailwind CSS CDN, DaisyUI components, Prism.js FORGE syntax highlighting, and demo page (#46)
 - `Html` builtin type with automatic `text/html` Content-Type inference from endpoint return type annotations (#44)
 - Safe record field access — missing fields return `Unit` instead of crashing, enabling graceful handling of optional request query/header parameters (#44)
 - Auto-escaping template interpolation in Html context for XSS prevention (#45)

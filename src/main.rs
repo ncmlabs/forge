@@ -724,7 +724,8 @@ async fn serve_program(
     let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
-    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer);
+    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer)
+        .with_config(config.clone());
 
     let mut server =
         forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());

@@ -11,6 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 
 use crate::config::ServerConfig;
 use crate::runtime::confidence::{ConfidentValue, Value};
@@ -23,17 +24,25 @@ pub struct ForgeServer {
     host: String,
     port: u16,
     cors_origins: Vec<String>,
+    static_root: Option<String>,
+    static_prefix: Option<String>,
 }
 
 impl ForgeServer {
     pub fn new(executor: TaskExecutor, config: Option<&ServerConfig>) -> Self {
-        let (host, port, cors_origins) = match config {
+        let (host, port, cors_origins, static_root, static_prefix) = match config {
             Some(c) => (
                 c.host_or_default().to_string(),
                 c.port_or_default(),
                 c.cors_origins.clone().unwrap_or_default(),
+                c.static_files
+                    .as_ref()
+                    .map(|s| s.root_or_default().to_string()),
+                c.static_files
+                    .as_ref()
+                    .map(|s| s.prefix_or_default().to_string()),
             ),
-            None => ("127.0.0.1".to_string(), 3000, Vec::new()),
+            None => ("127.0.0.1".to_string(), 3000, Vec::new(), None, None),
         };
 
         Self {
@@ -41,6 +50,8 @@ impl ForgeServer {
             host,
             port,
             cors_origins,
+            static_root,
+            static_prefix,
         }
     }
 
@@ -101,15 +112,24 @@ impl ForgeServer {
             CorsLayer::new().allow_origin(origins)
         };
 
-        router
-            .fallback(fallback_handler)
-            .layer(cors)
-            .with_state(self.executor.clone())
+        let router = if let Some(ref root) = self.static_root {
+            let prefix = self.static_prefix.as_deref().unwrap_or("/static");
+            router
+                .nest_service(prefix, ServeDir::new(root))
+                .fallback(fallback_handler)
+        } else {
+            router.fallback(fallback_handler)
+        };
+
+        router.layer(cors).with_state(self.executor.clone())
     }
 
     /// Print startup banner listing registered endpoints.
     fn print_banner(&self) {
         println!("Listening on http://{}:{}", self.host, self.port);
+        if let (Some(ref root), Some(ref prefix)) = (&self.static_root, &self.static_prefix) {
+            println!("  Static files: {} -> {}", root, prefix);
+        }
         let endpoints = self.executor.endpoints();
         if endpoints.is_empty() {
             println!("  (no endpoints registered)");
