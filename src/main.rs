@@ -52,6 +52,9 @@ enum Command {
         /// Paths to .forge source files
         #[arg(required = true)]
         files: Vec<PathBuf>,
+        /// Merge files before checking (for multi-file projects with cross-file references)
+        #[arg(long)]
+        merge: bool,
     },
     /// Execute a .forge program
     Run {
@@ -180,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Command::Check { files } => {
+        Command::Check { files, merge } => {
             let mut all_diagnostics = Vec::new();
             let mut parsed_programs = Vec::new();
 
@@ -189,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
                 let program = parse_or_exit(&source, file);
                 let fname = file.display().to_string();
 
-                // Per-file: resolver
+                // Per-file: resolver (always runs per-file)
                 let ctx = forge::resolver::CheckContext::new(&fname);
                 if let Err(errors) = ctx.check(&program) {
                     let registry = forge::resolver::CapabilityRegistry::builtin();
@@ -197,15 +200,52 @@ async fn main() -> anyhow::Result<()> {
                         .extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
                 }
 
-                // Per-file: checker (pure, states, requires)
-                all_diagnostics.extend(forge::checker::check_all(&program, &fname));
-
                 parsed_programs.push((program, fname, source));
             }
 
-            // Cross-file: boundary checker
+            if merge && parsed_programs.len() > 1 {
+                // Merge mode: combine all files, then run checkers on merged program.
+                // This resolves cross-file references (states, types, functions).
+                let source_files: Vec<_> = parsed_programs
+                    .iter()
+                    .map(|(p, f, s)| forge::compose::SourceFile {
+                        path: f.clone(),
+                        source: s.clone(),
+                        program: p.clone(),
+                    })
+                    .collect();
+
+                match forge::compose::merge_programs(&source_files) {
+                    Ok(composed) => {
+                        let merged_source = parsed_programs
+                            .iter()
+                            .map(|(_, _, s)| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let merged_fname = "<merged>".to_string();
+                        all_diagnostics
+                            .extend(forge::checker::check_all(&composed.program, &merged_fname));
+                        // Store merged program for diagnostic rendering
+                        parsed_programs.push((composed.program, merged_fname, merged_source));
+                    }
+                    Err(errs) => {
+                        for e in &errs {
+                            eprintln!("Merge error: {e}");
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // Per-file checkers (pure, states, requires)
+                for (program, fname, _) in &parsed_programs {
+                    all_diagnostics.extend(forge::checker::check_all(program, fname));
+                }
+            }
+
+            // Cross-file: boundary checker (always per-file)
             let boundary_refs: Vec<_> = parsed_programs
                 .iter()
+                .filter(|(_, f, _)| f != "<merged>")
                 .map(|(p, f, _)| (p, f.as_str()))
                 .collect();
             all_diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
