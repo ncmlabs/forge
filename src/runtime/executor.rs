@@ -1316,6 +1316,63 @@ impl TaskExecutor {
                         }
                     }
 
+                    // web.fetch() / web.post() — built-in HTTP client capabilities
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "web" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let web_config = self.config.as_ref().and_then(|c| c.web.as_ref());
+                            let client =
+                                crate::runtime::http_client::ForgeHttpClient::new(web_config);
+                            match method.node.as_str() {
+                                "fetch" => {
+                                    let url = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    match client.fetch(&url).await {
+                                        Ok(body) => {
+                                            return Ok(ConfidentValue::deterministic(Value::Text(
+                                                body,
+                                            )));
+                                        }
+                                        Err(e) => {
+                                            return Err(RuntimeError::FlowError(e));
+                                        }
+                                    }
+                                }
+                                "post" => {
+                                    let url = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let body = arg_vals
+                                        .get(1)
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    match client.post(&url, &body).await {
+                                        Ok(resp) => {
+                                            return Ok(ConfidentValue::deterministic(Value::Text(
+                                                resp,
+                                            )));
+                                        }
+                                        Err(e) => {
+                                            return Err(RuntimeError::FlowError(e));
+                                        }
+                                    }
+                                }
+                                other => {
+                                    return Err(RuntimeError::Unsupported(format!(
+                                        "web.{}()",
+                                        other
+                                    )));
+                                }
+                            }
+                        }
+                    }
+
                     // Pool .send() interception — pools are declarations, not runtime values
                     if method.node == "send" {
                         if let Expr::Ident(ref name) = obj_expr.node {
@@ -1706,7 +1763,39 @@ impl TaskExecutor {
                     ))
                 }
 
-                Expr::Search(_) => Ok(ConfidentValue::deterministic(Value::List(vec![]))),
+                Expr::Search(query_expr) => {
+                    let query_val = self.eval_expr(query_expr, env).await?;
+                    let query_text = format!("{}", query_val.value);
+                    let web_config = self.config.as_ref().and_then(|c| c.web.as_ref());
+                    let client = crate::runtime::http_client::ForgeHttpClient::new(web_config);
+                    match crate::runtime::http_client::search(&client, &query_text, web_config)
+                        .await
+                    {
+                        Ok(results) => {
+                            let items: Vec<ConfidentValue> = results
+                                .into_iter()
+                                .map(|r| {
+                                    let mut fields = HashMap::new();
+                                    fields.insert(
+                                        "title".into(),
+                                        ConfidentValue::deterministic(Value::Text(r.title)),
+                                    );
+                                    fields.insert(
+                                        "url".into(),
+                                        ConfidentValue::deterministic(Value::Text(r.url)),
+                                    );
+                                    fields.insert(
+                                        "snippet".into(),
+                                        ConfidentValue::deterministic(Value::Text(r.snippet)),
+                                    );
+                                    ConfidentValue::deterministic(Value::Record(fields))
+                                })
+                                .collect();
+                            Ok(ConfidentValue::deterministic(Value::List(items)))
+                        }
+                        Err(e) => Err(RuntimeError::FlowError(e)),
+                    }
+                }
 
                 Expr::Recall(query_expr) => {
                     let query_val = self.eval_expr(query_expr, env).await?;
