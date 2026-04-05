@@ -67,6 +67,7 @@ impl ForgeHttpClient {
 
 // ── Search ───────────────────────────────────────────────────────────────────
 
+#[derive(Debug)]
 pub struct SearchResult {
     pub title: String,
     pub url: String,
