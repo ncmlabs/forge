@@ -973,3 +973,449 @@ async fn webhook_no_secret_configured_skips_verification() {
         .expect("request failed");
     assert_eq!(resp.status(), 200);
 }
+
+// ── Multi-file serve support ──────────────────────────────────
+
+const MULTI_CORE: &str = r#"
+pure greet_msg
+  needs name: Text
+  gives Text
+  do
+    give "Hello, {name}!"
+
+pure add_numbers
+  needs a: Number, b: Number
+  gives Number
+  do
+    give a + b
+"#;
+
+const MULTI_WEB: &str = r#"#! boundary: server
+
+endpoint hello(name: Text) -> Text
+  give greet_msg(name)
+
+endpoint math(a: Text) -> Text
+  give "computed"
+"#;
+
+/// Spawn a server from multiple source files merged together.
+async fn spawn_multi_file_server(sources: &[&str]) -> String {
+    let mut source_files = Vec::new();
+    for (i, src) in sources.iter().enumerate() {
+        let program = forge::parser::parse(src).expect("parse failed");
+        source_files.push(forge::compose::SourceFile {
+            path: format!("file{i}.forge"),
+            source: src.to_string(),
+            program,
+        });
+    }
+    let composed = forge::compose::merge_programs(&source_files).expect("merge failed");
+    let executor = TaskExecutor::new(composed.program, mock_registry(), None);
+    let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+    let server = ForgeServer::new(executor, None).with_event_bus(event_bus);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    format!("http://127.0.0.1:{port}")
+}
+
+#[tokio::test]
+async fn multi_file_endpoint_calls_pure_from_other_file() {
+    let base = spawn_multi_file_server(&[MULTI_WEB, MULTI_CORE]).await;
+    let resp = reqwest::get(format!("{base}/hello?name=World"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "Hello, World!");
+}
+
+#[tokio::test]
+async fn multi_file_endpoints_registered_from_server_boundary() {
+    let base = spawn_multi_file_server(&[MULTI_WEB, MULTI_CORE]).await;
+
+    // Endpoint from web file works
+    let resp = reqwest::get(format!("{base}/hello?name=Test"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+
+    // Second endpoint works too
+    let resp = reqwest::get(format!("{base}/math?a=5"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn multi_file_unknown_route_returns_404() {
+    let base = spawn_multi_file_server(&[MULTI_WEB, MULTI_CORE]).await;
+    let resp = reqwest::get(format!("{base}/nonexistent"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn multi_file_post_with_json_body() {
+    let base = spawn_multi_file_server(&[MULTI_WEB, MULTI_CORE]).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/hello"))
+        .json(&serde_json::json!({"name": "PostUser"}))
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "Hello, PostUser!");
+}
+
+#[tokio::test]
+async fn multi_file_webhook_route_works() {
+    let base = spawn_multi_file_server(&[MULTI_WEB, MULTI_CORE]).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/hello"))
+        .header("content-type", "application/json")
+        .body(r#"{"name": "WebhookUser"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "Hello, WebhookUser!");
+}
+
+// ── Multi-file with events and emit from endpoints ────────────
+
+const MULTI_EVENTS_CORE: &str = r#"
+event DataReceived
+  payload: Text
+
+task process_data
+  needs data: Text
+  gives Text
+  do
+    give "processed: {data}"
+"#;
+
+const MULTI_EVENTS_WEB: &str = r#"#! boundary: server
+
+endpoint ingest(data: Text) -> Text
+  emit DataReceived(payload: data)
+  result = process_data(data)
+  give result
+"#;
+
+#[tokio::test]
+async fn multi_file_emit_from_endpoint_with_event_from_other_file() {
+    let base = spawn_multi_file_server(&[MULTI_EVENTS_WEB, MULTI_EVENTS_CORE]).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/ingest"))
+        .header("content-type", "application/json")
+        .body(r#"{"data": "test payload"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "processed: test payload");
+}
+
+// ── Multi-file with Html rendering ────────────────────────────
+
+const MULTI_HTML_CORE: &str = r#"
+pure render_header
+  gives Html
+  do
+    give "<header>FORGE</header>"
+"#;
+
+const MULTI_HTML_WEB: &str = r#"#! boundary: server
+
+endpoint page() -> Html
+  h = render_header()
+  give html.layout("Test Page", h)
+"#;
+
+#[tokio::test]
+async fn multi_file_html_rendering_across_files() {
+    let base = spawn_multi_file_server(&[MULTI_HTML_WEB, MULTI_HTML_CORE]).await;
+    let resp = reqwest::get(format!("{base}/page"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "text/html");
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<!DOCTYPE html>"));
+    assert!(body.contains("<title>Test Page</title>"));
+    assert!(body.contains("<header>FORGE</header>"));
+}
+
+// ── forge-sensei web endpoint tests ───────────────────────────
+
+/// Load and merge the actual forge-sensei source files.
+async fn spawn_sensei_web_server() -> String {
+    let core_source =
+        std::fs::read_to_string("workflows/forge-sensei/core.forge").expect("read core.forge");
+    let web_source =
+        std::fs::read_to_string("workflows/forge-sensei/web.forge").expect("read web.forge");
+
+    let core_program = forge::parser::parse(&core_source).expect("parse core.forge failed");
+    let web_program = forge::parser::parse(&web_source).expect("parse web.forge failed");
+
+    let source_files = vec![
+        forge::compose::SourceFile {
+            path: "core.forge".to_string(),
+            source: core_source,
+            program: core_program,
+        },
+        forge::compose::SourceFile {
+            path: "web.forge".to_string(),
+            source: web_source,
+            program: web_program,
+        },
+    ];
+    let composed =
+        forge::compose::merge_programs(&source_files).expect("merge sensei files failed");
+    let executor = TaskExecutor::new(composed.program, mock_registry(), None);
+    let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+    let server = ForgeServer::new(executor, None).with_event_bus(event_bus);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    format!("http://127.0.0.1:{port}")
+}
+
+#[tokio::test]
+async fn sensei_status_returns_html_page() {
+    let base = spawn_sensei_web_server().await;
+    let resp = reqwest::get(format!("{base}/status"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "text/html");
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<title>forge-sensei | Status</title>"));
+    assert!(body.contains("Sensei Status"));
+    assert!(body.contains("novice")); // default level
+}
+
+#[tokio::test]
+async fn sensei_status_has_navigation() {
+    let base = spawn_sensei_web_server().await;
+    let body = reqwest::get(format!("{base}/status"))
+        .await
+        .expect("request failed")
+        .text()
+        .await
+        .unwrap();
+    // Nav links present
+    assert!(body.contains("href=\"/status\""));
+    assert!(body.contains("href=\"/ask\""));
+    assert!(body.contains("href=\"/review\""));
+}
+
+#[tokio::test]
+async fn sensei_ask_form_returns_html_with_textarea() {
+    let base = spawn_sensei_web_server().await;
+    let resp = reqwest::get(format!("{base}/ask_form"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<title>forge-sensei | Ask</title>"));
+    assert!(body.contains("<textarea"));
+    assert!(body.contains("name=\"question\""));
+    assert!(body.contains("action=\"/ask\""));
+}
+
+#[tokio::test]
+async fn sensei_review_form_returns_html_with_textarea() {
+    let base = spawn_sensei_web_server().await;
+    let resp = reqwest::get(format!("{base}/review_form"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<title>forge-sensei | Review</title>"));
+    assert!(body.contains("<textarea"));
+    assert!(body.contains("name=\"code\""));
+    assert!(body.contains("action=\"/review\""));
+}
+
+#[tokio::test]
+async fn sensei_ask_endpoint_dispatches() {
+    // The ask endpoint calls answer_query flow which uses classify + reason (LLM).
+    // With mock provider, we get a runtime error (500) — but the endpoint IS reached.
+    // A 404 would mean routing failed; 500 means it dispatched and hit the LLM path.
+    let base = spawn_sensei_web_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/ask"))
+        .json(&serde_json::json!({"question": "what is a task?"}))
+        .send()
+        .await
+        .expect("request failed");
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap();
+    // Either 200 (mock returned something) or 500 (runtime error from LLM path)
+    assert!(
+        status == 200 || status == 500,
+        "expected 200 or 500, got {status}: {body}"
+    );
+    // Must NOT be 404 (that would mean endpoint not found)
+    assert_ne!(status, 404);
+    if status == 200 {
+        assert!(body.contains("Answer"));
+    } else {
+        assert!(body.contains("runtime error"));
+    }
+}
+
+#[tokio::test]
+async fn sensei_review_endpoint_dispatches() {
+    // Same as ask — the review flow calls classify + reason, which hits the mock provider.
+    let base = spawn_sensei_web_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/review"))
+        .json(&serde_json::json!({"code": "task hello\n  gives Text\n  do\n    give hi"}))
+        .send()
+        .await
+        .expect("request failed");
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap();
+    assert!(
+        status == 200 || status == 500,
+        "expected 200 or 500, got {status}: {body}"
+    );
+    assert_ne!(status, 404);
+    if status == 200 {
+        assert!(body.contains("Review Results"));
+    } else {
+        assert!(body.contains("runtime error"));
+    }
+}
+
+#[tokio::test]
+async fn sensei_webhook_ingest_accepts_json() {
+    let base = spawn_sensei_web_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/webhook_ingest"))
+        .header("content-type", "application/json")
+        .body(r#"{"category": "SYNTAX", "fact": "tasks use reason keyword"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "ok");
+}
+
+#[tokio::test]
+async fn sensei_webhook_learn_accepts_json() {
+    let base = spawn_sensei_web_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/webhook_learn"))
+        .header("content-type", "application/json")
+        .body(r#"{"question": "how do flows work?", "resolution": "flows use stages with needs"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "ok");
+}
+
+#[tokio::test]
+async fn sensei_nonexistent_endpoint_returns_404() {
+    let base = spawn_sensei_web_server().await;
+    let resp = reqwest::get(format!("{base}/nonexistent"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn sensei_all_endpoints_registered() {
+    let core_source =
+        std::fs::read_to_string("workflows/forge-sensei/core.forge").expect("read core.forge");
+    let web_source =
+        std::fs::read_to_string("workflows/forge-sensei/web.forge").expect("read web.forge");
+
+    let core_program = forge::parser::parse(&core_source).expect("parse core.forge failed");
+    let web_program = forge::parser::parse(&web_source).expect("parse web.forge failed");
+
+    let source_files = vec![
+        forge::compose::SourceFile {
+            path: "core.forge".to_string(),
+            source: core_source,
+            program: core_program,
+        },
+        forge::compose::SourceFile {
+            path: "web.forge".to_string(),
+            source: web_source,
+            program: web_program,
+        },
+    ];
+    let composed =
+        forge::compose::merge_programs(&source_files).expect("merge sensei files failed");
+    let executor = TaskExecutor::new(composed.program, mock_registry(), None);
+    let endpoints = executor.endpoints();
+
+    // All 7 endpoints should be registered
+    assert!(endpoints.contains_key("status"), "missing status endpoint");
+    assert!(
+        endpoints.contains_key("ask_form"),
+        "missing ask_form endpoint"
+    );
+    assert!(endpoints.contains_key("ask"), "missing ask endpoint");
+    assert!(
+        endpoints.contains_key("review_form"),
+        "missing review_form endpoint"
+    );
+    assert!(endpoints.contains_key("review"), "missing review endpoint");
+    assert!(
+        endpoints.contains_key("webhook_ingest"),
+        "missing webhook_ingest endpoint"
+    );
+    assert!(
+        endpoints.contains_key("webhook_learn"),
+        "missing webhook_learn endpoint"
+    );
+    assert_eq!(endpoints.len(), 7);
+}
