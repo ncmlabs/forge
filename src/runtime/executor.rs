@@ -1245,7 +1245,7 @@ impl TaskExecutor {
                             };
                             Ok(ConfidentValue::deterministic(Value::Bool(same)))
                         }
-                        (Value::Array(v) | Value::List(v), "len" | "count") => {
+                        (Value::Array(v) | Value::List(v), "len" | "length" | "count") => {
                             Ok(ConfidentValue::deterministic(Value::Number(v.len() as f64)))
                         }
                         // Record field access — transparently unwrap _type/_value wrapper
@@ -1667,6 +1667,73 @@ impl TaskExecutor {
                                 Value::Text(text)
                             };
                             Ok(ConfidentValue::derived(val, obj.confidence))
+                        }
+                        "split" => {
+                            if args.len() != 1 {
+                                return Err(RuntimeError::TypeError {
+                                    expected: "1 argument".to_string(),
+                                    got: format!("{} arguments", args.len()),
+                                });
+                            }
+                            let delim_val = self.eval_expr(&args[0].node.value, env).await?;
+                            let delimiter = match &delim_val.value {
+                                Value::Text(s) => s.clone(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Text delimiter".to_string(),
+                                        got: format!("{}", delim_val.value),
+                                    })
+                                }
+                            };
+                            let text = match &obj.value {
+                                Value::Text(s) | Value::Html(s) => s.as_str(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Text".to_string(),
+                                        got: format!("{}", obj.value),
+                                    })
+                                }
+                            };
+                            let parts: Vec<ConfidentValue> = text
+                                .split(&delimiter)
+                                .map(|part| {
+                                    ConfidentValue::deterministic(Value::Text(part.to_string()))
+                                })
+                                .collect();
+                            Ok(ConfidentValue::deterministic(Value::Array(parts)))
+                        }
+                        "join" => {
+                            if args.len() != 1 {
+                                return Err(RuntimeError::TypeError {
+                                    expected: "1 argument".to_string(),
+                                    got: format!("{} arguments", args.len()),
+                                });
+                            }
+                            let delim_val = self.eval_expr(&args[0].node.value, env).await?;
+                            let delimiter = match &delim_val.value {
+                                Value::Text(s) => s.clone(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Text delimiter".to_string(),
+                                        got: format!("{}", delim_val.value),
+                                    })
+                                }
+                            };
+                            let items = match &obj.value {
+                                Value::Array(v) | Value::List(v) => v,
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Array or List".to_string(),
+                                        got: format!("{}", obj.value),
+                                    })
+                                }
+                            };
+                            let joined: String = items
+                                .iter()
+                                .map(|item| format!("{}", item.value))
+                                .collect::<Vec<_>>()
+                                .join(&delimiter);
+                            Ok(ConfidentValue::deterministic(Value::Text(joined)))
                         }
                         other => Err(RuntimeError::Unsupported(format!("method .{}()", other))),
                     }
@@ -2877,5 +2944,88 @@ fn main
         )
         .await;
         assert!(matches!(result, Err(RuntimeError::FlowError(ref msg)) if msg.contains("cycle")));
+    }
+
+    // ── split / join tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_split_basic() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  text = "a,b,c"
+  parts = text.split(",")
+  say parts.length
+  for p in parts
+      say p
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "split failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["3", "a", "b", "c"]);
+    }
+
+    #[tokio::test]
+    async fn test_split_newline() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  text = "line one
+line two
+line three"
+  parts = text.split("\n")
+  say parts.length
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "split newline failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["3"]);
+    }
+
+    #[tokio::test]
+    async fn test_split_no_match() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  text = "no delimiter here"
+  parts = text.split(",")
+  say parts.length
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "split no match failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["1"]);
+    }
+
+    #[tokio::test]
+    async fn test_join_basic() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  text = "a,b,c"
+  parts = text.split(",")
+  joined = parts.join(" | ")
+  say joined
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "join failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["a | b | c"]);
+    }
+
+    #[tokio::test]
+    async fn test_split_join_roundtrip() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  original = "hello world foo"
+  parts = original.split(" ")
+  back = parts.join(" ")
+  say back
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "roundtrip failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["hello world foo"]);
     }
 }

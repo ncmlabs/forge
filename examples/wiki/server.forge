@@ -50,7 +50,7 @@ pure docs_sidebar
   needs active_slug: Text
   gives Html
   do
-    give "<aside class=\"w-64 shrink-0 hidden lg:block\"><ul class=\"menu bg-base-200 rounded-box w-full\"><li class=\"menu-title\">Getting Started</li><li><a href=\"/docs?slug=getting-started\" class=\"{!active_slug}\">Quick Start</a></li><li><a href=\"/docs?slug=principles\">First Principles</a></li><li class=\"menu-title\">Reference</li><li><a href=\"/docs?slug=task\">task</a></li><li><a href=\"/docs?slug=agent\">agent</a></li><li><a href=\"/docs?slug=flow\">flow</a></li><li><a href=\"/docs?slug=pool\">pool</a></li><li><a href=\"/docs?slug=system\">system</a></li><li><a href=\"/docs?slug=event\">event</a></li><li><a href=\"/docs?slug=states\">states</a></li><li><a href=\"/docs?slug=when\">when</a></li><li><a href=\"/docs?slug=pure\">pure</a></li><li><a href=\"/docs?slug=boundary\">boundary</a></li><li><a href=\"/docs?slug=requires\">requires</a></li><li><a href=\"/docs?slug=warden\">warden</a></li><li class=\"menu-title\">Generated</li><li><a href=\"/docs?slug=auto-reference\">Auto Reference</a></li><li class=\"menu-title\">About</li><li><a href=\"/docs?slug=roadmap\">Roadmap</a></li></ul></aside>"
+    give "<aside class=\"w-64 shrink-0 hidden lg:block\"><ul class=\"menu bg-base-200 rounded-box w-full\"><li class=\"menu-title\">Getting Started</li><li><a href=\"/docs?slug=getting-started\" class=\"{!active_slug}\">Quick Start</a></li><li><a href=\"/docs?slug=principles\">First Principles</a></li><li class=\"menu-title\">Reference</li><li><a href=\"/docs?slug=task\">task</a></li><li><a href=\"/docs?slug=agent\">agent</a></li><li><a href=\"/docs?slug=flow\">flow</a></li><li><a href=\"/docs?slug=pool\">pool</a></li><li><a href=\"/docs?slug=system\">system</a></li><li><a href=\"/docs?slug=event\">event</a></li><li><a href=\"/docs?slug=states\">states</a></li><li><a href=\"/docs?slug=when\">when</a></li><li><a href=\"/docs?slug=pure\">pure</a></li><li><a href=\"/docs?slug=boundary\">boundary</a></li><li><a href=\"/docs?slug=requires\">requires</a></li><li><a href=\"/docs?slug=warden\">warden</a></li><li class=\"menu-title\">Generated</li><li><a href=\"/docs?slug=auto-reference\">Auto Reference</a></li><li><a href=\"/docs?slug=fact-check-report\">Fact-Check Report</a></li><li class=\"menu-title\">About</li><li><a href=\"/docs?slug=roadmap\">Roadmap</a></li></ul></aside>"
 
 pure hero_section
   gives Html
@@ -276,13 +276,14 @@ agent search_agent
 # ── Doc Generation Flow ─────────────────────────────────────────
 #
 # Auto-generates reference docs from FORGE source files (issue #62).
-# DAG: scan_files -> [extract_tasks | extract_agents | extract_flows] -> generate_reference -> publish
+# DAG: scan_files -> [extract_* (parallel)] -> generate_reference -> fact_check -> publish
 #
 # Parallelism:
 #   Wave 0: scan_files
 #   Wave 1: extract_tasks, extract_agents, extract_flows  (parallel)
 #   Wave 2: generate_reference
-#   Wave 3: publish
+#   Wave 3: fact_check
+#   Wave 4: publish
 
 flow generate_docs
   needs sources: Text[]
@@ -321,29 +322,82 @@ flow generate_docs
     when reference.unsure -> give reference
     else -> give "Could not generate reference documentation."
 
-  stage publish
+  stage fact_check
     needs generate_reference.*
-    data.store("page:auto-reference", generate_reference)
-    emit PageUpdated(slug: "auto-reference")
-    give "Reference documentation generated and published"
+    report = verify_document(generate_reference)
+    when report.sure -> give report
+    when report.unsure -> give report
+    else -> give "Fact-checking could not complete."
 
-# ── Stub Pool ────────────────────────────────────────────────────
+  stage publish
+    needs generate_reference.*, fact_check.*
+    data.store("page:auto-reference", generate_reference)
+    data.store("page:fact-check-report", fact_check)
+    emit PageUpdated(slug: "auto-reference")
+    give "Reference docs generated, verified, and published"
+
+# ── Fact-Checking Pool ───────────────────────────────────────────
 #
-# Demonstrates: pool with workers. Full implementation in issue #63.
+# Demonstrates: pool with majority vote, per-claim verification (#63).
+# Three independent checkers evaluate each claim; 2/3 must agree.
+# Conservative: uncertain claims (split decision) marked NEEDS_REVIEW.
+
+task extract_claims
+  needs document: Text
+  gives Text
+  do
+    claims = reason "Extract individual factual claims from this FORGE documentation. Return one claim per line, nothing else. Only extract verifiable factual statements.\n\nDocument:\n{document}"
+    when claims.sure -> give claims
+    when claims.unsure -> give claims
+    else -> give ""
 
 task fact_checker
   needs claim: Text
   gives Text
   do
-    result = reason "Is this claim about FORGE accurate? Answer YES or NO with a brief explanation: {claim}"
+    result = reason "Is this claim about FORGE accurate? FORGE has 14 primitives: task, pure, flow, agent, pool, system, warden, event, states, when, boundary, requires, spawn, find. Answer with exactly YES or NO followed by a brief explanation.\n\nClaim: {claim}"
     when result.sure -> give result
-    when result.unsure -> give "uncertain"
-    else -> give "could not verify"
+    when result.unsure -> give "UNCERTAIN: {result}"
+    else -> give "UNCERTAIN: could not verify"
+
+task fact_check_fallback
+  needs claim: Text
+  gives Text
+  do
+    give "TIMEOUT: verification timed out"
 
 pool fact_check_panel
   workers: fact_checker * 3
   strategy: majority
   timeout: 30s
+  fallback: fact_check_fallback
+
+task classify_verdict
+  needs verdict: Text
+  gives Text
+  do
+    when verdict.sure -> give "PASS"
+    when verdict.unsure -> give "NEEDS_REVIEW"
+    else -> give "FAIL"
+
+task verify_document
+  needs document: Text
+  gives Text
+  do
+    raw_claims = extract_claims(document)
+    if raw_claims == ""
+      give "No verifiable claims found."
+    claims = raw_claims.split("\n")
+    report = ""
+    for claim in claims
+      trimmed = claim.trim()
+      if trimmed.length > 0
+        verdict = fact_check_panel("check", trimmed)
+        label = classify_verdict(verdict)
+        report = report + "- " + label + ": " + trimmed + "\n"
+    if report == ""
+      give "No verifiable claims found."
+    give report.trim()
 
 # ── Warden ───────────────────────────────────────────────────────
 #
@@ -413,8 +467,16 @@ endpoint admin_generate_docs() -> Html
   nav = nav_bar("")
   sources = data.list("page:")
   result = generate_docs(sources)
-  body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Doc Generation</h1><div class=\"alert alert-success\"><span>{result}</span></div><a href=\"/docs?slug=auto-reference\" class=\"btn btn-primary mt-4\">View Generated Reference</a></div>"
+  body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Doc Generation</h1><div class=\"alert alert-success\"><span>{result}</span></div><a href=\"/docs?slug=auto-reference\" class=\"btn btn-primary mt-4\">View Generated Reference</a><a href=\"/docs?slug=fact-check-report\" class=\"btn btn-outline mt-4 ml-2\">View Fact-Check Report</a></div>"
   give page_layout("Admin — Generate Docs", nav, body)
+
+endpoint admin_fact_check(slug: Text) -> Html
+  nav = nav_bar("")
+  content = data.get("page:{slug}")
+  report = verify_document(content)
+  rendered = markdown.render(report)
+  body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Fact-Check Report</h1><p class=\"mb-4\">Verifying page: <code>{slug}</code></p><div class=\"prose max-w-none\">{!rendered}</div><a href=\"/docs?slug={slug}\" class=\"btn btn-ghost mt-4\">Back to page</a></div>"
+  give page_layout("Fact Check — FORGE", nav, body)
 
 # -- Entry Point --
 

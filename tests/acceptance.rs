@@ -366,6 +366,41 @@ async fn accept_tictactoe_game() {
     println!("=== Tic-tac-toe full game complete — X wins! ===");
 }
 
+// ── Fact-check pool acceptance test (issue #63) ─────────────────
+
+#[test]
+fn accept_fact_check_pool_parse() {
+    let diags = check_file("examples/fact_check_pool.forge");
+    let errs = errors(&diags);
+    assert!(
+        errs.is_empty(),
+        "fact_check_pool.forge should have no checker errors, got: {:?}",
+        errs.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn accept_fact_check_pool_run() {
+    let program = parse_file("examples/fact_check_pool.forge");
+    // Mock provider returns 3 identical responses for the 3 pool workers
+    let mock = MockProvider::new("mock").with_default("YES this claim is factually accurate");
+    let executor = TaskExecutor::new(program, mock_registry(mock), None);
+    let result = executor.run().await;
+    assert!(
+        result.is_ok(),
+        "fact_check_pool.forge should run without error: {:?}",
+        result.err()
+    );
+    let outputs = executor.outputs();
+    assert!(
+        outputs
+            .iter()
+            .any(|o| o.contains("YES") || o.contains("Verdict")),
+        "should output a verdict, got: {:?}",
+        outputs
+    );
+}
+
 // ── CLI smoke tests ──────────────────────────────────────────────
 
 #[test]

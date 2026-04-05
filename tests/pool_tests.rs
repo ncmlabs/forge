@@ -458,3 +458,122 @@ async fn pool_via_send_method_call() {
     let result = executor.run().await.unwrap();
     assert!(matches!(result.value, Value::Unit | Value::Text(_)));
 }
+
+// ── Fact-check specific tests (issue #63) ───────────────────────────────────
+
+#[tokio::test]
+async fn fact_check_majority_pass() {
+    // 2/3 agree on identical "YES" answer — consensus with 0.67 agreement.
+    // Use identical responses for the 2 agreeing workers so concurrent
+    // dispatch order does not affect the majority result.
+    let registry = mock_registry_with_sequence(vec![
+        "YES this claim is accurate".to_string(),
+        "YES this claim is accurate".to_string(),
+        "NO this claim is inaccurate".to_string(),
+    ]);
+
+    let task = reason_task("fact_checker");
+    let program = program_with(vec![task]);
+    let decl = pool_decl_node(
+        "fact_check_panel",
+        "fact_checker",
+        3.0,
+        PoolStrategy::Majority,
+        Some(Duration {
+            value: 30,
+            unit: DurationUnit::Seconds,
+        }),
+        None,
+    );
+
+    let pool = PoolExecutor::new(decl, &program, registry, None).unwrap();
+    let result = pool
+        .send("check", vec![text_arg("FORGE has 14 primitives")])
+        .await
+        .unwrap();
+
+    // Should return consensus (YES) — 2 identical answers cluster together
+    assert!(
+        matches!(&result.value, Value::Text(s) if s.contains("YES")),
+        "expected YES consensus, got: {:?}",
+        result.value
+    );
+    // Source should be ConsensusAgreement with ~0.67 agreement
+    assert!(
+        matches!(result.source, ConfidenceSource::ConsensusAgreement(a) if a > 0.6 && a < 0.8),
+        "expected agreement ~0.67, got: {:?}",
+        result.source
+    );
+}
+
+#[tokio::test]
+async fn fact_check_majority_fail() {
+    // 2/3 agree on identical "NO" answer
+    let registry = mock_registry_with_sequence(vec![
+        "NO this claim is false".to_string(),
+        "NO this claim is false".to_string(),
+        "YES this is correct".to_string(),
+    ]);
+
+    let task = reason_task("fact_checker");
+    let program = program_with(vec![task]);
+    let decl = pool_decl_node(
+        "fact_check_panel",
+        "fact_checker",
+        3.0,
+        PoolStrategy::Majority,
+        Some(Duration {
+            value: 30,
+            unit: DurationUnit::Seconds,
+        }),
+        None,
+    );
+
+    let pool = PoolExecutor::new(decl, &program, registry, None).unwrap();
+    let result = pool
+        .send("check", vec![text_arg("FORGE has 100 primitives")])
+        .await
+        .unwrap();
+
+    // Should return consensus (NO)
+    assert!(
+        matches!(&result.value, Value::Text(s) if s.contains("NO")),
+        "expected NO consensus, got: {:?}",
+        result.value
+    );
+}
+
+#[tokio::test]
+async fn fact_check_unanimous() {
+    // 3/3 agree — unanimous, agreement = 1.0
+    let registry = mock_registry_with_sequence(vec![
+        "YES this is accurate".to_string(),
+        "YES this is accurate".to_string(),
+        "YES this is accurate".to_string(),
+    ]);
+
+    let task = reason_task("fact_checker");
+    let program = program_with(vec![task]);
+    let decl = pool_decl_node(
+        "fact_check_panel",
+        "fact_checker",
+        3.0,
+        PoolStrategy::Majority,
+        None,
+        None,
+    );
+
+    let pool = PoolExecutor::new(decl, &program, registry, None).unwrap();
+    let result = pool
+        .send("check", vec![text_arg("test claim")])
+        .await
+        .unwrap();
+
+    // Should be .sure() with agreement 1.0
+    assert!(result.sure(), "expected .sure() for unanimous agreement");
+    assert!(
+        matches!(result.source, ConfidenceSource::ConsensusAgreement(a) if a > 0.99),
+        "expected agreement ~1.0, got: {:?}",
+        result.source
+    );
+}
