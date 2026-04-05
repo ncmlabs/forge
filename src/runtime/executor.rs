@@ -1290,6 +1290,32 @@ impl TaskExecutor {
                         }
                     }
 
+                    // markdown.render() — built-in Markdown capability
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "markdown" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            match method.node.as_str() {
+                                "render" => {
+                                    let content = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let html = crate::runtime::markdown::render_markdown(&content);
+                                    return Ok(ConfidentValue::deterministic(Value::Html(html)));
+                                }
+                                other => {
+                                    return Err(RuntimeError::Unsupported(format!(
+                                        "markdown.{}()",
+                                        other
+                                    )));
+                                }
+                            }
+                        }
+                    }
+
                     // Pool .send() interception — pools are declarations, not runtime values
                     if method.node == "send" {
                         if let Expr::Ident(ref name) = obj_expr.node {

@@ -9,6 +9,7 @@ pub mod html;
 pub mod http_server;
 pub mod instance_registry;
 pub mod knowledge_store;
+pub mod markdown;
 pub mod memory;
 pub mod pool;
 pub mod state_machine;
