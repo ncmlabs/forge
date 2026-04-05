@@ -1,0 +1,306 @@
+#! boundary: server
+
+# ================================================================
+# FORGE Wiki — Server
+# ================================================================
+# The ultimate dogfooding showcase: a real documentation wiki
+# built with FORGE, demonstrating all 14 language primitives.
+#
+# Start: forge serve examples/wiki/server.forge \
+#          -s examples/wiki/shared.forge --watch
+# ================================================================
+
+use
+  llm.reason
+  llm.classify
+  data.store
+  data.get
+  data.list
+
+# ── Pure HTML Helpers ────────────────────────────────────────────
+#
+# All rendering is deterministic — no LLM calls allowed.
+# Demonstrates: pure, boundary: server
+
+pure wiki_head
+  needs title: Text
+  gives Html
+  do
+    give "<head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>{title}</title><link href=\"https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css\" rel=\"stylesheet\" type=\"text/css\" /><script src=\"https://cdn.tailwindcss.com\"></script><link href=\"https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css\" rel=\"stylesheet\" /><link rel=\"stylesheet\" href=\"/static/css/style.css\"></head>"
+
+pure nav_bar
+  needs active: Text
+  gives Html
+  do
+    home_cls = "btn btn-sm btn-ghost"
+    docs_cls = "btn btn-sm btn-ghost"
+    search_cls = "btn btn-sm btn-ghost"
+    ask_cls = "btn btn-sm btn-ghost"
+    if active == "home"
+      home_cls = "btn btn-sm btn-primary"
+    if active == "docs"
+      docs_cls = "btn btn-sm btn-primary"
+    if active == "search"
+      search_cls = "btn btn-sm btn-primary"
+    if active == "ask"
+      ask_cls = "btn btn-sm btn-primary"
+    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/home\" class=\"btn btn-ghost text-xl font-bold\">FORGE</a><div class=\"flex gap-2\"><a href=\"/home\" class=\"{!home_cls}\">Home</a><a href=\"/docs?slug=getting-started\" class=\"{!docs_cls}\">Docs</a><a href=\"/search\" class=\"{!search_cls}\">Search</a><a href=\"/ask_form\" class=\"{!ask_cls}\">Ask</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost\">T</button></div></div></nav>"
+
+pure docs_sidebar
+  needs active_slug: Text
+  gives Html
+  do
+    give "<aside class=\"w-64 shrink-0 hidden lg:block\"><ul class=\"menu bg-base-200 rounded-box w-full\"><li class=\"menu-title\">Getting Started</li><li><a href=\"/docs?slug=getting-started\" class=\"{!active_slug}\">Quick Start</a></li><li><a href=\"/docs?slug=principles\">First Principles</a></li><li class=\"menu-title\">Reference</li><li><a href=\"/docs?slug=task\">task</a></li><li><a href=\"/docs?slug=agent\">agent</a></li><li><a href=\"/docs?slug=flow\">flow</a></li><li><a href=\"/docs?slug=pool\">pool</a></li><li><a href=\"/docs?slug=system\">system</a></li><li><a href=\"/docs?slug=event\">event</a></li><li><a href=\"/docs?slug=states\">states</a></li><li><a href=\"/docs?slug=when\">when</a></li><li><a href=\"/docs?slug=pure\">pure</a></li><li><a href=\"/docs?slug=boundary\">boundary</a></li><li><a href=\"/docs?slug=requires\">requires</a></li><li><a href=\"/docs?slug=warden\">warden</a></li><li class=\"menu-title\">About</li><li><a href=\"/docs?slug=roadmap\">Roadmap</a></li></ul></aside>"
+
+pure hero_section
+  gives Html
+  do
+    give "<div class=\"hero min-h-[60vh] bg-gradient-to-br from-primary/10 to-secondary/10\"><div class=\"hero-content text-center\"><div class=\"max-w-2xl\"><h1 class=\"text-5xl font-bold\">FORGE</h1><p class=\"text-xl py-6\">The language for trustworthy AI agent systems. Built-in honesty, determinism boundaries, and supervision — because agents that lie, hallucinate, or run unsupervised are not production-ready.</p><div class=\"flex gap-4 justify-center\"><a href=\"/docs?slug=getting-started\" class=\"btn btn-primary\">Get Started</a><a href=\"/search\" class=\"btn btn-outline\">Explore Docs</a></div></div></div></div>"
+
+pure feature_cards
+  gives Html
+  do
+    give "<div class=\"container mx-auto px-4 py-12\"><h2 class=\"text-3xl font-bold text-center mb-8\">Why FORGE?</h2><div class=\"grid grid-cols-1 md:grid-cols-3 gap-6\"><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Honesty by Default</h3><p>Every LLM call returns <code>uncertain&lt;T&gt;</code>. You must handle confidence explicitly — no silent hallucinations.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Determinism Boundary</h3><p><code>pure</code> functions cannot call LLMs. The compiler enforces the boundary between deterministic and oracle-augmented code.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Supervision Trees</h3><p>Agents crash, get stuck, or hallucinate. <code>warden</code> declarations handle it — retry, restart, escalate.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Token Economy</h3><p>Budget limits are language-level. The compiler tracks cost before any LLM is called.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Composition</h3><p>Everything pipelines with <code>&gt;&gt;</code>. Flows, agents, pools — all composable, all parallelizable.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Agent Lifecycle</h3><p>Agents are born, learn, specialize, discover each other, and retire — preserving knowledge for the next generation.</p></div></div></div></div>"
+
+pure page_layout
+  needs title: Text, nav: Html, body: Html
+  gives Html
+  do
+    head = wiki_head(title)
+    give "<!DOCTYPE html><html data-theme=\"light\">{!head}<body class=\"min-h-screen bg-base-100\">{!nav}<main>{!body}</main><footer class=\"footer footer-center p-4 bg-base-200 text-base-content mt-12\"><p>Built with FORGE — the language for trustworthy AI agent systems</p></footer><script src=\"https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js\"></script><script src=\"/static/js/forge-highlight.js\"></script><script src=\"/static/js/app.js\"></script></body></html>"
+
+pure docs_layout
+  needs title: Text, sidebar: Html, content: Html
+  gives Html
+  do
+    nav = nav_bar("docs")
+    head = wiki_head("FORGE Docs — {title}")
+    give "<!DOCTYPE html><html data-theme=\"light\">{!head}<body class=\"min-h-screen bg-base-100\">{!nav}<div class=\"container mx-auto px-4 py-8 flex gap-8\">{!sidebar}<article class=\"prose max-w-none flex-1\">{!content}</article></div><footer class=\"footer footer-center p-4 bg-base-200 text-base-content mt-12\"><p>Built with FORGE</p></footer><script src=\"https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js\"></script><script src=\"/static/js/forge-highlight.js\"></script><script src=\"/static/js/app.js\"></script></body></html>"
+
+pure not_found_page
+  needs slug: Text
+  gives Html
+  do
+    nav = nav_bar("")
+    body = "<div class=\"container mx-auto px-4 py-16 text-center\"><h1 class=\"text-4xl font-bold mb-4\">Page Not Found</h1><p class=\"text-lg mb-8\">No documentation found for <code>{slug}</code>.</p><a href=\"/home\" class=\"btn btn-primary\">Back to Home</a></div>"
+    give page_layout("Not Found — FORGE", nav, body)
+
+pure search_results_html
+  needs query: Text, results: Text
+  gives Html
+  do
+    nav = nav_bar("search")
+    body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Search Results</h1><form method=\"GET\" action=\"/search\" class=\"mb-8\"><div class=\"join w-full max-w-lg\"><input type=\"text\" name=\"q\" value=\"{query}\" class=\"input input-bordered join-item flex-1\" placeholder=\"Search documentation...\" /><button type=\"submit\" class=\"btn btn-primary join-item\">Search</button></div></form><div class=\"prose max-w-none\">{!results}</div></div>"
+    give page_layout("Search — FORGE", nav, body)
+
+pure qa_page
+  needs question: Text, answer: Html, confidence: Text
+  gives Html
+  do
+    nav = nav_bar("ask")
+    badge = "<span class=\"badge badge-outline\">{confidence}</span>"
+    body = "<div class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-2\">Answer</h1>{!badge}<div class=\"card bg-base-100 shadow-xl mt-4\"><div class=\"card-body prose max-w-none\">{!answer}</div></div><div class=\"mt-6\"><a href=\"/ask_form\" class=\"btn btn-ghost\">Ask another question</a></div></div>"
+    give page_layout("Q&A — FORGE", nav, body)
+
+# ── Content Tasks ────────────────────────────────────────────────
+#
+# Demonstrates: task, data.store, data.get
+
+task seed_page
+  needs slug: Text, content: Text
+  gives Unit
+  do
+    data.store("page:{slug}", content)
+    say "Seeded: {slug}"
+
+task load_page
+  needs slug: Text
+  gives Text
+  do
+    content = data.get("page:{slug}")
+    give content
+
+# ── Search Task ──────────────────────────────────────────────────
+#
+# Stub search — will be replaced by SearchAgent in issue #61.
+# Demonstrates: task, when, classify
+
+task search_docs
+  needs query: Text
+  gives Text
+  do
+    pages = data.list("page:")
+    intent = classify query into ["reference", "tutorial", "troubleshooting", "general"]
+    when intent.sure -> say "Search intent: {intent}"
+    when intent.unsure -> say "Ambiguous query"
+    else -> say "Could not classify query"
+    results = reason "Given a documentation search for '{query}' (intent: {intent}), generate 2-3 relevant search result summaries. Each should have a title and one-sentence excerpt. Format as a simple list."
+    when results.sure -> give results
+    when results.unsure -> give "Some results found but confidence is low:\n{results}"
+    else -> give "No confident results for: {query}"
+
+# ── Q&A Task ─────────────────────────────────────────────────────
+#
+# Stub Q&A — will be replaced by QAAgent in issue #61.
+# Demonstrates: task, when, reason
+
+task answer_question
+  needs question: Text
+  gives Text
+  do
+    answer = reason "You are a FORGE language expert. Answer this question about FORGE, the programming language for AI agent systems. FORGE has 14 primitives: task, pure, flow, agent, pool, system, warden, event, states, when, boundary, requires, spawn, find. Be concise and accurate. Question: {question}"
+    when answer.sure -> give answer
+    when answer.unsure -> give answer
+    else -> give "I could not generate a confident answer for this question."
+
+# ── Stub Agents ──────────────────────────────────────────────────
+#
+# Minimal agent declarations to demonstrate the primitive.
+# Full implementations in issues #60 and #61.
+
+agent content_manager
+  lifecycle: PageLifecycle
+  memory
+    page_count: Number
+    last_updated: Text
+  subscribe PageCreated
+  subscribe PageUpdated
+
+  on start
+    say "ContentAgent ready."
+    memory.page_count = 0
+
+  on page_update(slug: Text)
+    requires slug != "" on fail: give "slug required"
+    memory.page_count = memory.page_count + 1
+    memory.last_updated = slug
+    emit PageUpdated(slug: slug)
+    say "Updated: {slug}"
+
+  on PageCreated
+    memory.page_count = memory.page_count + 1
+
+agent search_agent
+  memory
+    query_count: Number
+    last_query: Text
+
+  on start
+    say "SearchAgent ready."
+    memory.query_count = 0
+
+  on search(query: Text)
+    memory.query_count = memory.query_count + 1
+    memory.last_query = query
+    results = search_docs(query)
+    give results
+
+  on PageUpdated
+    say "Re-indexing after content update..."
+
+# ── Stub Flow ────────────────────────────────────────────────────
+#
+# Demonstrates: flow with stages. Full implementation in issue #62.
+
+flow doc_gen_flow
+  needs source: Text
+  gives Text
+
+  stage scan
+    summary = reason "Summarize the key concepts in this FORGE source code:\n{source}"
+
+  stage generate
+    needs scan.summary
+    doc = reason "Generate reference documentation from this summary: {scan.summary}"
+
+  stage format
+    needs generate.doc
+    give generate.doc
+
+# ── Stub Pool ────────────────────────────────────────────────────
+#
+# Demonstrates: pool with workers. Full implementation in issue #63.
+
+task fact_checker
+  needs claim: Text
+  gives Text
+  do
+    result = reason "Is this claim about FORGE accurate? Answer YES or NO with a brief explanation: {claim}"
+    when result.sure -> give result
+    when result.unsure -> give "uncertain"
+    else -> give "could not verify"
+
+pool fact_check_panel
+  workers: fact_checker * 3
+  strategy: majority
+  timeout: 30s
+
+# ── Warden ───────────────────────────────────────────────────────
+#
+# Demonstrates: warden supervision. Full implementation in issue #64.
+
+warden wiki_supervisor
+  manages [content_manager, search_agent]
+  on crash: restart, self
+    after 3: escalate
+  on hallucination: restart, self
+  on stuck: nudge, self
+    after 5: restart
+  on budget: nudge, all
+    after 1: escalate
+  on timeout: restart, self
+    after 3: escalate
+  max_retries 10 per 1h then escalate
+
+# ── System Wiring ────────────────────────────────────────────────
+#
+# Demonstrates: system, composition, spawn, find
+
+system forge_wiki
+  use
+    content: content_manager
+    search: search_agent
+
+  content >> search
+
+# ── Endpoints ────────────────────────────────────────────────────
+#
+# Demonstrates: endpoint, Html return type, data.get, task calls
+
+endpoint home() -> Html
+  nav = nav_bar("home")
+  hero = hero_section()
+  cards = feature_cards()
+  give page_layout("FORGE — The Language for Trustworthy AI", nav, hero + cards)
+
+endpoint docs(slug: Text) -> Html
+  content = data.get("page:{slug}")
+  rendered = markdown.render(content)
+  sidebar = docs_sidebar(slug)
+  give docs_layout(slug, sidebar, rendered)
+
+endpoint search(q: Text) -> Html
+  results = search_docs(q)
+  rendered = markdown.render(results)
+  give search_results_html(q, rendered)
+
+endpoint ask_form() -> Html
+  nav = nav_bar("ask")
+  body = "<div class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-6\">Ask about FORGE</h1><form method=\"POST\" action=\"/ask\"><textarea name=\"question\" class=\"textarea textarea-bordered w-full\" rows=\"4\" placeholder=\"What would you like to know about FORGE?\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Ask</button></form></div>"
+  give page_layout("Ask — FORGE", nav, body)
+
+endpoint ask(question: Text) -> Html
+  answer = answer_question(question)
+  rendered = markdown.render(answer)
+  give qa_page(question, rendered, "answer")
+
+endpoint api_search(q: Text) -> Text
+  results = search_docs(q)
+  give results
+
+# -- Entry Point --
+
+fn main
+  say "=== FORGE Wiki ==="
+  say "Content is seeded automatically from content/ directory by forge serve."
+  say "Run: forge serve examples/wiki/server.forge -s examples/wiki/shared.forge --watch"

@@ -247,6 +247,12 @@ impl TaskExecutor {
         self
     }
 
+    /// Attach storage for `data.store`/`data.get`/`data.list`/`data.delete` capabilities.
+    pub fn with_storage(mut self, storage: crate::runtime::storage::SharedStorage) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
     /// Configure persistent memory storage (issue #57).
     pub fn with_persistent_memory(
         mut self,
@@ -1403,6 +1409,98 @@ impl TaskExecutor {
                                 other => {
                                     return Err(RuntimeError::Unsupported(format!(
                                         "web.{}()",
+                                        other
+                                    )));
+                                }
+                            }
+                        }
+                    }
+
+                    // data.store() / data.get() / data.list() / data.delete() — KV persistence
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "data" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let storage = self.storage.as_ref().ok_or_else(|| {
+                                RuntimeError::Unsupported(
+                                    "data.* requires storage — configure [storage] in forge.config.toml or use forge serve".to_string(),
+                                )
+                            })?;
+                            match method.node.as_str() {
+                                "store" => {
+                                    let key = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let value = arg_vals
+                                        .get(1)
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    storage.store(&key, &value).map_err(|e| {
+                                        RuntimeError::FlowError(format!("data.store: {e}"))
+                                    })?;
+                                    return Ok(ConfidentValue::deterministic(Value::Unit));
+                                }
+                                "get" => {
+                                    let key = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    match storage.get(&key) {
+                                        Ok(Some(val)) => {
+                                            return Ok(ConfidentValue::deterministic(Value::Text(
+                                                val,
+                                            )));
+                                        }
+                                        Ok(None) => {
+                                            return Ok(ConfidentValue::deterministic(Value::Unit));
+                                        }
+                                        Err(e) => {
+                                            return Err(RuntimeError::FlowError(format!(
+                                                "data.get: {e}"
+                                            )));
+                                        }
+                                    }
+                                }
+                                "list" => {
+                                    let prefix = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    match storage.list(&prefix) {
+                                        Ok(keys) => {
+                                            let items = keys
+                                                .into_iter()
+                                                .map(|k| {
+                                                    ConfidentValue::deterministic(Value::Text(k))
+                                                })
+                                                .collect();
+                                            return Ok(ConfidentValue::deterministic(
+                                                Value::Array(items),
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            return Err(RuntimeError::FlowError(format!(
+                                                "data.list: {e}"
+                                            )));
+                                        }
+                                    }
+                                }
+                                "delete" => {
+                                    let key = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    storage.delete(&key).map_err(|e| {
+                                        RuntimeError::FlowError(format!("data.delete: {e}"))
+                                    })?;
+                                    return Ok(ConfidentValue::deterministic(Value::Unit));
+                                }
+                                other => {
+                                    return Err(RuntimeError::Unsupported(format!(
+                                        "data.{}()",
                                         other
                                     )));
                                 }

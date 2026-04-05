@@ -131,6 +131,27 @@ impl CapabilityRegistry {
             },
         );
         caps.insert(
+            "data.get".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "data.list".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "data.delete".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Unit,
+            },
+        );
+        caps.insert(
             "data.embed".into(),
             CapabilitySignature {
                 inputs: vec![ForgeType::Text],
@@ -439,6 +460,9 @@ mod tests {
         assert!(registry.resolve("llm.classify").is_some());
         assert!(registry.resolve("web.search").is_some());
         assert!(registry.resolve("data.store").is_some());
+        assert!(registry.resolve("data.get").is_some());
+        assert!(registry.resolve("data.list").is_some());
+        assert!(registry.resolve("data.delete").is_some());
         assert!(registry.resolve("data.embed").is_some());
         assert!(registry.resolve("magic.wand").is_none());
     }

@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **FORGE Wiki project** — dogfooding showcase web application in `examples/wiki/` demonstrating all 14 language primitives with Tailwind CSS + DaisyUI UI, content seeding, stub agents/flows/pools, warden supervision, and system wiring (#59)
+- **`data.get(key)` capability** — retrieve values from persistent KV storage, returns `Unit` for missing keys (#59)
+- **`data.list(prefix)` capability** — list all keys matching a prefix from persistent KV storage, returns `Array` (#59)
+- **`data.delete(key)` capability** — remove entries from persistent KV storage (#59)
+- **`data.store` runtime dispatch** — `data.store(key, value)` now executes against redb-backed storage in `forge serve` context (#59)
+- **Root URL redirect** — `GET /` now redirects to `/home` for wiki-style applications (#59)
+- **Automatic storage provisioning** — `forge serve` creates a `.forge-data/server.redb` database alongside the served file for `data.*` capabilities (#59)
+- **FORGE syntax highlighting** — Prism.js language definition for FORGE at `examples/wiki/static/js/forge-highlight.js` (#59)
+- Wiki content: getting started guide, first principles reference, roadmap, and reference docs for task, agent, flow, pool (#59)
 - **Webhook support** — `POST /webhook/{endpoint}` routes dispatch inbound HTTP requests to endpoint handlers with JSON body parsing, Content-Type validation (must be `application/json`), and optional HMAC-SHA256 signature verification via `X-Hub-Signature-256` header (#52)
 - **`emit` in endpoint handlers** — `emit` statements now work outside agent context when an event bus is attached, enabling webhook endpoints to publish events that agents subscribe to (#52)
 - **`[server.webhook_secrets]` config** — per-endpoint HMAC secrets for webhook signature verification with constant-time comparison (#52)

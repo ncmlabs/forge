@@ -10,3 +10,8 @@ forge.config.toml
 config/forge.config.toml
 config/claude.config.toml
 config/ollama.config.toml
+
+# Playwright E2E tests
+tests/e2e/node_modules/
+tests/e2e/playwright-report/
+tests/e2e/test-results/
