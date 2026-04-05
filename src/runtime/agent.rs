@@ -278,7 +278,17 @@ impl AgentProcess {
                 let _ = memory.restore_from_json(&json);
             }
         }
-        let state_machine = states.map(StateMachine::new);
+        let state_machine = states.map(|s| {
+            let mut sm = StateMachine::new(s);
+            // Restore lifecycle state from persistent storage if available
+            if let Some(ref store) = storage {
+                let key = format!("agent:{}:lifecycle", decl.name.node);
+                if let Ok(Some(saved_state)) = store.get(&key) {
+                    sm.set_current(&saved_state);
+                }
+            }
+            sm
+        });
         let timer_manager = TimerManager::new(&decl.timers);
         let stuck_threshold = decl
             .stuck_policy
@@ -455,14 +465,19 @@ impl AgentProcess {
             });
         }
 
-        // Persist memory state after handler execution
-        // Ensures memory survives across CLI invocations (forge send / binary)
+        // Persist memory and lifecycle state after handler execution
+        // Ensures both survive across CLI invocations (forge send / binary)
         {
             let ctx = self.context.lock().unwrap();
             if let Some(ref store) = self.storage {
                 let key = format!("agent:{}:memory", self.decl.name.node);
                 if let Ok(json) = ctx.memory.to_json() {
                     let _ = store.store(&key, &json);
+                }
+                // Persist lifecycle state
+                if let Some(ref sm) = ctx.state_machine {
+                    let lc_key = format!("agent:{}:lifecycle", self.decl.name.node);
+                    let _ = store.store(&lc_key, &sm.current);
                 }
             }
         }

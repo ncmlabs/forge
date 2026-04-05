@@ -62,6 +62,14 @@ impl StateMachine {
         }
     }
 
+    /// Restore lifecycle state from persistent storage.
+    /// Only accepts valid state names (must exist in the graph).
+    pub fn set_current(&mut self, state: &str) {
+        if self.graph.contains_key(state) {
+            self.current = state.to_string();
+        }
+    }
+
     /// Attempt a transition. Returns error if no valid edge exists from current state.
     pub fn transition(&mut self, to: &str) -> Result<(), StateError> {
         let valid = self
