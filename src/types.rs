@@ -24,6 +24,7 @@ pub enum ForgeType {
     Request,
     Response,
     Headers,
+    Html,
     Embedding,
     Duration,
     Named(String),
@@ -49,6 +50,7 @@ impl std::fmt::Display for ForgeType {
             ForgeType::Request => write!(f, "Request"),
             ForgeType::Response => write!(f, "Response"),
             ForgeType::Headers => write!(f, "Headers"),
+            ForgeType::Html => write!(f, "Html"),
             ForgeType::Embedding => write!(f, "Embedding"),
             ForgeType::Duration => write!(f, "Duration"),
             ForgeType::Named(s) => write!(f, "{s}"),
@@ -106,6 +108,7 @@ pub fn from_type_name(tn: &TypeName) -> ForgeType {
         TypeName::Request => ForgeType::Request,
         TypeName::Response => ForgeType::Response,
         TypeName::Headers => ForgeType::Headers,
+        TypeName::Html => ForgeType::Html,
         TypeName::Custom(s) => ForgeType::Named(s.clone()),
         TypeName::Array(inner, size) => ForgeType::Array(Box::new(from_type_name(inner)), *size),
     }

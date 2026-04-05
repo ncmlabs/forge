@@ -261,14 +261,19 @@ fn endpoint_result_to_response(result: EndpointResult) -> Response {
         .and_then(|s| StatusCode::from_u16(s).ok())
         .unwrap_or(default_status);
 
-    let (default_content_type, body) = match &result.value.value {
+    let (value_inferred_ct, body) = match &result.value.value {
         Value::Text(s) => ("text/plain", s.clone()),
         Value::Number(n) => ("text/plain", n.to_string()),
         Value::Bool(b) => ("text/plain", b.to_string()),
         Value::Unit => return status_code.into_response(),
         Value::List(_) | Value::Record(_) | Value::Array(_) => {
             let json = value_to_json(&result.value);
-            let ct = result.content_type.as_deref().unwrap_or("application/json");
+            // Priority: explicit > return-type annotation > value-inferred
+            let ct = result
+                .content_type
+                .as_deref()
+                .or(result.default_content_type.as_deref())
+                .unwrap_or("application/json");
             return (
                 status_code,
                 [(axum::http::header::CONTENT_TYPE, ct)],
@@ -278,10 +283,12 @@ fn endpoint_result_to_response(result: EndpointResult) -> Response {
         }
     };
 
+    // Priority: explicit > return-type annotation > value-inferred
     let ct = result
         .content_type
         .as_deref()
-        .unwrap_or(default_content_type);
+        .or(result.default_content_type.as_deref())
+        .unwrap_or(value_inferred_ct);
     (status_code, [(axum::http::header::CONTENT_TYPE, ct)], body).into_response()
 }
 
