@@ -156,7 +156,11 @@ impl ForgeServer {
         // Webhook route: POST /webhook/:name with Content-Type validation and optional HMAC
         let mut router = Router::new()
             .route("/webhook/:endpoint", axum::routing::post(handle_webhook))
-            .route("/:endpoint", get(handle_get).post(handle_post));
+            .route("/:endpoint", get(handle_get).post(handle_post))
+            .route(
+                "/",
+                get(|| async { axum::response::Redirect::temporary("/home") }),
+            );
 
         // SSE reload endpoint (watch mode only)
         if self.watch_mode {

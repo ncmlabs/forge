@@ -1,0 +1,5 @@
+#! boundary: client
+
+# Future: interactive components compiled to WASM (Track D, issues #53-56).
+# Client-side search modal, live preview, and collaborative editing
+# will be implemented once the WASM compilation target is ready.

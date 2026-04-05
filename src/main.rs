@@ -900,6 +900,28 @@ async fn serve_program(
         // Create event bus for webhook → agent event delivery
         let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
 
+        // Create storage for data.store/data.get/data.list/data.delete (#59)
+        let storage_path = file
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join(".forge-data/server.redb");
+        if let Some(parent) = storage_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
+            Ok(storage) => {
+                let shared = std::sync::Arc::new(storage);
+                executor.with_storage(shared)
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not open storage at {}: {e}",
+                    storage_path.display()
+                );
+                executor
+            }
+        };
+
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_event_bus(event_bus);
@@ -937,6 +959,28 @@ async fn serve_with_watch(
 
         // Create event bus for webhook → agent event delivery
         let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+
+        // Create storage for data.store/data.get/data.list/data.delete (#59)
+        let storage_path = file
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join(".forge-data/server.redb");
+        if let Some(parent) = storage_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
+            Ok(storage) => {
+                let shared = std::sync::Arc::new(storage);
+                executor.with_storage(shared)
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not open storage at {}: {e}",
+                    storage_path.display()
+                );
+                executor
+            }
+        };
 
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())

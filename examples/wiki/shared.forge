@@ -1,0 +1,36 @@
+#! boundary: shared
+
+# ── Types ────────────────────────────────────────────────────────
+
+type Page
+  slug: Text
+  title: Text
+  content: Text
+  status: Text
+
+type SearchResult
+  slug: Text
+  title: Text
+  excerpt: Text
+  relevance: Number
+
+# ── Events ───────────────────────────────────────────────────────
+
+event PageCreated
+  slug: Text
+  title: Text
+
+event PageUpdated
+  slug: Text
+
+event PagePublished
+  slug: Text
+
+# ── Lifecycle ────────────────────────────────────────────────────
+
+states PageLifecycle
+  draft -> review
+  review -> published
+  review -> draft
+  published -> archived
+  archived -> draft
