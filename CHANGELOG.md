@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Wiki doc generation flow** — `generate_docs` flow with 5-stage DAG (scan, parallel extraction of tasks/agents/flows, reference generation, publish), `data.store` + `emit PageUpdated`, triggered via `/admin_generate_docs` endpoint with HTML result page (#62)
 - **Wiki search agent** — LLM-powered search and Q&A with confidence gating (`when .sure/.unsure/else`), persistent memory tracking index version and query count, event-driven re-indexing via `subscribe`, and confidence badge on answers (#61)
 - **Wiki content agent** — full CRUD operations with lifecycle states, persistent memory, requires guards, event emission, and KV persistence for the wiki content manager (#60)
 - **FORGE Wiki project** — dogfooding showcase web application in `examples/wiki/` demonstrating all 14 language primitives with Tailwind CSS + DaisyUI UI, content seeding, stub agents/flows/pools, warden supervision, and system wiring (#59)
