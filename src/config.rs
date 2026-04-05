@@ -106,6 +106,26 @@ impl ForgeConfig {
         Ok(config)
     }
 
+    /// Resolve the config file path that would be used by `load_or_default`.
+    pub fn resolve_path() -> Option<std::path::PathBuf> {
+        if let Ok(path) = std::env::var("FORGE_CONFIG") {
+            let p = std::path::PathBuf::from(path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        let search_paths = [
+            Some(std::path::PathBuf::from("forge.config.toml")),
+            dirs::home_dir().map(|d| d.join(".forge/config.toml")),
+        ];
+        for path in search_paths.iter().flatten() {
+            if path.exists() {
+                return Some(path.clone());
+            }
+        }
+        None
+    }
+
     pub fn load_or_default() -> Self {
         let quiet = std::env::var("FORGE_LOG_LEVEL")
             .map(|v| v == "quiet")
