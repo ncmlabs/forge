@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Wiki fact-checking pool** — `verify_document` task extracts claims via LLM and verifies each through `fact_check_panel` (3 workers, majority strategy, 30s timeout, fallback on timeout); individual verdicts via `fact_check_detail` (all strategy); claims classified as PASS/NEEDS_REVIEW/FAIL based on consensus confidence; integrated as `fact_check` stage in `generate_docs` flow with dedicated `admin_fact_check` endpoint (#63)
+- **`.split(delimiter)` string method** — splits Text into Array of Text values for per-element iteration with `for` loops (#63)
+- **`.join(delimiter)` array method** — joins Array/List elements into Text with delimiter (#63)
+- **`.length` field access on Text** — `text.length` now works as a property (previously only available as `.len`) (#63)
+- **Variable reassignment in nested scopes** — `bind` now updates outer-scope variables when reassigning inside `for`/`if`/`match` blocks (#63)
+- **Mixed Text/Html concatenation** — `Text + Html` and `Html + Text` now work via the `+` operator, producing Text (#63)
 - **Wiki doc generation flow** — `generate_docs` flow with 5-stage DAG (scan, parallel extraction of tasks/agents/flows, reference generation, publish), `data.store` + `emit PageUpdated`, triggered via `/admin_generate_docs` endpoint with HTML result page (#62)
 - **Wiki search agent** — LLM-powered search and Q&A with confidence gating (`when .sure/.unsure/else`), persistent memory tracking index version and query count, event-driven re-indexing via `subscribe`, and confidence badge on answers (#61)
 - **Wiki content agent** — full CRUD operations with lifecycle states, persistent memory, requires guards, event emission, and KV persistence for the wiki content manager (#60)
