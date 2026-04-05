@@ -3,7 +3,12 @@
 set -euo pipefail
 
 FORGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SENSEI_SOURCE="$FORGE_ROOT/workflows/forge-sensei.forge"
+# Multi-file project: use directory with forge.project.toml
+SENSEI_SOURCE="$FORGE_ROOT/workflows/forge-sensei"
+# Fallback to single-file if directory doesn't exist
+if [ ! -d "$SENSEI_SOURCE" ]; then
+  SENSEI_SOURCE="$FORGE_ROOT/workflows/forge-sensei.forge"
+fi
 SENSEI_BIN="$FORGE_ROOT/bin/forge-sensei"
 HASH_FILE="$FORGE_ROOT/bin/.sensei-build-hash"
 
@@ -14,7 +19,11 @@ if ! command -v cargo &>/dev/null; then
 fi
 
 # ── Skip-if-unchanged ────────────────────────────────────────
-CURRENT_HASH=$(shasum -a 256 "$SENSEI_SOURCE" | cut -d' ' -f1)
+if [ -d "$SENSEI_SOURCE" ]; then
+  CURRENT_HASH=$(find "$SENSEI_SOURCE" -name '*.forge' -o -name '*.toml' | sort | xargs cat | shasum -a 256 | cut -d' ' -f1)
+else
+  CURRENT_HASH=$(shasum -a 256 "$SENSEI_SOURCE" | cut -d' ' -f1)
+fi
 if [ -f "$HASH_FILE" ] && [ -x "$SENSEI_BIN" ]; then
   CACHED_HASH=$(cat "$HASH_FILE")
   if [ "$CURRENT_HASH" = "$CACHED_HASH" ]; then
