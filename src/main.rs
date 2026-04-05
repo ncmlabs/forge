@@ -780,7 +780,7 @@ async fn serve_program(
 }
 
 async fn serve_with_watch(
-    file: &PathBuf,
+    file: &Path,
     cli_host: Option<String>,
     cli_port: Option<u16>,
 ) -> anyhow::Result<()> {
@@ -806,7 +806,7 @@ async fn serve_with_watch(
         let swappable = server.swappable_executor();
         let reload_tx = server.reload_sender();
 
-        let watch_file = file.clone();
+        let watch_file = file.to_path_buf();
         let watcher_handle = tokio::spawn(async move {
             forge::runtime::watcher::watch_and_reload(watch_file, swappable, reload_tx).await
         });
