@@ -1,15 +1,22 @@
 // FORGE HTTP server runtime
 // Dispatches HTTP requests to endpoint declarations. See issue #43.
+// Hot-reload support via SwappableExecutor. See issue #47.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::Router;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
@@ -17,15 +24,36 @@ use crate::config::ServerConfig;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::executor::{EndpointResult, TaskExecutor};
 
+// ── Swappable executor for hot-reload ───────────────────────────────────────
+
+/// Shared executor state that can be hot-swapped by the file watcher.
+/// Handlers clone the executor out under a brief read lock, then release it.
+pub type SwappableExecutor = Arc<RwLock<TaskExecutor>>;
+
+/// Combined server state shared with axum handlers.
+#[derive(Clone)]
+pub struct AppState {
+    pub executor: SwappableExecutor,
+    /// Broadcast channel for SSE reload notifications (only in watch mode).
+    pub reload_tx: Option<broadcast::Sender<()>>,
+}
+
+impl AppState {
+    fn is_watch_mode(&self) -> bool {
+        self.reload_tx.is_some()
+    }
+}
+
 // ── Server ───────────────────────────────────────────────────────────────────
 
 pub struct ForgeServer {
-    executor: TaskExecutor,
+    state: AppState,
     host: String,
     port: u16,
     cors_origins: Vec<String>,
     static_root: Option<String>,
     static_prefix: Option<String>,
+    watch_mode: bool,
 }
 
 impl ForgeServer {
@@ -46,13 +74,27 @@ impl ForgeServer {
         };
 
         Self {
-            executor,
+            state: AppState {
+                executor: Arc::new(RwLock::new(executor)),
+                reload_tx: None,
+            },
             host,
             port,
             cors_origins,
             static_root,
             static_prefix,
+            watch_mode: false,
         }
+    }
+
+    /// Enable watch mode: adds SSE reload endpoint and injects reload script in HTML responses.
+    pub fn with_watch_mode(mut self, watch: bool) -> Self {
+        self.watch_mode = watch;
+        if watch {
+            let (tx, _) = broadcast::channel(16);
+            self.state.reload_tx = Some(tx);
+        }
+        self
     }
 
     /// Override host (CLI flag takes precedence over config).
@@ -67,37 +109,25 @@ impl ForgeServer {
         self
     }
 
-    /// Build the axum router from registered endpoints.
-    fn build_router(&self) -> Router {
-        let mut router = Router::new();
+    /// Get a handle to the swappable executor for the file watcher.
+    pub fn swappable_executor(&self) -> SwappableExecutor {
+        self.state.executor.clone()
+    }
 
-        for name in self.executor.endpoints().keys() {
-            let get_path = format!("/{name}");
-            let post_path = get_path.clone();
-            let name_get = name.clone();
-            let name_post = name.clone();
+    /// Get a handle to the reload broadcast sender (for the watcher to signal reloads).
+    pub fn reload_sender(&self) -> Option<broadcast::Sender<()>> {
+        self.state.reload_tx.clone()
+    }
 
-            router = router
-                .route(
-                    &get_path,
-                    get(
-                        move |state: State<TaskExecutor>,
-                              query: Query<HashMap<String, String>>,
-                              headers: HeaderMap| {
-                            handle_get(state, Path(name_get), query, headers)
-                        },
-                    ),
-                )
-                .route(
-                    &post_path,
-                    post(
-                        move |state: State<TaskExecutor>,
-                              headers: HeaderMap,
-                              body: axum::Json<serde_json::Value>| {
-                            handle_post(state, Path(name_post), headers, body)
-                        },
-                    ),
-                );
+    /// Build the axum router with dynamic endpoint dispatch.
+    fn build_router(&self) -> Router<()> {
+        // Dynamic catch-all routing: endpoint lookup happens at request time,
+        // so new/removed endpoints are visible immediately after hot-reload.
+        let mut router = Router::new().route("/:endpoint", get(handle_get).post(handle_post));
+
+        // SSE reload endpoint (watch mode only)
+        if self.watch_mode {
+            router = router.route("/__forge/reload", get(handle_sse_reload));
         }
 
         // CORS
@@ -121,41 +151,25 @@ impl ForgeServer {
             router.fallback(fallback_handler)
         };
 
-        router.layer(cors).with_state(self.executor.clone())
+        router.layer(cors).with_state(self.state.clone())
     }
 
     /// Print startup banner listing registered endpoints.
     fn print_banner(&self) {
-        println!("Listening on http://{}:{}", self.host, self.port);
+        let mode = if self.watch_mode { " (watch mode)" } else { "" };
+        println!("Listening on http://{}:{}{}", self.host, self.port, mode);
         if let (Some(ref root), Some(ref prefix)) = (&self.static_root, &self.static_prefix) {
             println!("  Static files: {} -> {}", root, prefix);
         }
-        let endpoints = self.executor.endpoints();
+        if self.watch_mode {
+            println!("  SSE reload:   /__forge/reload");
+        }
+        let executor = self.state.executor.read().unwrap();
+        let endpoints = executor.endpoints();
         if endpoints.is_empty() {
             println!("  (no endpoints registered)");
         } else {
-            for (name, ep) in endpoints {
-                let params: Vec<String> = ep
-                    .params
-                    .iter()
-                    .map(|p| format!("{}=<{:?}>", p.node.name, p.node.type_name.node))
-                    .collect();
-                let ret = ep
-                    .return_type
-                    .as_ref()
-                    .map(|t| {
-                        let types: Vec<String> = t
-                            .node
-                            .types
-                            .iter()
-                            .map(|tn| format!("{:?}", tn.node))
-                            .collect();
-                        format!(" -> {}", types.join(", "))
-                    })
-                    .unwrap_or_default();
-                println!("  GET  /{name}?{}{ret}", params.join("&"));
-                println!("  POST /{name}{ret}");
-            }
+            print_endpoint_list(endpoints);
         }
     }
 
@@ -185,25 +199,70 @@ impl ForgeServer {
     }
 }
 
+/// Print endpoint list (reused by banner and reload logging).
+pub fn print_endpoint_list(endpoints: &HashMap<String, crate::ast::EndpointDecl>) {
+    for (name, ep) in endpoints {
+        let params: Vec<String> = ep
+            .params
+            .iter()
+            .map(|p| format!("{}=<{:?}>", p.node.name, p.node.type_name.node))
+            .collect();
+        let ret = ep
+            .return_type
+            .as_ref()
+            .map(|t| {
+                let types: Vec<String> = t
+                    .node
+                    .types
+                    .iter()
+                    .map(|tn| format!("{:?}", tn.node))
+                    .collect();
+                format!(" -> {}", types.join(", "))
+            })
+            .unwrap_or_default();
+        println!("  GET  /{name}?{}{ret}", params.join("&"));
+        println!("  POST /{name}{ret}");
+    }
+}
+
+/// Dev-mode reload script injected before </body> in HTML responses.
+const RELOAD_SCRIPT: &str =
+    r#"<script>new EventSource("/__forge/reload").onmessage=()=>location.reload()</script>"#;
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 async fn handle_get(
-    State(executor): State<TaskExecutor>,
+    State(state): State<AppState>,
     Path(endpoint_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
+    let executor = state.executor.read().unwrap().clone();
+    if !executor.endpoints().contains_key(&endpoint_name) {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
     let request = build_request_record("GET", &endpoint_name, &params, &headers, "");
     let args = params_to_args(params);
-    dispatch_endpoint(executor, &endpoint_name, args, request).await
+    dispatch_endpoint(
+        executor,
+        &endpoint_name,
+        args,
+        request,
+        state.is_watch_mode(),
+    )
+    .await
 }
 
 async fn handle_post(
-    State(executor): State<TaskExecutor>,
+    State(state): State<AppState>,
     Path(endpoint_name): Path<String>,
     headers: HeaderMap,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> Response {
+    let executor = state.executor.read().unwrap().clone();
+    if !executor.endpoints().contains_key(&endpoint_name) {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
     let raw_body = body.to_string();
     let params = match body.as_object() {
         Some(map) => map
@@ -220,7 +279,32 @@ async fn handle_post(
     };
     let request = build_request_record("POST", &endpoint_name, &params, &headers, &raw_body);
     let args = params_to_args(params);
-    dispatch_endpoint(executor, &endpoint_name, args, request).await
+    dispatch_endpoint(
+        executor,
+        &endpoint_name,
+        args,
+        request,
+        state.is_watch_mode(),
+    )
+    .await
+}
+
+/// SSE endpoint for browser auto-reload in watch mode.
+async fn handle_sse_reload(
+    State(state): State<AppState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let rx = state
+        .reload_tx
+        .as_ref()
+        .expect("SSE reload route registered without watch mode")
+        .subscribe();
+
+    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(()) => Some(Ok(Event::default().data("reload"))),
+        Err(_) => None, // lagged — skip
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 fn params_to_args(params: HashMap<String, String>) -> HashMap<String, ConfidentValue> {
@@ -235,6 +319,7 @@ async fn dispatch_endpoint(
     endpoint_name: &str,
     args: HashMap<String, ConfidentValue>,
     request: ConfidentValue,
+    inject_reload: bool,
 ) -> Response {
     let start = Instant::now();
 
@@ -249,7 +334,7 @@ async fn dispatch_endpoint(
     {
         Ok(result) => {
             let duration_ms = start.elapsed().as_millis() as u64;
-            let response = endpoint_result_to_response(result);
+            let response = endpoint_result_to_response(result, inject_reload);
             let status = response.status().as_u16();
             if let Some(tracer) = executor.tracer() {
                 tracer.http_response(endpoint_name, status, duration_ms);
@@ -270,7 +355,7 @@ async fn dispatch_endpoint(
     }
 }
 
-fn endpoint_result_to_response(result: EndpointResult) -> Response {
+fn endpoint_result_to_response(result: EndpointResult, inject_reload: bool) -> Response {
     let default_status = if matches!(result.value.value, Value::Unit) {
         StatusCode::NO_CONTENT
     } else {
@@ -283,7 +368,15 @@ fn endpoint_result_to_response(result: EndpointResult) -> Response {
 
     let (value_inferred_ct, body) = match &result.value.value {
         Value::Text(s) => ("text/plain", s.clone()),
-        Value::Html(s) => ("text/html", s.clone()),
+        Value::Html(s) => {
+            // In watch mode, inject the reload script before </body> or at the end
+            let html = if inject_reload {
+                inject_reload_script(s)
+            } else {
+                s.clone()
+            };
+            ("text/html", html)
+        }
         Value::Number(n) => ("text/plain", n.to_string()),
         Value::Bool(b) => ("text/plain", b.to_string()),
         Value::Unit => return status_code.into_response(),
@@ -311,6 +404,23 @@ fn endpoint_result_to_response(result: EndpointResult) -> Response {
         .or(result.default_content_type.as_deref())
         .unwrap_or(value_inferred_ct);
     (status_code, [(axum::http::header::CONTENT_TYPE, ct)], body).into_response()
+}
+
+/// Inject the reload script into an HTML body string.
+fn inject_reload_script(html: &str) -> String {
+    // Insert before </body> if present, otherwise append
+    if let Some(pos) = html.to_lowercase().rfind("</body>") {
+        let mut result = String::with_capacity(html.len() + RELOAD_SCRIPT.len());
+        result.push_str(&html[..pos]);
+        result.push_str(RELOAD_SCRIPT);
+        result.push_str(&html[pos..]);
+        result
+    } else {
+        let mut result = String::with_capacity(html.len() + RELOAD_SCRIPT.len());
+        result.push_str(html);
+        result.push_str(RELOAD_SCRIPT);
+        result
+    }
 }
 
 fn build_request_record(

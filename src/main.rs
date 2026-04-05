@@ -86,6 +86,9 @@ enum Command {
         /// Port to bind to (overrides config)
         #[arg(long)]
         port: Option<u16>,
+        /// Watch for file changes and hot-reload (dev mode)
+        #[arg(long)]
+        watch: bool,
     },
     /// Export an agent's knowledge and config as a .forgepkg.json package
     Export {
@@ -240,8 +243,13 @@ async fn main() -> anyhow::Result<()> {
             let estimate = forge::cost_estimator::estimate(&program, &config);
             print!("{}", estimate);
         }
-        Command::Serve { file, host, port } => {
-            serve_program(&file, host, port).await?;
+        Command::Serve {
+            file,
+            host,
+            port,
+            watch,
+        } => {
+            serve_program(&file, host, port, watch).await?;
         }
         Command::Export {
             file,
@@ -682,16 +690,28 @@ async fn build_program(
     Ok(())
 }
 
-async fn serve_program(
-    file: &PathBuf,
-    cli_host: Option<String>,
-    cli_port: Option<u16>,
-) -> anyhow::Result<()> {
-    let source = read_source(file)?;
-    let program = parse_or_exit(&source, file);
+/// Try to parse, validate, and build an executor from a .forge file.
+/// Returns the executor and config on success, or renders diagnostics and returns an error.
+fn try_build_executor(
+    file: &Path,
+) -> Result<
+    (
+        forge::runtime::executor::TaskExecutor,
+        forge::config::ForgeConfig,
+    ),
+    anyhow::Error,
+> {
+    let source = read_source(&file.to_path_buf())?;
     let fname = file.display().to_string();
 
-    // Validate before serving
+    let program = match forge::parser::parse(&source) {
+        Ok(p) => p,
+        Err(e) => {
+            e.to_diagnostic(&fname).render(&source);
+            return Err(anyhow::anyhow!("parse error in {}", fname));
+        }
+    };
+
     let mut diagnostics = Vec::new();
 
     let ctx = forge::resolver::CheckContext::new(&fname);
@@ -707,7 +727,7 @@ async fn serve_program(
 
     if !diagnostics.is_empty() {
         forge::diagnostic::render_diagnostics(&source, &diagnostics);
-        std::process::exit(1);
+        return Err(anyhow::anyhow!("{} diagnostic error(s)", diagnostics.len()));
     }
 
     let config = forge::config::ForgeConfig::load_or_default();
@@ -727,17 +747,93 @@ async fn serve_program(
     let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer)
         .with_config(config.clone());
 
-    let mut server =
-        forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+    Ok((executor, config))
+}
 
-    if let Some(host) = cli_host {
-        server = server.with_host(host);
-    }
-    if let Some(port) = cli_port {
-        server = server.with_port(port);
-    }
+async fn serve_program(
+    file: &PathBuf,
+    cli_host: Option<String>,
+    cli_port: Option<u16>,
+    watch: bool,
+) -> anyhow::Result<()> {
+    if watch {
+        serve_with_watch(file, cli_host, cli_port).await
+    } else {
+        // Non-watch mode: build once and serve. Exits on errors.
+        let (executor, config) = match try_build_executor(file) {
+            Ok(r) => r,
+            Err(_) => std::process::exit(1),
+        };
 
-    server.run().await
+        let mut server =
+            forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+
+        if let Some(host) = cli_host {
+            server = server.with_host(host);
+        }
+        if let Some(port) = cli_port {
+            server = server.with_port(port);
+        }
+
+        server.run().await
+    }
+}
+
+async fn serve_with_watch(
+    file: &Path,
+    cli_host: Option<String>,
+    cli_port: Option<u16>,
+) -> anyhow::Result<()> {
+    use forge::runtime::watcher::WatchAction;
+
+    loop {
+        let (executor, config) = match try_build_executor(file) {
+            Ok(r) => r,
+            Err(_) => std::process::exit(1),
+        };
+
+        let mut server =
+            forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
+                .with_watch_mode(true);
+
+        if let Some(ref host) = cli_host {
+            server = server.with_host(host.clone());
+        }
+        if let Some(port) = cli_port {
+            server = server.with_port(port);
+        }
+
+        let swappable = server.swappable_executor();
+        let reload_tx = server.reload_sender();
+
+        let watch_file = file.to_path_buf();
+        let watcher_handle = tokio::spawn(async move {
+            forge::runtime::watcher::watch_and_reload(watch_file, swappable, reload_tx).await
+        });
+
+        tokio::select! {
+            result = server.run() => {
+                // Server stopped (SIGINT) — watcher task is dropped and cancelled
+                return result;
+            }
+            watch_result = watcher_handle => {
+                match watch_result {
+                    Ok(Ok(WatchAction::RestartServer)) => {
+                        eprintln!("Config changed -- restarting server...");
+                        continue;
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("Watcher error: {e}");
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        eprintln!("Watcher task failed: {e}");
+                        return Err(anyhow::anyhow!("watcher task failed: {e}"));
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
