@@ -112,7 +112,6 @@ impl Env {
 
 // ── Task Executor ─────────────────────────────────────────────────────────────
 
-#[derive(Clone)]
 pub struct TaskExecutor {
     program: Program,
     providers: Arc<ProviderRegistry>,
@@ -133,6 +132,31 @@ pub struct TaskExecutor {
     config: Option<crate::config::ForgeConfig>,
     /// When true, template strings produce `Value::Html` and auto-escape interpolated values.
     html_context: AtomicBool,
+}
+
+impl Clone for TaskExecutor {
+    fn clone(&self) -> Self {
+        Self {
+            program: self.program.clone(),
+            providers: self.providers.clone(),
+            tracer: self.tracer.clone(),
+            task_map: self.task_map.clone(),
+            pure_map: self.pure_map.clone(),
+            flow_map: self.flow_map.clone(),
+            pool_map: self.pool_map.clone(),
+            endpoint_map: self.endpoint_map.clone(),
+            output: self.output.clone(),
+            agent_context: self.agent_context.clone(),
+            timer_engine: self.timer_engine.clone(),
+            storage: self.storage.clone(),
+            instance_registry: self.instance_registry.clone(),
+            event_bus: self.event_bus.clone(),
+            agent_name: self.agent_name.clone(),
+            memory_persistent: self.memory_persistent,
+            config: self.config.clone(),
+            html_context: AtomicBool::new(self.html_context.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 impl TaskExecutor {
@@ -1081,10 +1105,9 @@ impl TaskExecutor {
                                     match &val.value {
                                         Value::Html(s) => result.push_str(s),
                                         other => {
-                                            let escaped =
-                                                crate::runtime::html::html_escape(
-                                                    &format!("{}", other),
-                                                );
+                                            let escaped = crate::runtime::html::html_escape(
+                                                &format!("{}", other),
+                                            );
                                             result.push_str(&escaped);
                                         }
                                     }

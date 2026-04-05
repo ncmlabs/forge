@@ -1,4 +1,4 @@
-/// HTML escaping for XSS prevention in FORGE template strings.
+//! HTML escaping for XSS prevention in FORGE template strings.
 
 /// Escape HTML special characters: `&`, `<`, `>`, `"`, `'`.
 pub fn html_escape(text: &str) -> String {
