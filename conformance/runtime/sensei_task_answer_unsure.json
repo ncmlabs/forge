@@ -1,0 +1,13 @@
+{
+  "name": "sensei_task_answer_unsure",
+  "category": "runtime",
+  "description": "Task answer_forge_question dispatches on unsure confidence and prefixes with Uncertain",
+  "input": "use\n  llm.reason\n\ntask answer_forge_question\n  needs question: Text, context: Text\n  gives Text\n  do\n    result = reason \"You are forge-sensei. Using this prior knowledge:\\n{context}\\n\\nAnswer this FORGE question: {question}\"\n    when result.sure -> give result\n    when result.unsure -> give \"Uncertain: {result}\"\n    else -> give \"I could not answer this question confidently.\"\n\nfn main\n  result = answer_forge_question(\"How do wardens work?\", \"Limited context on wardens.\")\n  say result\n",
+  "mock_responses": [
+    {"text": "I think wardens might supervise agents but I am not fully sure about the details.", "confidence": 0.55}
+  ],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": ["task_call", "llm_request", "llm_response", "when_dispatch", "task_return"]
+  }
+}

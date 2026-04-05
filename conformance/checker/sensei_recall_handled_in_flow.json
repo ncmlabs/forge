@@ -1,0 +1,10 @@
+{
+  "name": "sensei_recall_handled_in_flow",
+  "category": "checker",
+  "subcategory": "uncertain",
+  "description": "Recall dispatched with when/else in a flow stage compiles cleanly",
+  "input": "use\n  llm.reason\n\ntask answer_question\n  needs question: Text, context: Text\n  gives Text\n  do\n    result = reason \"Answer: {question} using {context}\"\n    when result.sure -> give result\n    else -> give \"Unknown\"\n\nflow answer_query\n  needs question: Text\n  gives Text\n\n  stage retrieve\n    prior = recall \"{question}\"\n\n  stage respond\n    needs retrieve.prior\n    prior = retrieve.prior\n    when prior.sure -> give answer_question(question, prior)\n    when prior.unsure -> give answer_question(question, prior)\n    else -> give \"No knowledge found.\"\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

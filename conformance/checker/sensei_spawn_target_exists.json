@@ -1,0 +1,10 @@
+{
+  "name": "sensei_spawn_target_exists",
+  "category": "checker",
+  "subcategory": "spawn",
+  "description": "Spawn referencing a declared agent compiles cleanly",
+  "input": "agent specialist\n  memory\n    topic: Text\n  on start\n    say \"Specialist ready\"\n\n  if stuck for 3 turns\n    escalate to human\n\nagent sensei\n  on deep_dive(topic: Text)\n    child = spawn specialist as \"specialist_{topic}\"\n    say \"Spawned specialist.\"\n\n  if stuck for 3 turns\n    escalate to human\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

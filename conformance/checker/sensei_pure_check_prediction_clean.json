@@ -1,0 +1,10 @@
+{
+  "name": "sensei_pure_check_prediction_clean",
+  "category": "checker",
+  "subcategory": "pure",
+  "description": "Pure function using .contains() compiles cleanly",
+  "input": "pure check_prediction\n  needs predicted: Text, expected: Text\n  gives Bool\n  do\n    if predicted.contains(expected)\n      give true\n    give false\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

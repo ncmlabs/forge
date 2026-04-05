@@ -1,0 +1,12 @@
+{
+  "name": "sensei_invalid_states_syntax",
+  "category": "parser",
+  "description": "States with dangling when guard fails to parse",
+  "input": "states Broken\n  novice -> apprentice when\n",
+  "expected": {
+    "outcome": "parse_error",
+    "error_contains": [
+      "expected"
+    ]
+  }
+}

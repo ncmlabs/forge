@@ -1,0 +1,11 @@
+{
+  "name": "sensei_pure_with_reason",
+  "category": "checker",
+  "subcategory": "pure",
+  "description": "Pure function cannot use reason (LLM oracle forbidden)",
+  "input": "pure bad_pure\n  needs q: Text\n  gives Text\n  do\n    give reason \"think about {q}\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["cannot use", "reason"]
+  }
+}

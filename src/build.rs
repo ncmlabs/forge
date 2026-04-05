@@ -532,11 +532,24 @@ fn generate_agent_cli_main(
             let param_inserts: Vec<String> = handler
                 .params
                 .iter()
-                .map(|(name, _)| {
-                    format!(
-                        r#"            params.insert("{name}".to_string(), forge::runtime::confidence::ConfidentValue::deterministic(forge::runtime::confidence::Value::Text({name})));"#,
-                        name = name,
-                    )
+                .map(|(name, type_dbg)| {
+                    // Coerce CLI string args to declared parameter types
+                    if type_dbg.contains("Number") {
+                        format!(
+                            r#"            params.insert("{name}".to_string(), forge::runtime::confidence::ConfidentValue::deterministic(if let Ok(n) = {name}.parse::<f64>() {{ forge::runtime::confidence::Value::Number(n) }} else {{ forge::runtime::confidence::Value::Text({name}) }}));"#,
+                            name = name,
+                        )
+                    } else if type_dbg.contains("Bool") {
+                        format!(
+                            r#"            params.insert("{name}".to_string(), forge::runtime::confidence::ConfidentValue::deterministic(forge::runtime::confidence::Value::Bool({name} == "true" || {name} == "1")));"#,
+                            name = name,
+                        )
+                    } else {
+                        format!(
+                            r#"            params.insert("{name}".to_string(), forge::runtime::confidence::ConfidentValue::deterministic(forge::runtime::confidence::Value::Text({name})));"#,
+                            name = name,
+                        )
+                    }
                 })
                 .collect();
 
@@ -704,14 +717,29 @@ async fn main() -> anyhow::Result<()> {{
     let lifecycle_name = agent_decl.lifecycle.as_ref().map(|l| l.node.as_str());
     let states_decl = forge::compose::find_states(&program, lifecycle_name);
 
+    // Create instance registry for find/spawn support
+    let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry =
+        std::sync::Arc::new(tokio::sync::RwLock::new(
+            forge::runtime::instance_registry::InstanceRegistry::new(),
+        ));
+
+    // Open persistent storage for memory across invocations
+    let storage = {{
+        let db_path = std::path::Path::new(".forge-data").join("store.redb");
+        std::fs::create_dir_all(".forge-data").ok();
+        forge::runtime::storage::ForgeStorage::open(&db_path)
+            .ok()
+            .map(|s| std::sync::Arc::new(s))
+    }};
+
     let agent = forge::runtime::agent::AgentProcess::new(
         agent_decl.clone(),
         states_decl.as_ref(),
         Arc::new(registry),
         None,
         program,
-        None, // build mode doesn't need persistent storage
-        None, // no instance registry in build mode
+        storage,
+        Some(instance_registry),
     );
 
     match cli.command {{

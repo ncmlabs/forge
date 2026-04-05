@@ -1,0 +1,9 @@
+{
+  "name": "sensei_agent_transition_to",
+  "category": "parser",
+  "description": "Agent handler with transition to statement parses successfully",
+  "input": "states MasteryLevel\n  novice -> apprentice when conformance_score >= 40\n  apprentice -> journeyman when conformance_score >= 70\n  journeyman -> expert when conformance_score >= 90\n  expert -> expert\n\nexportable agent forge_sensei\n  lifecycle: MasteryLevel\n  memory\n    last_assessment_score: Number\n\n  on promote\n    score = memory.last_assessment_score\n    if score >= 90 and lifecycle != expert\n      transition to expert\n    if score >= 70 and lifecycle == apprentice\n      transition to journeyman\n    if score >= 40 and lifecycle == novice\n      transition to apprentice\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

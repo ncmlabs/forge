@@ -1,0 +1,12 @@
+{
+  "name": "sensei_malformed_spawn",
+  "category": "parser",
+  "description": "Spawn with dangling with clause fails to parse",
+  "input": "agent bot\n  on start\n    say \"hi\"\n\ntask run\n  do\n    child = spawn bot as \"x\"\n      with\n",
+  "expected": {
+    "outcome": "parse_error",
+    "error_contains": [
+      "expected"
+    ]
+  }
+}

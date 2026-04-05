@@ -918,12 +918,14 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
-    // Open persistent storage if agent declares memory persistent
-    let storage = if agent_decl.memory_persistent {
-        Some(open_forge_storage()?)
-    } else {
-        None
-    };
+    // Always open storage in CLI mode — even non-persistent agents need
+    // memory to survive across forge-send invocations
+    let storage = Some(open_forge_storage()?);
+
+    // Create instance registry for find/spawn support
+    let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+        tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+    );
 
     let agent = AgentProcess::new(
         agent_decl.clone(),
@@ -932,7 +934,7 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
         None,
         program,
         storage,
-        None,
+        Some(instance_registry),
     );
 
     // Build params from positional args matching handler param names
@@ -944,9 +946,22 @@ async fn send_to_agent(file: &PathBuf, event: &str, args: Vec<String>) -> anyhow
     if let Some(h) = handler {
         for (i, param) in h.node.params.iter().enumerate() {
             if let Some(arg) = args.get(i) {
+                // Coerce CLI string args to declared parameter types
+                use forge::ast::TypeName;
+                let value = match &param.node.type_name.node {
+                    TypeName::Number => {
+                        if let Ok(n) = arg.parse::<f64>() {
+                            Value::Number(n)
+                        } else {
+                            Value::Text(arg.clone())
+                        }
+                    }
+                    TypeName::Bool => Value::Bool(arg == "true" || arg == "1"),
+                    _ => Value::Text(arg.clone()),
+                };
                 params.insert(
                     param.node.name.clone(),
-                    ConfidentValue::deterministic(Value::Text(arg.clone())),
+                    ConfidentValue::deterministic(value),
                 );
             }
         }

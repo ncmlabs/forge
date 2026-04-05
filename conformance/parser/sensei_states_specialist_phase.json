@@ -1,0 +1,9 @@
+{
+  "name": "sensei_states_specialist_phase",
+  "category": "parser",
+  "description": "States with simple when guard and self-loop parses successfully",
+  "input": "states SpecialistPhase\n  learning -> ready when absorbed_count >= 5\n  ready -> ready\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

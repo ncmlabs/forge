@@ -1,0 +1,7 @@
+{
+  "name": "sensei_field_access_on_custom_type",
+  "category": "runtime",
+  "description": "Field access on a custom type record unwraps _type/_value transparently",
+  "input": "type Greeting\n  message: Text\n  count: Number\n\npure make_greeting\n  needs name: Text\n  gives Greeting\n  do\n    give Greeting(message: \"hello {name}\", count: 1)\n\nfn main\n  g = make_greeting(\"world\")\n  say g.message\n  say \"{g.count}\"\n",
+  "expected": { "outcome": "run_ok" }
+}

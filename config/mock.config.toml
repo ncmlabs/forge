@@ -1,0 +1,6 @@
+[llm]
+default = "mock"
+
+[providers.mock]
+type = "mock"
+model = "mock-model"

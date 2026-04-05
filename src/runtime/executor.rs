@@ -1119,12 +1119,22 @@ impl TaskExecutor {
                         (Value::Array(v) | Value::List(v), "len" | "count") => {
                             Ok(ConfidentValue::deterministic(Value::Number(v.len() as f64)))
                         }
-                        // Record field access
+                        // Record field access — transparently unwrap _type/_value wrapper
                         (Value::Record(fields), _) => {
-                            fields.get(&field.node).cloned().ok_or_else(|| {
-                                RuntimeError::UndefinedVariable {
-                                    name: format!(".{}", field.node),
+                            // Direct field access
+                            if let Some(val) = fields.get(&field.node) {
+                                return Ok(val.clone());
+                            }
+                            // Check for wrapped custom type: { _type: "Name", _value: { fields... } }
+                            if let Some(inner) = fields.get("_value") {
+                                if let Value::Record(inner_fields) = &inner.value {
+                                    if let Some(val) = inner_fields.get(&field.node) {
+                                        return Ok(val.clone());
+                                    }
                                 }
+                            }
+                            Err(RuntimeError::UndefinedVariable {
+                                name: format!(".{}", field.node),
                             })
                         }
                         _ => Err(RuntimeError::TypeError {

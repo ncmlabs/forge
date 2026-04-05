@@ -1,0 +1,11 @@
+{
+  "name": "sensei_pure_determine_level",
+  "category": "runtime",
+  "description": "Pure function determine_level returns correct level for all 4 thresholds",
+  "input": "pure determine_level\n  needs score: Number\n  gives Text\n  do\n    if score >= 90\n      give \"expert\"\n    if score >= 70\n      give \"journeyman\"\n    if score >= 40\n      give \"apprentice\"\n    give \"novice\"\n\nfn main\n  say determine_level(95)\n  say determine_level(75)\n  say determine_level(50)\n  say determine_level(20)\n",
+  "mock_responses": [],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": []
+  }
+}

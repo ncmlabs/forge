@@ -2,6 +2,19 @@ use
   llm.reason
   llm.classify
 
+# ── Types ─────────────────────────────────────────────────────
+
+type QueryResult
+  answer: Text
+  confidence_tier: Text
+  sources_used: Number
+
+type AssessmentResult
+  passed: Bool
+  prediction: Text
+  expected: Text
+  gap_topic: Text
+
 # ── Events ────────────────────────────────────────────────────
 
 event LearnedInsight
@@ -28,6 +41,10 @@ states MasteryLevel
   apprentice -> journeyman when conformance_score >= 70
   journeyman -> expert when conformance_score >= 90
   expert -> expert
+
+states SpecialistPhase
+  learning -> ready when absorbed_count >= 5
+  ready -> ready
 
 # ── Pure Functions ────────────────────────────────────────────
 
@@ -57,6 +74,14 @@ pure format_status
   do
     give "forge-sensei | Level: {level} | Mastery: {score}% | Interactions: {interactions}"
 
+pure check_prediction
+  needs predicted: Text, expected: Text
+  gives Bool
+  do
+    if predicted.contains(expected)
+      give true
+    give false
+
 # ── Tasks ─────────────────────────────────────────────────────
 
 task answer_forge_question
@@ -65,8 +90,8 @@ task answer_forge_question
   do
     result = reason "You are forge-sensei, an expert on the FORGE programming language for oracle-augmented computation. Using this prior knowledge:\n{context}\n\nAnswer this FORGE question accurately and concisely: {question}\n\nIf the prior knowledge does not cover this topic, say so honestly."
     when result.sure -> give result
-    when result.unsure -> give result
-    else -> give "I could not answer this question confidently."
+    when result.unsure -> give "Uncertain: {result}"
+    else -> give "I could not answer this question confidently. Consider checking the forge-reference."
 
 task review_forge_code
   needs code: Text, context: Text
@@ -74,7 +99,7 @@ task review_forge_code
   do
     result = reason "You are forge-sensei, reviewing FORGE code for correctness. Using this knowledge of FORGE:\n{context}\n\nReview this FORGE code for errors, style issues, and principle violations:\n{code}\n\nList each issue with: line reference, issue description, fix suggestion."
     when result.sure -> give result
-    when result.unsure -> give result
+    when result.unsure -> give "Uncertain review: {result}"
     else -> give "Could not review this code confidently."
 
 task extract_lesson
@@ -83,35 +108,84 @@ task extract_lesson
   do
     result = reason "A FORGE developer asked: {question}\nThe resolution was: {resolution}\n\nExtract a concise, reusable lesson about FORGE from this interaction. Format: [CATEGORY] lesson text. Categories: SYNTAX, TASKS, FLOWS, CONTROL, AGENTS, KNOWLEDGE, SUPERVISION, PRINCIPLES, PATTERNS, ERRORS."
     when result.sure -> give result
-    when result.unsure -> give result
+    when result.unsure -> give "Tentative lesson: {result}"
     else -> give "Could not extract lesson."
 
-task evaluate_conformance
-  needs test_input: Text, expected_outcome: Text, knowledge_context: Text
+task predict_outcome
+  needs test_input: Text, knowledge_context: Text
   gives Text
   do
-    result = reason "You are forge-sensei assessing your own FORGE knowledge. Given this conformance test:\n\nInput:\n{test_input}\n\nExpected outcome: {expected_outcome}\n\nYour current knowledge:\n{knowledge_context}\n\nDo you understand WHY this test has this expected outcome? Explain briefly. If you cannot explain it, say GAP: followed by the topic."
+    result = reason "Given this FORGE program:\n{test_input}\n\nUsing your knowledge:\n{knowledge_context}\n\nPredict the EXACT compiler outcome: parse_ok, parse_error, compile_ok, compile_error, run_ok, or run_error. State your prediction and explain briefly."
     when result.sure -> give result
-    when result.unsure -> give result
-    else -> give "GAP: insufficient knowledge to evaluate this test"
+    when result.unsure -> give "UNCERTAIN: {result}"
+    else -> give "CANNOT_PREDICT"
 
 task categorize_for_recall
   needs context: Text
   gives Text
   do
-    result = reason "Given this FORGE-related input, identify the most relevant knowledge categories. Pick 1-3 from: SYNTAX, TASKS, FLOWS, CONTROL, AGENTS, KNOWLEDGE, SUPERVISION, PRINCIPLES, PATTERNS, ERRORS, CONFORMANCE, BOUNDARY. Reply with ONLY the category names separated by spaces.\n\nInput: {context}"
+    result = classify context into ["SYNTAX", "TASKS", "FLOWS", "CONTROL", "AGENTS", "KNOWLEDGE", "SUPERVISION", "PRINCIPLES", "PATTERNS", "ERRORS", "CONFORMANCE", "BOUNDARY"]
     when result.sure -> give result
-    else -> give "CONFORMANCE SYNTAX"
+    when result.unsure -> give result
+    else -> give "GENERAL"
+
+# ── Flows ─────────────────────────────────────────────────────
+
+flow answer_query
+  needs question: Text
+  gives QueryResult
+
+  stage categorize
+    categories = question >> categorize_for_recall(_pipe)
+
+  stage retrieve
+    needs categorize.categories
+    prior = recall "{categorize.categories} {question}"
+
+  stage respond
+    needs retrieve.prior, categorize.categories
+    prior = retrieve.prior
+    response = answer_forge_question(question, prior)
+    when prior.sure -> give QueryResult(answer: response, confidence_tier: "sure", sources_used: 1)
+    when prior.unsure -> give QueryResult(answer: response, confidence_tier: "unsure", sources_used: 1)
+    else -> give QueryResult(answer: response, confidence_tier: "none", sources_used: 0)
+
+flow review_code
+  needs code: Text
+  gives Text
+
+  stage categorize
+    categories = code >> categorize_for_recall(_pipe)
+
+  stage retrieve
+    needs categorize.categories
+    prior = recall "{categorize.categories} FORGE syntax patterns errors"
+
+  stage review
+    needs retrieve.prior
+    prior = retrieve.prior
+    when prior.sure -> give review_forge_code(code, prior)
+    when prior.unsure -> give review_forge_code(code, prior)
+    else -> give review_forge_code(code, "No prior knowledge. Review from first principles.")
+
+# ── Contract ──────────────────────────────────────────────────
+
+contract ForgeTutor
+  can query(question: Text) -> QueryResult
+  can review(code: Text) -> Text
+  can status() -> Text
+  can assess_detailed(test_input: Text, expected: Text) -> AssessmentResult
 
 # ── The Sensei Agent ──────────────────────────────────────────
 #
 # A self-referential learning agent: written in FORGE to teach FORGE.
-# Uses knowledge, recall, learn, states, events, and exportable
-# primitives to progressively master the language.
+# Uses type, flow, contract, match, requires, pipe, try/or, for,
+# knowledge, recall, learn, states, events, and exportable primitives
+# to progressively master the language.
 
 exportable agent forge_sensei
   lifecycle: MasteryLevel
-  memory
+  memory persistent
     interaction_count: Number
     success_count: Number
     last_assessment_score: Number
@@ -138,25 +212,21 @@ exportable agent forge_sensei
     say "Learned [{category}]"
     emit LearnedInsight(category: category, content: fact, source: "direct", confidence: 1.0)
 
-  # ── Query: answer FORGE questions ───────────────────────────
+  # ── Query: answer FORGE questions via flow ──────────────────
 
   on query(question: Text)
     memory.interaction_count = memory.interaction_count + 1
-    categories = categorize_for_recall(question)
-    prior = recall "{categories} {question}"
-    answer = answer_forge_question(question, prior)
-    learn from interaction(question, answer, 0.7)
-    emit LearnedInsight(category: "interactions", content: answer, source: "query", confidence: 0.7)
-    give answer
+    result = answer_query(question)
+    learn from interaction(question, result.answer, 0.7)
+    emit LearnedInsight(category: "interactions", content: result.answer, source: "query", confidence: 0.7)
+    give result
 
-  # ── Review: check FORGE code for correctness ────────────────
+  # ── Review: check FORGE code via flow ───────────────────────
 
   on review(code: Text)
+    requires lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: give "Sensei is still at novice level. Code review unlocks at apprentice. Run assessment first."
     memory.interaction_count = memory.interaction_count + 1
-    categories = categorize_for_recall(code)
-    prior = recall "{categories} FORGE syntax patterns errors"
-    result = review_forge_code(code, prior)
-    give result
+    give review_code(code)
 
   # ── Learn: ingest insight from Claude Code interaction ──────
 
@@ -169,6 +239,7 @@ exportable agent forge_sensei
   # ── Deep Dive: spawn specialist for focused domain learning ──
 
   on deep_dive(topic: Text)
+    requires lifecycle == journeyman or lifecycle == expert on fail: give "Deep dive requires journeyman level. Run assessment to advance."
     memory.interaction_count = memory.interaction_count + 1
     existing = find "specialist_{topic}"
     if existing
@@ -176,20 +247,63 @@ exportable agent forge_sensei
       give existing
     child = spawn specialist as "specialist_{topic}"
       with knowledge where category == topic
-      with confidence_cap: 0.8
       with memory topic: topic
     say "Spawned specialist for [{topic}]."
     emit LearnedInsight(category: topic, content: "Specialist spawned for deep dive", source: "deep_dive", confidence: 0.9)
     give child
 
-  # ── Assess: self-evaluation against conformance knowledge ───
+  # ── Assess: objective self-evaluation ───────────────────────
 
   on assess_detailed(test_input: Text, expected: Text)
+    requires lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: give AssessmentResult(passed: false, prediction: "", expected: expected, gap_topic: "Must reach apprentice level first")
     memory.interaction_count = memory.interaction_count + 1
     categories = categorize_for_recall("{test_input} expects {expected}")
-    prior = recall "{categories} {test_input} {expected}"
-    result = evaluate_conformance(test_input, expected, prior)
-    give result
+    prior = recall "{categories} {test_input}"
+    when prior.sure -> give predict_outcome(test_input, prior)
+    when prior.unsure -> give predict_outcome(test_input, prior)
+    else -> give AssessmentResult(passed: false, prediction: "NO_KNOWLEDGE", expected: expected, gap_topic: categories)
+
+  # ── Batch Assess: iterate tests with state transitions ─────
+
+  on batch_assess(tests: Text[], expectations: Text[])
+    requires lifecycle == novice or lifecycle == apprentice or lifecycle == journeyman on fail: silent
+    passed = 0
+    total = 0
+    gaps = ""
+    for test in tests
+      total = total + 1
+      result = assess_detailed(test, expectations[total - 1])
+      if result.passed
+        passed = passed + 1
+      match result
+        AssessmentResult -> say "Assessment complete"
+        _ -> emit KnowledgeGapFound(category: "GENERAL", question: test)
+    score = compute_mastery_score(passed, total)
+    memory.last_assessment_score = score
+    level = determine_level(score)
+    if score >= 90 and lifecycle != expert
+      transition to expert
+    if score >= 70 and lifecycle == apprentice
+      transition to journeyman
+    if score >= 40 and lifecycle == novice
+      transition to apprentice
+    emit AssessmentCompleted(level: level, score: score, passed: passed, total: total, failures: gaps)
+    give AssessmentResult(passed: score >= 40, prediction: "{passed}/{total}", expected: ">=40%", gap_topic: gaps)
+
+  # ── Update Mastery: externalized assessment trigger ──────────
+
+  on update_mastery(score: Number)
+    requires lifecycle == novice or lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: silent
+    memory.last_assessment_score = score
+    level = determine_level(score)
+    memory.current_level = level
+    if score >= 90 and lifecycle == journeyman
+      transition to expert
+    if score >= 70 and lifecycle == apprentice
+      transition to journeyman
+    if score >= 40 and lifecycle == novice
+      transition to apprentice
+    say "Mastery updated: {level} ({score}%)"
 
   # ── Status: report current mastery ──────────────────────────
 
@@ -201,11 +315,7 @@ exportable agent forge_sensei
   # ── Timer: periodic self-assessment ─────────────────────────
 
   on self_assess.expired
-    say "Running periodic self-assessment..."
-    prior = recall "FORGE conformance and principles"
-    when prior.sure -> say "Self-assessment complete. Knowledge base healthy."
-    when prior.unsure -> say "Knowledge coverage is thin. Consider re-ingesting documentation."
-    else -> say "Knowledge gaps detected. Run pretrain to restore baseline."
+    say "Self-assess timer fired. Run 'assess.sh' for full mastery evaluation."
     reset self_assess
 
   if stuck for 3 turns
@@ -215,9 +325,11 @@ exportable agent forge_sensei
 # ── Specialist Agent (spawned by sensei for deep dives) ──────
 
 agent specialist
+  lifecycle: SpecialistPhase
   memory
     topic: Text
     query_count: Number
+    absorbed_count: Number
   knowledge store: ".forge-knowledge/specialist"
     max_entries: 10000
     retention: 180d
@@ -228,14 +340,17 @@ agent specialist
 
   on LearnedInsight(category: Text, content: Text, source: Text, confidence: Number)
     learn "{content}" category: category
+    memory.absorbed_count = memory.absorbed_count + 1
+    emit LearnedInsight(category: category, content: "Specialist [{memory.topic}] absorbed: {content}", source: "specialist", confidence: confidence)
     say "Specialist [{memory.topic}] absorbed insight from {source}"
 
   on query(question: Text)
+    requires lifecycle == ready on fail: give "Specialist still learning. Queries available after absorbing 5 insights."
     memory.query_count = memory.query_count + 1
     prior = recall "{memory.topic} {question}"
-    answer = answer_forge_question(question, prior)
-    learn from interaction(question, answer, 0.6) category: "{memory.topic}"
-    give answer
+    when prior.sure -> give answer_forge_question(question, prior)
+    when prior.unsure -> give answer_forge_question(question, prior)
+    else -> give "Specialist [{memory.topic}] has no knowledge on this. Escalating."
 
   if stuck for 3 turns
     say "Specialist stuck. Escalating."

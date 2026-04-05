@@ -1,0 +1,11 @@
+{
+  "name": "sensei_unhandled_recall",
+  "category": "checker",
+  "subcategory": "uncertain",
+  "description": "Recall result passed to give without when/match dispatch is rejected",
+  "input": "use\n  llm.reason\n\nagent learner\n  knowledge store: \".forge-knowledge/test\"\n\n  on query(q: Text)\n    prior = recall \"{q}\"\n    give prior\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["unhandled uncertain"]
+  }
+}

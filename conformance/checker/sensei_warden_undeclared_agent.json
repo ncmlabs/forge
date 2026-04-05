@@ -1,0 +1,11 @@
+{
+  "name": "sensei_warden_undeclared_agent",
+  "category": "checker",
+  "subcategory": "warden",
+  "description": "Warden managing an undeclared agent is rejected",
+  "input": "warden bad_warden\n  manages [nonexistent_agent]\n  on stuck: nudge, self\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["manages", "not declared"]
+  }
+}

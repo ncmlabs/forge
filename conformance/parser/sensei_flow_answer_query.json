@@ -1,0 +1,9 @@
+{
+  "name": "sensei_flow_answer_query",
+  "category": "parser",
+  "description": "Flow with stages, pipe operator, recall, and when/else gives parses successfully",
+  "input": "use\n  llm.reason\n  llm.classify\n\ntype QueryResult\n  answer: Text\n  confidence_tier: Text\n  sources_used: Number\n\ntask answer_forge_question\n  needs question: Text, context: Text\n  gives Text\n  do\n    result = reason \"answer {question} using {context}\"\n    when result.sure -> give result\n    else -> give \"unknown\"\n\ntask categorize_for_recall\n  needs context: Text\n  gives Text\n  do\n    result = classify context into [\"SYNTAX\", \"TASKS\"]\n    when result.sure -> give result\n    else -> give \"GENERAL\"\n\nflow answer_query\n  needs question: Text\n  gives QueryResult\n\n  stage categorize\n    categories = question >> categorize_for_recall(_pipe)\n\n  stage retrieve\n    needs categorize.categories\n    prior = recall \"{categorize.categories} {question}\"\n\n  stage respond\n    needs retrieve.prior, categorize.categories\n    prior = retrieve.prior\n    response = answer_forge_question(question, prior)\n    when prior.sure -> give QueryResult(answer: response, confidence_tier: \"sure\", sources_used: 1)\n    when prior.unsure -> give QueryResult(answer: response, confidence_tier: \"unsure\", sources_used: 1)\n    else -> give QueryResult(answer: response, confidence_tier: \"none\", sources_used: 0)\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}
