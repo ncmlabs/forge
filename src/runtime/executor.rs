@@ -2,8 +2,8 @@
 // Walks the AST, evaluates expressions, dispatches on confidence predicates,
 // calls LLM providers. See issue #9.
 
-use std::cell::Cell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::ast::*;
@@ -132,7 +132,7 @@ pub struct TaskExecutor {
     memory_persistent: bool,
     config: Option<crate::config::ForgeConfig>,
     /// When true, template strings produce `Value::Html` and auto-escape interpolated values.
-    html_context: Cell<bool>,
+    html_context: AtomicBool,
 }
 
 impl TaskExecutor {
@@ -182,7 +182,7 @@ impl TaskExecutor {
             agent_name: None,
             memory_persistent: false,
             config: None,
-            html_context: Cell::new(false),
+            html_context: AtomicBool::new(false),
         }
     }
 
@@ -293,9 +293,9 @@ impl TaskExecutor {
         }
 
         // Set html_context if this endpoint returns Html
-        let prev_html = self.html_context.get();
+        let prev_html = self.html_context.load(Ordering::Relaxed);
         if Self::returns_html_output(&endpoint.return_type) {
-            self.html_context.set(true);
+            self.html_context.store(true, Ordering::Relaxed);
         }
 
         let result = match self.exec_stmts(&endpoint.body, &mut env).await {
@@ -314,7 +314,7 @@ impl TaskExecutor {
             Err(e) => Err(e),
         };
 
-        self.html_context.set(prev_html);
+        self.html_context.store(prev_html, Ordering::Relaxed);
         result
     }
 
@@ -1066,7 +1066,7 @@ impl TaskExecutor {
                 }
 
                 Expr::Template(parts) => {
-                    let is_html = self.html_context.get();
+                    let is_html = self.html_context.load(Ordering::Relaxed);
                     let mut result = String::new();
                     let mut min_conf: f32 = 1.0;
                     for part in parts {
@@ -1080,11 +1080,13 @@ impl TaskExecutor {
                                     // everything else gets escaped for XSS prevention.
                                     match &val.value {
                                         Value::Html(s) => result.push_str(s),
-                                        other => result.push_str(
-                                            &crate::runtime::html::html_escape(
-                                                &format!("{}", other),
-                                            ),
-                                        ),
+                                        other => {
+                                            let escaped =
+                                                crate::runtime::html::html_escape(
+                                                    &format!("{}", other),
+                                                );
+                                            result.push_str(&escaped);
+                                        }
                                     }
                                 } else {
                                     result.push_str(&format!("{}", val.value));
@@ -1743,9 +1745,9 @@ impl TaskExecutor {
         }
 
         // Set html_context if this task returns Html
-        let prev_html = self.html_context.get();
+        let prev_html = self.html_context.load(Ordering::Relaxed);
         if Self::returns_html_output(&decl.gives) {
-            self.html_context.set(true);
+            self.html_context.store(true, Ordering::Relaxed);
         }
 
         let result = match &decl.body.node {
@@ -1757,7 +1759,7 @@ impl TaskExecutor {
             TaskBody::Is(expr) => self.eval_expr(expr, &mut env).await,
         };
 
-        self.html_context.set(prev_html);
+        self.html_context.store(prev_html, Ordering::Relaxed);
         result
     }
 
@@ -1775,19 +1777,19 @@ impl TaskExecutor {
             env.bind(&param.node.name, val);
         }
         // Set html_context if this pure function returns Html
-        let prev_html = self.html_context.get();
+        let prev_html = self.html_context.load(Ordering::Relaxed);
         if Self::returns_html_output(&decl.gives) {
-            self.html_context.set(true);
+            self.html_context.store(true, Ordering::Relaxed);
         }
         let result = match self.exec_stmts(&decl.body, &mut env).await {
             Ok(val) => val,
             Err(RuntimeError::GiveSignal(val, ..)) => val,
             Err(e) => {
-                self.html_context.set(prev_html);
+                self.html_context.store(prev_html, Ordering::Relaxed);
                 return Err(e);
             }
         };
-        self.html_context.set(prev_html);
+        self.html_context.store(prev_html, Ordering::Relaxed);
         // Pure functions always return deterministic confidence
         Ok(ConfidentValue::deterministic(result.value))
     }
