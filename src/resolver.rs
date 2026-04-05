@@ -138,6 +138,13 @@ impl CapabilityRegistry {
                 output: ForgeType::Text,
             },
         );
+        caps.insert(
+            "asset".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
 
         Self { capabilities: caps }
     }

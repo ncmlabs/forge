@@ -1494,6 +1494,27 @@ impl TaskExecutor {
                             .unwrap_or_else(|| "default".to_string());
                         let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
                         pool.send(&event, payload).await
+                    } else if name == "asset" {
+                        let path = arg_vals
+                            .first()
+                            .map(|v| format!("{}", v.value))
+                            .unwrap_or_default();
+                        let prefix = self
+                            .config
+                            .as_ref()
+                            .and_then(|c| c.server.as_ref())
+                            .and_then(|s| s.static_files.as_ref())
+                            .map(|sc| sc.prefix_or_default().to_string())
+                            .unwrap_or_else(|| "/static".to_string());
+                        let prefix = prefix.trim_end_matches('/');
+                        let path = if path.starts_with('/') {
+                            path
+                        } else {
+                            format!("/{path}")
+                        };
+                        return Ok(ConfidentValue::deterministic(Value::Text(format!(
+                            "{prefix}{path}"
+                        ))));
                     } else if name.starts_with(|c: char| c.is_uppercase()) {
                         // Uppercase names not in task/pure/flow/pool maps are type constructors
                         let mut fields = HashMap::new();

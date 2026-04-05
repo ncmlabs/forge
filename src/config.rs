@@ -16,6 +16,24 @@ pub struct ServerConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub cors_origins: Option<Vec<String>>,
+    #[serde(rename = "static")]
+    pub static_files: Option<StaticConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct StaticConfig {
+    pub root: Option<String>,
+    pub prefix: Option<String>,
+}
+
+impl StaticConfig {
+    pub fn root_or_default(&self) -> &str {
+        self.root.as_deref().unwrap_or("static")
+    }
+
+    pub fn prefix_or_default(&self) -> &str {
+        self.prefix.as_deref().unwrap_or("/static")
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -158,6 +176,7 @@ impl ForgeConfig {
                 host: None,
                 port: None,
                 cors_origins: None,
+                static_files: None,
             });
             server.host = Some(host);
         }
@@ -167,9 +186,25 @@ impl ForgeConfig {
                     host: None,
                     port: None,
                     cors_origins: None,
+                    static_files: None,
                 });
                 server.port = Some(val);
             }
+        }
+
+        // FORGE_STATIC_ROOT override
+        if let Ok(root) = std::env::var("FORGE_STATIC_ROOT") {
+            let server = config.server.get_or_insert(ServerConfig {
+                host: None,
+                port: None,
+                cors_origins: None,
+                static_files: None,
+            });
+            let static_cfg = server.static_files.get_or_insert(StaticConfig {
+                root: None,
+                prefix: None,
+            });
+            static_cfg.root = Some(root);
         }
 
         // FORGE_MAX_AGENTS override
@@ -388,6 +423,39 @@ model = "mock-model"
         assert_eq!(config.llm.default, "mock");
         assert!(config.providers.contains_key("mock"));
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn parse_toml_with_static_config() {
+        let toml_str = r#"
+[llm]
+default = "mock"
+
+[providers.mock]
+type = "mock"
+
+[server.static]
+root = "public"
+prefix = "/assets"
+"#;
+        let config: ForgeConfig = toml::from_str(toml_str).unwrap();
+        let static_cfg = config
+            .server
+            .unwrap()
+            .static_files
+            .unwrap();
+        assert_eq!(static_cfg.root_or_default(), "public");
+        assert_eq!(static_cfg.prefix_or_default(), "/assets");
+    }
+
+    #[test]
+    fn static_config_defaults() {
+        let cfg = StaticConfig {
+            root: None,
+            prefix: None,
+        };
+        assert_eq!(cfg.root_or_default(), "static");
+        assert_eq!(cfg.prefix_or_default(), "/static");
     }
 
     #[test]

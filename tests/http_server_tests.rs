@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use forge::config::ServerConfig;
+use forge::config::{ServerConfig, StaticConfig};
 use forge::llm::registry::ProviderRegistry;
 use forge::runtime::executor::TaskExecutor;
 use forge::runtime::http_server::ForgeServer;
@@ -37,6 +37,55 @@ async fn spawn_server(source: &str) -> String {
     });
 
     // Give the server a moment to start
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Spawn a server with custom config on a random port and return the base URL.
+async fn spawn_server_with_config(source: &str, config: Option<&ServerConfig>) -> String {
+    let executor = parse_and_build(source);
+    let server = ForgeServer::new(executor, config);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Spawn a server with config attached to executor (for asset() tests).
+async fn spawn_server_with_full_config(
+    source: &str,
+    forge_config: forge::config::ForgeConfig,
+) -> String {
+    let program = forge::parser::parse(source).expect("parse failed");
+    let executor = TaskExecutor::new(program, mock_registry(), None)
+        .with_config(forge_config.clone());
+    let server = ForgeServer::new(executor, forge_config.server.as_ref());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     format!("http://127.0.0.1:{port}")
@@ -123,6 +172,7 @@ async fn server_config_defaults() {
         host: None,
         port: None,
         cors_origins: None,
+        static_files: None,
     };
     assert_eq!(config.host_or_default(), "127.0.0.1");
     assert_eq!(config.port_or_default(), 3000);
@@ -134,6 +184,7 @@ async fn server_config_custom() {
         host: Some("0.0.0.0".to_string()),
         port: Some(8080),
         cors_origins: Some(vec!["http://localhost:3000".to_string()]),
+        static_files: None,
     };
     assert_eq!(config.host_or_default(), "0.0.0.0");
     assert_eq!(config.port_or_default(), 8080);
@@ -496,4 +547,155 @@ async fn html_composition_via_pure_functions() {
     assert!(body.contains("<header>FORGE</header>"));
     assert!(body.contains("<main>body</main>"));
     assert!(body.contains("<footer>2026</footer>"));
+}
+
+// ── Static file serving tests (issue #46) ───────────────────────
+
+#[tokio::test]
+async fn static_file_served_with_correct_mime() {
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    let css_dir = tmp.path().join("css");
+    std::fs::create_dir_all(&css_dir).unwrap();
+    std::fs::write(css_dir.join("style.css"), "body { color: red }").unwrap();
+
+    let config = ServerConfig {
+        host: None,
+        port: None,
+        cors_origins: None,
+        static_files: Some(StaticConfig {
+            root: Some(tmp.path().to_str().unwrap().to_string()),
+            prefix: Some("/static".to_string()),
+        }),
+    };
+
+    let source = r#"#! boundary: server
+endpoint ping()
+  give "pong"
+"#;
+    let base = spawn_server_with_config(source, Some(&config)).await;
+    let resp = reqwest::get(format!("{base}/static/css/style.css"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(ct.contains("text/css"), "expected text/css, got {ct}");
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "body { color: red }");
+}
+
+#[tokio::test]
+async fn static_file_404_for_missing() {
+    let tmp = tempfile::tempdir().expect("tmpdir");
+
+    let config = ServerConfig {
+        host: None,
+        port: None,
+        cors_origins: None,
+        static_files: Some(StaticConfig {
+            root: Some(tmp.path().to_str().unwrap().to_string()),
+            prefix: Some("/static".to_string()),
+        }),
+    };
+
+    let source = r#"#! boundary: server
+endpoint ping()
+  give "pong"
+"#;
+    let base = spawn_server_with_config(source, Some(&config)).await;
+    let resp = reqwest::get(format!("{base}/static/nope.js"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn static_does_not_shadow_dynamic_routes() {
+    let tmp = tempfile::tempdir().expect("tmpdir");
+    // Create a file that would match the endpoint name
+    std::fs::write(tmp.path().join("ping"), "static content").unwrap();
+
+    let config = ServerConfig {
+        host: None,
+        port: None,
+        cors_origins: None,
+        static_files: Some(StaticConfig {
+            root: Some(tmp.path().to_str().unwrap().to_string()),
+            prefix: Some("/static".to_string()),
+        }),
+    };
+
+    let source = r#"#! boundary: server
+endpoint ping()
+  give "dynamic pong"
+"#;
+    let base = spawn_server_with_config(source, Some(&config)).await;
+    // Dynamic route should win
+    let resp = reqwest::get(format!("{base}/ping"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "dynamic pong");
+}
+
+#[tokio::test]
+async fn asset_function_returns_prefixed_path() {
+    let source = r#"#! boundary: server
+endpoint link() -> Html
+  url = asset("css/style.css")
+  give "<link href='{url}'>"
+"#;
+    let mut config = forge::config::ForgeConfig::default_mock_config();
+    config.server = Some(ServerConfig {
+        host: None,
+        port: None,
+        cors_origins: None,
+        static_files: Some(StaticConfig {
+            root: Some("static".to_string()),
+            prefix: Some("/static".to_string()),
+        }),
+    });
+
+    let base = spawn_server_with_full_config(source, config).await;
+    let resp = reqwest::get(format!("{base}/link"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("/static/css/style.css"),
+        "expected /static/css/style.css in: {body}"
+    );
+}
+
+#[tokio::test]
+async fn asset_function_custom_prefix() {
+    let source = r#"#! boundary: server
+endpoint img_url()
+  url = asset("img/logo.png")
+  give url
+"#;
+    let mut config = forge::config::ForgeConfig::default_mock_config();
+    config.server = Some(ServerConfig {
+        host: None,
+        port: None,
+        cors_origins: None,
+        static_files: Some(StaticConfig {
+            root: Some("public".to_string()),
+            prefix: Some("/assets".to_string()),
+        }),
+    });
+
+    let base = spawn_server_with_full_config(source, config).await;
+    let resp = reqwest::get(format!("{base}/img_url"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "/assets/img/logo.png");
 }

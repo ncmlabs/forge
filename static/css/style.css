@@ -1,0 +1,41 @@
+/*
+ * FORGE default stylesheet — development mode
+ *
+ * In development: Tailwind CSS + DaisyUI loaded via CDN (zero build step).
+ * In production:  Run the Tailwind standalone CLI to generate minimal CSS:
+ *
+ *   ./tailwindcss -i static/css/input.css -o static/css/style.css --minify
+ *
+ * This file contains only FORGE-specific overrides not covered by Tailwind/DaisyUI.
+ */
+
+/* FORGE code block styling — complements Prism.js syntax theme */
+.forge-code {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    tab-size: 2;
+}
+
+/* Confidence indicator for uncertain values (Principle I — Honesty) */
+.confidence-high   { border-left: 3px solid oklch(0.72 0.19 154); }
+.confidence-medium { border-left: 3px solid oklch(0.80 0.15 84);  }
+.confidence-low    { border-left: 3px solid oklch(0.65 0.22 29);  }
+
+/* Boundary badge — marks server vs client zones (Principle IX) */
+.boundary-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.25rem;
+}
+
+/* Trace timeline (Principle VIII — Accountability) */
+.trace-entry {
+    font-family: monospace;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.5rem;
+    border-bottom: 1px solid oklch(0.90 0 0);
+}
