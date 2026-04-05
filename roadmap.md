@@ -56,7 +56,7 @@ Everything in this document exists to reach that moment.
 | M3 — Core Runtime | Async executor, flows, pools, agents, events, timers, providers | Done | 2026-04-02 |
 | M4 — Build System | `forge build` standalone binaries, multi-file composition, agent REPL | Done | 2026-04-03 |
 | M5 — Ecosystem Core | Persistent memory, knowledge categories, instance registry, spawn/find/retire, system runtime, forge-sensei specialist spawning | Done | 2026-04-04 |
-| M6 — Web Runtime | HTML templates, static serving, hot-reload, HTTP client, webhooks | Open | — |
+| M6 — Web Runtime | HTML templates, static serving, hot-reload, HTTP client, markdown, webhooks | In Progress | — |
 | M7 — WASM Compilation | Cranelift backend for pure functions, browser WASM target | Open | — |
 | M8 — Wiki Showcase | First real FORGE application: wiki with search agent, fact-checking pool, warden supervision | Open | — |
 | M9 — Layer 1 Complete | All tracks done, conformance suite finalized, documentation complete | Open | — |
@@ -84,19 +84,19 @@ The substrate for agent birth, learning, specialization, discovery, communicatio
 | #87 | `system` declaration runtime — orchestration, event routing, warden integration | Done |
 | #88 | Specialist spawning — forge-sensei creates domain expert apprentices | Done |
 
-### Track B — Web & Capabilities: 4/13
+### Track B — Web & Capabilities: 6/9
 
 Web runtime, HTTP client, data persistence, and external integrations.
 
 | Issue | Feature | Status |
 |-------|---------|--------|
-| #44 | HTTP request/response types | Open |
-| #45 | HTML template rendering | Open |
-| #46 | Static file serving with Tailwind CSS | Open |
-| #47 | Hot-reload development mode | Open |
-| #51 | HTTP client: `web.fetch`, `web.post` | Open |
+| #44 | HTTP request/response types | Done |
+| #45 | HTML template rendering | Done |
+| #46 | Static file serving with Tailwind CSS | Done |
+| #47 | Hot-reload development mode | Done |
+| #49 | Markdown rendering | Done |
+| #51 | HTTP client: `web.fetch`, `web.post` | Done |
 | #52 | Webhook and callback support | Open |
-| #49 | Markdown rendering | Open |
 | #50 | Vector embeddings and semantic search | Open |
 | #40 | Host skill bridge and Slack adapter | Open |
 
@@ -129,11 +129,11 @@ Cranelift backend for compiling FORGE to WebAssembly.
 
 ```
 Track A ████████████████████ 9/9  (100%)  — Ecosystem Core
-Track B ████░░░░░░░░░░░░░░░░ 4/13 ( 31%)  — Web & Capabilities
+Track B █████████████░░░░░░░ 6/9  ( 67%)  — Web & Capabilities
 Track C ░░░░░░░░░░░░░░░░░░░░ 0/7  (  0%)  — Wiki Showcase
 Track D ░░░░░░░░░░░░░░░░░░░░ 0/4  (  0%)  — WASM Compilation
 ─────────────────────────────────────────
-Overall ████████████████░░░░ 56/72 ( 78%)
+Overall ████████████████████ 15/29 ( 52%)
 ```
 
 ---

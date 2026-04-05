@@ -275,6 +275,11 @@ impl TaskExecutor {
         &self.endpoint_map
     }
 
+    /// Get the event bus reference (for webhook wiring).
+    pub fn event_bus(&self) -> Option<&crate::runtime::event_bus::SharedEventBus> {
+        self.event_bus.as_ref()
+    }
+
     /// Check if an OutputType includes Html.
     fn returns_html_output(gives: &Option<Spanned<OutputType>>) -> bool {
         gives.as_ref().is_some_and(|ot| {
@@ -549,16 +554,18 @@ impl TaskExecutor {
 
                 // ── Agent features (issue #11) ─────────────────────────────
                 Stmt::Emit(name, args) => {
-                    if let Some(ref ctx_arc) = self.agent_context {
-                        let mut arg_vals = Vec::new();
-                        let mut fields = std::collections::HashMap::new();
-                        for arg in args {
-                            let val = self.eval_expr(&arg.node.value, env).await?;
-                            if let Some(ref label) = arg.node.label {
-                                fields.insert(label.node.clone(), val.clone());
-                            }
-                            arg_vals.push(val);
+                    let mut arg_vals = Vec::new();
+                    let mut fields = std::collections::HashMap::new();
+                    for arg in args {
+                        let val = self.eval_expr(&arg.node.value, env).await?;
+                        if let Some(ref label) = arg.node.label {
+                            fields.insert(label.node.clone(), val.clone());
                         }
+                        arg_vals.push(val);
+                    }
+
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        // Inside agent: collect in sink for batch publish
                         ctx_arc
                             .lock()
                             .unwrap()
@@ -569,6 +576,22 @@ impl TaskExecutor {
                                 args: arg_vals,
                                 fields,
                             });
+                    } else if let Some(ref bus) = self.event_bus {
+                        // Outside agent (e.g. endpoint/webhook): publish directly
+                        let source = self
+                            .agent_name
+                            .clone()
+                            .unwrap_or_else(|| "endpoint".to_string());
+                        let payload = crate::runtime::event_bus::EventPayload {
+                            event_name: name.node.clone(),
+                            args: arg_vals,
+                            source_agent: source.clone(),
+                            fields,
+                        };
+                        let delivered = bus.read().await.publish(&payload);
+                        if let Some(ref t) = self.tracer {
+                            t.event_emit(&source, &name.node, delivered);
+                        }
                     } else {
                         return Err(RuntimeError::Unsupported("emit outside agent".into()));
                     }

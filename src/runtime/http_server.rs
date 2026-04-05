@@ -22,6 +22,7 @@ use tower_http::services::ServeDir;
 
 use crate::config::ServerConfig;
 use crate::runtime::confidence::{ConfidentValue, Value};
+use crate::runtime::event_bus::SharedEventBus;
 use crate::runtime::executor::{EndpointResult, TaskExecutor};
 
 // ── Swappable executor for hot-reload ───────────────────────────────────────
@@ -36,6 +37,10 @@ pub struct AppState {
     pub executor: SwappableExecutor,
     /// Broadcast channel for SSE reload notifications (only in watch mode).
     pub reload_tx: Option<broadcast::Sender<()>>,
+    /// Shared event bus for webhook → agent event delivery.
+    pub event_bus: Option<SharedEventBus>,
+    /// HMAC secrets keyed by webhook endpoint name.
+    pub webhook_secrets: HashMap<String, String>,
 }
 
 impl AppState {
@@ -54,6 +59,7 @@ pub struct ForgeServer {
     static_root: Option<String>,
     static_prefix: Option<String>,
     watch_mode: bool,
+    webhook_secrets: HashMap<String, String>,
 }
 
 impl ForgeServer {
@@ -77,6 +83,8 @@ impl ForgeServer {
             state: AppState {
                 executor: Arc::new(RwLock::new(executor)),
                 reload_tx: None,
+                event_bus: None,
+                webhook_secrets: HashMap::new(),
             },
             host,
             port,
@@ -84,6 +92,7 @@ impl ForgeServer {
             static_root,
             static_prefix,
             watch_mode: false,
+            webhook_secrets: HashMap::new(),
         }
     }
 
@@ -109,6 +118,27 @@ impl ForgeServer {
         self
     }
 
+    /// Attach an event bus for webhook → agent event delivery.
+    pub fn with_event_bus(mut self, bus: SharedEventBus) -> Self {
+        // Wire the event bus into the executor so `emit` works in endpoint handlers.
+        // We clone the executor, attach the bus, and replace it.
+        {
+            let mut guard = self.state.executor.write().unwrap();
+            let executor = guard.clone().with_event_bus(bus.clone());
+            *guard = executor;
+        }
+        self.state.event_bus = Some(bus);
+        self
+    }
+
+    /// Set HMAC secrets for webhook signature verification.
+    /// Keys are endpoint names, values are secret strings.
+    pub fn with_webhook_secrets(mut self, secrets: HashMap<String, String>) -> Self {
+        self.state.webhook_secrets = secrets.clone();
+        self.webhook_secrets = secrets;
+        self
+    }
+
     /// Get a handle to the swappable executor for the file watcher.
     pub fn swappable_executor(&self) -> SwappableExecutor {
         self.state.executor.clone()
@@ -123,7 +153,10 @@ impl ForgeServer {
     fn build_router(&self) -> Router<()> {
         // Dynamic catch-all routing: endpoint lookup happens at request time,
         // so new/removed endpoints are visible immediately after hot-reload.
-        let mut router = Router::new().route("/:endpoint", get(handle_get).post(handle_post));
+        // Webhook route: POST /webhook/:name with Content-Type validation and optional HMAC
+        let mut router = Router::new()
+            .route("/webhook/:endpoint", axum::routing::post(handle_webhook))
+            .route("/:endpoint", get(handle_get).post(handle_post));
 
         // SSE reload endpoint (watch mode only)
         if self.watch_mode {
@@ -222,6 +255,7 @@ pub fn print_endpoint_list(endpoints: &HashMap<String, crate::ast::EndpointDecl>
             .unwrap_or_default();
         println!("  GET  /{name}?{}{ret}", params.join("&"));
         println!("  POST /{name}{ret}");
+        println!("  POST /webhook/{name}{ret}");
     }
 }
 
@@ -305,6 +339,124 @@ async fn handle_sse_reload(
     });
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Webhook handler: POST /webhook/:name
+/// Validates Content-Type is application/json, optionally verifies HMAC signature,
+/// then dispatches to the endpoint handler with full request context.
+async fn handle_webhook(
+    State(state): State<AppState>,
+    Path(endpoint_name): Path<String>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    // Content-Type must be application/json
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !content_type.starts_with("application/json") {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Content-Type must be application/json",
+        )
+            .into_response();
+    }
+
+    // Optional HMAC signature verification
+    if let Some(secret) = state.webhook_secrets.get(&endpoint_name) {
+        let signature = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !verify_hmac_signature(secret, &body, signature) {
+            return (StatusCode::UNAUTHORIZED, "invalid signature").into_response();
+        }
+    }
+
+    // Parse JSON body
+    let body_str = match String::from_utf8(body.to_vec()) {
+        Ok(s) => s,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, "invalid UTF-8 body").into_response();
+        }
+    };
+    let json_value: serde_json::Value = match serde_json::from_str(&body_str) {
+        Ok(v) => v,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, "invalid JSON body").into_response();
+        }
+    };
+
+    // Clone executor with event bus attached
+    let executor = {
+        let ex = state.executor.read().unwrap().clone();
+        if let Some(ref bus) = state.event_bus {
+            if ex.event_bus().is_none() {
+                ex.with_event_bus(bus.clone())
+            } else {
+                ex
+            }
+        } else {
+            ex
+        }
+    };
+
+    if !executor.endpoints().contains_key(&endpoint_name) {
+        return (StatusCode::NOT_FOUND, "webhook endpoint not found").into_response();
+    }
+
+    let params: HashMap<String, String> = match json_value.as_object() {
+        Some(map) => map
+            .iter()
+            .map(|(k, v)| {
+                let s = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                (k.clone(), s)
+            })
+            .collect(),
+        None => HashMap::new(),
+    };
+
+    let request = build_request_record("POST", &endpoint_name, &params, &headers, &body_str);
+    let args = params_to_args(params);
+    dispatch_endpoint(
+        executor,
+        &endpoint_name,
+        args,
+        request,
+        state.is_watch_mode(),
+    )
+    .await
+}
+
+/// Verify GitHub-style HMAC-SHA256 signature.
+/// Signature format: "sha256=<hex_digest>"
+fn verify_hmac_signature(secret: &str, body: &[u8], signature: &str) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let expected_hex = match signature.strip_prefix("sha256=") {
+        Some(hex) => hex,
+        None => return false,
+    };
+
+    let mut mac = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    mac.update(body);
+    let result = mac.finalize().into_bytes();
+    let computed_hex = hex::encode(result);
+
+    // Constant-time comparison to prevent timing attacks
+    use subtle::ConstantTimeEq;
+    computed_hex
+        .as_bytes()
+        .ct_eq(expected_hex.as_bytes())
+        .into()
 }
 
 fn params_to_args(params: HashMap<String, String>) -> HashMap<String, ConfidentValue> {

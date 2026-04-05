@@ -173,6 +173,7 @@ async fn server_config_defaults() {
         port: None,
         cors_origins: None,
         static_files: None,
+        webhook_secrets: None,
     };
     assert_eq!(config.host_or_default(), "127.0.0.1");
     assert_eq!(config.port_or_default(), 3000);
@@ -185,6 +186,7 @@ async fn server_config_custom() {
         port: Some(8080),
         cors_origins: Some(vec!["http://localhost:3000".to_string()]),
         static_files: None,
+        webhook_secrets: None,
     };
     assert_eq!(config.host_or_default(), "0.0.0.0");
     assert_eq!(config.port_or_default(), 8080);
@@ -562,6 +564,7 @@ async fn static_file_served_with_correct_mime() {
         host: None,
         port: None,
         cors_origins: None,
+        webhook_secrets: None,
         static_files: Some(StaticConfig {
             root: Some(tmp.path().to_str().unwrap().to_string()),
             prefix: Some("/static".to_string()),
@@ -596,6 +599,7 @@ async fn static_file_404_for_missing() {
         host: None,
         port: None,
         cors_origins: None,
+        webhook_secrets: None,
         static_files: Some(StaticConfig {
             root: Some(tmp.path().to_str().unwrap().to_string()),
             prefix: Some("/static".to_string()),
@@ -623,6 +627,7 @@ async fn static_does_not_shadow_dynamic_routes() {
         host: None,
         port: None,
         cors_origins: None,
+        webhook_secrets: None,
         static_files: Some(StaticConfig {
             root: Some(tmp.path().to_str().unwrap().to_string()),
             prefix: Some("/static".to_string()),
@@ -655,6 +660,7 @@ endpoint link() -> Html
         host: None,
         port: None,
         cors_origins: None,
+        webhook_secrets: None,
         static_files: Some(StaticConfig {
             root: Some("static".to_string()),
             prefix: Some("/static".to_string()),
@@ -685,6 +691,7 @@ endpoint img_url()
         host: None,
         port: None,
         cors_origins: None,
+        webhook_secrets: None,
         static_files: Some(StaticConfig {
             root: Some("public".to_string()),
             prefix: Some("/assets".to_string()),
@@ -698,4 +705,271 @@ endpoint img_url()
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
     assert_eq!(body, "/assets/img/logo.png");
+}
+
+// ── Issue #52: Webhook support ────────────────────────────────────
+
+const WEBHOOK_SERVER: &str = r#"#! boundary: server
+
+endpoint hook(payload: Text) -> Text
+  give "received: {payload}"
+"#;
+
+/// Spawn a server with event bus attached for webhook tests.
+async fn spawn_webhook_server(source: &str) -> String {
+    let program = forge::parser::parse(source).expect("parse failed");
+    let executor = TaskExecutor::new(program, mock_registry(), None);
+    let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+    let server = ForgeServer::new(executor, None).with_event_bus(event_bus);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Spawn a server with HMAC secrets for signature verification tests.
+async fn spawn_webhook_server_with_secrets(
+    source: &str,
+    secrets: std::collections::HashMap<String, String>,
+) -> String {
+    let program = forge::parser::parse(source).expect("parse failed");
+    let executor = TaskExecutor::new(program, mock_registry(), None);
+    let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+    let server = ForgeServer::new(executor, None)
+        .with_event_bus(event_bus)
+        .with_webhook_secrets(secrets);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    format!("http://127.0.0.1:{port}")
+}
+
+#[tokio::test]
+async fn webhook_post_dispatches_to_endpoint() {
+    let base = spawn_webhook_server(WEBHOOK_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .body(r#"{"payload": "hello"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "received: hello");
+}
+
+#[tokio::test]
+async fn webhook_json_body_parsed_as_text_param() {
+    let base = spawn_webhook_server(WEBHOOK_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .body(r#"{"payload": "test data"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("test data"));
+}
+
+#[tokio::test]
+async fn webhook_invalid_json_returns_400() {
+    let base = spawn_webhook_server(WEBHOOK_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .body("not json at all {{{")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 400);
+}
+
+#[tokio::test]
+async fn webhook_wrong_content_type_returns_400() {
+    let base = spawn_webhook_server(WEBHOOK_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "text/plain")
+        .body(r#"{"payload": "hello"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 400);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("application/json"));
+}
+
+#[tokio::test]
+async fn webhook_nonexistent_endpoint_returns_404() {
+    let base = spawn_webhook_server(WEBHOOK_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/nonexistent"))
+        .header("content-type", "application/json")
+        .body(r#"{}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn webhook_hmac_valid_signature_accepted() {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let secret = "test-secret-123";
+    let mut secrets = std::collections::HashMap::new();
+    secrets.insert("hook".to_string(), secret.to_string());
+
+    let base = spawn_webhook_server_with_secrets(WEBHOOK_SERVER, secrets).await;
+
+    let body = r#"{"payload": "signed"}"#;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(body.as_bytes());
+    let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .header("x-hub-signature-256", &signature)
+        .body(body)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("signed"));
+}
+
+#[tokio::test]
+async fn webhook_hmac_invalid_signature_rejected() {
+    let mut secrets = std::collections::HashMap::new();
+    secrets.insert("hook".to_string(), "real-secret".to_string());
+
+    let base = spawn_webhook_server_with_secrets(WEBHOOK_SERVER, secrets).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .header("x-hub-signature-256", "sha256=deadbeef")
+        .body(r#"{"payload": "hacked"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn webhook_hmac_missing_signature_rejected() {
+    let mut secrets = std::collections::HashMap::new();
+    secrets.insert("hook".to_string(), "my-secret".to_string());
+
+    let base = spawn_webhook_server_with_secrets(WEBHOOK_SERVER, secrets).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .body(r#"{"payload": "unsigned"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 401);
+}
+
+const WEBHOOK_EMIT_SERVER: &str = r#"#! boundary: server
+
+event WebhookReceived
+  data: Text
+
+endpoint github_push(payload: Text) -> Text
+  emit WebhookReceived(data: payload)
+  give "ok"
+"#;
+
+#[tokio::test]
+async fn webhook_endpoint_can_emit_events() {
+    let base = spawn_webhook_server(WEBHOOK_EMIT_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/github_push"))
+        .header("content-type", "application/json")
+        .body(r#"{"payload": "push event data"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "ok");
+}
+
+const WEBHOOK_REQUEST_CONTEXT_SERVER: &str = r#"#! boundary: server
+
+endpoint inspect() -> Text
+  method = request.method
+  body = request.body
+  give "{method}: {body}"
+"#;
+
+#[tokio::test]
+async fn webhook_request_context_available() {
+    let base = spawn_webhook_server(WEBHOOK_REQUEST_CONTEXT_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/inspect"))
+        .header("content-type", "application/json")
+        .body(r#"{"key": "value"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.starts_with("POST:"));
+    assert!(body.contains("key"));
+}
+
+#[tokio::test]
+async fn webhook_no_secret_configured_skips_verification() {
+    // When no secret is configured for this endpoint, requests without signatures should work
+    let base = spawn_webhook_server(WEBHOOK_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .body(r#"{"payload": "no secret needed"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
 }

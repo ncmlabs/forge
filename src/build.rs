@@ -805,7 +805,14 @@ async fn main() -> anyhow::Result<()> {{
     let executor = forge::runtime::executor::TaskExecutor::new(
         program, Arc::new(registry), None,
     );
-    let server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+    let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+    let mut server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
+        .with_event_bus(event_bus);
+    if let Some(ref srv_config) = config.server {{
+        if let Some(ref secrets) = srv_config.webhook_secrets {{
+            server = server.with_webhook_secrets(secrets.clone());
+        }}
+    }}
     server.run().await
 }}
 "#,

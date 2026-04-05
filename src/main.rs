@@ -765,8 +765,19 @@ async fn serve_program(
             Err(_) => std::process::exit(1),
         };
 
+        // Create event bus for webhook → agent event delivery
+        let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+
         let mut server =
-            forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+            forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
+                .with_event_bus(event_bus);
+
+        // Wire webhook secrets from config
+        if let Some(ref srv_config) = config.server {
+            if let Some(ref secrets) = srv_config.webhook_secrets {
+                server = server.with_webhook_secrets(secrets.clone());
+            }
+        }
 
         if let Some(host) = cli_host {
             server = server.with_host(host);
@@ -792,9 +803,20 @@ async fn serve_with_watch(
             Err(_) => std::process::exit(1),
         };
 
+        // Create event bus for webhook → agent event delivery
+        let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
-                .with_watch_mode(true);
+                .with_watch_mode(true)
+                .with_event_bus(event_bus);
+
+        // Wire webhook secrets from config
+        if let Some(ref srv_config) = config.server {
+            if let Some(ref secrets) = srv_config.webhook_secrets {
+                server = server.with_webhook_secrets(secrets.clone());
+            }
+        }
 
         if let Some(ref host) = cli_host {
             server = server.with_host(host.clone());
