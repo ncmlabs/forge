@@ -311,3 +311,86 @@ async fn default_status_is_200() {
         .expect("request failed");
     assert_eq!(resp.status(), 200);
 }
+
+// ── Issue #44: Html type and content-type inference ───────────
+
+const HTML_ENDPOINT_SERVER: &str = r#"#! boundary: server
+
+endpoint page() -> Html
+  give "<h1>Hello</h1>"
+"#;
+
+#[tokio::test]
+async fn html_return_type_infers_content_type() {
+    let base = spawn_server(HTML_ENDPOINT_SERVER).await;
+    let resp = reqwest::get(format!("{base}/page"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "text/html");
+    assert_eq!(resp.text().await.unwrap(), "<h1>Hello</h1>");
+}
+
+const HTML_OVERRIDE_SERVER: &str = r#"#! boundary: server
+
+endpoint page() -> Html
+  give "<data/>" with content_type: "application/xml"
+"#;
+
+#[tokio::test]
+async fn explicit_content_type_overrides_return_type() {
+    let base = spawn_server(HTML_OVERRIDE_SERVER).await;
+    let resp = reqwest::get(format!("{base}/page"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "application/xml");
+}
+
+// ── Issue #44: Missing record fields return Unit ─────────────
+
+const MISSING_QUERY_SERVER: &str = r#"#! boundary: server
+
+endpoint check() -> Text
+  val = request.query.nonexistent
+  give val
+"#;
+
+#[tokio::test]
+async fn missing_query_field_returns_unit() {
+    let base = spawn_server(MISSING_QUERY_SERVER).await;
+    let resp = reqwest::get(format!("{base}/check"))
+        .await
+        .expect("request failed");
+    // Unit maps to 204 No Content
+    assert_eq!(resp.status(), 204);
+}
+
+const MISSING_HEADER_SERVER: &str = r#"#! boundary: server
+
+endpoint check() -> Text
+  val = request.headers.x_nonexistent
+  give val
+"#;
+
+#[tokio::test]
+async fn missing_header_field_returns_unit() {
+    let base = spawn_server(MISSING_HEADER_SERVER).await;
+    let resp = reqwest::get(format!("{base}/check"))
+        .await
+        .expect("request failed");
+    // Unit maps to 204 No Content
+    assert_eq!(resp.status(), 204);
+}

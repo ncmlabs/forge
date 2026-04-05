@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden sensei scripts: build-sensei.sh (skip-if-unchanged, smoke test), pretrain-sensei.sh (error capture, jq, idempotency, --force/--dry-run), consult-sensei.sh (jq, content caching, thresholds), assess.sh (per-category scoring, trend tracking, --json)
 
 ### Added
+- `Html` builtin type with automatic `text/html` Content-Type inference from endpoint return type annotations (#44)
+- Safe record field access — missing fields return `Unit` instead of crashing, enabling graceful handling of optional request query/header parameters (#44)
 - Exhaustive forge-sensei test suite: parser, checker, and runtime conformance tests + Rust integration tests
 - `scripts/sensei-smoke-test.sh` for end-to-end integration testing
 - `scripts/sensei-cache.sh` for knowledge store and cache management (clean/reset/stats)

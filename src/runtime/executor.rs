@@ -62,6 +62,8 @@ pub struct EndpointResult {
     pub value: ConfidentValue,
     pub status: Option<u16>,
     pub content_type: Option<String>,
+    /// Content-type inferred from the endpoint's return type annotation.
+    pub default_content_type: Option<String>,
 }
 
 // ── Environment (scope stack) ─────────────────────────────────────────────────
@@ -259,6 +261,15 @@ impl TaskExecutor {
                 name: name.to_string(),
             })?;
 
+        // Derive default content-type from return type annotation
+        let default_ct = endpoint.return_type.as_ref().and_then(|ot| {
+            ot.node.types.first().and_then(|tn| match &tn.node {
+                crate::ast::TypeName::Html => Some("text/html".to_string()),
+                crate::ast::TypeName::Text => Some("text/plain".to_string()),
+                _ => None,
+            })
+        });
+
         let mut env = Env::new();
         if let Some(req) = request {
             env.bind("request", req);
@@ -272,11 +283,13 @@ impl TaskExecutor {
                 value: val,
                 status: None,
                 content_type: None,
+                default_content_type: default_ct,
             }),
             Err(RuntimeError::GiveSignal(val, status, content_type)) => Ok(EndpointResult {
                 value: val,
                 status,
                 content_type,
+                default_content_type: default_ct,
             }),
             Err(e) => Err(e),
         }
@@ -1133,9 +1146,7 @@ impl TaskExecutor {
                                     }
                                 }
                             }
-                            Err(RuntimeError::UndefinedVariable {
-                                name: format!(".{}", field.node),
-                            })
+                            Ok(ConfidentValue::deterministic(Value::Unit))
                         }
                         _ => Err(RuntimeError::TypeError {
                             expected: "Record".to_string(),
