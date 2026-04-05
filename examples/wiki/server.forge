@@ -290,7 +290,7 @@ flow generate_docs
 
   stage scan_files
     file_contents = sources
-    say "Scanning {sources.length} source files..."
+    say "Scanning {sources.len()} source files..."
     give file_contents
 
   stage extract_tasks
