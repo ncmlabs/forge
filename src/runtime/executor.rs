@@ -1382,7 +1382,11 @@ impl TaskExecutor {
                                     })
                                 }
                             };
-                            let val = if wrap { Value::Html(text) } else { Value::Text(text) };
+                            let val = if wrap {
+                                Value::Html(text)
+                            } else {
+                                Value::Text(text)
+                            };
                             Ok(ConfidentValue::derived(val, obj.confidence))
                         }
                         "upper" => {
@@ -1396,7 +1400,11 @@ impl TaskExecutor {
                                     })
                                 }
                             };
-                            let val = if wrap { Value::Html(text) } else { Value::Text(text) };
+                            let val = if wrap {
+                                Value::Html(text)
+                            } else {
+                                Value::Text(text)
+                            };
                             Ok(ConfidentValue::derived(val, obj.confidence))
                         }
                         "trim" => {
@@ -1410,7 +1418,11 @@ impl TaskExecutor {
                                     })
                                 }
                             };
-                            let val = if wrap { Value::Html(text) } else { Value::Text(text) };
+                            let val = if wrap {
+                                Value::Html(text)
+                            } else {
+                                Value::Text(text)
+                            };
                             Ok(ConfidentValue::derived(val, obj.confidence))
                         }
                         other => Err(RuntimeError::Unsupported(format!("method .{}()", other))),
