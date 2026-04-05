@@ -102,6 +102,16 @@ pure qa_page
     body = "<div class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-2\">Answer</h1>{!badge}<div class=\"card bg-base-100 shadow-xl mt-4\"><div class=\"card-body prose max-w-none\">{!answer}</div></div><div class=\"mt-6\"><a href=\"/ask_form\" class=\"btn btn-ghost\">Ask another question</a></div></div>"
     give page_layout("Q&A — FORGE", nav, body)
 
+pure confidence_tier
+  needs answer: Text
+  gives Text
+  do
+    if answer.contains("don't have enough information")
+      give "low confidence"
+    if answer.contains("not fully confident")
+      give "medium confidence"
+    give "high confidence"
+
 # ── Content Tasks ────────────────────────────────────────────────
 #
 # Demonstrates: task, data.store, data.get
@@ -122,8 +132,8 @@ task load_page
 
 # ── Search Task ──────────────────────────────────────────────────
 #
-# Stub search — will be replaced by SearchAgent in issue #61.
-# Demonstrates: task, when, classify
+# LLM-powered search with confidence gating (issue #61).
+# Demonstrates: task, when, classify, reason, data.list
 
 task search_docs
   needs query: Text
@@ -131,27 +141,25 @@ task search_docs
   do
     pages = data.list("page:")
     intent = classify query into ["reference", "tutorial", "troubleshooting", "general"]
-    when intent.sure -> say "Search intent: {intent}"
-    when intent.unsure -> say "Ambiguous query"
-    else -> say "Could not classify query"
-    results = reason "Given a documentation search for '{query}' (intent: {intent}), generate 2-3 relevant search result summaries. Each should have a title and one-sentence excerpt. Format as a simple list."
+    results = reason "You are a FORGE documentation search engine. Available pages: {pages}\n\nSearch query: '{query}' (intent: {intent})\n\nList the most relevant pages with slug and one-line excerpt. Format as a markdown list."
     when results.sure -> give results
-    when results.unsure -> give "Some results found but confidence is low:\n{results}"
+    when results.unsure -> give "Partial matches found (confidence is moderate):\n{results}"
     else -> give "No confident results for: {query}"
 
 # ── Q&A Task ─────────────────────────────────────────────────────
 #
-# Stub Q&A — will be replaced by QAAgent in issue #61.
-# Demonstrates: task, when, reason
+# LLM-powered Q&A with confidence gating (issue #61).
+# Demonstrates: task, when, reason, data.list
 
 task answer_question
   needs question: Text
   gives Text
   do
-    answer = reason "You are a FORGE language expert. Answer this question about FORGE, the programming language for AI agent systems. FORGE has 14 primitives: task, pure, flow, agent, pool, system, warden, event, states, when, boundary, requires, spawn, find. Be concise and accurate. Question: {question}"
+    pages = data.list("page:")
+    answer = reason "You are a FORGE language expert. Using the available documentation pages ({pages}), answer this question accurately and concisely. FORGE has 14 primitives: task, pure, flow, agent, pool, system, warden, event, states, when, boundary, requires, spawn, find.\n\nQuestion: {question}"
     when answer.sure -> give answer
-    when answer.unsure -> give answer
-    else -> give "I could not generate a confident answer for this question."
+    when answer.unsure -> give "I'm not fully confident, but here's what I found:\n{answer}"
+    else -> give "I don't have enough information to answer that reliably."
 
 # ── Content Agent ────────────────────────────────────────────────
 #
@@ -229,22 +237,41 @@ agent content_manager
     give "Total pages: {memory.pages.length}, Total edits: {memory.total_edits}"
 
 agent search_agent
-  memory
+  memory persistent
+    index_version: Number
     query_count: Number
-    last_query: Text
+  subscribe PageUpdated
+  subscribe PageCreated
+  subscribe PagePublished
 
   on start
-    say "SearchAgent ready."
+    say "SearchAgent: ready."
+    memory.index_version = 1
     memory.query_count = 0
+
+  on PageUpdated
+    say "Content updated, index version bumped."
+    memory.index_version = memory.index_version + 1
+
+  on PageCreated
+    say "New page indexed."
+    memory.index_version = memory.index_version + 1
+
+  on PagePublished
+    say "Published page noted."
 
   on search(query: Text)
     memory.query_count = memory.query_count + 1
-    memory.last_query = query
     results = search_docs(query)
     give results
 
-  on PageUpdated
-    say "Re-indexing after content update..."
+  on ask(question: Text)
+    memory.query_count = memory.query_count + 1
+    answer = answer_question(question)
+    give answer
+
+  on stats
+    give "Index v{memory.index_version}, {memory.query_count} queries processed"
 
 # ── Stub Flow ────────────────────────────────────────────────────
 #
@@ -340,7 +367,8 @@ endpoint ask_form() -> Html
 endpoint ask(question: Text) -> Html
   answer = answer_question(question)
   rendered = markdown.render(answer)
-  give qa_page(question, rendered, "answer")
+  confidence = confidence_tier(answer)
+  give qa_page(question, rendered, confidence)
 
 endpoint api_search(q: Text) -> Text
   results = search_docs(q)

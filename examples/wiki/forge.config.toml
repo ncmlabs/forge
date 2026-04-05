@@ -7,7 +7,7 @@ default = "wiki-provider"
 [providers.wiki-provider]
 type = "anthropic"
 model = "claude-sonnet-4-20250514"
-api_key = "set-ANTHROPIC_API_KEY-env-var"
+api_key = "${ANTHROPIC_API_KEY}"
 
 [server]
 host = "127.0.0.1"

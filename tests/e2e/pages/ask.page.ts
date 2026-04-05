@@ -6,11 +6,14 @@ export class AskPage extends BasePage {
   readonly submitButton: Locator;
   readonly answerCard: Locator;
 
+  readonly confidenceBadge: Locator;
+
   constructor(page: Page) {
     super(page);
     this.questionInput = page.locator('textarea[name="question"]');
     this.submitButton = page.getByRole('button', { name: 'Ask' });
     this.answerCard = page.locator('.card .card-body');
+    this.confidenceBadge = page.locator('.badge');
   }
 
   async goto() {
