@@ -132,6 +132,8 @@ pub struct TaskExecutor {
     config: Option<crate::config::ForgeConfig>,
     /// When true, template strings produce `Value::Html` and auto-escape interpolated values.
     html_context: AtomicBool,
+    /// Standalone knowledge store for endpoint/webhook context (no agent required).
+    knowledge_store: Option<Arc<Mutex<crate::runtime::knowledge_store::KnowledgeStore>>>,
 }
 
 impl Clone for TaskExecutor {
@@ -155,6 +157,7 @@ impl Clone for TaskExecutor {
             memory_persistent: self.memory_persistent,
             config: self.config.clone(),
             html_context: AtomicBool::new(self.html_context.load(Ordering::Relaxed)),
+            knowledge_store: self.knowledge_store.clone(),
         }
     }
 }
@@ -207,6 +210,7 @@ impl TaskExecutor {
             memory_persistent: false,
             config: None,
             html_context: AtomicBool::new(false),
+            knowledge_store: None,
         }
     }
 
@@ -278,6 +282,16 @@ impl TaskExecutor {
     /// Get the event bus reference (for webhook wiring).
     pub fn event_bus(&self) -> Option<&crate::runtime::event_bus::SharedEventBus> {
         self.event_bus.as_ref()
+    }
+
+    /// Attach a standalone knowledge store for endpoint/webhook context.
+    /// Allows `recall` and `learn` to work outside agent handlers.
+    pub fn with_knowledge_store(
+        mut self,
+        ks: crate::runtime::knowledge_store::KnowledgeStore,
+    ) -> Self {
+        self.knowledge_store = Some(Arc::new(Mutex::new(ks)));
+        self
     }
 
     /// Check if an OutputType includes Html.
@@ -1835,8 +1849,18 @@ impl TaskExecutor {
                                 "recall requires agent with knowledge store".into(),
                             ))
                         }
+                    } else if let Some(ref ks_arc) = self.knowledge_store {
+                        // Standalone knowledge store (endpoint/webhook context)
+                        let mut ks = ks_arc.lock().unwrap();
+                        let result = ks.recall(&query_text, 2000);
+                        Ok(result)
                     } else {
-                        Err(RuntimeError::Unsupported("recall outside agent".into()))
+                        // No knowledge store — return empty with low confidence
+                        Ok(ConfidentValue {
+                            value: Value::Text(String::new()),
+                            confidence: 0.0,
+                            source: crate::types::ConfidenceSource::KnowledgeRecall(0.0),
+                        })
                     }
                 }
 
