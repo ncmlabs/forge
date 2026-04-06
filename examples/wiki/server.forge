@@ -144,10 +144,20 @@ task load_page
     content = data.get("page:{slug}")
     give content
 
+task gather_docs
+  gives Text
+  do
+    pages = data.list("page:")
+    docs = []
+    for key in pages
+      content = data.get(key)
+      docs = docs + ["--- {key} ---\n{content}"]
+    give docs.join("\n\n")
+
 # ── Search Task ──────────────────────────────────────────────────
 #
 # LLM-powered search with confidence gating (issue #61).
-# Demonstrates: task, when, classify, reason, data.list
+# Demonstrates: task, when, classify, reason, data.list, gather_docs
 
 task search_docs
   needs query: Text
@@ -155,9 +165,9 @@ task search_docs
   do
     if query == ""
       give ""
-    pages = data.list("page:")
+    docs = gather_docs()
     intent = classify query into ["reference", "tutorial", "troubleshooting", "general"]
-    results = reason "You are a FORGE documentation search engine. Available pages: {pages}\n\nSearch query: '{query}' (intent: {intent})\n\nIMPORTANT: Every page reference MUST be a markdown link. Use the format [slug](/docs?slug=slug) for every page you mention. Example: - [agent](/docs?slug=agent) — Core FORGE entity\n\nList the most relevant pages with one-line excerpt. Format as a markdown list."
+    results = reason "You are a FORGE documentation search engine. Use the documentation below to provide accurate excerpts.\n\n{docs}\n\nSearch query: '{query}' (intent: {intent})\n\nIMPORTANT: Every page reference MUST be a markdown link. Use the format [slug](/docs?slug=slug) for every page you mention. Example: - [agent](/docs?slug=agent) — Core FORGE entity\n\nList the most relevant pages with one-line excerpt from their actual content. Format as a markdown list."
     when results.sure -> give results
     when results.unsure -> give "Partial matches found (confidence is moderate):\n{results}"
     else -> give "No confident results for: {query}"
@@ -165,7 +175,7 @@ task search_docs
 # ── Q&A Task ─────────────────────────────────────────────────────
 #
 # LLM-powered Q&A with confidence gating (issue #61).
-# Demonstrates: task, when, reason, data.list
+# Demonstrates: task, when, reason, gather_docs
 
 task answer_question
   needs question: Text
@@ -173,8 +183,8 @@ task answer_question
   do
     if question == ""
       give ""
-    pages = data.list("page:")
-    answer = reason "You are a FORGE language expert. Using the available documentation pages ({pages}), answer this question accurately and concisely.\n\nIMPORTANT: Every time you mention a FORGE concept that has a doc page, you MUST link it using markdown. Use the format [name](/docs?slug=slug). Available doc slugs: getting-started, principles, roadmap, home, task, agent, flow, pool, system, event, states, when, pure, boundary, requires, warden. For example, write [pool](/docs?slug=pool) not just 'pool'. Never mention a concept as plain text if it has a doc slug.\n\nQuestion: {question}"
+    docs = gather_docs()
+    answer = reason "You are a FORGE language expert. Use ONLY the documentation below to answer. Do not invent syntax.\n\n{docs}\n\nIMPORTANT: Every time you mention a FORGE concept that has a doc page, you MUST link it using markdown. Use the format [name](/docs?slug=slug). Available doc slugs: getting-started, principles, roadmap, home, task, agent, flow, pool, system, event, states, when, pure, boundary, requires, warden. For example, write [pool](/docs?slug=pool) not just 'pool'. Never mention a concept as plain text if it has a doc slug.\n\nQuestion: {question}"
     when answer.sure -> give answer
     when answer.unsure -> give "I'm not fully confident, but here's what I found:\n{answer}"
     else -> give "I don't have enough information to answer that reliably."

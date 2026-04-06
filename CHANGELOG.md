@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Wiki Q&A and search grounded in actual docs** — `answer_question` and `search_docs` now inject real page content into the LLM context via `gather_docs`, eliminating hallucinated FORGE syntax (#122)
+
 ### Changed
 - **Wiki UX polish** — doc links show dotted underline with highlight on hover; search results styled as card-like items; confidence badges color-coded (green/yellow/red); theme toggle uses sun/moon icons; activity log gets subtle border (#120)
 - **Wiki search and Q&A link to doc pages** — LLM responses now include markdown links to relevant documentation pages (e.g. `[agent](/docs?slug=agent)`) instead of plain text mentions (#120)
