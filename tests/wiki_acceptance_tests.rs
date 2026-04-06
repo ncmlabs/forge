@@ -1300,3 +1300,255 @@ async fn wiki_warden_graceful_degradation() {
         .retry_count;
     assert!(retry_count >= 3, "retry count should be >= 3");
 }
+
+#[tokio::test]
+async fn wiki_warden_circuit_breaker() {
+    let program = load_wiki_program();
+    let warden_decl = find_warden(&program, "wiki_supervisor");
+
+    let mut runtime = forge::runtime::warded::WardedRuntime::new(
+        warden_decl,
+        &program,
+        wiki_mock_registry(),
+        None,
+    );
+
+    // Not tripped initially
+    assert!(!runtime.warden.circuit_breaker_tripped(0));
+
+    // Fire 10 crashes (max_retries 10 per 1h)
+    let signal = FailureSignal {
+        agent_name: "search_agent".to_string(),
+        failure_type: FailureType::Crash,
+        detail: "repeated crash".to_string(),
+    };
+    for i in 1..=10 {
+        runtime
+            .warden
+            .handle_failure(&signal, &[], i * 1000)
+            .unwrap();
+    }
+
+    // Circuit breaker should trip
+    assert!(
+        runtime.warden.circuit_breaker_tripped(11000),
+        "circuit breaker should trip after 10 failures within 1h window"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Additional Coverage: root redirect, webhook, confidence branches
+// ═══════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn wiki_http_root_redirects_to_home() {
+    let (base, _tmp) = spawn_wiki_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("{base}/"))
+        .send()
+        .await
+        .expect("request failed");
+    assert!(
+        resp.status().is_redirection(),
+        "GET / should redirect, got: {}",
+        resp.status()
+    );
+    let location = resp
+        .headers()
+        .get("location")
+        .map(|v| v.to_str().unwrap_or(""))
+        .unwrap_or("");
+    assert!(
+        location.contains("/home"),
+        "should redirect to /home, got: {}",
+        location
+    );
+}
+
+#[tokio::test]
+async fn wiki_http_webhook_requires_json() {
+    let (base, _tmp) = spawn_wiki_server().await;
+    // POST /webhook/home without JSON content-type should be rejected
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/home"))
+        .body("not json")
+        .send()
+        .await
+        .expect("request failed");
+    // Webhook handler validates Content-Type is application/json
+    assert!(
+        resp.status().as_u16() == 400 || resp.status().as_u16() == 415,
+        "webhook without JSON content-type should be rejected, got: {}",
+        resp.status()
+    );
+}
+
+#[tokio::test]
+async fn wiki_http_webhook_dispatches() {
+    let (base, _tmp) = spawn_wiki_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/home"))
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .expect("request failed");
+    // home endpoint takes no required params, so webhook dispatch should succeed
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "webhook to home should succeed"
+    );
+}
+
+#[tokio::test]
+async fn wiki_search_reindex_on_event() {
+    let program = load_wiki_program();
+    let (_tmp, storage) = temp_wiki_storage();
+
+    let agent_decl = find_agent(&program, "search_agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        wiki_mock_registry(),
+        None,
+        program,
+        Some(storage),
+        None,
+    );
+
+    agent.dispatch("start", HashMap::new()).await.unwrap();
+
+    // Verify initial index_version
+    {
+        let ctx = agent.context().lock().unwrap();
+        let ver = ctx.memory.get("index_version").unwrap();
+        assert!(
+            matches!(&ver.value, Value::Number(n) if *n == 1.0),
+            "initial index_version should be 1"
+        );
+    }
+
+    // Simulate PageCreated event by dispatching the handler directly
+    let result = agent.dispatch("PageCreated", HashMap::new()).await;
+    assert!(result.is_ok(), "PageCreated handler should succeed");
+
+    // Index version should have incremented
+    {
+        let ctx = agent.context().lock().unwrap();
+        let ver = ctx.memory.get("index_version").unwrap();
+        assert!(
+            matches!(&ver.value, Value::Number(n) if *n == 2.0),
+            "index_version should be 2 after PageCreated, got: {:?}",
+            ver.value
+        );
+    }
+}
+
+#[tokio::test]
+async fn wiki_confidence_tier_low() {
+    // Test confidence_tier pure function via an endpoint that calls it.
+    // The answer_question mock returns text with "don't have enough information"
+    // when we configure it that way.
+    let mock = MockProvider::new("mock")
+        .with_response(
+            "answer this question",
+            "I don't have enough information to answer that.",
+        )
+        .with_response("classify", "general")
+        .with_default("mock");
+
+    let program = load_wiki_program();
+    let (tmp, storage) = temp_wiki_storage();
+
+    let config = forge::config::ForgeConfig::default_mock_config();
+    let executor = TaskExecutor::new(program, mock_registry_from(mock), None)
+        .with_storage(storage)
+        .with_config(config.clone());
+
+    let server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resp = reqwest::get(format!(
+        "http://127.0.0.1:{port}/ask?question=something+unknowable"
+    ))
+    .await
+    .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    // confidence_tier should return "low confidence" for answers containing
+    // "don't have enough information"
+    assert!(
+        body.contains("low confidence"),
+        "should show low confidence badge for uncertain answer, got body length: {}",
+        body.len()
+    );
+    drop(tmp);
+}
+
+#[tokio::test]
+async fn wiki_confidence_tier_medium() {
+    let mock = MockProvider::new("mock")
+        .with_response(
+            "answer this question",
+            "I'm not fully confident, but FORGE has 14 primitives.",
+        )
+        .with_response("classify", "general")
+        .with_default("mock");
+
+    let program = load_wiki_program();
+    let (tmp, storage) = temp_wiki_storage();
+
+    let config = forge::config::ForgeConfig::default_mock_config();
+    let executor = TaskExecutor::new(program, mock_registry_from(mock), None)
+        .with_storage(storage)
+        .with_config(config.clone());
+
+    let server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resp = reqwest::get(format!(
+        "http://127.0.0.1:{port}/ask?question=something+partial"
+    ))
+    .await
+    .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("medium confidence"),
+        "should show medium confidence for partial answer, got body length: {}",
+        body.len()
+    );
+    drop(tmp);
+}
