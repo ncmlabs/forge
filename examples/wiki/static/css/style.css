@@ -37,6 +37,73 @@ html {
   background-color: oklch(var(--b2));
 }
 
+/* ── Link styles in prose (LLM responses, docs) ────────────── */
+
+.prose a {
+  color: oklch(var(--p));
+  text-decoration: underline;
+  text-decoration-color: oklch(var(--p) / 0.3);
+  text-underline-offset: 2px;
+  transition: text-decoration-color 0.15s ease;
+}
+
+.prose a:hover {
+  text-decoration-color: oklch(var(--p));
+}
+
+/* Doc links — distinct dotted underline + highlight on hover */
+.prose a[href^="/docs"] {
+  text-decoration: none;
+  border-bottom: 1.5px dotted oklch(var(--p) / 0.4);
+  padding-bottom: 1px;
+  transition: all 0.15s ease;
+}
+
+.prose a[href^="/docs"]:hover {
+  border-bottom-style: solid;
+  border-bottom-color: oklch(var(--p));
+  background: oklch(var(--p) / 0.08);
+  border-radius: 2px;
+  padding: 1px 3px;
+  margin: 0 -3px;
+}
+
+/* ── Search results ─────────────────────────────────────────── */
+
+#search-results .prose ul {
+  list-style: none;
+  padding: 0;
+}
+
+#search-results .prose ul li {
+  padding: 0.75rem 1rem;
+  border: 1px solid oklch(var(--b2));
+  border-radius: 0.5rem;
+  margin-bottom: 0.5rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#search-results .prose ul li:hover {
+  border-color: oklch(var(--p) / 0.3);
+  box-shadow: 0 1px 4px oklch(var(--p) / 0.08);
+}
+
+/* ── Q&A answer polish ──────────────────────────────────────── */
+
+#qa-result {
+  line-height: 1.75;
+}
+
+#qa-result .prose > p:first-child {
+  font-size: 1.05em;
+}
+
+/* ── Theme toggle icon ──────────────────────────────────────── */
+
+.theme-toggle { font-size: 1.1rem; }
+[data-theme="light"] .theme-toggle::after { content: "\263E"; }
+[data-theme="dark"] .theme-toggle::after { content: "\2600"; }
+
 /* Search modal */
 .search-modal {
   backdrop-filter: blur(4px);
@@ -46,6 +113,7 @@ html {
 .forge-activity {
   background: oklch(var(--n));
   color: oklch(var(--nc));
+  border: 1px solid oklch(var(--nc) / 0.1);
   border-radius: 0.75rem;
   padding: 1.25rem 1.5rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

@@ -44,7 +44,7 @@ pure nav_bar
       search_cls = "btn btn-sm btn-primary"
     if active == "ask"
       ask_cls = "btn btn-sm btn-primary"
-    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/home\" class=\"btn btn-ghost text-xl font-bold\">FORGE</a><div class=\"flex gap-2\"><a href=\"/home\" class=\"{!home_cls}\">Home</a><a href=\"/docs?slug=getting-started\" class=\"{!docs_cls}\">Docs</a><a href=\"/search_page\" class=\"{!search_cls}\">Search</a><a href=\"/ask_form\" class=\"{!ask_cls}\">Ask</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost\">T</button></div></div></nav>"
+    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/home\" class=\"btn btn-ghost text-xl font-bold\">FORGE</a><div class=\"flex gap-2\"><a href=\"/home\" class=\"{!home_cls}\">Home</a><a href=\"/docs?slug=getting-started\" class=\"{!docs_cls}\">Docs</a><a href=\"/search_page\" class=\"{!search_cls}\">Search</a><a href=\"/ask_form\" class=\"{!ask_cls}\">Ask</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
 
 pure docs_sidebar
   needs active_slug: Text
@@ -98,7 +98,14 @@ pure qa_page
   gives Html
   do
     nav = nav_bar("ask")
-    badge = "<span class=\"badge badge-outline\">{confidence}</span>"
+    badge_cls = "badge badge-outline"
+    if confidence == "high confidence"
+      badge_cls = "badge badge-success badge-outline"
+    if confidence == "medium confidence"
+      badge_cls = "badge badge-warning badge-outline"
+    if confidence == "low confidence"
+      badge_cls = "badge badge-error badge-outline"
+    badge = "<span class=\"{badge_cls}\">{confidence}</span>"
     body = "<div id=\"ask-container\" class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-2\">Answer</h1>{!badge}<div class=\"card bg-base-100 shadow-xl mt-4\"><div id=\"qa-result\" class=\"card-body prose max-w-none\">{!answer}</div></div><div class=\"mt-6\"><a href=\"/ask_form\" class=\"btn btn-ghost\">Ask another question</a></div></div>"
     give page_layout("Q&A — FORGE", nav, body)
 
