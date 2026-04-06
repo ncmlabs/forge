@@ -16,11 +16,11 @@ export class AdminPage extends BasePage {
   }
 
   async goto() {
-    await this.page.goto('/admin_generate_docs');
+    await this.page.goto('/admin_generate_docs', { timeout: 120_000 });
   }
 
   async gotoFactCheck(slug: string) {
-    await this.page.goto(`/admin_fact_check?slug=${slug}`);
+    await this.page.goto(`/admin_fact_check?slug=${slug}`, { timeout: 120_000 });
   }
 
   async expectLoaded() {

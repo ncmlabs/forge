@@ -3,6 +3,9 @@ import { AdminPage } from '../pages/admin.page';
 import { DocsPage } from '../pages/docs.page';
 
 test.describe('Doc Generation (issue #62)', () => {
+  // generate_docs flow makes multiple LLM calls with full doc context
+  test.beforeEach(async () => { test.setTimeout(120_000); });
+
   test('admin endpoint triggers flow and shows success', async ({ page }) => {
     const admin = new AdminPage(page);
     await admin.goto();
@@ -35,6 +38,9 @@ test.describe('Doc Generation (issue #62)', () => {
 });
 
 test.describe('Fact-Checking Pool (issue #63)', () => {
+  // fact-checking requires doc generation + per-claim verification
+  test.beforeEach(async () => { test.setTimeout(180_000); });
+
   test('admin_generate_docs shows fact-check report link', async ({ page }) => {
     const admin = new AdminPage(page);
     await admin.goto();
@@ -53,6 +59,7 @@ test.describe('Fact-Checking Pool (issue #63)', () => {
   });
 
   test('admin_fact_check endpoint renders verification report', async ({ page }) => {
+    test.setTimeout(300_000); // doc gen + fact-check with full doc context
     // Seed a page first via generate_docs
     const admin = new AdminPage(page);
     await admin.goto();

@@ -15,8 +15,8 @@ test.describe('Search', () => {
     await search.goto();
     await search.search('task');
 
-    await expect(page).toHaveURL(/q=task/);
-    await search.expectResultsVisible();
+    // Form uses AJAX fetch, so URL doesn't change — wait for results to appear
+    await expect(search.results).toHaveText(/.+/, { timeout: 15_000 });
   });
 
   test('URL query param pre-fills input', async ({ page }) => {
@@ -38,6 +38,6 @@ test.describe('Search', () => {
   test('Cmd+K shortcut navigates to search', async ({ page }) => {
     await page.goto('/home');
     await page.keyboard.press('Meta+k');
-    await expect(page).toHaveURL(/\/search/);
+    await expect(page).toHaveURL(/\/search_page/);
   });
 });

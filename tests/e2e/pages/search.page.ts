@@ -15,9 +15,9 @@ export class SearchPage extends BasePage {
 
   async goto(query?: string) {
     if (query) {
-      await this.page.goto(`/search?q=${encodeURIComponent(query)}`);
+      await this.page.goto(`/search_page?q=${encodeURIComponent(query)}`);
     } else {
-      await this.page.goto('/search?q=');
+      await this.page.goto('/search_page?q=');
     }
   }
 
