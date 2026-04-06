@@ -20,15 +20,25 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { browserName: 'chromium' },
+      testIgnore: '**/warden-real.spec.ts',
+    },
+    {
+      name: 'real-api',
+      use: { browserName: 'chromium' },
+      testMatch: '**/warden-real.spec.ts',
     },
   ],
 
   webServer: {
-    command: 'FORGE_MOCK=1 cargo run -- serve examples/wiki/server.forge -s examples/wiki/shared.forge',
+    command: 'cargo run -- serve examples/wiki/server.forge -s examples/wiki/shared.forge',
     cwd: '../../',
     url: 'http://localhost:3000/home',
     reuseExistingServer: true,
     timeout: 120_000,
-    env: { FORGE_MOCK: '1' },
+    env: {
+      ...(process.env.ANTHROPIC_API_KEY
+        ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
+        : { FORGE_MOCK: '1' }),
+    },
   },
 });

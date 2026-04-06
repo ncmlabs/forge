@@ -239,18 +239,16 @@ async fn detects_agent_crash_and_restarts() {
     // Trigger crash #2 — warden should escalate (count=2, hits threshold)
     publish_trigger(&bus).await;
 
-    // Wait for warden to finish (escalation returns error)
+    // Wait for warden to finish — graceful degradation means Ok, not Err
     let result = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
 
     assert!(result.is_ok(), "warden timed out");
     let inner = result.unwrap().unwrap();
-    // Escalation returns an error
-    assert!(inner.is_err(), "expected escalation error");
-    let err_msg = format!("{:?}", inner.unwrap_err());
+    // Escalation is now graceful — agent is removed but runtime continues
     assert!(
-        err_msg.contains("escalated"),
-        "expected escalation, got: {}",
-        err_msg
+        inner.is_ok(),
+        "expected graceful degradation (Ok), got: {:?}",
+        inner
     );
 }
 
@@ -296,9 +294,13 @@ async fn scope_self_only_restarts_crashed_agent() {
     let result = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
 
     assert!(result.is_ok(), "warden timed out");
-    // Eventually escalates
+    // Graceful degradation: escalation removes the agent but runtime continues
     let inner = result.unwrap().unwrap();
-    assert!(inner.is_err());
+    assert!(
+        inner.is_ok(),
+        "expected graceful degradation (Ok), got: {:?}",
+        inner
+    );
 }
 
 // ── Scope: all (one_for_all equivalent) ─────────────────────────────────────
@@ -339,10 +341,13 @@ async fn scope_all_restarts_entire_group() {
     let result = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
 
     assert!(result.is_ok(), "warden timed out");
-    // Escalates after 1 crash
+    // Graceful degradation: escalation removes agents but runtime continues
     let inner = result.unwrap().unwrap();
-    assert!(inner.is_err());
-    assert!(format!("{:?}", inner.unwrap_err()).contains("escalated"));
+    assert!(
+        inner.is_ok(),
+        "expected graceful degradation (Ok), got: {:?}",
+        inner
+    );
 }
 
 // ── Escalation Ladder ───────────────────────────────────────────────────────

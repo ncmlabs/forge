@@ -2029,6 +2029,7 @@ fn build_ward_response(pair: &Pair) -> anyhow::Result<Spanned<WardResponse>> {
     let span = to_span(pair);
     let wr = match pair.as_str() {
         "nudge" => WardResponse::Nudge,
+        "downgrade" => WardResponse::Downgrade,
         "restart" => WardResponse::Restart,
         "replace" => WardResponse::Replace,
         "escalate" => WardResponse::Escalate,

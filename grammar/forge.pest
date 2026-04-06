@@ -49,7 +49,7 @@ keyword = @{
     ( "use" | "task" | "flow" | "agent" | "pool" | "warden" | "contract" | "system"
     | "fn" | "needs" | "gives" | "do" | "is" | "stage"
     | "if" | "else" | "when" | "give" | "say" | "reason" | "classify"
-    | "into" | "true" | "false" | "or" | "with" | "escalate"
+    | "into" | "true" | "false" | "or" | "with" | "escalate" | "downgrade"
     | "to" | "try" | "above"
     | "pure" | "event" | "states" | "timer" | "endpoint" | "type"
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
@@ -276,7 +276,7 @@ ward_policy = {
 
 failure_type = @{ ("stuck" | "crash" | "hallucination" | "budget" | "timeout") ~ !(ASCII_ALPHANUMERIC | "_") }
 
-ward_response = @{ ("nudge" | "restart" | "replace" | "escalate") ~ !(ASCII_ALPHANUMERIC | "_") }
+ward_response = @{ ("nudge" | "downgrade" | "restart" | "replace" | "escalate") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 ward_scope = @{ ("self" | "downstream" | "all") ~ !(ASCII_ALPHANUMERIC | "_") }
 

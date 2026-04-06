@@ -93,7 +93,7 @@ fn check_escalation_ladder(warden: &WardenDecl, file: &str, diagnostics: &mut Ve
                         after.node.response.span.start..after.node.response.span.end,
                         "must be more severe than previous response",
                     )
-                    .with_help("responses must escalate: nudge → restart → replace → escalate"),
+                    .with_help("responses must escalate: nudge → downgrade → restart → replace → escalate"),
                 );
             }
 

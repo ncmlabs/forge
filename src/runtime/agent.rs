@@ -128,6 +128,9 @@ impl EventSink {
 #[derive(Debug, Clone)]
 pub enum AgentSignal {
     Stuck { agent_name: String },
+    Timeout { agent_name: String },
+    Hallucination { agent_name: String, detail: String },
+    BudgetExceeded { agent_name: String, detail: String },
 }
 
 // ── Stuck Detector ───────────────────────────────────────────────────────────
@@ -185,6 +188,16 @@ impl StuckDetector {
             .all(|pair| pair[0].memory_hash == pair[1].memory_hash);
 
         all_similar || low_confidence || (memory_unchanged && self.history.len() >= self.threshold)
+    }
+
+    /// Returns true if recent responses indicate hallucination.
+    /// Hallucination = last N turns ALL have very low confidence (< 0.3).
+    pub fn is_hallucinating(&self) -> bool {
+        if self.history.len() < self.threshold {
+            return false;
+        }
+        let recent = &self.history[self.history.len() - self.threshold..];
+        recent.iter().all(|t| t.confidence < 0.3)
     }
 
     pub fn clear(&mut self) {
@@ -442,11 +455,27 @@ impl AgentProcess {
             }
         }
 
-        // Execute handler body
-        let result = match self.executor.exec_stmts(&handler.node.body, &mut env).await {
-            Ok(_) => None,
-            Err(RuntimeError::GiveSignal(val, ..)) => Some(val),
-            Err(e) => return Err(e),
+        // Execute handler body with timeout detection
+        let handler_timeout = std::time::Duration::from_secs(30);
+        let exec_future = self.executor.exec_stmts(&handler.node.body, &mut env);
+        let result = match tokio::time::timeout(handler_timeout, exec_future).await {
+            Ok(Ok(_)) => None,
+            Ok(Err(RuntimeError::GiveSignal(val, ..))) => Some(val),
+            Ok(Err(e)) => return Err(e),
+            Err(_elapsed) => {
+                // Handler timed out — signal warden
+                if let Some(ref tx) = self.warden_tx {
+                    let _ = tx.try_send(AgentSignal::Timeout {
+                        agent_name: self.decl.name.node.clone(),
+                    });
+                }
+                return Err(RuntimeError::Unsupported(format!(
+                    "agent '{}' handler '{}' timed out after {}s",
+                    self.decl.name.node,
+                    event,
+                    handler_timeout.as_secs()
+                )));
+            }
         };
 
         // Record turn for stuck detection
@@ -505,6 +534,22 @@ impl AgentProcess {
                     Err(RuntimeError::GiveSignal(val, ..)) => return Ok(Some(val)),
                     Err(e) => return Err(e),
                 }
+            }
+        }
+
+        // Check hallucination detection — repeated very low confidence responses
+        let is_hallucinating = self
+            .context
+            .lock()
+            .unwrap()
+            .stuck_detector
+            .is_hallucinating();
+        if is_hallucinating {
+            if let Some(ref tx) = self.warden_tx {
+                let _ = tx.try_send(AgentSignal::Hallucination {
+                    agent_name: self.decl.name.node.clone(),
+                    detail: format!("repeated low confidence responses in handler '{}'", event),
+                });
             }
         }
 
