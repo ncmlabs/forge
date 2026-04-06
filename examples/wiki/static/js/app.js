@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', function () {
         btn.disabled = true;
       }
 
-      fetch('/search?q=' + encodeURIComponent(query))
+      fetch('/search_page?q=' + encodeURIComponent(query))
         .then(function (r) { return r.text(); })
         .then(function (html) {
           // Extract the search-results div content from the response
@@ -170,7 +170,7 @@ document.addEventListener('DOMContentLoaded', function () {
         '<p class="mb-4 opacity-70">Asking: <em>' + escapeHtml(question) + '</em></p>';
       container.appendChild(createActivityLog(ASK_STEPS));
 
-      fetch('/ask?question=' + encodeURIComponent(question))
+      fetch('/ask_page?question=' + encodeURIComponent(question))
         .then(function (r) { return r.text(); })
         .then(function (html) {
           // Extract the ask-container content from the response
@@ -197,7 +197,7 @@ document.addEventListener('DOMContentLoaded', function () {
 document.addEventListener('keydown', function (e) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
     e.preventDefault();
-    window.location.href = '/search';
+    window.location.href = '/search_page';
   }
 });
 

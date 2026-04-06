@@ -662,7 +662,7 @@ async fn wiki_http_docs_not_found() {
 #[tokio::test]
 async fn wiki_http_search() {
     let (base, _tmp) = spawn_wiki_server().await;
-    let resp = reqwest::get(format!("{base}/search?q=agent"))
+    let resp = reqwest::get(format!("{base}/search_page?q=agent"))
         .await
         .expect("request failed");
     assert_eq!(resp.status(), 200);
@@ -691,7 +691,7 @@ async fn wiki_http_ask_form() {
 #[tokio::test]
 async fn wiki_http_ask_question() {
     let (base, _tmp) = spawn_wiki_server().await;
-    let resp = reqwest::get(format!("{base}/ask?question=what+is+a+pool"))
+    let resp = reqwest::get(format!("{base}/ask_page?question=what+is+a+pool"))
         .await
         .expect("request failed");
     assert_eq!(resp.status(), 200);
@@ -1490,7 +1490,7 @@ async fn wiki_confidence_tier_low() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let resp = reqwest::get(format!(
-        "http://127.0.0.1:{port}/ask?question=something+unknowable"
+        "http://127.0.0.1:{port}/ask_page?question=something+unknowable"
     ))
     .await
     .expect("request failed");
@@ -1540,7 +1540,7 @@ async fn wiki_confidence_tier_medium() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let resp = reqwest::get(format!(
-        "http://127.0.0.1:{port}/ask?question=something+partial"
+        "http://127.0.0.1:{port}/ask_page?question=something+partial"
     ))
     .await
     .expect("request failed");
@@ -1664,7 +1664,7 @@ async fn wiki_qa_unsure_branch() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let resp = reqwest::get(format!(
-        "http://127.0.0.1:{port}/ask?question=what+is+FORGE"
+        "http://127.0.0.1:{port}/ask_page?question=what+is+FORGE"
     ))
     .await
     .unwrap();
@@ -1705,7 +1705,7 @@ async fn wiki_qa_else_branch() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let resp = reqwest::get(format!(
-        "http://127.0.0.1:{port}/ask?question=what+is+impossible"
+        "http://127.0.0.1:{port}/ask_page?question=what+is+impossible"
     ))
     .await
     .unwrap();
@@ -1805,7 +1805,7 @@ async fn wiki_real_qa_answers_question() {
     };
 
     let resp = reqwest::get(format!(
-        "{base}/ask?question=what+are+the+14+primitives+in+FORGE"
+        "{base}/ask_page?question=what+are+the+14+primitives+in+FORGE"
     ))
     .await
     .expect("request failed");
