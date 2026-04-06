@@ -899,7 +899,7 @@ async fn serve_program(
     }
 
     if watch {
-        serve_with_watch(file, cli_host, cli_port).await
+        serve_with_watch(file, sources, cli_host, cli_port).await
     } else {
         // Non-watch mode: build once and serve. Exits on errors.
         let (executor, config) = match try_build_executor_multi(file, sources) {
@@ -1007,13 +1007,14 @@ fn seed_content_recursive(
 
 async fn serve_with_watch(
     file: &Path,
+    sources: &[PathBuf],
     cli_host: Option<String>,
     cli_port: Option<u16>,
 ) -> anyhow::Result<()> {
     use forge::runtime::watcher::WatchAction;
 
     loop {
-        let (executor, config) = match try_build_executor(file) {
+        let (executor, config) = match try_build_executor_multi(file, sources) {
             Ok(r) => r,
             Err(_) => std::process::exit(1),
         };
