@@ -1,6 +1,7 @@
 // FORGE wiki end-to-end acceptance tests — issue #65
 // Comprehensive test suite for the wiki example using mock provider.
-// Zero API calls. Run with: FORGE_MOCK=1 cargo test wiki_
+// Zero API calls for mock tests: FORGE_MOCK=1 cargo test wiki_
+// Real-API tests gated on ANTHROPIC_API_KEY: cargo test wiki_real_
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -1551,4 +1552,294 @@ async fn wiki_confidence_tier_medium() {
         body.len()
     );
     drop(tmp);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Confidence Branching: .sure / .unsure / else in search & Q&A
+// ═══════════════════════════════════════════════════════════════════
+// The `estimate_confidence` heuristic checks for hedging phrases:
+//   0 hedges → 0.85 (sure), 1 hedge → 0.77 (unsure), 5+ hedges → 0.45 (unreliable/else)
+
+#[tokio::test]
+async fn wiki_search_unsure_branch() {
+    // Mock returns text with 1 hedging phrase → confidence ~0.77 → .unsure branch
+    let mock = MockProvider::new("mock")
+        .with_response(
+            "Search query:",
+            "I think the task primitive is the core execution unit. Possibly related to agents.",
+        )
+        .with_response("classify", "reference")
+        .with_default("mock");
+
+    let program = load_wiki_program();
+    let (_tmp, storage) = temp_wiki_storage();
+
+    let executor = TaskExecutor::new(program, mock_registry_from(mock), None).with_storage(storage);
+    let config = forge::config::ForgeConfig::default_mock_config();
+
+    let server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        server.run_on_listener(listener).await.ok();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resp = reqwest::get(format!("http://127.0.0.1:{port}/api_search?q=task"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    // With 2 hedging phrases ("I think", "possibly"), confidence ~0.69 → .unsure branch
+    // search_docs: when results.unsure -> give "Partial matches found..."
+    assert!(
+        body.contains("Partial matches"),
+        "unsure branch should prefix with 'Partial matches', got: {}",
+        body
+    );
+}
+
+#[tokio::test]
+async fn wiki_search_else_branch() {
+    // Mock returns text with 5+ hedging phrases → confidence ~0.45 → else branch
+    let mock = MockProvider::new("mock")
+        .with_response(
+            "Search query:",
+            "I'm not sure, I think it might be unclear, possibly it depends on context, I don't know exactly",
+        )
+        .with_response("classify", "general")
+        .with_default("mock");
+
+    let program = load_wiki_program();
+    let (_tmp, storage) = temp_wiki_storage();
+
+    let executor = TaskExecutor::new(program, mock_registry_from(mock), None).with_storage(storage);
+    let config = forge::config::ForgeConfig::default_mock_config();
+
+    let server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        server.run_on_listener(listener).await.ok();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resp = reqwest::get(format!("http://127.0.0.1:{port}/api_search?q=nonsense"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    // With 5+ hedging phrases, confidence < 0.5 → else branch
+    // search_docs: else -> give "No confident results for: {query}"
+    assert!(
+        body.contains("No confident results"),
+        "else branch should say 'No confident results', got: {}",
+        body
+    );
+}
+
+#[tokio::test]
+async fn wiki_qa_unsure_branch() {
+    // Q&A with 1 hedging phrase → .unsure → "I'm not fully confident" prefix
+    let mock = MockProvider::new("mock")
+        .with_response(
+            "answer this question",
+            "I think FORGE has multiple primitives for agent orchestration.",
+        )
+        .with_response("classify", "general")
+        .with_default("mock");
+
+    let program = load_wiki_program();
+    let (_tmp, storage) = temp_wiki_storage();
+
+    let executor = TaskExecutor::new(program, mock_registry_from(mock), None).with_storage(storage);
+    let config = forge::config::ForgeConfig::default_mock_config();
+
+    let server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        server.run_on_listener(listener).await.ok();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resp = reqwest::get(format!(
+        "http://127.0.0.1:{port}/ask?question=what+is+FORGE"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    // answer_question: when answer.unsure -> give "I'm not fully confident..."
+    // The body is rendered HTML containing the answer text
+    assert!(
+        body.contains("not fully confident"),
+        "unsure Q&A should include 'not fully confident' disclaimer, got length: {}",
+        body.len()
+    );
+}
+
+#[tokio::test]
+async fn wiki_qa_else_branch() {
+    // Q&A with many hedging phrases → else → "I don't have enough information"
+    let mock = MockProvider::new("mock")
+        .with_response(
+            "answer this question",
+            "I'm not sure about this. I think it might be something, but it's unclear. Possibly it depends, I don't know",
+        )
+        .with_response("classify", "general")
+        .with_default("mock");
+
+    let program = load_wiki_program();
+    let (_tmp, storage) = temp_wiki_storage();
+
+    let executor = TaskExecutor::new(program, mock_registry_from(mock), None).with_storage(storage);
+    let config = forge::config::ForgeConfig::default_mock_config();
+
+    let server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        server.run_on_listener(listener).await.ok();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resp = reqwest::get(format!(
+        "http://127.0.0.1:{port}/ask?question=what+is+impossible"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    // answer_question: else -> give "I don't have enough information..."
+    assert!(
+        body.contains("don't have enough information"),
+        "else Q&A should give 'don't have enough information', got length: {}",
+        body.len()
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Real-LLM Tests (gated on ANTHROPIC_API_KEY)
+// Uses claude-haiku-4-5-20251001 for speed.
+// Run with: ANTHROPIC_API_KEY=sk-... cargo test wiki_real_
+// ═══════════════════════════════════════════════════════════════════
+
+fn haiku_registry() -> Option<Arc<ProviderRegistry>> {
+    let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
+    if api_key.is_empty() {
+        return None;
+    }
+
+    let mut config = forge::config::ForgeConfig::default_mock_config();
+    config.llm.default = "haiku".to_string();
+    config.providers.clear();
+    config.providers.insert(
+        "haiku".to_string(),
+        forge::config::ProviderConfig {
+            type_: "anthropic".to_string(),
+            model: Some("claude-haiku-4-5-20251001".to_string()),
+            api_key: Some(api_key),
+            base_url: None,
+            fallback: None,
+            capabilities: None,
+            headers: None,
+            timeout_secs: None,
+        },
+    );
+
+    ProviderRegistry::from_config(config)
+        .ok()
+        .map(|r| Arc::new(r))
+}
+
+/// Spawn a wiki server backed by real Haiku. Returns None if no API key.
+async fn spawn_wiki_server_real() -> Option<(String, tempfile::TempDir)> {
+    let registry = haiku_registry()?;
+    let program = load_wiki_program();
+    let (tmp, storage) = temp_wiki_storage();
+
+    let config = forge::config::ForgeConfig::default_mock_config();
+    let executor = TaskExecutor::new(program, registry, None)
+        .with_storage(storage)
+        .with_config(config.clone());
+
+    let server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server.run_on_listener(listener).await.ok();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    Some((format!("http://127.0.0.1:{port}"), tmp))
+}
+
+#[tokio::test]
+async fn wiki_real_search_returns_results() {
+    let Some((base, _tmp)) = spawn_wiki_server_real().await else {
+        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        return;
+    };
+
+    let resp = reqwest::get(format!("{base}/api_search?q=what+is+a+task+in+FORGE"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(
+        !body.is_empty(),
+        "real LLM search should return non-empty results"
+    );
+    // With a real LLM, the response should contain actual page references
+    println!("Real search result: {}", &body[..body.len().min(500)]);
+}
+
+#[tokio::test]
+async fn wiki_real_qa_answers_question() {
+    let Some((base, _tmp)) = spawn_wiki_server_real().await else {
+        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        return;
+    };
+
+    let resp = reqwest::get(format!(
+        "{base}/ask?question=what+are+the+14+primitives+in+FORGE"
+    ))
+    .await
+    .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(!body.is_empty(), "real LLM Q&A should return an answer");
+    // The answer should mention at least some primitives
+    assert!(
+        body.contains("task") || body.contains("agent") || body.contains("pool"),
+        "real LLM answer should mention FORGE primitives, got length: {}",
+        body.len()
+    );
+}
+
+#[tokio::test]
+async fn wiki_real_fact_check() {
+    let Some((base, _tmp)) = spawn_wiki_server_real().await else {
+        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        return;
+    };
+
+    let resp = reqwest::get(format!("{base}/admin_fact_check?slug=getting-started"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Fact-Check")
+            || body.contains("PASS")
+            || body.contains("YES")
+            || body.contains("Verdicts"),
+        "real LLM fact-check should render results, got length: {}",
+        body.len()
+    );
 }
