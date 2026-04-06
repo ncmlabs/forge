@@ -90,7 +90,7 @@ pure search_results_html
   gives Html
   do
     nav = nav_bar("search")
-    body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Search Results</h1><form method=\"GET\" action=\"/search\" class=\"mb-8\"><div class=\"join w-full max-w-lg\"><input type=\"text\" name=\"q\" value=\"{query}\" class=\"input input-bordered join-item flex-1\" placeholder=\"Search documentation...\" /><button type=\"submit\" class=\"btn btn-primary join-item\">Search</button></div></form><div class=\"prose max-w-none\">{!results}</div></div>"
+    body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Search</h1><form id=\"search-form\" method=\"GET\" action=\"/search\" class=\"mb-8\"><div class=\"join w-full max-w-lg\"><input type=\"text\" name=\"q\" value=\"{query}\" class=\"input input-bordered join-item flex-1\" placeholder=\"Search documentation...\" /><button type=\"submit\" class=\"btn btn-primary join-item\">Search</button></div></form><div id=\"search-results\" class=\"prose max-w-none\">{!results}</div></div>"
     give page_layout("Search — FORGE", nav, body)
 
 pure qa_page
@@ -99,8 +99,15 @@ pure qa_page
   do
     nav = nav_bar("ask")
     badge = "<span class=\"badge badge-outline\">{confidence}</span>"
-    body = "<div class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-2\">Answer</h1>{!badge}<div class=\"card bg-base-100 shadow-xl mt-4\"><div class=\"card-body prose max-w-none\">{!answer}</div></div><div class=\"mt-6\"><a href=\"/ask_form\" class=\"btn btn-ghost\">Ask another question</a></div></div>"
+    body = "<div id=\"ask-container\" class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-2\">Answer</h1>{!badge}<div class=\"card bg-base-100 shadow-xl mt-4\"><div id=\"qa-result\" class=\"card-body prose max-w-none\">{!answer}</div></div><div class=\"mt-6\"><a href=\"/ask_form\" class=\"btn btn-ghost\">Ask another question</a></div></div>"
     give page_layout("Q&A — FORGE", nav, body)
+
+pure ask_form_page
+  gives Html
+  do
+    nav = nav_bar("ask")
+    body = "<div id=\"ask-container\" class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-6\">Ask about FORGE</h1><form id=\"ask-form\" action=\"/ask\" method=\"GET\"><textarea name=\"question\" class=\"textarea textarea-bordered w-full\" rows=\"4\" placeholder=\"What would you like to know about FORGE?\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Ask</button></form></div>"
+    give page_layout("Ask — FORGE", nav, body)
 
 pure confidence_tier
   needs answer: Text
@@ -139,6 +146,8 @@ task search_docs
   needs query: Text
   gives Text
   do
+    if query == ""
+      give ""
     pages = data.list("page:")
     intent = classify query into ["reference", "tutorial", "troubleshooting", "general"]
     results = reason "You are a FORGE documentation search engine. Available pages: {pages}\n\nSearch query: '{query}' (intent: {intent})\n\nList the most relevant pages with slug and one-line excerpt. Format as a markdown list."
@@ -155,6 +164,8 @@ task answer_question
   needs question: Text
   gives Text
   do
+    if question == ""
+      give ""
     pages = data.list("page:")
     answer = reason "You are a FORGE language expert. Using the available documentation pages ({pages}), answer this question accurately and concisely. FORGE has 14 primitives: task, pure, flow, agent, pool, system, warden, event, states, when, boundary, requires, spawn, find.\n\nQuestion: {question}"
     when answer.sure -> give answer
@@ -489,7 +500,7 @@ endpoint search(q: Text) -> Html
 
 endpoint ask_form() -> Html
   nav = nav_bar("ask")
-  body = "<div class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-6\">Ask about FORGE</h1><form method=\"POST\" action=\"/ask\"><textarea name=\"question\" class=\"textarea textarea-bordered w-full\" rows=\"4\" placeholder=\"What would you like to know about FORGE?\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Ask</button></form></div>"
+  body = "<div id=\"ask-container\" class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-6\">Ask about FORGE</h1><form id=\"ask-form\" action=\"/ask\" method=\"GET\"><textarea name=\"question\" class=\"textarea textarea-bordered w-full\" rows=\"4\" placeholder=\"What would you like to know about FORGE?\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Ask</button></form></div>"
   give page_layout("Ask — FORGE", nav, body)
 
 endpoint ask(question: Text) -> Html
