@@ -314,38 +314,37 @@ agent search_agent
 #   Wave 4: publish
 
 flow generate_docs
-  needs sources: Text[]
+  needs sources: Text
   gives Text
 
   stage scan_files
-    file_contents = sources
-    say "Scanning {sources.len()} source files..."
-    give file_contents
+    say "Loaded documentation content"
+    give sources
 
   stage extract_tasks
     needs scan_files.*
-    signatures = reason "Extract all task declarations from this FORGE source code.\nFor each task, provide: name, parameters, return type, and a one-line description.\nSource: {scan_files}"
+    signatures = reason "Extract all task declarations from the FORGE documentation below.\nFor each task, provide: name, parameters, return type, and a one-line description.\nUse ONLY what appears in the documentation. Do not invent syntax.\n\nDocumentation:\n{scan_files}"
     when signatures.sure -> give signatures
     when signatures.unsure -> give signatures
     else -> give "No task declarations found."
 
   stage extract_agents
     needs scan_files.*
-    signatures = reason "Extract all agent declarations from this FORGE source code.\nFor each agent: name, states, memory fields, handlers, and a one-line description.\nSource: {scan_files}"
+    signatures = reason "Extract all agent declarations from the FORGE documentation below.\nFor each agent: name, states, memory fields, handlers, and a one-line description.\nUse ONLY what appears in the documentation. Do not invent syntax.\n\nDocumentation:\n{scan_files}"
     when signatures.sure -> give signatures
     when signatures.unsure -> give signatures
     else -> give "No agent declarations found."
 
   stage extract_flows
     needs scan_files.*
-    signatures = reason "Extract all flow declarations from this FORGE source code.\nFor each flow: name, stages, dependencies, and a one-line description.\nSource: {scan_files}"
+    signatures = reason "Extract all flow declarations from the FORGE documentation below.\nFor each flow: name, stages, dependencies, and a one-line description.\nUse ONLY what appears in the documentation. Do not invent syntax.\n\nDocumentation:\n{scan_files}"
     when signatures.sure -> give signatures
     when signatures.unsure -> give signatures
     else -> give "No flow declarations found."
 
   stage generate_reference
     needs extract_tasks.*, extract_agents.*, extract_flows.*
-    reference = reason "Generate a comprehensive reference document in Markdown format.\nOrganize by category: Tasks, Agents, Flows.\nInclude code examples for each item.\n\nTasks: {extract_tasks}\nAgents: {extract_agents}\nFlows: {extract_flows}"
+    reference = reason "Generate a comprehensive reference document in Markdown format.\nOrganize by category: Tasks, Agents, Flows.\nInclude code examples for each item.\nUse ONLY the extracted information below. Do not invent syntax or examples.\n\nTasks: {extract_tasks}\nAgents: {extract_agents}\nFlows: {extract_flows}"
     when reference.sure -> give reference
     when reference.unsure -> give reference
     else -> give "Could not generate reference documentation."
@@ -532,8 +531,8 @@ endpoint api_search(q: Text) -> Text
 
 endpoint admin_generate_docs() -> Html
   nav = nav_bar("")
-  sources = data.list("page:")
-  result = generate_docs(sources)
+  docs = gather_docs()
+  result = generate_docs(docs)
   body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Doc Generation</h1><div class=\"alert alert-success\"><span>{result}</span></div><a href=\"/docs?slug=auto-reference\" class=\"btn btn-primary mt-4\">View Generated Reference</a><a href=\"/docs?slug=fact-check-report\" class=\"btn btn-outline mt-4 ml-2\">View Fact-Check Report</a></div>"
   give page_layout("Admin — Generate Docs", nav, body)
 
