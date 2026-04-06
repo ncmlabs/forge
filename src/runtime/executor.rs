@@ -2443,6 +2443,23 @@ fn eval_binop(left: &Value, op: &BinOp, right: &Value) -> Result<Value, RuntimeE
         (Value::Html(a), BinOp::Add, Value::Html(b)) => Ok(Value::Html(format!("{}{}", a, b))),
         (Value::Text(a), BinOp::Add, Value::Html(b)) => Ok(Value::Text(format!("{}{}", a, b))),
         (Value::Html(a), BinOp::Add, Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
+        // Array concatenation (Array + Array → Array, List variants too)
+        (Value::Array(a), BinOp::Add, Value::Array(b)) => {
+            let mut result = a.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::Array(result))
+        }
+        (Value::List(a), BinOp::Add, Value::List(b)) => {
+            let mut result = a.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::List(result))
+        }
+        (Value::Array(a), BinOp::Add, Value::List(b))
+        | (Value::List(a), BinOp::Add, Value::Array(b)) => {
+            let mut result = a.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::Array(result))
+        }
         // Numeric comparison
         (Value::Number(a), BinOp::Lt, Value::Number(b)) => Ok(Value::Bool(a < b)),
         (Value::Number(a), BinOp::Gt, Value::Number(b)) => Ok(Value::Bool(a > b)),
