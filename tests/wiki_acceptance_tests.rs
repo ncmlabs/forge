@@ -1748,9 +1748,7 @@ fn haiku_registry() -> Option<Arc<ProviderRegistry>> {
         },
     );
 
-    ProviderRegistry::from_config(config)
-        .ok()
-        .map(Arc::new)
+    ProviderRegistry::from_config(config).ok().map(Arc::new)
 }
 
 /// Spawn a wiki server backed by real Haiku. Returns None if no API key.
