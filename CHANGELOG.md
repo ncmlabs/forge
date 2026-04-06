@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Wiki search and Q&A link to doc pages** — LLM responses now include markdown links to relevant documentation pages (e.g. `[agent](/docs?slug=agent)`) instead of plain text mentions (#120)
+
 ### Added
 - **End-to-end wiki acceptance tests** — 44 Rust integration tests covering all 7 wiki subsystems: checker/parse validation, page lifecycle (CRUD + state transitions), HTTP endpoints (including root redirect, webhooks), search agent (with re-indexing on events), Q&A agent (with confidence tier branching for low/medium/high), doc generation flow + fact-check pool (majority vote), and warden supervision (crash/stuck/escalation/circuit breaker); all tests run with mock provider in under 2 seconds (#65)
 - **Array concatenation** — `Array + Array` now works via the `+` operator, enabling `memory.pages = memory.pages + [slug]` patterns in agents (#65)
