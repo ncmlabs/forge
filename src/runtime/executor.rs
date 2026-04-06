@@ -2419,6 +2419,8 @@ fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Text(a), Value::Text(b)) => a == b,
         (Value::Html(a), Value::Html(b)) => a == b,
+        // Text/Html cross-comparison: same string content means equal
+        (Value::Text(a), Value::Html(b)) | (Value::Html(a), Value::Text(b)) => a == b,
         (Value::Number(a), Value::Number(b)) => (a - b).abs() < f64::EPSILON,
         (Value::Bool(a), Value::Bool(b)) => a == b,
         (Value::Unit, Value::Unit) => true,
