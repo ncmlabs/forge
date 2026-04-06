@@ -70,12 +70,12 @@ html {
 
 /* ── Search results ─────────────────────────────────────────── */
 
-#search-results .prose ul {
+#search-results ul {
   list-style: none;
   padding: 0;
 }
 
-#search-results .prose ul li {
+#search-results ul li {
   padding: 0.75rem 1rem;
   border: 1px solid oklch(var(--b2));
   border-radius: 0.5rem;
@@ -83,7 +83,7 @@ html {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-#search-results .prose ul li:hover {
+#search-results ul li:hover {
   border-color: oklch(var(--p) / 0.3);
   box-shadow: 0 1px 4px oklch(var(--p) / 0.08);
 }
