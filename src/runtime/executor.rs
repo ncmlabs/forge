@@ -2419,6 +2419,8 @@ fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Text(a), Value::Text(b)) => a == b,
         (Value::Html(a), Value::Html(b)) => a == b,
+        // Text/Html cross-comparison: same string content means equal
+        (Value::Text(a), Value::Html(b)) | (Value::Html(a), Value::Text(b)) => a == b,
         (Value::Number(a), Value::Number(b)) => (a - b).abs() < f64::EPSILON,
         (Value::Bool(a), Value::Bool(b)) => a == b,
         (Value::Unit, Value::Unit) => true,
@@ -2443,6 +2445,23 @@ fn eval_binop(left: &Value, op: &BinOp, right: &Value) -> Result<Value, RuntimeE
         (Value::Html(a), BinOp::Add, Value::Html(b)) => Ok(Value::Html(format!("{}{}", a, b))),
         (Value::Text(a), BinOp::Add, Value::Html(b)) => Ok(Value::Text(format!("{}{}", a, b))),
         (Value::Html(a), BinOp::Add, Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
+        // Array concatenation (Array + Array → Array, List variants too)
+        (Value::Array(a), BinOp::Add, Value::Array(b)) => {
+            let mut result = a.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::Array(result))
+        }
+        (Value::List(a), BinOp::Add, Value::List(b)) => {
+            let mut result = a.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::List(result))
+        }
+        (Value::Array(a), BinOp::Add, Value::List(b))
+        | (Value::List(a), BinOp::Add, Value::Array(b)) => {
+            let mut result = a.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::Array(result))
+        }
         // Numeric comparison
         (Value::Number(a), BinOp::Lt, Value::Number(b)) => Ok(Value::Bool(a < b)),
         (Value::Number(a), BinOp::Gt, Value::Number(b)) => Ok(Value::Bool(a > b)),

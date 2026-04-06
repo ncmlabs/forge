@@ -42,6 +42,73 @@ html {
   backdrop-filter: blur(4px);
 }
 
+/* FORGE Activity Log — surfaces runtime mechanics */
+.forge-activity {
+  background: oklch(var(--n));
+  color: oklch(var(--nc));
+  border-radius: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.8;
+  overflow: hidden;
+}
+
+.forge-activity .log-title {
+  font-weight: 700;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+  margin-bottom: 0.75rem;
+}
+
+.forge-activity .log-entry {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: log-appear 0.3s ease forwards;
+}
+
+.forge-activity .log-entry .step-icon {
+  display: inline-block;
+  width: 1.2em;
+  text-align: center;
+}
+
+.forge-activity .log-entry .step-label {
+  color: oklch(var(--p));
+  font-weight: 600;
+}
+
+.forge-activity .log-entry .step-detail {
+  opacity: 0.7;
+}
+
+.forge-activity .log-entry .step-time {
+  float: right;
+  opacity: 0.5;
+  font-size: 0.8em;
+}
+
+.forge-activity .log-entry.done .step-icon {
+  color: oklch(var(--su));
+}
+
+.forge-activity .log-entry.active .step-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes log-appear {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Mobile sidebar */
 @media (max-width: 1023px) {
   .mobile-sidebar {

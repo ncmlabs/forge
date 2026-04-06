@@ -272,12 +272,20 @@ const RELOAD_SCRIPT: &str =
 async fn handle_get(
     State(state): State<AppState>,
     Path(endpoint_name): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
+    Query(mut params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
     let executor = state.executor.read().unwrap().clone();
     if !executor.endpoints().contains_key(&endpoint_name) {
         return (StatusCode::NOT_FOUND, "not found").into_response();
+    }
+    // Fill in missing params with empty strings so endpoints don't crash on undefined vars
+    if let Some(ep) = executor.endpoints().get(&endpoint_name) {
+        for param in &ep.params {
+            params
+                .entry(param.node.name.clone())
+                .or_insert_with(String::new);
+        }
     }
     let request = build_request_record("GET", &endpoint_name, &params, &headers, "");
     let args = params_to_args(params);
@@ -295,26 +303,59 @@ async fn handle_post(
     State(state): State<AppState>,
     Path(endpoint_name): Path<String>,
     headers: HeaderMap,
-    axum::Json(body): axum::Json<serde_json::Value>,
+    body_bytes: axum::body::Bytes,
 ) -> Response {
     let executor = state.executor.read().unwrap().clone();
     if !executor.endpoints().contains_key(&endpoint_name) {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     }
-    let raw_body = body.to_string();
-    let params = match body.as_object() {
-        Some(map) => map
-            .iter()
-            .map(|(k, v)| {
-                let s = match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
+    let raw_body = String::from_utf8_lossy(&body_bytes).to_string();
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let params: HashMap<String, String> = if content_type.contains("application/json") {
+        // JSON body
+        match serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+            Ok(json) => match json.as_object() {
+                Some(map) => map
+                    .iter()
+                    .map(|(k, v)| {
+                        let s = match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        (k.clone(), s)
+                    })
+                    .collect(),
+                None => HashMap::new(),
+            },
+            Err(_) => HashMap::new(),
+        }
+    } else {
+        // Form-encoded body (application/x-www-form-urlencoded)
+        raw_body
+            .split('&')
+            .filter_map(|pair| {
+                let mut parts = pair.splitn(2, '=');
+                let key = parts.next()?;
+                let value = parts.next().unwrap_or("");
+                if key.is_empty() {
+                    return None;
+                }
+                // Decode percent-encoding (+ as space)
+                let decode = |s: &str| {
+                    let replaced = s.replace('+', " ");
+                    urlencoding::decode(&replaced)
+                        .map(|c| c.into_owned())
+                        .unwrap_or(replaced)
                 };
-                (k.clone(), s)
+                Some((decode(key), decode(value)))
             })
-            .collect(),
-        None => HashMap::new(),
+            .collect()
     };
+
     let request = build_request_record("POST", &endpoint_name, &params, &headers, &raw_body);
     let args = params_to_args(params);
     dispatch_endpoint(

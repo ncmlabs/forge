@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **End-to-end wiki acceptance tests** — 44 Rust integration tests covering all 7 wiki subsystems: checker/parse validation, page lifecycle (CRUD + state transitions), HTTP endpoints (including root redirect, webhooks), search agent (with re-indexing on events), Q&A agent (with confidence tier branching for low/medium/high), doc generation flow + fact-check pool (majority vote), and warden supervision (crash/stuck/escalation/circuit breaker); all tests run with mock provider in under 2 seconds (#65)
+- **Array concatenation** — `Array + Array` now works via the `+` operator, enabling `memory.pages = memory.pages + [slug]` patterns in agents (#65)
 - **Wiki warden supervision** — `wiki_supervisor` manages `search_agent`, `content_manager`, and new `qa_agent` with typed failure policies for crash, hallucination, stuck, timeout, and budget; graceful degradation on escalation (agents removed but wiki continues serving); `downgrade` response type added to the language (`nudge < downgrade < restart < replace < escalate`); timeout detection via `tokio::time::timeout` on handler execution; hallucination detection via repeated low-confidence responses; supervision tree visible in trace output; circuit breaker with graceful shutdown (#64)
 - **`downgrade` warden response** — new `WardResponse::Downgrade` variant between Nudge and Restart in the escalation severity ordering, parsed from `on budget: downgrade, self` syntax (#64)
 - **`qa_agent` wiki agent** — wraps `answer_question` task with persistent memory tracking question count and last question, routed from `/ask` endpoint (#64)
