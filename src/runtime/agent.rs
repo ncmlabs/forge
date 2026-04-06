@@ -456,7 +456,7 @@ impl AgentProcess {
         }
 
         // Execute handler body with timeout detection
-        let handler_timeout = std::time::Duration::from_secs(30);
+        let handler_timeout = std::time::Duration::from_secs(60);
         let exec_future = self.executor.exec_stmts(&handler.node.body, &mut env);
         let result = match tokio::time::timeout(handler_timeout, exec_future).await {
             Ok(Ok(_)) => None,
