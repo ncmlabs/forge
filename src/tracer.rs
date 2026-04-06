@@ -313,6 +313,17 @@ impl Tracer {
         );
     }
 
+    pub fn supervision_tree(&self, warden: &str, active: &[&str], degraded: &[&str]) {
+        self.emit(
+            "supervision_tree",
+            serde_json::json!({
+                "warden": warden,
+                "active_agents": active,
+                "degraded_agents": degraded,
+            }),
+        );
+    }
+
     pub fn ward_action(
         &self,
         warden: &str,

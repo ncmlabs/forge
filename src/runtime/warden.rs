@@ -183,6 +183,11 @@ impl Warden {
         }
     }
 
+    /// Get a reference to the tracer, if any.
+    pub fn tracer(&self) -> Option<&Tracer> {
+        self.tracer.as_ref()
+    }
+
     /// Get the list of managed names.
     pub fn managed_names(&self) -> Vec<&str> {
         self.decl.manages.iter().map(|m| m.node.as_str()).collect()

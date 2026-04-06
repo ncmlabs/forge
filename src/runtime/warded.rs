@@ -2,7 +2,7 @@
 // Orchestrates agent lifecycle management: spawns agents as tokio tasks,
 // monitors for crashes/stuck, and executes warden response decisions.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -53,6 +53,9 @@ pub struct WardedRuntime {
     signal_tx: mpsc::Sender<AgentSignal>,
     signal_rx: mpsc::Receiver<AgentSignal>,
     start: Instant,
+    /// Agents that have been escalated and removed from active supervision.
+    /// The wiki continues running with degraded features for these agents.
+    pub degraded_agents: HashSet<String>,
 }
 
 impl WardedRuntime {
@@ -120,6 +123,7 @@ impl WardedRuntime {
             signal_tx,
             signal_rx,
             start: Instant::now(),
+            degraded_agents: HashSet::new(),
         }
     }
 
@@ -183,6 +187,7 @@ impl WardedRuntime {
             signal_tx,
             signal_rx,
             start: Instant::now(),
+            degraded_agents: HashSet::new(),
         }
     }
 
@@ -206,7 +211,18 @@ impl WardedRuntime {
         for name in names {
             self.spawn_one(&name).await?;
         }
+        // Trace supervision tree after startup
+        self.trace_supervision_tree();
         Ok(())
+    }
+
+    /// Emit a supervision tree trace event showing active and degraded agents.
+    fn trace_supervision_tree(&self) {
+        if let Some(tracer) = self.warden.tracer() {
+            let active: Vec<&str> = self.agents.keys().map(|s| s.as_str()).collect();
+            let degraded: Vec<&str> = self.degraded_agents.iter().map(|s| s.as_str()).collect();
+            tracer.supervision_tree(&self.warden.decl.name.node, &active, &degraded);
+        }
     }
 
     /// Spawn a single agent by name.
@@ -266,7 +282,7 @@ impl WardedRuntime {
             }
 
             tokio::select! {
-                // Check for stuck signals from agents
+                // Check for agent signals (stuck, timeout, hallucination, budget)
                 signal = self.signal_rx.recv() => {
                     match signal {
                         Some(AgentSignal::Stuck { agent_name }) => {
@@ -274,6 +290,30 @@ impl WardedRuntime {
                                 agent_name,
                                 failure_type: FailureType::Stuck,
                                 detail: "stuck detector triggered".to_string(),
+                            };
+                            self.handle_signal(fs).await?;
+                        }
+                        Some(AgentSignal::Timeout { agent_name }) => {
+                            let fs = FailureSignal {
+                                agent_name,
+                                failure_type: FailureType::Timeout,
+                                detail: "handler execution timed out".to_string(),
+                            };
+                            self.handle_signal(fs).await?;
+                        }
+                        Some(AgentSignal::Hallucination { agent_name, detail }) => {
+                            let fs = FailureSignal {
+                                agent_name,
+                                failure_type: FailureType::Hallucination,
+                                detail,
+                            };
+                            self.handle_signal(fs).await?;
+                        }
+                        Some(AgentSignal::BudgetExceeded { agent_name, detail }) => {
+                            let fs = FailureSignal {
+                                agent_name,
+                                failure_type: FailureType::Budget,
+                                detail,
                             };
                             self.handle_signal(fs).await?;
                         }
@@ -313,10 +353,19 @@ impl WardedRuntime {
             // Check circuit breaker after every signal
             let now = self.timestamp_ms();
             if self.warden.circuit_breaker_tripped(now) {
-                return Err(RuntimeError::Unsupported(format!(
-                    "warden '{}' circuit breaker tripped",
+                // Graceful degradation: stop all agents, mark as degraded, but don't crash
+                eprintln!(
+                    "[warden] CIRCUIT BREAKER: warden '{}' tripped — stopping all agents. \
+                     Deterministic endpoints continue serving.",
                     self.warden.decl.name.node,
-                )));
+                );
+                let names: Vec<String> = self.agents.keys().cloned().collect();
+                for name in names {
+                    self.stop_agent(&name).await;
+                    self.degraded_agents.insert(name);
+                }
+                self.trace_supervision_tree();
+                break;
             }
         }
 
@@ -349,19 +398,30 @@ impl WardedRuntime {
         let agent_name = action.agent_name.clone();
 
         match action.response {
-            WardResponse::Nudge | WardResponse::Restart | WardResponse::Replace => {
-                // v1: all three are restart (nudge with memory hint and replace with config deferred)
+            WardResponse::Nudge
+            | WardResponse::Downgrade
+            | WardResponse::Restart
+            | WardResponse::Replace => {
+                // v1: all four are restart (nudge with memory hint, downgrade model tier, and replace with config deferred)
                 self.stop_agent(&agent_name).await;
                 if self.blueprints.contains_key(&agent_name) {
                     self.spawn_one(&agent_name).await?;
                 }
             }
             WardResponse::Escalate => {
+                // Graceful degradation: stop the agent but continue running.
+                // The wiki serves deterministic endpoints while the agent is degraded.
                 self.stop_agent(&agent_name).await;
-                return Err(RuntimeError::Unsupported(format!(
-                    "warden '{}' escalated for agent '{}'",
-                    action.warden_name, agent_name
-                )));
+                self.degraded_agents.insert(agent_name.clone());
+
+                eprintln!(
+                    "[warden] ESCALATED: warden '{}' escalated agent '{}' \
+                     (failure: {:?}, retries: {}). Agent removed from supervision.",
+                    action.warden_name, agent_name, action.failure_type, action.retry_count
+                );
+
+                self.trace_supervision_tree();
+                return Ok(()); // Continue running — do not crash the runtime
             }
         }
 

@@ -349,6 +349,7 @@ pub enum FailureType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WardResponse {
     Nudge,
+    Downgrade,
     Restart,
     Replace,
     Escalate,

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Wiki warden supervision** — `wiki_supervisor` manages `search_agent`, `content_manager`, and new `qa_agent` with typed failure policies for crash, hallucination, stuck, timeout, and budget; graceful degradation on escalation (agents removed but wiki continues serving); `downgrade` response type added to the language (`nudge < downgrade < restart < replace < escalate`); timeout detection via `tokio::time::timeout` on handler execution; hallucination detection via repeated low-confidence responses; supervision tree visible in trace output; circuit breaker with graceful shutdown (#64)
+- **`downgrade` warden response** — new `WardResponse::Downgrade` variant between Nudge and Restart in the escalation severity ordering, parsed from `on budget: downgrade, self` syntax (#64)
+- **`qa_agent` wiki agent** — wraps `answer_question` task with persistent memory tracking question count and last question, routed from `/ask` endpoint (#64)
+- **Playwright E2E tests for warden** — mock-mode tests verifying wiki functions under supervision, plus real-API tests (gated by `ANTHROPIC_API_KEY`) covering all endpoints with actual LLM calls (#64)
 - **Wiki fact-checking pool** — `verify_document` task extracts claims via LLM and verifies each through `fact_check_panel` (3 workers, majority strategy, 30s timeout, fallback on timeout); individual verdicts via `fact_check_detail` (all strategy); claims classified as PASS/NEEDS_REVIEW/FAIL based on consensus confidence; integrated as `fact_check` stage in `generate_docs` flow with dedicated `admin_fact_check` endpoint (#63)
 - **`.split(delimiter)` string method** — splits Text into Array of Text values for per-element iteration with `for` loops (#63)
 - **`.join(delimiter)` array method** — joins Array/List elements into Text with delimiter (#63)

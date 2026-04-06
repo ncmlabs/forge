@@ -406,21 +406,52 @@ task verify_document
       give "No verifiable claims found."
     give report.trim()
 
+# ── QA Agent ─────────────────────────────────────────────────────
+#
+# Demonstrates: agent with persistent memory, delegating to tasks.
+# Wraps answer_question with tracking and supervised lifecycle.
+
+agent qa_agent
+  memory persistent
+    question_count: Number
+    last_question: Text
+
+  on start
+    say "QAAgent: ready."
+    memory.question_count = 0
+    memory.last_question = ""
+
+  on ask(question: Text)
+    memory.question_count = memory.question_count + 1
+    memory.last_question = question
+    answer = answer_question(question)
+    give answer
+
+  on stats
+    give "QA: {memory.question_count} questions answered"
+
 # ── Warden ───────────────────────────────────────────────────────
 #
-# Demonstrates: warden supervision. Full implementation in issue #64.
+# Demonstrates: warden supervision with all failure policies (#64).
+# Manages three agents: content, search, and QA.
 
 warden wiki_supervisor
-  manages [content_manager, search_agent]
-  on crash: restart, self
-    after 3: escalate
+  manages [search_agent, content_manager, qa_agent]
+
   on hallucination: restart, self
+    after 3: escalate
+
   on stuck: nudge, self
     after 5: restart
-  on budget: nudge, all
-    after 1: escalate
-  on timeout: restart, self
+
+  on crash: restart, self
     after 3: escalate
+
+  on timeout: restart, self
+
+  on budget: downgrade, self
+    after 2: escalate
+
   max_retries 10 per 1h then escalate
 
 # ── System Wiring ────────────────────────────────────────────────
@@ -431,8 +462,9 @@ system forge_wiki
   use
     content: content_manager
     search: search_agent
+    qa: qa_agent
 
-  content >> search
+  content >> search >> qa
 
 # ── Endpoints ────────────────────────────────────────────────────
 #
