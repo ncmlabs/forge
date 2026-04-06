@@ -44,7 +44,7 @@ pure nav_bar
       search_cls = "btn btn-sm btn-primary"
     if active == "ask"
       ask_cls = "btn btn-sm btn-primary"
-    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/home\" class=\"btn btn-ghost text-xl font-bold\">FORGE</a><div class=\"flex gap-2\"><a href=\"/home\" class=\"{!home_cls}\">Home</a><a href=\"/docs?slug=getting-started\" class=\"{!docs_cls}\">Docs</a><a href=\"/search_page\" class=\"{!search_cls}\">Search</a><a href=\"/ask_form\" class=\"{!ask_cls}\">Ask</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost\">T</button></div></div></nav>"
+    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/home\" class=\"btn btn-ghost text-xl font-bold\">FORGE</a><div class=\"flex gap-2\"><a href=\"/home\" class=\"{!home_cls}\">Home</a><a href=\"/docs?slug=getting-started\" class=\"{!docs_cls}\">Docs</a><a href=\"/search_page\" class=\"{!search_cls}\">Search</a><a href=\"/ask_form\" class=\"{!ask_cls}\">Ask</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
 
 pure docs_sidebar
   needs active_slug: Text
@@ -98,7 +98,14 @@ pure qa_page
   gives Html
   do
     nav = nav_bar("ask")
-    badge = "<span class=\"badge badge-outline\">{confidence}</span>"
+    badge_cls = "badge badge-outline"
+    if confidence == "high confidence"
+      badge_cls = "badge badge-success badge-outline"
+    if confidence == "medium confidence"
+      badge_cls = "badge badge-warning badge-outline"
+    if confidence == "low confidence"
+      badge_cls = "badge badge-error badge-outline"
+    badge = "<span class=\"{badge_cls}\">{confidence}</span>"
     body = "<div id=\"ask-container\" class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-2\">Answer</h1>{!badge}<div class=\"card bg-base-100 shadow-xl mt-4\"><div id=\"qa-result\" class=\"card-body prose max-w-none\">{!answer}</div></div><div class=\"mt-6\"><a href=\"/ask_form\" class=\"btn btn-ghost\">Ask another question</a></div></div>"
     give page_layout("Q&A — FORGE", nav, body)
 
@@ -150,7 +157,7 @@ task search_docs
       give ""
     pages = data.list("page:")
     intent = classify query into ["reference", "tutorial", "troubleshooting", "general"]
-    results = reason "You are a FORGE documentation search engine. Available pages: {pages}\n\nSearch query: '{query}' (intent: {intent})\n\nList the most relevant pages with slug and one-line excerpt. Format as a markdown list."
+    results = reason "You are a FORGE documentation search engine. Available pages: {pages}\n\nSearch query: '{query}' (intent: {intent})\n\nIMPORTANT: Every page reference MUST be a markdown link. Use the format [slug](/docs?slug=slug) for every page you mention. Example: - [agent](/docs?slug=agent) — Core FORGE entity\n\nList the most relevant pages with one-line excerpt. Format as a markdown list."
     when results.sure -> give results
     when results.unsure -> give "Partial matches found (confidence is moderate):\n{results}"
     else -> give "No confident results for: {query}"
@@ -167,7 +174,7 @@ task answer_question
     if question == ""
       give ""
     pages = data.list("page:")
-    answer = reason "You are a FORGE language expert. Using the available documentation pages ({pages}), answer this question accurately and concisely. FORGE has 14 primitives: task, pure, flow, agent, pool, system, warden, event, states, when, boundary, requires, spawn, find.\n\nQuestion: {question}"
+    answer = reason "You are a FORGE language expert. Using the available documentation pages ({pages}), answer this question accurately and concisely.\n\nIMPORTANT: Every time you mention a FORGE concept that has a doc page, you MUST link it using markdown. Use the format [name](/docs?slug=slug). Available doc slugs: getting-started, principles, roadmap, home, task, agent, flow, pool, system, event, states, when, pure, boundary, requires, warden. For example, write [pool](/docs?slug=pool) not just 'pool'. Never mention a concept as plain text if it has a doc slug.\n\nQuestion: {question}"
     when answer.sure -> give answer
     when answer.unsure -> give "I'm not fully confident, but here's what I found:\n{answer}"
     else -> give "I don't have enough information to answer that reliably."
