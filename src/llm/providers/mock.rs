@@ -1,6 +1,6 @@
 use crate::llm::{
     CompletionRequest, CompletionResponse, LLMProvider, ProviderCapabilities, ProviderError,
-    QualityTier,
+    QualityTier, ToolCallRequest,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -13,6 +13,7 @@ pub struct MockProvider {
     responses: HashMap<String, String>,
     default_response: String,
     sequence: Option<(Vec<String>, Arc<AtomicUsize>)>,
+    tool_call_response: Option<Vec<ToolCallRequest>>,
 }
 
 impl MockProvider {
@@ -30,6 +31,7 @@ impl MockProvider {
             responses: HashMap::new(),
             default_response: "mock response".to_string(),
             sequence: None,
+            tool_call_response: None,
         }
     }
 
@@ -49,6 +51,12 @@ impl MockProvider {
     /// Takes priority over pattern-based and default responses.
     pub fn with_responses_sequence(mut self, responses: Vec<String>) -> Self {
         self.sequence = Some((responses, Arc::new(AtomicUsize::new(0))));
+        self
+    }
+
+    /// Simulate tool call responses from the LLM.
+    pub fn with_tool_call_response(mut self, tool_calls: Vec<ToolCallRequest>) -> Self {
+        self.tool_call_response = Some(tool_calls);
         self
     }
 }
@@ -74,10 +82,13 @@ impl LLMProvider for MockProvider {
                 .unwrap_or_else(|| self.default_response.clone())
         };
 
+        let tool_calls = self.tool_call_response.clone().unwrap_or_default();
+
         Ok(CompletionResponse {
             tokens_in: (req.prompt.len() / 4) as u32,
             tokens_out: (content.len() / 4) as u32,
             content,
+            tool_calls,
             latency_ms: 1,
             model_used: "mock-model".to_string(),
             provider_name: self.name.clone(),

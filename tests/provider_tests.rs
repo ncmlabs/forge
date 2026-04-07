@@ -47,6 +47,7 @@ async fn mock_health_check() {
 fn estimate_confidence_no_hedging() {
     let resp = CompletionResponse {
         content: "The answer is 42.".to_string(),
+        tool_calls: vec![],
         tokens_in: 10,
         tokens_out: 5,
         latency_ms: 50,
@@ -61,6 +62,7 @@ fn estimate_confidence_no_hedging() {
 fn estimate_confidence_with_hedging() {
     let resp = CompletionResponse {
         content: "I think it might be 42, but I'm not sure.".to_string(),
+        tool_calls: vec![],
         tokens_in: 10,
         tokens_out: 10,
         latency_ms: 50,
@@ -76,6 +78,7 @@ fn estimate_confidence_with_hedging() {
 fn estimate_confidence_floor() {
     let resp = CompletionResponse {
         content: "I'm not sure, I think it's possibly something, might be unclear, I don't know, it depends, I cannot say".to_string(),
+        tool_calls: vec![],
         tokens_in: 10, tokens_out: 20, latency_ms: 50,
         model_used: "test".to_string(), provider_name: "test".to_string(),
         cost_usd: 0.0,
@@ -119,6 +122,7 @@ fn budget_exceeded() {
     let resp = CompletionResponse {
         cost_usd: 0.002,
         content: "hello".to_string(),
+        tool_calls: vec![],
         tokens_in: 100,
         tokens_out: 50,
         latency_ms: 1,

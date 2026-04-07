@@ -234,6 +234,7 @@ impl LLMProvider for AnthropicProvider {
 
         Ok(CompletionResponse {
             content,
+            tool_calls: vec![],
             tokens_in,
             tokens_out,
             latency_ms,

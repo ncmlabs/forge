@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`exec` primitive** — first-class CLI execution expression (`exec "command"`) that runs shell commands and returns `uncertain<Text>` with confidence derived from exit code (0 → 0.9, non-zero → 0.3); enforced by pure checker (exec in pure = compile error), uncertain checker (must handle with `when`), and accountability tracer (`exec_call`/`exec_return` events); composes via `>>` with LLM operations (#40)
 - **Host skill bridge** — LLM-mediated execution of SKILL.md ecosystem skills via `skill.namespace.method()` syntax; skills loaded from directories, parsed from YAML frontmatter, executed through an agentic loop where the LLM reads instructions and uses tools (bash, HTTP); results wrapped as `uncertain<T>` with confidence capped at 0.99; pure checker rejects skill calls; full trace events (`skill_call`/`skill_return`); config via `[skills]` TOML section (#40)
-- **LLM tool-use extension** — `LLMProvider` trait extended with `complete_with_tools()` for multi-turn tool-use; `ToolDefinition`, `ToolCallRequest`, `CompletionWithToolsResponse` types; `ProviderRegistry::resolve_and_complete_with_tools()` method; default implementation falls back to regular completion (#40)
+- **LLM tool-use extension** — `ToolDefinition` and `ToolCallRequest` types for LLM tool-use; `MockProvider::with_tool_call_response()` for tool-call simulation in tests (#40)
 - **`ConfidenceSource::ExecResult`** — confidence source for CLI execution results, capped at 0.95 (#40)
 - **`ConfidenceSource::SkillInvocation`** — confidence source for external skill results, capped at 0.99 (#40)
 - **Wiki documentation** — `examples/wiki/README.md` (quick start, configuration, endpoints, deployment guide) and `examples/wiki/ARCHITECTURE.md` (system diagrams, data/event flows, supervision tree, complete 14-primitive feature map); updated top-level README with wiki showcase section (#66)
@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Wiki Q&A, search, and auto-reference grounded in actual docs** — `answer_question`, `search_docs`, and `generate_docs` flow now inject real page content into the LLM context via `gather_docs`, eliminating hallucinated FORGE syntax (#122)
 
 ### Changed
+- **Unified tool-use into CompletionRequest/Response** — `tools` field on `CompletionRequest` and `tool_calls` field on `CompletionResponse` replace the separate `complete_with_tools()` trait method, `CompletionWithToolsResponse` type, and `resolve_and_complete_with_tools()` registry method; tool-use requests now get the same fallback chain as standard completions; eliminates duplicate `estimate_confidence()` code (#133)
 - **Wiki UX polish** — doc links show dotted underline with highlight on hover; search results styled as card-like items; confidence badges color-coded (green/yellow/red); theme toggle uses sun/moon icons; activity log gets subtle border (#120)
 - **Wiki search and Q&A link to doc pages** — LLM responses now include markdown links to relevant documentation pages (e.g. `[agent](/docs?slug=agent)`) instead of plain text mentions (#120)
 

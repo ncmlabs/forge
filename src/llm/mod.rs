@@ -72,6 +72,7 @@ pub struct CompletionRequest {
     pub temperature: f32,
     pub stop_sequences: Vec<String>,
     pub json_mode: bool,
+    pub tools: Vec<ToolDefinition>,
 }
 
 impl CompletionRequest {
@@ -83,7 +84,13 @@ impl CompletionRequest {
             temperature: 0.7,
             stop_sequences: vec![],
             json_mode: false,
+            tools: vec![],
         }
+    }
+
+    pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
+        self.tools = tools;
+        self
     }
 
     pub fn with_system(mut self, system: impl Into<String>) -> Self {
@@ -105,6 +112,7 @@ impl CompletionRequest {
 #[derive(Debug, Clone)]
 pub struct CompletionResponse {
     pub content: String,
+    pub tool_calls: Vec<ToolCallRequest>,
     pub tokens_in: u32,
     pub tokens_out: u32,
     pub latency_ms: u64,
@@ -189,41 +197,6 @@ pub struct ToolCallRequest {
     pub arguments: serde_json::Value,
 }
 
-/// Response from an LLM call that may include tool use requests.
-#[derive(Debug, Clone)]
-pub struct CompletionWithToolsResponse {
-    pub content: String,
-    pub tool_calls: Vec<ToolCallRequest>,
-    pub tokens_in: u32,
-    pub tokens_out: u32,
-    pub latency_ms: u64,
-    pub cost_usd: f32,
-    pub model_used: String,
-    pub provider_name: String,
-}
-
-impl CompletionWithToolsResponse {
-    /// Heuristic confidence (same as CompletionResponse).
-    pub fn estimate_confidence(&self) -> f32 {
-        let hedging_phrases = [
-            "i'm not sure",
-            "i think",
-            "possibly",
-            "might be",
-            "i cannot",
-            "i don't know",
-            "unclear",
-            "it depends",
-        ];
-        let lower = self.content.to_lowercase();
-        let hedge_count = hedging_phrases
-            .iter()
-            .filter(|p| lower.contains(*p))
-            .count();
-        (0.85 - (hedge_count as f32 * 0.08)).max(0.3)
-    }
-}
-
 // ── The trait every provider implements ────────────────────────────────────────
 
 #[async_trait]
@@ -235,26 +208,6 @@ pub trait LLMProvider: Send + Sync {
         &self,
         request: CompletionRequest,
     ) -> Result<CompletionResponse, ProviderError>;
-
-    /// Complete with tool-use support (for skill execution).
-    /// Default implementation falls back to regular complete() with no tool calls.
-    async fn complete_with_tools(
-        &self,
-        request: CompletionRequest,
-        _tools: &[ToolDefinition],
-    ) -> Result<CompletionWithToolsResponse, ProviderError> {
-        let resp = self.complete(request).await?;
-        Ok(CompletionWithToolsResponse {
-            content: resp.content,
-            tool_calls: vec![],
-            tokens_in: resp.tokens_in,
-            tokens_out: resp.tokens_out,
-            latency_ms: resp.latency_ms,
-            cost_usd: resp.cost_usd,
-            model_used: resp.model_used,
-            provider_name: resp.provider_name,
-        })
-    }
 
     async fn health_check(&self) -> Result<(), ProviderError> {
         self.complete(CompletionRequest::simple("ping").with_max_tokens(1))
