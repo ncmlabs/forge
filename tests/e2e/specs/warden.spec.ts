@@ -21,7 +21,7 @@ test.describe('Warden Supervision (issue #64)', () => {
 
   test('Q&A works under supervision', async ({ page }) => {
     // Use GET with query param (same as existing ask.spec.ts pattern)
-    await page.goto('/ask?question=What+is+a+warden');
+    await page.goto('/ask_page?question=What+is+a+warden');
     const answerCard = page.locator('.card .card-body');
     await expect(answerCard).toBeVisible();
     const answer = await answerCard.textContent();
@@ -45,7 +45,7 @@ test.describe('Warden Supervision (issue #64)', () => {
   });
 
   test('admin fact-check works under supervision', async ({ page }) => {
-    test.setTimeout(120_000); // requires doc generation + fact-checking
+    test.setTimeout(300_000); // requires doc generation + fact-checking with full doc context
     // Seed docs first
     const admin = new AdminPage(page);
     await admin.goto();

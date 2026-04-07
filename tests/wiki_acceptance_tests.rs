@@ -98,7 +98,7 @@ fn wiki_mock_registry() -> Arc<ProviderRegistry> {
             "- **task**: Core execution primitive for deterministic work\n- **agent**: Stateful lifecycle actor with memory and handlers",
         )
         .with_response(
-            "answer this question",
+            "Do not invent syntax",
             "FORGE has 14 primitives including task, pure, flow, agent, pool, warden, and system. Each primitive serves a specific role in AI agent orchestration.",
         )
         .with_response(
@@ -125,7 +125,7 @@ fn wiki_mock_registry() -> Arc<ProviderRegistry> {
             "Generate a comprehensive reference",
             "# FORGE Reference\n\n## Tasks\n- seed_page: Store content\n- load_page: Retrieve content\n\n## Agents\n- content_manager: Full CRUD lifecycle\n- search_agent: Index and search\n- qa_agent: Answer questions",
         )
-        .with_response("classify", "reference")
+        .with_response("Classify the following", "reference")
         .with_default("mock wiki response");
 
     mock_registry_from(mock)
@@ -1460,10 +1460,10 @@ async fn wiki_confidence_tier_low() {
     // when we configure it that way.
     let mock = MockProvider::new("mock")
         .with_response(
-            "answer this question",
+            "Do not invent syntax",
             "I don't have enough information to answer that.",
         )
-        .with_response("classify", "general")
+        .with_response("Classify the following", "general")
         .with_default("mock");
 
     let program = load_wiki_program();
@@ -1510,10 +1510,10 @@ async fn wiki_confidence_tier_low() {
 async fn wiki_confidence_tier_medium() {
     let mock = MockProvider::new("mock")
         .with_response(
-            "answer this question",
+            "Do not invent syntax",
             "I'm not fully confident, but FORGE has 14 primitives.",
         )
-        .with_response("classify", "general")
+        .with_response("Classify the following", "general")
         .with_default("mock");
 
     let program = load_wiki_program();
@@ -1568,7 +1568,7 @@ async fn wiki_search_unsure_branch() {
             "Search query:",
             "I think the task primitive is the core execution unit. Possibly related to agents.",
         )
-        .with_response("classify", "reference")
+        .with_response("Classify the following", "reference")
         .with_default("mock");
 
     let program = load_wiki_program();
@@ -1607,7 +1607,7 @@ async fn wiki_search_else_branch() {
             "Search query:",
             "I'm not sure, I think it might be unclear, possibly it depends on context, I don't know exactly",
         )
-        .with_response("classify", "general")
+        .with_response("Classify the following", "general")
         .with_default("mock");
 
     let program = load_wiki_program();
@@ -1643,10 +1643,10 @@ async fn wiki_qa_unsure_branch() {
     // Q&A with 1 hedging phrase → .unsure → "I'm not fully confident" prefix
     let mock = MockProvider::new("mock")
         .with_response(
-            "answer this question",
+            "Do not invent syntax",
             "I think FORGE has multiple primitives for agent orchestration.",
         )
-        .with_response("classify", "general")
+        .with_response("Classify the following", "general")
         .with_default("mock");
 
     let program = load_wiki_program();
@@ -1684,10 +1684,10 @@ async fn wiki_qa_else_branch() {
     // Q&A with many hedging phrases → else → "I don't have enough information"
     let mock = MockProvider::new("mock")
         .with_response(
-            "answer this question",
+            "Do not invent syntax",
             "I'm not sure about this. I think it might be something, but it's unclear. Possibly it depends, I don't know",
         )
-        .with_response("classify", "general")
+        .with_response("Classify the following", "general")
         .with_default("mock");
 
     let program = load_wiki_program();

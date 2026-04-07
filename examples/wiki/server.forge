@@ -144,10 +144,20 @@ task load_page
     content = data.get("page:{slug}")
     give content
 
+task gather_docs
+  gives Text
+  do
+    pages = data.list("page:")
+    docs = []
+    for key in pages
+      content = data.get(key)
+      docs = docs + ["--- {key} ---\n{content}"]
+    give docs.join("\n\n")
+
 # ── Search Task ──────────────────────────────────────────────────
 #
 # LLM-powered search with confidence gating (issue #61).
-# Demonstrates: task, when, classify, reason, data.list
+# Demonstrates: task, when, classify, reason, data.list, gather_docs
 
 task search_docs
   needs query: Text
@@ -155,9 +165,9 @@ task search_docs
   do
     if query == ""
       give ""
-    pages = data.list("page:")
+    docs = gather_docs()
     intent = classify query into ["reference", "tutorial", "troubleshooting", "general"]
-    results = reason "You are a FORGE documentation search engine. Available pages: {pages}\n\nSearch query: '{query}' (intent: {intent})\n\nIMPORTANT: Every page reference MUST be a markdown link. Use the format [slug](/docs?slug=slug) for every page you mention. Example: - [agent](/docs?slug=agent) — Core FORGE entity\n\nList the most relevant pages with one-line excerpt. Format as a markdown list."
+    results = reason "You are a FORGE documentation search engine. Use the documentation below to provide accurate excerpts.\n\n{docs}\n\nSearch query: '{query}' (intent: {intent})\n\nIMPORTANT: Every page reference MUST be a markdown link. Use the format [slug](/docs?slug=slug) for every page you mention. Example: - [agent](/docs?slug=agent) — Core FORGE entity\n\nList the most relevant pages with one-line excerpt from their actual content. Format as a markdown list."
     when results.sure -> give results
     when results.unsure -> give "Partial matches found (confidence is moderate):\n{results}"
     else -> give "No confident results for: {query}"
@@ -165,7 +175,7 @@ task search_docs
 # ── Q&A Task ─────────────────────────────────────────────────────
 #
 # LLM-powered Q&A with confidence gating (issue #61).
-# Demonstrates: task, when, reason, data.list
+# Demonstrates: task, when, reason, gather_docs
 
 task answer_question
   needs question: Text
@@ -173,8 +183,8 @@ task answer_question
   do
     if question == ""
       give ""
-    pages = data.list("page:")
-    answer = reason "You are a FORGE language expert. Using the available documentation pages ({pages}), answer this question accurately and concisely.\n\nIMPORTANT: Every time you mention a FORGE concept that has a doc page, you MUST link it using markdown. Use the format [name](/docs?slug=slug). Available doc slugs: getting-started, principles, roadmap, home, task, agent, flow, pool, system, event, states, when, pure, boundary, requires, warden. For example, write [pool](/docs?slug=pool) not just 'pool'. Never mention a concept as plain text if it has a doc slug.\n\nQuestion: {question}"
+    docs = gather_docs()
+    answer = reason "You are a FORGE language expert. Use ONLY the documentation below to answer. Do not invent syntax.\n\n{docs}\n\nIMPORTANT: Every time you mention a FORGE concept that has a doc page, you MUST link it using markdown. Use the format [name](/docs?slug=slug). Available doc slugs: getting-started, principles, roadmap, home, task, agent, flow, pool, system, event, states, when, pure, boundary, requires, warden. For example, write [pool](/docs?slug=pool) not just 'pool'. Never mention a concept as plain text if it has a doc slug.\n\nQuestion: {question}"
     when answer.sure -> give answer
     when answer.unsure -> give "I'm not fully confident, but here's what I found:\n{answer}"
     else -> give "I don't have enough information to answer that reliably."
@@ -304,38 +314,37 @@ agent search_agent
 #   Wave 4: publish
 
 flow generate_docs
-  needs sources: Text[]
+  needs sources: Text
   gives Text
 
   stage scan_files
-    file_contents = sources
-    say "Scanning {sources.len()} source files..."
-    give file_contents
+    say "Loaded documentation content"
+    give sources
 
   stage extract_tasks
     needs scan_files.*
-    signatures = reason "Extract all task declarations from this FORGE source code.\nFor each task, provide: name, parameters, return type, and a one-line description.\nSource: {scan_files}"
+    signatures = reason "Extract all task declarations from the FORGE documentation below.\nFor each task, provide: name, parameters, return type, and a one-line description.\nUse ONLY what appears in the documentation. Do not invent syntax.\n\nDocumentation:\n{scan_files}"
     when signatures.sure -> give signatures
     when signatures.unsure -> give signatures
     else -> give "No task declarations found."
 
   stage extract_agents
     needs scan_files.*
-    signatures = reason "Extract all agent declarations from this FORGE source code.\nFor each agent: name, states, memory fields, handlers, and a one-line description.\nSource: {scan_files}"
+    signatures = reason "Extract all agent declarations from the FORGE documentation below.\nFor each agent: name, states, memory fields, handlers, and a one-line description.\nUse ONLY what appears in the documentation. Do not invent syntax.\n\nDocumentation:\n{scan_files}"
     when signatures.sure -> give signatures
     when signatures.unsure -> give signatures
     else -> give "No agent declarations found."
 
   stage extract_flows
     needs scan_files.*
-    signatures = reason "Extract all flow declarations from this FORGE source code.\nFor each flow: name, stages, dependencies, and a one-line description.\nSource: {scan_files}"
+    signatures = reason "Extract all flow declarations from the FORGE documentation below.\nFor each flow: name, stages, dependencies, and a one-line description.\nUse ONLY what appears in the documentation. Do not invent syntax.\n\nDocumentation:\n{scan_files}"
     when signatures.sure -> give signatures
     when signatures.unsure -> give signatures
     else -> give "No flow declarations found."
 
   stage generate_reference
     needs extract_tasks.*, extract_agents.*, extract_flows.*
-    reference = reason "Generate a comprehensive reference document in Markdown format.\nOrganize by category: Tasks, Agents, Flows.\nInclude code examples for each item.\n\nTasks: {extract_tasks}\nAgents: {extract_agents}\nFlows: {extract_flows}"
+    reference = reason "Generate a comprehensive reference document in Markdown format.\nOrganize by category: Tasks, Agents, Flows.\nInclude code examples for each item.\nUse ONLY the extracted information below. Do not invent syntax or examples.\n\nTasks: {extract_tasks}\nAgents: {extract_agents}\nFlows: {extract_flows}"
     when reference.sure -> give reference
     when reference.unsure -> give reference
     else -> give "Could not generate reference documentation."
@@ -522,8 +531,8 @@ endpoint api_search(q: Text) -> Text
 
 endpoint admin_generate_docs() -> Html
   nav = nav_bar("")
-  sources = data.list("page:")
-  result = generate_docs(sources)
+  docs = gather_docs()
+  result = generate_docs(docs)
   body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Doc Generation</h1><div class=\"alert alert-success\"><span>{result}</span></div><a href=\"/docs?slug=auto-reference\" class=\"btn btn-primary mt-4\">View Generated Reference</a><a href=\"/docs?slug=fact-check-report\" class=\"btn btn-outline mt-4 ml-2\">View Fact-Check Report</a></div>"
   give page_layout("Admin — Generate Docs", nav, body)
 

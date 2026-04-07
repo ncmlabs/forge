@@ -29,7 +29,7 @@ test.describe('Warden Supervision — Real API (issue #64)', () => {
   test('Q&A gives real answers', async ({ page }) => {
     test.setTimeout(60_000);
     // Use GET with query param (form POST sends wrong Content-Type)
-    await page.goto('/ask?question=What+is+a+warden+in+FORGE');
+    await page.goto('/ask_page?question=What+is+a+warden+in+FORGE');
     const answerCard = page.locator('.card .card-body');
     await expect(answerCard).toBeVisible({ timeout: 45_000 });
     const answer = await answerCard.textContent();
@@ -79,7 +79,7 @@ test.describe('Warden Supervision — Real API (issue #64)', () => {
   test('confidence tiers reflect real LLM confidence', async ({ page }) => {
     test.setTimeout(60_000);
     // Use GET with query param
-    await page.goto('/ask?question=What+are+the+14+primitives+in+FORGE');
+    await page.goto('/ask_page?question=What+are+the+14+primitives+in+FORGE');
     const answerCard = page.locator('.card .card-body');
     await expect(answerCard).toBeVisible({ timeout: 45_000 });
     // Confidence badge should be visible
@@ -102,7 +102,7 @@ test.describe('Warden Supervision — Real API (issue #64)', () => {
     await search.expectResultsVisible();
 
     // Use GET for Q&A — wait for server-side LLM call
-    await page.goto('/ask?question=Explain+FORGE+supervision', { timeout: 60_000 });
+    await page.goto('/ask_page?question=Explain+FORGE+supervision', { timeout: 60_000 });
     const answerCard = page.locator('.card .card-body');
     await expect(answerCard).toBeVisible({ timeout: 10_000 });
   });
