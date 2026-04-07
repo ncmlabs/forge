@@ -1012,6 +1012,61 @@ async fn wiki_docgen_stores_reference() {
 }
 
 #[tokio::test]
+async fn wiki_docgen_no_record_prefix() {
+    // Verify that data.store in flow stages doesn't leak {key: value} Record format.
+    let program = load_wiki_program();
+    let (tmp, storage) = temp_wiki_storage();
+
+    let config = forge::config::ForgeConfig::default_mock_config();
+    let executor = TaskExecutor::new(program, wiki_mock_registry(), None)
+        .with_storage(storage.clone())
+        .with_config(config.clone());
+
+    let server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let resp = reqwest::get(format!("http://127.0.0.1:{port}/admin_generate_docs"))
+        .await
+        .expect("request failed");
+    let _status = resp.status().as_u16();
+
+    // Check stored auto-reference page for Record format leak
+    if let Some(content) = storage.get("page:auto-reference").unwrap() {
+        eprintln!("STORED auto-reference (first 300 chars): {}", &content[..content.len().min(300)]);
+        assert!(
+            !content.starts_with("{reference:") && !content.starts_with("{reference "),
+            "auto-reference should not have Record prefix, got: {}",
+            &content[..content.len().min(200)]
+        );
+    } else {
+        eprintln!("STORED auto-reference: NONE (page not written)");
+    }
+
+    // Check stored fact-check-report page for Record format leak
+    if let Some(content) = storage.get("page:fact-check-report").unwrap() {
+        assert!(
+            !content.starts_with("{report:") && !content.starts_with("{report "),
+            "fact-check-report should not have Record prefix, got: {}",
+            &content[..content.len().min(200)]
+        );
+    }
+    drop(tmp);
+}
+
+#[tokio::test]
 async fn wiki_fact_check_all_agree() {
     let (base, _tmp) = spawn_wiki_server().await;
     let resp = reqwest::get(format!("{base}/admin_fact_check?slug=getting-started"))
