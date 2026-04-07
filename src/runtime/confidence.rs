@@ -42,14 +42,25 @@ impl fmt::Display for Value {
                 write!(f, "]")
             }
             Value::Record(fields) => {
-                write!(f, "{{")?;
-                for (i, (k, v)) in fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{k}: {}", v.value)?;
+                // When a Record has a single field, display just the value.
+                // This handles flow stage outputs (wrapped as Records by the
+                // executor) being interpolated in strings or stored via
+                // data.store — users expect the inner text, not {key: value}.
+                if fields.len() == 1 {
+                    let val = fields.values().next().unwrap();
+                    return write!(f, "{}", val.value);
                 }
-                write!(f, "}}")
+                // Multi-field Records: join values with newlines for readable
+                // text output (e.g., stage with multiple bindings).
+                let mut first = true;
+                for v in fields.values() {
+                    if !first {
+                        writeln!(f)?;
+                    }
+                    first = false;
+                    write!(f, "{}", v.value)?;
+                }
+                Ok(())
             }
             Value::Array(items) => {
                 write!(f, "[")?;
