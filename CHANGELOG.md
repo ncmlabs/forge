@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Wiki Auto Reference & Fact-Check Report UX** — fixed Record serialization leak (`{reference:` / `{report:` prefix) by changing `Value::Record` Display to output values instead of `{key: value}` debug format; moved `data.store` into generating stages; improved extraction prompts to produce structured markdown; restructured fact-check output with summary table and collapsible per-claim verdicts; added intro context to both pages (#124)
 - **Wiki Q&A, search, and auto-reference grounded in actual docs** — `answer_question`, `search_docs`, and `generate_docs` flow now inject real page content into the LLM context via `gather_docs`, eliminating hallucinated FORGE syntax (#122)
 
 ### Changed
