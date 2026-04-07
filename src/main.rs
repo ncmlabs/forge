@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use forge::ast::{Expr, TemplatePart, TopLevel};
 use forge::portability::{
@@ -502,6 +502,30 @@ fn parse_or_exit(source: &str, file: &Path) -> forge::ast::Program {
     }
 }
 
+/// Build a [`SkillExecutor`] from config when the `[skills]` section is present.
+fn build_skill_executor(
+    config: &forge::config::ForgeConfig,
+    providers: &Arc<forge::llm::registry::ProviderRegistry>,
+    tracer: Option<&forge::tracer::Tracer>,
+) -> Option<Arc<forge::runtime::skill_executor::SkillExecutor>> {
+    let skills_cfg = config.skills.as_ref()?;
+    let dirs = skills_cfg.skill_dirs_or_default();
+    let loaded = forge::runtime::skill_loader::SkillLoader::load_from_dirs(&dirs);
+    let mut registry = forge::runtime::skill_registry::SkillRegistry::new();
+    for skill in loaded {
+        registry.register(skill);
+    }
+    let shared = Arc::new(Mutex::new(registry));
+    let mut executor =
+        forge::runtime::skill_executor::SkillExecutor::new(Arc::clone(providers), shared);
+    executor.max_turns = skills_cfg.max_turns_or_default();
+    executor.default_timeout = std::time::Duration::from_secs(skills_cfg.timeout_or_default());
+    if let Some(t) = tracer {
+        executor = executor.with_tracer(Arc::new(t.clone()));
+    }
+    Some(Arc::new(executor))
+}
+
 async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     let source = read_source(file)?;
     let program = parse_or_exit(&source, file);
@@ -532,6 +556,7 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     let config_clone = config.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
 
     let tracer = if trace
         || std::env::var("FORGE_TRACE")
@@ -543,8 +568,13 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
         None
     };
 
-    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer)
-        .with_config(config_clone);
+    let skill_exec = build_skill_executor(&config_clone, &providers, tracer.as_ref());
+    let mut executor =
+        forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
+            .with_config(config_clone);
+    if let Some(se) = skill_exec {
+        executor = executor.with_skill_executor(se);
+    }
 
     match executor.run().await {
         Ok(_) => {}
@@ -617,6 +647,7 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     let config_clone = config.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
 
     let tracer = if trace
         || std::env::var("FORGE_TRACE")
@@ -628,9 +659,16 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
         None
     };
 
-    let executor =
-        forge::runtime::executor::TaskExecutor::new(composed.program, Arc::new(registry), tracer)
-            .with_config(config_clone);
+    let skill_exec = build_skill_executor(&config_clone, &providers, tracer.as_ref());
+    let mut executor = forge::runtime::executor::TaskExecutor::new(
+        composed.program,
+        Arc::clone(&providers),
+        tracer,
+    )
+    .with_config(config_clone);
+    if let Some(se) = skill_exec {
+        executor = executor.with_skill_executor(se);
+    }
 
     match executor.run().await {
         Ok(_) => {}
@@ -813,10 +851,18 @@ fn try_build_executor_multi(
 
     let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
 
-    let executor =
-        forge::runtime::executor::TaskExecutor::new(composed.program, Arc::new(registry), tracer)
-            .with_config(config.clone());
+    let skill_exec = build_skill_executor(&config, &providers, tracer.as_ref());
+    let mut executor = forge::runtime::executor::TaskExecutor::new(
+        composed.program,
+        Arc::clone(&providers),
+        tracer,
+    )
+    .with_config(config.clone());
+    if let Some(se) = skill_exec {
+        executor = executor.with_skill_executor(se);
+    }
 
     Ok((executor, config))
 }
@@ -874,9 +920,15 @@ fn try_build_executor(
 
     let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
 
-    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer)
-        .with_config(config.clone());
+    let skill_exec = build_skill_executor(&config, &providers, tracer.as_ref());
+    let mut executor =
+        forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
+            .with_config(config.clone());
+    if let Some(se) = skill_exec {
+        executor = executor.with_skill_executor(se);
+    }
 
     Ok((executor, config))
 }
