@@ -1,0 +1,13 @@
+# exec acceptance test: exec composes with reason via >>
+use
+  llm.reason
+
+task summarize_dir
+  gives Text
+  do
+    summary = exec "ls -la" >> reason "List the file count from: {_pipe}"
+    when summary.sure -> give summary
+    else -> give "could not summarize"
+
+fn main
+  say summarize_dir()
