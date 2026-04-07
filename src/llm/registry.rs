@@ -1,8 +1,8 @@
 use crate::config::ForgeConfig;
 use crate::llm::providers::build_provider;
 use crate::llm::{
-    BoxedProvider, CapabilityHint, CompletionRequest, CompletionResponse, LLMProvider,
-    ProviderError,
+    BoxedProvider, CapabilityHint, CompletionRequest, CompletionResponse,
+    CompletionWithToolsResponse, LLMProvider, ProviderError, ToolDefinition,
 };
 use std::collections::HashMap;
 
@@ -164,6 +164,24 @@ impl ProviderRegistry {
                 }
             }
         }
+    }
+
+    /// Resolve provider and complete with tool-use support (for skill execution).
+    pub async fn resolve_and_complete_with_tools(
+        &self,
+        request: CompletionRequest,
+        tools: &[ToolDefinition],
+        hint: Option<&CapabilityHint>,
+    ) -> Result<CompletionWithToolsResponse, ProviderError> {
+        let provider_name = self.choose_provider(hint)?;
+        let provider =
+            self.providers
+                .get(&provider_name)
+                .ok_or_else(|| ProviderError::Unavailable {
+                    provider: provider_name.clone(),
+                    reason: "not found in registry".to_string(),
+                })?;
+        provider.complete_with_tools(request, tools).await
     }
 
     pub fn get(&self, name: &str) -> Option<&BoxedProvider> {

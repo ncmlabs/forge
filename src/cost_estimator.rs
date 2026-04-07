@@ -205,6 +205,9 @@ impl CostWalker {
                 let tokens_out = 200 * multiplier;
                 self.add_op("search", context.to_string(), tokens_in, tokens_out);
             }
+            Expr::Exec(_) => {
+                // exec has zero token cost (direct CLI, no LLM)
+            }
             Expr::TryOr(a, b) => {
                 self.walk_expr(a, context, multiplier);
                 self.walk_expr(b, context, multiplier);

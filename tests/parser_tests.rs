@@ -236,6 +236,32 @@ fn parse_search_expression() {
 }
 
 #[test]
+fn parse_exec_expression() {
+    let prog = parse_task_with("x = exec \"git status\"");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Exec(inner) => match &inner.node {
+            Expr::Template(parts) => match &parts[0].node {
+                TemplatePart::Text(t) => assert_eq!(t, "git status"),
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected template"),
+        },
+        other => panic!("expected Exec, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_exec_with_variable() {
+    let prog = parse_task_with("x = exec cmd");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Exec(inner) => {
+            assert!(matches!(&inner.node, Expr::Ident(name) if name == "cmd"));
+        }
+        other => panic!("expected Exec, got {:?}", other),
+    }
+}
+
+#[test]
 fn parse_try_or_expression() {
     let prog = parse_task_with("x = try search \"query\" or \"default\"");
     match bind_expr(first_stmt(&prog)) {

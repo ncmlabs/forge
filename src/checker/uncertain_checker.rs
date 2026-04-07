@@ -134,7 +134,7 @@ fn check_stmt(
 fn expr_is_oracle(expr: &Spanned<Expr>) -> bool {
     matches!(
         &expr.node,
-        Expr::Reason(_) | Expr::Classify(_) | Expr::Search(_) | Expr::Recall(_)
+        Expr::Reason(_) | Expr::Classify(_) | Expr::Search(_) | Expr::Recall(_) | Expr::Exec(_)
     )
 }
 

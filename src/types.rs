@@ -86,6 +86,10 @@ pub enum ConfidenceSource {
     KnowledgeRecall(f32),
     /// Imported from an external agent package (confidence = capped value)
     ImportedKnowledge(f32),
+    /// From direct CLI execution — always uncertain (external process)
+    ExecResult(f32),
+    /// From an external skill invocation (host-provided capability)
+    SkillInvocation(f32),
 }
 
 // ── Conversions ──────────────────────────────────────────────

@@ -313,6 +313,50 @@ impl Tracer {
         );
     }
 
+    // ── Exec tracing (issue #40) ──────────────────────────────────────────
+
+    pub fn exec_call(&self, command: &str) {
+        self.emit(
+            "exec_call",
+            serde_json::json!({
+                "command": command,
+            }),
+        );
+    }
+
+    pub fn exec_return(&self, command: &str, success: bool, duration_ms: u64) {
+        self.emit(
+            "exec_return",
+            serde_json::json!({
+                "command": command,
+                "success": success,
+                "duration_ms": duration_ms,
+            }),
+        );
+    }
+
+    // ── Skill tracing (issue #40) ──────────────────────────────────────────
+
+    pub fn skill_call(&self, skill_name: &str) {
+        self.emit(
+            "skill_call",
+            serde_json::json!({
+                "skill": skill_name,
+            }),
+        );
+    }
+
+    pub fn skill_return(&self, skill_name: &str, success: bool, duration_ms: u64) {
+        self.emit(
+            "skill_return",
+            serde_json::json!({
+                "skill": skill_name,
+                "success": success,
+                "duration_ms": duration_ms,
+            }),
+        );
+    }
+
     pub fn supervision_tree(&self, warden: &str, active: &[&str], degraded: &[&str]) {
         self.emit(
             "supervision_tree",

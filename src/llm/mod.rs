@@ -6,7 +6,7 @@ pub mod providers;
 pub mod registry;
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -171,6 +171,59 @@ pub enum ProviderError {
     Network(String),
 }
 
+// ── Tool-use types (issue #40 — skill bridge) ───────────────────────────────
+
+/// Definition of a tool the LLM can call during skill execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// A tool call requested by the LLM.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolCallRequest {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// Response from an LLM call that may include tool use requests.
+#[derive(Debug, Clone)]
+pub struct CompletionWithToolsResponse {
+    pub content: String,
+    pub tool_calls: Vec<ToolCallRequest>,
+    pub tokens_in: u32,
+    pub tokens_out: u32,
+    pub latency_ms: u64,
+    pub cost_usd: f32,
+    pub model_used: String,
+    pub provider_name: String,
+}
+
+impl CompletionWithToolsResponse {
+    /// Heuristic confidence (same as CompletionResponse).
+    pub fn estimate_confidence(&self) -> f32 {
+        let hedging_phrases = [
+            "i'm not sure",
+            "i think",
+            "possibly",
+            "might be",
+            "i cannot",
+            "i don't know",
+            "unclear",
+            "it depends",
+        ];
+        let lower = self.content.to_lowercase();
+        let hedge_count = hedging_phrases
+            .iter()
+            .filter(|p| lower.contains(*p))
+            .count();
+        (0.85 - (hedge_count as f32 * 0.08)).max(0.3)
+    }
+}
+
 // ── The trait every provider implements ────────────────────────────────────────
 
 #[async_trait]
@@ -182,6 +235,26 @@ pub trait LLMProvider: Send + Sync {
         &self,
         request: CompletionRequest,
     ) -> Result<CompletionResponse, ProviderError>;
+
+    /// Complete with tool-use support (for skill execution).
+    /// Default implementation falls back to regular complete() with no tool calls.
+    async fn complete_with_tools(
+        &self,
+        request: CompletionRequest,
+        _tools: &[ToolDefinition],
+    ) -> Result<CompletionWithToolsResponse, ProviderError> {
+        let resp = self.complete(request).await?;
+        Ok(CompletionWithToolsResponse {
+            content: resp.content,
+            tool_calls: vec![],
+            tokens_in: resp.tokens_in,
+            tokens_out: resp.tokens_out,
+            latency_ms: resp.latency_ms,
+            cost_usd: resp.cost_usd,
+            model_used: resp.model_used,
+            provider_name: resp.provider_name,
+        })
+    }
 
     async fn health_check(&self) -> Result<(), ProviderError> {
         self.complete(CompletionRequest::simple("ping").with_max_tokens(1))
