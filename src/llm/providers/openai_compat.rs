@@ -276,6 +276,7 @@ impl LLMProvider for OpenAICompatProvider {
 
         Ok(CompletionResponse {
             content,
+            tool_calls: vec![],
             tokens_in,
             tokens_out,
             latency_ms,

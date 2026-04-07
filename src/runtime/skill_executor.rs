@@ -163,10 +163,12 @@ impl SkillExecutor {
         let mut prompt = initial_prompt.to_string();
 
         for turn in 0..self.max_turns {
-            let request = CompletionRequest::simple(&prompt).with_system(system.to_string());
+            let request = CompletionRequest::simple(&prompt)
+                .with_system(system.to_string())
+                .with_tools(tools.to_vec());
             let response = self
                 .providers
-                .resolve_and_complete_with_tools(request, tools, None)
+                .resolve_and_complete(request, None)
                 .await
                 .map_err(|e| SkillError::ProviderError(e.to_string()))?;
 
