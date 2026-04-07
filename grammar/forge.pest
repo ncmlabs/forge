@@ -55,7 +55,7 @@ keyword = @{
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
     | "match" | "recall" | "learn" | "spawn" | "find" | "retire"
-    | "exportable" | "import" | "from" | "as" )
+    | "exec" | "exportable" | "import" | "from" | "as" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -559,7 +559,8 @@ postfix_op   = {
 }
 
 pipe_term = {
-    find_expr
+    exec_expr
+  | find_expr
   | reason_expr
   | classify_expr
   | search_expr
@@ -576,6 +577,7 @@ find_expr = {
   | "find" ~ _s ~ string_arg
 }
 
+exec_expr     = { "exec" ~ _s ~ string_arg }
 reason_expr   = { "reason" ~ _s ~ string_arg }
 classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list }
 search_expr   = { "search" ~ _s ~ string_arg }

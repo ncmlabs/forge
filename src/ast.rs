@@ -472,6 +472,8 @@ pub enum Expr {
     Search(Box<Spanned<Expr>>),
     /// `recall "query"` — retrieve from agent knowledge store
     Recall(Box<Spanned<Expr>>),
+    /// `exec "command"` — direct CLI execution, returns uncertain<Text>
+    Exec(Box<Spanned<Expr>>),
     /// `find "alias"` / `find all template [where lifecycle == state]`
     Find(Box<FindExpr>),
     /// `try expr or expr`

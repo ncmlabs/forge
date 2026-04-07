@@ -160,6 +160,28 @@ impl ConfidentValue {
             source: ConfidenceSource::Derived(confidence),
         }
     }
+
+    /// Create from CLI exec result — never deterministic (Principle I).
+    /// Exit code 0 → 0.9 confidence, non-zero → 0.3.
+    pub fn from_exec(value: Value, confidence: f32) -> Self {
+        let confidence = clamp_confidence(confidence).min(0.95);
+        Self {
+            value,
+            confidence,
+            source: ConfidenceSource::ExecResult(confidence),
+        }
+    }
+
+    /// Create from external skill invocation — never deterministic (Principle I).
+    /// Capped at 0.99 because external systems are oracles.
+    pub fn from_skill(value: Value, confidence: f32) -> Self {
+        let confidence = clamp_confidence(confidence).min(0.99);
+        Self {
+            value,
+            confidence,
+            source: ConfidenceSource::SkillInvocation(confidence),
+        }
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────
@@ -352,5 +374,42 @@ mod tests {
         assert_eq!(format!("{}", Value::Number(3.15)), "3.15");
         assert_eq!(format!("{}", Value::Bool(true)), "true");
         assert_eq!(format!("{}", Value::Unit), "()");
+    }
+
+    // -- exec constructors (issue #40) --
+
+    #[test]
+    fn from_exec_caps_at_0_95() {
+        let cv = ConfidentValue::from_exec(text_val("output"), 1.0);
+        assert_eq!(cv.confidence, 0.95);
+        assert!(matches!(cv.source, ConfidenceSource::ExecResult(0.95)));
+    }
+
+    #[test]
+    fn from_exec_success_confidence() {
+        let cv = ConfidentValue::from_exec(text_val("ok"), 0.9);
+        assert_eq!(cv.confidence, 0.9);
+        assert!(cv.sure());
+    }
+
+    #[test]
+    fn from_exec_failure_confidence() {
+        let cv = ConfidentValue::from_exec(text_val("error"), 0.3);
+        assert_eq!(cv.confidence, 0.3);
+        assert!(cv.unreliable());
+    }
+
+    #[test]
+    fn from_skill_caps_at_0_99() {
+        let cv = ConfidentValue::from_skill(text_val("result"), 1.0);
+        assert_eq!(cv.confidence, 0.99);
+        assert!(matches!(cv.source, ConfidenceSource::SkillInvocation(0.99)));
+    }
+
+    #[test]
+    fn from_skill_preserves_confidence() {
+        let cv = ConfidentValue::from_skill(text_val("result"), 0.85);
+        assert_eq!(cv.confidence, 0.85);
+        assert!(cv.sure());
     }
 }

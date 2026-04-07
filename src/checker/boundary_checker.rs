@@ -473,7 +473,7 @@ fn check_refs_in_expr(
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
             }
         }
-        Expr::Reason(inner) | Expr::Recall(inner) => {
+        Expr::Reason(inner) | Expr::Recall(inner) | Expr::Exec(inner) => {
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
         }
         Expr::Search(inner) => {

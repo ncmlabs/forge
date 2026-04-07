@@ -1,0 +1,23 @@
+# FORGE skill bridge integration test — issue #40
+# Agent that uses exec to search the skills.sh ecosystem.
+
+task find_skill
+  needs query: Text
+  gives Text
+  do
+    result = exec "npx skills find \"{query}\" 2>&1 | grep -E 'installs|skills\\.sh' | head -10"
+    when result.sure -> give result
+    else -> give "No skills found for: {query}"
+
+task count_results
+  needs query: Text
+  gives Text
+  do
+    raw = exec "npx skills find \"{query}\" 2>&1 | grep -c 'installs'"
+    when raw.sure -> give "{raw} skills found"
+    else -> give "0 skills found"
+
+fn main
+  say "=== FORGE Skill Finder ==="
+  say find_skill("testing")
+  say "=== Done ==="

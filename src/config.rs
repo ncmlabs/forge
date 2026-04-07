@@ -10,6 +10,8 @@ pub struct ForgeConfig {
     pub server: Option<ServerConfig>,
     pub system: Option<SystemConfig>,
     pub web: Option<WebConfig>,
+    pub exec: Option<ExecConfig>,
+    pub skills: Option<SkillsConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -72,6 +74,53 @@ impl ServerConfig {
 
     pub fn port_or_default(&self) -> u16 {
         self.port.unwrap_or(3000)
+    }
+}
+
+/// Configuration for the `exec` primitive (CLI execution).
+#[derive(Debug, Deserialize, Clone)]
+pub struct ExecConfig {
+    pub default_timeout: Option<u64>,
+    pub default_dir: Option<String>,
+    pub allowed_commands: Option<Vec<String>>,
+    pub denied_commands: Option<Vec<String>>,
+    pub max_output_bytes: Option<usize>,
+}
+
+impl ExecConfig {
+    pub fn timeout_or_default(&self) -> u64 {
+        self.default_timeout.unwrap_or(30)
+    }
+}
+
+/// Configuration for the skill bridge (SKILL.md loading and execution).
+#[derive(Debug, Deserialize, Clone)]
+pub struct SkillsConfig {
+    pub skill_dirs: Option<Vec<String>>,
+    pub timeout_secs: Option<u64>,
+    pub max_turns: Option<usize>,
+}
+
+impl SkillsConfig {
+    pub fn timeout_or_default(&self) -> u64 {
+        self.timeout_secs.unwrap_or(30)
+    }
+
+    pub fn max_turns_or_default(&self) -> usize {
+        self.max_turns.unwrap_or(10)
+    }
+
+    pub fn skill_dirs_or_default(&self) -> Vec<std::path::PathBuf> {
+        self.skill_dirs
+            .as_ref()
+            .map(|dirs| dirs.iter().map(std::path::PathBuf::from).collect())
+            .unwrap_or_else(|| {
+                let mut defaults = vec![std::path::PathBuf::from("./skills")];
+                if let Some(home) = dirs::home_dir() {
+                    defaults.push(home.join(".forge/skills"));
+                }
+                defaults
+            })
     }
 }
 
@@ -349,6 +398,8 @@ impl ForgeConfig {
             server: None,
             system: None,
             web: None,
+            exec: None,
+            skills: None,
         }
     }
 }
@@ -401,6 +452,8 @@ mod tests {
             server: None,
             system: None,
             web: None,
+            exec: None,
+            skills: None,
         };
         assert!(matches!(
             config.validate(),
@@ -447,6 +500,8 @@ mod tests {
             server: None,
             system: None,
             web: None,
+            exec: None,
+            skills: None,
         };
         assert!(matches!(
             config.validate(),

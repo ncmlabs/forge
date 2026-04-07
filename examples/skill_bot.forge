@@ -1,0 +1,32 @@
+# FORGE skill bridge example — issue #40
+# Demonstrates the exec primitive for CLI execution.
+
+task check_repo
+  needs repo_path: Text
+  gives Text
+  do
+    status = exec "git -C {repo_path} status --short"
+    when status.sure -> give status
+    when status.unsure -> give "Repository status unclear"
+    else -> escalate to human
+
+task get_recent_commits
+  needs repo_path: Text
+  gives Text
+  do
+    log = exec "git -C {repo_path} log --oneline -5"
+    when log.sure -> give log
+    else -> give "Could not read git log"
+
+task run_and_report
+  needs command: Text
+  gives Text
+  do
+    output = exec command
+    when output.sure -> give output
+    else -> give "Command failed or timed out"
+
+fn main
+  say "=== FORGE Exec Primitive Demo ==="
+  say run_and_report("echo 'Hello from exec!'")
+  say "=== Demo complete ==="

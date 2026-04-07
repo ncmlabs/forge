@@ -84,6 +84,15 @@ pub struct CapabilityRegistry {
 }
 
 impl CapabilityRegistry {
+    /// Create a registry with builtins + external skill capabilities.
+    pub fn with_skills(skill_signatures: HashMap<String, CapabilitySignature>) -> Self {
+        let mut registry = Self::builtin();
+        for (name, sig) in skill_signatures {
+            registry.capabilities.insert(name, sig);
+        }
+        registry
+    }
+
     /// Create a registry with all built-in capabilities.
     pub fn builtin() -> Self {
         let mut caps = HashMap::new();
@@ -207,6 +216,17 @@ impl CheckContext {
     pub fn new(_file: &str) -> Self {
         Self {
             registry: CapabilityRegistry::builtin(),
+            errors: Vec::new(),
+        }
+    }
+
+    /// Create a check context with external skill capabilities registered.
+    pub fn with_skills(
+        _file: &str,
+        skill_signatures: HashMap<String, CapabilitySignature>,
+    ) -> Self {
+        Self {
+            registry: CapabilityRegistry::with_skills(skill_signatures),
             errors: Vec::new(),
         }
     }
@@ -386,6 +406,7 @@ fn infer_type(expr: &Spanned<Expr>) -> Option<ForgeType> {
         Expr::BoolLit(_) => Some(ForgeType::Bool),
         Expr::Template(_) => Some(ForgeType::Text),
         Expr::Reason(_) => Some(ForgeType::Text),
+        Expr::Exec(_) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Classification),
         Expr::Search(_) => Some(ForgeType::Results),
         Expr::Compose(parts) => parts.last().and_then(infer_type),
@@ -400,6 +421,7 @@ fn infer_input_type(expr: &Spanned<Expr>) -> Option<ForgeType> {
         // Most callables accept Text in the POC
         Expr::Call(_) => Some(ForgeType::Text),
         Expr::Reason(_) => Some(ForgeType::Text),
+        Expr::Exec(_) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Text),
         Expr::Search(_) => Some(ForgeType::Text),
         _ => None,

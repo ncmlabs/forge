@@ -142,6 +142,8 @@ pub struct TaskExecutor {
     html_context: AtomicBool,
     /// Standalone knowledge store for endpoint/webhook context (no agent required).
     knowledge_store: Option<Arc<Mutex<crate::runtime::knowledge_store::KnowledgeStore>>>,
+    /// Skill executor for LLM-mediated skill bridge (issue #40).
+    skill_executor: Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
 }
 
 impl Clone for TaskExecutor {
@@ -166,6 +168,7 @@ impl Clone for TaskExecutor {
             config: self.config.clone(),
             html_context: AtomicBool::new(self.html_context.load(Ordering::Relaxed)),
             knowledge_store: self.knowledge_store.clone(),
+            skill_executor: self.skill_executor.clone(),
         }
     }
 }
@@ -219,12 +222,22 @@ impl TaskExecutor {
             config: None,
             html_context: AtomicBool::new(false),
             knowledge_store: None,
+            skill_executor: None,
         }
     }
 
     /// Attach a ForgeConfig for system runtime configuration.
     pub fn with_config(mut self, config: crate::config::ForgeConfig) -> Self {
         self.config = Some(config);
+        self
+    }
+
+    /// Attach a skill executor for LLM-mediated skill bridge (issue #40).
+    pub fn with_skill_executor(
+        mut self,
+        executor: Arc<crate::runtime::skill_executor::SkillExecutor>,
+    ) -> Self {
+        self.skill_executor = Some(executor);
         self
     }
 
@@ -1519,6 +1532,42 @@ impl TaskExecutor {
                         }
                     }
 
+                    // skill.namespace.method() dispatch — issue #40
+                    if let Expr::FieldAccess(inner, namespace) = &obj_expr.node {
+                        if let Expr::Ident(ref prefix) = inner.node {
+                            if prefix == "skill" {
+                                if let Some(ref skill_executor) = self.skill_executor {
+                                    let skill_name = namespace.node.clone();
+                                    let method_name = method.node.clone();
+                                    let mut arg_map = std::collections::HashMap::new();
+                                    for arg in args {
+                                        let val = self.eval_expr(&arg.node.value, env).await?;
+                                        let key = arg
+                                            .node
+                                            .label
+                                            .as_ref()
+                                            .map(|l| l.node.clone())
+                                            .unwrap_or_else(|| format!("_{}", arg_map.len()));
+                                        arg_map.insert(key, val);
+                                    }
+                                    return skill_executor
+                                        .execute(&skill_name, &method_name, &arg_map)
+                                        .await
+                                        .map_err(|e| {
+                                            RuntimeError::FlowError(format!(
+                                                "skill.{}.{}: {}",
+                                                skill_name, method_name, e
+                                            ))
+                                        });
+                                } else {
+                                    return Err(RuntimeError::Unsupported(
+                                        "skill calls require a skill executor — configure [skills] in forge.config.toml".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
                     // Pool .send() interception — pools are declarations, not runtime values
                     if method.node == "send" {
                         if let Expr::Ident(ref name) = obj_expr.node {
@@ -1899,6 +1948,50 @@ impl TaskExecutor {
                         fields.insert(key, val);
                     }
                     Ok(ConfidentValue::deterministic(Value::Record(fields)))
+                }
+
+                // ── CLI execution (issue #40) ────────────────────────────────
+                Expr::Exec(command_expr) => {
+                    let command = self.eval_expr(command_expr, env).await?;
+                    let cmd_str = format!("{}", command.value);
+
+                    if let Some(ref tracer) = self.tracer {
+                        tracer.exec_call(&cmd_str);
+                    }
+
+                    let start = std::time::Instant::now();
+
+                    let result = tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        tokio::process::Command::new("sh")
+                            .arg("-c")
+                            .arg(&cmd_str)
+                            .output(),
+                    )
+                    .await;
+
+                    let elapsed = start.elapsed();
+
+                    match result {
+                        Ok(Ok(output)) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                            let success = output.status.success();
+                            let confidence = if success { 0.9 } else { 0.3 };
+                            let text = if stdout.is_empty() { stderr } else { stdout };
+
+                            if let Some(ref tracer) = self.tracer {
+                                tracer.exec_return(&cmd_str, success, elapsed.as_millis() as u64);
+                            }
+
+                            Ok(ConfidentValue::from_exec(Value::Text(text), confidence))
+                        }
+                        Ok(Err(e)) => Err(RuntimeError::FlowError(format!("exec failed: {}", e))),
+                        Err(_) => Err(RuntimeError::FlowError(format!(
+                            "exec timed out after 30s: {}",
+                            cmd_str
+                        ))),
+                    }
                 }
 
                 // ── LLM expressions ───────────────────────────────────────────

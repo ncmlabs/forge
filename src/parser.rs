@@ -482,6 +482,13 @@ fn build_string_arg(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     }
 }
 
+fn build_exec_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let span = to_span(&pair);
+    let inner = pair.into_inner().next().unwrap();
+    let arg = build_string_arg(inner)?;
+    Ok(Spanned::new(Expr::Exec(Box::new(arg)), span))
+}
+
 fn build_reason_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let span = to_span(&pair);
     let inner = pair.into_inner().next().unwrap();
@@ -539,6 +546,7 @@ fn build_try_or_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
 fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
+        Rule::exec_expr => build_exec_expr(inner),
         Rule::find_expr => build_find_expr(inner),
         Rule::reason_expr => build_reason_expr(inner),
         Rule::classify_expr => build_classify_expr(inner),

@@ -1,0 +1,13 @@
+# exec acceptance test: when dispatch routes on confidence
+task check_command
+  needs cmd: Text
+  gives Text
+  do
+    output = exec cmd
+    when output.sure -> give "SURE:{output}"
+    when output.unsure -> give "UNSURE:{output}"
+    else -> give "LOW:{output}"
+
+fn main
+  say check_command("echo works")
+  say check_command("sh -c 'echo oops >&2; exit 1'")

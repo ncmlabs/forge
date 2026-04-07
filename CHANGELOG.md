@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`exec` primitive** — first-class CLI execution expression (`exec "command"`) that runs shell commands and returns `uncertain<Text>` with confidence derived from exit code (0 → 0.9, non-zero → 0.3); enforced by pure checker (exec in pure = compile error), uncertain checker (must handle with `when`), and accountability tracer (`exec_call`/`exec_return` events); composes via `>>` with LLM operations (#40)
+- **Host skill bridge** — LLM-mediated execution of SKILL.md ecosystem skills via `skill.namespace.method()` syntax; skills loaded from directories, parsed from YAML frontmatter, executed through an agentic loop where the LLM reads instructions and uses tools (bash, HTTP); results wrapped as `uncertain<T>` with confidence capped at 0.99; pure checker rejects skill calls; full trace events (`skill_call`/`skill_return`); config via `[skills]` TOML section (#40)
+- **LLM tool-use extension** — `LLMProvider` trait extended with `complete_with_tools()` for multi-turn tool-use; `ToolDefinition`, `ToolCallRequest`, `CompletionWithToolsResponse` types; `ProviderRegistry::resolve_and_complete_with_tools()` method; default implementation falls back to regular completion (#40)
+- **`ConfidenceSource::ExecResult`** — confidence source for CLI execution results, capped at 0.95 (#40)
+- **`ConfidenceSource::SkillInvocation`** — confidence source for external skill results, capped at 0.99 (#40)
 - **Wiki documentation** — `examples/wiki/README.md` (quick start, configuration, endpoints, deployment guide) and `examples/wiki/ARCHITECTURE.md` (system diagrams, data/event flows, supervision tree, complete 14-primitive feature map); updated top-level README with wiki showcase section (#66)
 
 ### Fixed
