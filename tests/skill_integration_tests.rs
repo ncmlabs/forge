@@ -47,7 +47,14 @@ fn create_temp_skill(name: &str, description: &str, body: &str) -> tempfile::Tem
 #[test]
 fn skill_loader_parses_local_find_skills() {
     // Parse the real find-skills SKILL.md if it exists locally
-    let skill_path = PathBuf::from(env!("HOME")).join(".claude/skills/find-skills/SKILL.md");
+    let home = match std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+        Ok(h) => PathBuf::from(h),
+        Err(_) => {
+            eprintln!("Skipping: HOME/USERPROFILE not set");
+            return;
+        }
+    };
+    let skill_path = home.join(".claude/skills/find-skills/SKILL.md");
     if !skill_path.exists() {
         eprintln!("Skipping: ~/.claude/skills/find-skills/SKILL.md not found");
         return;
