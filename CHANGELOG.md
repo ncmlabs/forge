@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **SkillExecutor wiring** — `build_skill_executor()` helper loads skills from config directories and wires the executor at all four `TaskExecutor::new()` call sites, enabling `skill.namespace.method()` calls at runtime; respects `[skills]` config for dirs, timeout, and max turns; no-op when config section is absent (#130)
 - **`exec` primitive** — first-class CLI execution expression (`exec "command"`) that runs shell commands and returns `uncertain<Text>` with confidence derived from exit code (0 → 0.9, non-zero → 0.3); enforced by pure checker (exec in pure = compile error), uncertain checker (must handle with `when`), and accountability tracer (`exec_call`/`exec_return` events); composes via `>>` with LLM operations (#40)
 - **Host skill bridge** — LLM-mediated execution of SKILL.md ecosystem skills via `skill.namespace.method()` syntax; skills loaded from directories, parsed from YAML frontmatter, executed through an agentic loop where the LLM reads instructions and uses tools (bash, HTTP); results wrapped as `uncertain<T>` with confidence capped at 0.99; pure checker rejects skill calls; full trace events (`skill_call`/`skill_return`); config via `[skills]` TOML section (#40)
 - **LLM tool-use extension** — `ToolDefinition` and `ToolCallRequest` types for LLM tool-use; `MockProvider::with_tool_call_response()` for tool-call simulation in tests (#40)

@@ -193,6 +193,12 @@ fn skill_confidence_capped() {
 
 #[tokio::test]
 async fn exec_runs_npx_skills_find() {
+    // This test uses Unix-only piping (tail) and npx is too slow on Windows CI.
+    if cfg!(windows) {
+        eprintln!("Skipping: not supported on Windows");
+        return;
+    }
+
     // This test calls the real npx skills CLI — skip if not available
     let npx_check = std::process::Command::new("which")
         .arg("npx")
