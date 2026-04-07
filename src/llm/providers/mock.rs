@@ -14,6 +14,7 @@ pub struct MockProvider {
     default_response: String,
     sequence: Option<(Vec<String>, Arc<AtomicUsize>)>,
     tool_call_response: Option<Vec<ToolCallRequest>>,
+    tool_call_sequence: Option<(Vec<Vec<ToolCallRequest>>, Arc<AtomicUsize>)>,
 }
 
 impl MockProvider {
@@ -32,6 +33,7 @@ impl MockProvider {
             default_response: "mock response".to_string(),
             sequence: None,
             tool_call_response: None,
+            tool_call_sequence: None,
         }
     }
 
@@ -59,6 +61,14 @@ impl MockProvider {
         self.tool_call_response = Some(tool_calls);
         self
     }
+
+    /// Simulate multi-turn tool-use conversations.
+    /// Each entry is the tool calls for that turn. After the sequence is
+    /// exhausted, subsequent calls return no tool calls (draining, not cycling).
+    pub fn with_tool_call_sequence(mut self, sequence: Vec<Vec<ToolCallRequest>>) -> Self {
+        self.tool_call_sequence = Some((sequence, Arc::new(AtomicUsize::new(0))));
+        self
+    }
 }
 
 #[async_trait]
@@ -82,7 +92,16 @@ impl LLMProvider for MockProvider {
                 .unwrap_or_else(|| self.default_response.clone())
         };
 
-        let tool_calls = self.tool_call_response.clone().unwrap_or_default();
+        let tool_calls = if let Some((ref seq, ref counter)) = self.tool_call_sequence {
+            let idx = counter.fetch_add(1, Ordering::Relaxed);
+            if idx < seq.len() {
+                seq[idx].clone()
+            } else {
+                Vec::new()
+            }
+        } else {
+            self.tool_call_response.clone().unwrap_or_default()
+        };
 
         Ok(CompletionResponse {
             tokens_in: (req.prompt.len() / 4) as u32,
