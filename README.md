@@ -377,6 +377,31 @@ This is not a toy example — it is the actual `forge-sensei` program that teach
 
 ---
 
+## See it in action — the FORGE Wiki
+
+The [`examples/wiki/`](examples/wiki/) directory contains a complete documentation wiki built in FORGE — ~580 lines that exercise all 14 language primitives in a real, working application. Browse docs, search with LLM-powered confidence gating, ask questions, and auto-generate verified reference documentation.
+
+What the wiki demonstrates:
+
+- **Agents** with persistent memory and typed state machines (`content_manager`, `search_agent`, `qa_agent`)
+- **Flows** with parallel DAG execution (3 LLM extractions in parallel, then generation, then fact-checking)
+- **Pools** with majority-vote verification (3 independent checkers per claim)
+- **Warden** supervision with 5 failure policies and escalation chains
+- **Events** for reactive cross-agent communication (content changes trigger search re-indexing)
+- **Confidence gating** from LLM output through to color-coded UI badges
+- **Pure** rendering functions enforcing the determinism boundary
+- **System** composition wiring agents with `>>`
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+forge serve examples/wiki/server.forge -s examples/wiki/shared.forge --watch
+# Open http://127.0.0.1:3000/home
+```
+
+See the [Wiki README](examples/wiki/README.md) for the full guide and [Architecture](examples/wiki/ARCHITECTURE.md) for system diagrams and the complete feature map.
+
+---
+
 ## The nine principles
 
 Every feature in FORGE traces to one of nine principles. Every design decision is a refusal or an affirmation of these beliefs.
@@ -585,6 +610,7 @@ task analyze_contract
 ✅ system orchestration          — multi-agent wiring with shared event bus
 ✅ forge build                   — standalone native binaries with CLI + REPL
 ✅ forge-sensei                  — self-referential learning agent (FORGE teaching FORGE)
+✅ Wiki showcase                 — documentation wiki using all 14 primitives
 ```
 
 ### Coming next
@@ -593,7 +619,6 @@ task analyze_contract
 ⬜ Web runtime                   — HTML templates, static serving, hot-reload
 ⬜ HTTP client                   — web.fetch, webhooks, external integrations
 ⬜ WASM compilation              — Cranelift backend, browser target
-⬜ Wiki showcase                 — first real FORGE application
 ```
 
 ### Future layers
