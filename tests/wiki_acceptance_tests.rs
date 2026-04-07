@@ -1045,7 +1045,10 @@ async fn wiki_docgen_no_record_prefix() {
 
     // Check stored auto-reference page for Record format leak
     if let Some(content) = storage.get("page:auto-reference").unwrap() {
-        eprintln!("STORED auto-reference (first 300 chars): {}", &content[..content.len().min(300)]);
+        eprintln!(
+            "STORED auto-reference (first 300 chars): {}",
+            &content[..content.len().min(300)]
+        );
         assert!(
             !content.starts_with("{reference:") && !content.starts_with("{reference "),
             "auto-reference should not have Record prefix, got: {}",
