@@ -621,3 +621,20 @@ code {
 /* Arrow markers */
 .topo-arrow { fill: oklch(0.6 0.1 250 / 0.5); }
 .topo-arrow.active { fill: oklch(0.65 0.15 145); }
+
+/* ── Cost dashboard (issue #142) ───────────────────────────── */
+
+.cost-counter {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  letter-spacing: -0.02em;
+  transition: color 0.3s ease;
+}
+
+.cost-flash {
+  color: oklch(0.7 0.15 145) !important;
+  transition: color 0s;
+}
+
+#confidence-chart svg {
+  overflow: visible;
+}

@@ -2062,6 +2062,7 @@ impl TaskExecutor {
                             tokens_out: response.tokens_out,
                             cost_usd: response.cost_usd,
                             confidence,
+                            agent_name: self.agent_name.as_deref(),
                         });
                     }
 
@@ -2102,6 +2103,7 @@ impl TaskExecutor {
                             tokens_out: response.tokens_out,
                             cost_usd: response.cost_usd,
                             confidence,
+                            agent_name: self.agent_name.as_deref(),
                         });
                     }
 

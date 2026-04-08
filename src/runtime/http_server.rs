@@ -22,6 +22,7 @@ use tower_http::services::ServeDir;
 
 use crate::config::ServerConfig;
 use crate::runtime::confidence::{ConfidentValue, Value};
+use crate::runtime::cost_aggregator::SharedCostAggregator;
 use crate::runtime::event_bus::SharedEventBus;
 use crate::runtime::executor::{EndpointResult, TaskExecutor};
 use crate::runtime::instance_registry::SharedInstanceRegistry;
@@ -55,6 +56,8 @@ pub struct AppState {
     pub warden_snapshots: Option<SharedWardenSnapshots>,
     /// Static topology snapshot for topology introspection (issue #139).
     pub topology: Option<TopologySnapshot>,
+    /// Shared cost aggregator for token economy visibility (issue #142).
+    pub cost_aggregator: Option<SharedCostAggregator>,
 }
 
 impl AppState {
@@ -104,6 +107,7 @@ impl ForgeServer {
                 inspect_storage: None,
                 warden_snapshots: None,
                 topology: None,
+                cost_aggregator: None,
             },
             host,
             port,
@@ -193,6 +197,12 @@ impl ForgeServer {
         self
     }
 
+    /// Attach a cost aggregator for token economy visibility (issue #142).
+    pub fn with_cost_aggregator(mut self, agg: SharedCostAggregator) -> Self {
+        self.state.cost_aggregator = Some(agg);
+        self
+    }
+
     /// Get a handle to the reload broadcast sender (for the watcher to signal reloads).
     pub fn reload_sender(&self) -> Option<broadcast::Sender<()>> {
         self.state.reload_tx.clone()
@@ -227,7 +237,8 @@ impl ForgeServer {
             .route("/__forge/inspect/agents/:id", get(handle_inspect_agent))
             .route("/__forge/inspect/topology", get(handle_inspect_topology))
             .route("/__forge/inspect/wardens", get(handle_inspect_wardens))
-            .route("/__forge/inspect/storage", get(handle_inspect_storage));
+            .route("/__forge/inspect/storage", get(handle_inspect_storage))
+            .route("/__forge/inspect/costs", get(handle_inspect_costs));
 
         // CORS
         let cors = if self.cors_origins.is_empty() {
@@ -576,6 +587,18 @@ async fn handle_inspect_storage(
             serde_json::json!({"error": format!("{}", e)}),
         ),
     }
+}
+
+/// GET /__forge/inspect/costs — aggregated token/cost/confidence metrics (issue #142).
+async fn handle_inspect_costs(State(state): State<AppState>) -> Response {
+    let Some(ref agg) = state.cost_aggregator else {
+        return json_response(
+            StatusCode::OK,
+            serde_json::json!({"totals": {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cost_usd": 0.0}, "by_operation": {}, "by_provider_model": {}, "by_agent": {}, "confidence_histogram": [0,0,0,0,0,0,0,0,0,0], "uptime_secs": 0.0, "tokens_per_sec": 0.0}),
+        );
+    };
+    let snapshot = agg.read().await.snapshot();
+    json_response(StatusCode::OK, snapshot)
 }
 
 /// Helper: build a JSON response with the given status code.

@@ -1016,12 +1016,22 @@ async fn serve_program(
             }
         };
 
+        // Cost aggregator (issue #142) — subscribe before server consumes events_tx
+        let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
+            forge::runtime::cost_aggregator::CostAggregator::new(),
+        ));
+        forge::runtime::cost_aggregator::spawn_cost_listener(
+            events_tx.subscribe(),
+            cost_aggregator.clone(),
+        );
+
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_event_bus(event_bus)
                 .with_events_tx(events_tx)
                 .with_instance_registry(instance_registry)
-                .with_warden_snapshots(warden_snapshots);
+                .with_warden_snapshots(warden_snapshots)
+                .with_cost_aggregator(cost_aggregator);
 
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);
@@ -1176,13 +1186,23 @@ async fn serve_with_watch(
             }
         };
 
+        // Cost aggregator (issue #142)
+        let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
+            forge::runtime::cost_aggregator::CostAggregator::new(),
+        ));
+        forge::runtime::cost_aggregator::spawn_cost_listener(
+            events_tx.subscribe(),
+            cost_aggregator.clone(),
+        );
+
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_watch_mode(true)
                 .with_event_bus(event_bus)
                 .with_events_tx(events_tx.clone())
                 .with_instance_registry(instance_registry)
-                .with_warden_snapshots(warden_snapshots);
+                .with_warden_snapshots(warden_snapshots)
+                .with_cost_aggregator(cost_aggregator);
 
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);

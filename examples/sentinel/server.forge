@@ -38,6 +38,7 @@ pure nav_bar
     api_cls = "btn btn-sm btn-ghost"
     obs_cls = "btn btn-sm btn-ghost"
     topo_cls = "btn btn-sm btn-ghost"
+    costs_cls = "btn btn-sm btn-ghost"
     if active == "dashboard"
       dash_cls = "btn btn-sm btn-primary"
     if active == "insights"
@@ -48,7 +49,9 @@ pure nav_bar
       obs_cls = "btn btn-sm btn-primary"
     if active == "topology"
       topo_cls = "btn btn-sm btn-primary"
-    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/dashboard\" class=\"btn btn-ghost text-xl font-bold\">SENTINEL</a><div class=\"flex gap-2\"><a href=\"/dashboard\" class=\"{!dash_cls}\">Dashboard</a><a href=\"/insights\" class=\"{!insights_cls}\">Insights</a><a href=\"/observer\" class=\"{!obs_cls}\">Observer</a><a href=\"/topology\" class=\"{!topo_cls}\">Topology</a><a href=\"/api_health\" class=\"{!api_cls}\">API</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
+    if active == "costs"
+      costs_cls = "btn btn-sm btn-primary"
+    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/dashboard\" class=\"btn btn-ghost text-xl font-bold\">SENTINEL</a><div class=\"flex gap-2\"><a href=\"/dashboard\" class=\"{!dash_cls}\">Dashboard</a><a href=\"/insights\" class=\"{!insights_cls}\">Insights</a><a href=\"/observer\" class=\"{!obs_cls}\">Observer</a><a href=\"/topology\" class=\"{!topo_cls}\">Topology</a><a href=\"/costs\" class=\"{!costs_cls}\">Costs</a><a href=\"/api_health\" class=\"{!api_cls}\">API</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
 
 pure page_layout
   needs title: Text, nav: Html, body: Html
@@ -491,11 +494,20 @@ endpoint observer() -> Html
   body = observer_body()
   give page_layout("Observer — Sentinel", nav, body)
 
-<<<<<<< HEAD
 endpoint topology() -> Html
   nav = nav_bar("topology")
   body = topology_body()
   give page_layout("Topology — Sentinel", nav, body)
+
+pure costs_body
+  gives Html
+  do
+    give "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><div><h1 class=\"text-3xl font-bold\">Token Economy</h1><p class=\"opacity-60 mt-1\">Live cost, throughput &amp; confidence — Principle III visibility</p></div><div class=\"flex items-center gap-3\"><span id=\"cost-sse-status\" class=\"badge badge-sm badge-ghost\">Connecting...</span></div></div><div class=\"grid grid-cols-1 md:grid-cols-4 gap-4 mb-6\" id=\"cost-totals\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h3 class=\"text-sm font-semibold opacity-60 uppercase tracking-wider\">Total Cost</h3><p class=\"text-2xl font-bold mt-1 cost-counter\" id=\"cost-usd\">$0.0000</p><p class=\"text-sm opacity-70 mt-1\" id=\"cost-calls\">0 calls</p></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h3 class=\"text-sm font-semibold opacity-60 uppercase tracking-wider\">Tokens In</h3><p class=\"text-2xl font-bold mt-1\" id=\"cost-tokens-in\">0</p><p class=\"text-sm opacity-70 mt-1\" id=\"cost-throughput-in\">0 tok/s</p></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h3 class=\"text-sm font-semibold opacity-60 uppercase tracking-wider\">Tokens Out</h3><p class=\"text-2xl font-bold mt-1\" id=\"cost-tokens-out\">0</p><p class=\"text-sm opacity-70 mt-1\" id=\"cost-throughput-out\">0 tok/s</p></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h3 class=\"text-sm font-semibold opacity-60 uppercase tracking-wider\">Uptime</h3><p class=\"text-2xl font-bold mt-1\" id=\"cost-uptime\">0s</p><p class=\"text-sm opacity-70 mt-1\" id=\"cost-tps\">0 tok/s out</p></div></div></div><div class=\"grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Cost by Operation</h2><div class=\"overflow-x-auto\"><table class=\"table table-sm\" id=\"cost-by-operation\"><thead><tr><th>Operation</th><th class=\"text-right\">Calls</th><th class=\"text-right\">Tokens In</th><th class=\"text-right\">Tokens Out</th><th class=\"text-right\">Cost</th><th class=\"text-right\">Avg Conf</th></tr></thead><tbody><tr><td colspan=\"6\" class=\"text-center opacity-40 py-4\">No data yet</td></tr></tbody></table></div></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Cost by Agent</h2><div class=\"overflow-x-auto\"><table class=\"table table-sm\" id=\"cost-by-agent\"><thead><tr><th>Agent</th><th class=\"text-right\">Calls</th><th class=\"text-right\">Tokens</th><th class=\"text-right\">Cost</th><th class=\"text-right\">Avg Conf</th></tr></thead><tbody><tr><td colspan=\"5\" class=\"text-center opacity-40 py-4\">No data yet</td></tr></tbody></table></div></div></div></div><div class=\"grid grid-cols-1 lg:grid-cols-2 gap-6\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Confidence Distribution</h2><div id=\"confidence-chart\" style=\"height:200px\"></div></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Cost by Provider / Model</h2><div class=\"overflow-x-auto\"><table class=\"table table-sm\" id=\"cost-by-provider\"><thead><tr><th>Provider / Model</th><th class=\"text-right\">Calls</th><th class=\"text-right\">Tokens</th><th class=\"text-right\">Cost</th></tr></thead><tbody><tr><td colspan=\"4\" class=\"text-center opacity-40 py-4\">No data yet</td></tr></tbody></table></div></div></div></div></div><script src=\"https://d3js.org/d3.v7.min.js\"></script><script src=\"/static/js/costs.js\"></script>"
+
+endpoint costs() -> Html
+  nav = nav_bar("costs")
+  body = costs_body()
+  give page_layout("Costs — Sentinel", nav, body)
 
 endpoint api_health() -> Text
   health = health_or_unknown()

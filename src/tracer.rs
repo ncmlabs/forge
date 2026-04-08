@@ -29,6 +29,7 @@ pub struct LLMResponseInfo<'a> {
     pub tokens_out: u32,
     pub cost_usd: f32,
     pub confidence: f32,
+    pub agent_name: Option<&'a str>,
 }
 
 impl Tracer {
@@ -103,18 +104,19 @@ impl Tracer {
     }
 
     pub fn llm_response(&self, info: &LLMResponseInfo) {
-        self.emit(
-            "llm_response",
-            serde_json::json!({
-                "operation": info.operation,
-                "provider": info.provider,
-                "model": info.model,
-                "tokens_in": info.tokens_in,
-                "tokens_out": info.tokens_out,
-                "cost_usd": info.cost_usd,
-                "confidence": info.confidence,
-            }),
-        );
+        let mut data = serde_json::json!({
+            "operation": info.operation,
+            "provider": info.provider,
+            "model": info.model,
+            "tokens_in": info.tokens_in,
+            "tokens_out": info.tokens_out,
+            "cost_usd": info.cost_usd,
+            "confidence": info.confidence,
+        });
+        if let Some(agent) = info.agent_name {
+            data["agent"] = serde_json::json!(agent);
+        }
+        self.emit("llm_response", data);
     }
 
     pub fn when_dispatch(&self, subject: &str, level: &str, matched: bool) {
