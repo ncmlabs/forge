@@ -110,6 +110,27 @@ impl ForgeStorage {
         }
         Ok(keys)
     }
+
+    /// List all keys matching prefix with their value sizes (in bytes).
+    /// Runs in a single read transaction for consistency.
+    pub fn list_with_sizes(&self, prefix: &str) -> Result<Vec<(String, usize)>, StorageError> {
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        let table = txn
+            .open_table(FORGE_KV)
+            .map_err(|e| StorageError::Table(Box::new(e)))?;
+        let mut entries = Vec::new();
+        for entry in table.iter().map_err(|e| StorageError::Read(Box::new(e)))? {
+            let (k, v) = entry.map_err(|e| StorageError::Read(Box::new(e)))?;
+            let key = k.value();
+            if key.starts_with(prefix) {
+                entries.push((key.to_string(), v.value().len()));
+            }
+        }
+        Ok(entries)
+    }
 }
 
 // ── Errors ──────────────────────────────────────────────────────
@@ -195,6 +216,20 @@ mod tests {
         let mut keys = storage.list("agent:").unwrap();
         keys.sort();
         assert_eq!(keys, vec!["agent:bar:memory", "agent:foo:memory"]);
+    }
+
+    #[test]
+    fn list_with_sizes_returns_key_and_byte_len() {
+        let (_dir, storage) = temp_storage();
+        storage.store("agent:foo:memory", r#"{"x":1}"#).unwrap();
+        storage.store("agent:bar:memory", "{}").unwrap();
+        storage.store("other:key", "hello").unwrap();
+
+        let mut entries = storage.list_with_sizes("agent:").unwrap();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], ("agent:bar:memory".to_string(), 2)); // "{}"
+        assert_eq!(entries[1], ("agent:foo:memory".to_string(), 7)); // r#"{"x":1}"#
     }
 
     #[test]

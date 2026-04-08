@@ -24,6 +24,10 @@ use crate::config::ServerConfig;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::event_bus::SharedEventBus;
 use crate::runtime::executor::{EndpointResult, TaskExecutor};
+use crate::runtime::instance_registry::SharedInstanceRegistry;
+use crate::runtime::storage::SharedStorage;
+use crate::runtime::system::TopologySnapshot;
+use crate::runtime::warded::SharedWardenSnapshots;
 
 // ── Swappable executor for hot-reload ───────────────────────────────────────
 
@@ -43,6 +47,14 @@ pub struct AppState {
     pub event_bus: Option<SharedEventBus>,
     /// HMAC secrets keyed by webhook endpoint name.
     pub webhook_secrets: HashMap<String, String>,
+    /// Shared instance registry for agent introspection (issue #139).
+    pub instance_registry: Option<SharedInstanceRegistry>,
+    /// Shared storage handle for storage introspection (issue #139).
+    pub inspect_storage: Option<SharedStorage>,
+    /// Shared warden snapshots for warden introspection (issue #139).
+    pub warden_snapshots: Option<SharedWardenSnapshots>,
+    /// Static topology snapshot for topology introspection (issue #139).
+    pub topology: Option<TopologySnapshot>,
 }
 
 impl AppState {
@@ -88,6 +100,10 @@ impl ForgeServer {
                 events_tx: None,
                 event_bus: None,
                 webhook_secrets: HashMap::new(),
+                instance_registry: None,
+                inspect_storage: None,
+                warden_snapshots: None,
+                topology: None,
             },
             host,
             port,
@@ -153,6 +169,30 @@ impl ForgeServer {
         self
     }
 
+    /// Attach an instance registry for agent introspection.
+    pub fn with_instance_registry(mut self, registry: SharedInstanceRegistry) -> Self {
+        self.state.instance_registry = Some(registry);
+        self
+    }
+
+    /// Attach storage handle for storage introspection.
+    pub fn with_inspect_storage(mut self, storage: SharedStorage) -> Self {
+        self.state.inspect_storage = Some(storage);
+        self
+    }
+
+    /// Attach warden snapshots for warden introspection.
+    pub fn with_warden_snapshots(mut self, snaps: SharedWardenSnapshots) -> Self {
+        self.state.warden_snapshots = Some(snaps);
+        self
+    }
+
+    /// Attach a static topology snapshot for topology introspection.
+    pub fn with_topology(mut self, topo: TopologySnapshot) -> Self {
+        self.state.topology = Some(topo);
+        self
+    }
+
     /// Get a handle to the reload broadcast sender (for the watcher to signal reloads).
     pub fn reload_sender(&self) -> Option<broadcast::Sender<()>> {
         self.state.reload_tx.clone()
@@ -180,6 +220,14 @@ impl ForgeServer {
         if self.state.events_tx.is_some() {
             router = router.route("/__forge/events", get(handle_sse_events));
         }
+
+        // Introspection endpoints (issue #139) — always registered, return empty/404 gracefully
+        router = router
+            .route("/__forge/inspect/agents", get(handle_inspect_agents))
+            .route("/__forge/inspect/agents/:id", get(handle_inspect_agent))
+            .route("/__forge/inspect/topology", get(handle_inspect_topology))
+            .route("/__forge/inspect/wardens", get(handle_inspect_wardens))
+            .route("/__forge/inspect/storage", get(handle_inspect_storage));
 
         // CORS
         let cors = if self.cors_origins.is_empty() {
@@ -419,6 +467,125 @@ async fn handle_sse_events(
     });
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+// ── Introspection handlers (issue #139) ────────────────────────────────────
+
+/// GET /__forge/inspect/agents — list all running agent instances.
+async fn handle_inspect_agents(State(state): State<AppState>) -> Response {
+    let Some(ref registry) = state.instance_registry else {
+        return json_response(StatusCode::OK, serde_json::json!([]));
+    };
+    let guard = registry.read().await;
+    let agents: Vec<serde_json::Value> = guard
+        .find_all()
+        .iter()
+        .map(|i| i.to_json_summary())
+        .collect();
+    json_response(StatusCode::OK, serde_json::json!(agents))
+}
+
+/// GET /__forge/inspect/agents/:id — deep inspection of a single agent.
+async fn handle_inspect_agent(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(ref registry) = state.instance_registry else {
+        return json_response(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({"error": "no instance registry"}),
+        );
+    };
+    let uuid = match uuid::Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({"error": "invalid UUID"}),
+            );
+        }
+    };
+    let guard = registry.read().await;
+    match guard.get(&uuid) {
+        Some(info) => json_response(StatusCode::OK, info.to_json_deep()),
+        None => json_response(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({"error": "agent not found"}),
+        ),
+    }
+}
+
+/// GET /__forge/inspect/topology — system graph with agents, wiring, subscriptions.
+async fn handle_inspect_topology(State(state): State<AppState>) -> Response {
+    let mut obj = serde_json::json!({});
+
+    // Static topology from system declaration
+    if let Some(ref topo) = state.topology {
+        obj["system_name"] = serde_json::json!(topo.system_name);
+        obj["bindings"] = serde_json::json!(topo.bindings);
+        obj["wiring"] = serde_json::json!(topo.wiring);
+    }
+
+    // Dynamic subscription info from event bus
+    if let Some(ref bus) = state.event_bus {
+        let guard = bus.read().await;
+        let subs: Vec<serde_json::Value> = guard
+            .subscription_info()
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "event": s.event_name,
+                    "agent": s.agent_id,
+                    "has_filter": s.has_filter,
+                })
+            })
+            .collect();
+        let routes = guard.route_info();
+        obj["subscribers"] = serde_json::json!(subs);
+        obj["routes"] = serde_json::json!(routes);
+    }
+
+    json_response(StatusCode::OK, obj)
+}
+
+/// GET /__forge/inspect/wardens — all wardens with health data.
+async fn handle_inspect_wardens(State(state): State<AppState>) -> Response {
+    let Some(ref snaps) = state.warden_snapshots else {
+        return json_response(StatusCode::OK, serde_json::json!([]));
+    };
+    let guard = snaps.read().await;
+    json_response(StatusCode::OK, serde_json::json!(*guard))
+}
+
+/// GET /__forge/inspect/storage — list storage keys with sizes.
+async fn handle_inspect_storage(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let Some(ref storage) = state.inspect_storage else {
+        return json_response(StatusCode::OK, serde_json::json!([]));
+    };
+    let prefix = params.get("prefix").map(|s| s.as_str()).unwrap_or("");
+    match storage.list_with_sizes(prefix) {
+        Ok(entries) => {
+            let items: Vec<serde_json::Value> = entries
+                .iter()
+                .map(|(key, size)| serde_json::json!({"key": key, "size_bytes": size}))
+                .collect();
+            json_response(StatusCode::OK, serde_json::json!(items))
+        }
+        Err(e) => json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({"error": format!("{}", e)}),
+        ),
+    }
+}
+
+/// Helper: build a JSON response with the given status code.
+fn json_response(status: StatusCode, body: serde_json::Value) -> Response {
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
 }
 
 /// Webhook handler: POST /webhook/:name

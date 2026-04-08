@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use serde::Serialize;
+
 use crate::ast::*;
 use crate::config::SystemConfig;
 use crate::llm::registry::ProviderRegistry;
@@ -16,8 +18,18 @@ use crate::runtime::agent::AgentProcess;
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
 use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
-use crate::runtime::warded::{AgentBlueprint, WardedRuntime};
+use crate::runtime::warded::{AgentBlueprint, SharedWardenSnapshots, WardedRuntime};
 use crate::tracer::Tracer;
+
+// ── Introspection Snapshot ─────────────────────────────────────────────────
+
+/// Static topology snapshot for introspection (issue #139).
+#[derive(Debug, Clone, Serialize)]
+pub struct TopologySnapshot {
+    pub system_name: String,
+    pub bindings: Vec<(String, String)>,
+    pub wiring: Vec<Vec<String>>,
+}
 
 // ── SystemRuntime ────────────────────────────────────────────────────────────
 
@@ -176,6 +188,25 @@ impl SystemRuntime {
         })
     }
 
+    /// Build a static topology snapshot (call before start()).
+    pub fn topology_snapshot(&self) -> TopologySnapshot {
+        TopologySnapshot {
+            system_name: self.name.clone(),
+            bindings: self.bindings.clone(),
+            wiring: self.wiring.clone(),
+        }
+    }
+
+    /// Attach shared warden snapshot handles to all warded runtimes.
+    pub fn with_shared_warden_snapshots(mut self, snaps: SharedWardenSnapshots) -> Self {
+        self.warded_runtimes = self
+            .warded_runtimes
+            .into_iter()
+            .map(|wr| wr.with_shared_snapshots(snaps.clone()))
+            .collect();
+        self
+    }
+
     /// Parse wiring compose expressions into alias chains.
     /// `a >> b >> c` becomes `["a", "b", "c"]`.
     fn parse_wiring(exprs: &[Spanned<Expr>]) -> Result<Vec<Vec<String>>, RuntimeError> {
@@ -279,11 +310,12 @@ impl SystemRuntime {
 
         process = process.with_event_bus(self.event_bus.clone()).await;
 
-        let instance_id = self
-            .instance_registry
-            .write()
-            .await
-            .register(&blueprint.decl.name.node, Some(alias));
+        let context_ref = process.context().clone();
+        let instance_id = self.instance_registry.write().await.register_with_context(
+            &blueprint.decl.name.node,
+            Some(alias),
+            context_ref,
+        );
 
         let handle = tokio::spawn(async move { process.run().await });
 

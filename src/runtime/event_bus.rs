@@ -24,6 +24,14 @@ pub struct EventPayload {
     pub fields: HashMap<String, ConfidentValue>,
 }
 
+/// Metadata about a subscription (for introspection, no channel handle).
+#[derive(Debug, Clone)]
+pub struct SubscriptionInfo {
+    pub event_name: String,
+    pub agent_id: String,
+    pub has_filter: bool,
+}
+
 /// A registered subscriber on the bus.
 pub struct Subscriber {
     pub agent_id: String,
@@ -179,6 +187,26 @@ impl EventBus {
         self.subscribers.get(event_name).map_or(0, |s| s.len())
     }
 
+    /// Return metadata for all active subscriptions (for introspection).
+    pub fn subscription_info(&self) -> Vec<SubscriptionInfo> {
+        let mut info = Vec::new();
+        for (event_name, subs) in &self.subscribers {
+            for sub in subs {
+                info.push(SubscriptionInfo {
+                    event_name: event_name.clone(),
+                    agent_id: sub.agent_id.clone(),
+                    has_filter: sub.filter.is_some(),
+                });
+            }
+        }
+        info
+    }
+
+    /// Return the routing table (source_agent → [target_agents]).
+    pub fn route_info(&self) -> &HashMap<String, Vec<String>> {
+        &self.routes
+    }
+
     /// Close the bus: drop all subscribers, closing their channels.
     /// Any agent `run()` loops will terminate when their receivers see closure.
     pub fn close(&mut self) {
@@ -299,6 +327,32 @@ mod tests {
     fn subscriber_count_empty() {
         let bus = EventBus::new(None);
         assert_eq!(bus.subscriber_count("Foo"), 0);
+    }
+
+    #[test]
+    fn subscription_info_returns_all_subscriptions() {
+        let mut bus = EventBus::new(None);
+        let _rx1 = bus.subscribe("Foo", "agent-a", None);
+        let _rx2 = bus.subscribe("Foo", "agent-b", None);
+        let _rx3 = bus.subscribe("Bar", "agent-a", None);
+
+        let mut info = bus.subscription_info();
+        info.sort_by(|a, b| (&a.event_name, &a.agent_id).cmp(&(&b.event_name, &b.agent_id)));
+        assert_eq!(info.len(), 3);
+        assert_eq!(info[0].event_name, "Bar");
+        assert_eq!(info[0].agent_id, "agent-a");
+        assert!(!info[0].has_filter);
+    }
+
+    #[test]
+    fn route_info_returns_routing_table() {
+        let mut bus = EventBus::new(None);
+        bus.add_route("inspector", "analyst");
+        bus.add_route("inspector", "logger");
+
+        let routes = bus.route_info();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes["inspector"], vec!["analyst", "logger"]);
     }
 
     #[test]

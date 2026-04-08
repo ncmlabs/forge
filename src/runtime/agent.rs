@@ -89,6 +89,11 @@ impl TimerManager {
         self.timers.get(name)
     }
 
+    /// Return all timer names and their current states (for introspection).
+    pub fn all_states(&self) -> &HashMap<String, TimerState> {
+        &self.timers
+    }
+
     /// Mark a timer as expired (for testing and future async integration).
     pub fn expire(&mut self, name: &str) {
         if let Some(state) = self.timers.get_mut(name) {

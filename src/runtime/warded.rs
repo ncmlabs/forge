@@ -13,12 +13,30 @@ use crate::ast::*;
 use crate::llm::registry::ProviderRegistry;
 use uuid::Uuid;
 
+use serde::Serialize;
+use tokio::sync::RwLock;
+
 use crate::runtime::agent::{AgentProcess, AgentSignal};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
 use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
 use crate::runtime::warden::{FailureSignal, WardAction, Warden};
 use crate::tracer::Tracer;
+
+// ── Introspection Snapshot ─────────────────────────────────────────────────
+
+/// Read-only snapshot of warden state for introspection (issue #139).
+#[derive(Debug, Clone, Serialize)]
+pub struct WardenSnapshot {
+    pub name: String,
+    pub managed_agents: Vec<String>,
+    pub degraded_agents: Vec<String>,
+    pub retry_counts: HashMap<String, u64>,
+    pub circuit_breaker_tripped: bool,
+}
+
+/// Shared handle for HTTP handlers to read warden snapshots.
+pub type SharedWardenSnapshots = Arc<RwLock<Vec<WardenSnapshot>>>;
 
 // ── AgentBlueprint ──────────────────────────────────────────────────────────
 
@@ -56,6 +74,8 @@ pub struct WardedRuntime {
     /// Agents that have been escalated and removed from active supervision.
     /// The wiki continues running with degraded features for these agents.
     pub degraded_agents: HashSet<String>,
+    /// Shared snapshot handle updated on state changes (for introspection).
+    shared_snapshots: Option<SharedWardenSnapshots>,
 }
 
 impl WardedRuntime {
@@ -124,6 +144,7 @@ impl WardedRuntime {
             signal_rx,
             start: Instant::now(),
             degraded_agents: HashSet::new(),
+            shared_snapshots: None,
         }
     }
 
@@ -188,6 +209,7 @@ impl WardedRuntime {
             signal_rx,
             start: Instant::now(),
             degraded_agents: HashSet::new(),
+            shared_snapshots: None,
         }
     }
 
@@ -199,6 +221,45 @@ impl WardedRuntime {
     /// Get a reference to the shared instance registry.
     pub fn instance_registry(&self) -> &SharedInstanceRegistry {
         &self.instance_registry
+    }
+
+    /// Attach a shared snapshot handle for introspection.
+    pub fn with_shared_snapshots(mut self, snaps: SharedWardenSnapshots) -> Self {
+        self.shared_snapshots = Some(snaps);
+        self
+    }
+
+    /// Build a read-only snapshot of current warden state.
+    pub fn snapshot(&self) -> WardenSnapshot {
+        let now_ms = self.timestamp_ms();
+        let retry_counts: HashMap<String, u64> = self
+            .warden
+            .retry_tracker
+            .all_counts()
+            .iter()
+            .map(|((agent, ft), count)| (format!("{}:{:?}", agent, ft), *count))
+            .collect();
+        WardenSnapshot {
+            name: self.warden.decl.name.node.clone(),
+            managed_agents: self.agents.keys().cloned().collect(),
+            degraded_agents: self.degraded_agents.iter().cloned().collect(),
+            retry_counts,
+            circuit_breaker_tripped: self.warden.circuit_breaker_tripped(now_ms),
+        }
+    }
+
+    /// Push current snapshot to the shared handle (if wired).
+    async fn update_shared_snapshot(&self) {
+        if let Some(ref shared) = self.shared_snapshots {
+            let snap = self.snapshot();
+            let mut guard = shared.write().await;
+            // Replace our entry (find by name) or append
+            if let Some(pos) = guard.iter().position(|s| s.name == snap.name) {
+                guard[pos] = snap;
+            } else {
+                guard.push(snap);
+            }
+        }
     }
 
     fn timestamp_ms(&self) -> u64 {
@@ -213,6 +274,7 @@ impl WardedRuntime {
         }
         // Trace supervision tree after startup
         self.trace_supervision_tree();
+        self.update_shared_snapshot().await;
         Ok(())
     }
 
@@ -244,7 +306,12 @@ impl WardedRuntime {
 
         process = process.with_event_bus(self.event_bus.clone()).await;
 
-        let instance_id = self.instance_registry.write().await.register(name, None);
+        let context_ref = process.context().clone();
+        let instance_id =
+            self.instance_registry
+                .write()
+                .await
+                .register_with_context(name, None, context_ref);
 
         let handle = tokio::spawn(async move { process.run().await });
 
@@ -365,8 +432,12 @@ impl WardedRuntime {
                     self.degraded_agents.insert(name);
                 }
                 self.trace_supervision_tree();
+                self.update_shared_snapshot().await;
                 break;
             }
+
+            // Update shared snapshot after state changes
+            self.update_shared_snapshot().await;
         }
 
         Ok(())
