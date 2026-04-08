@@ -1,0 +1,338 @@
+// FORGE Sentinel — Cost & Confidence Dashboard (issue #142)
+// Real-time token economy visibility via SSE + inspect API.
+
+(function () {
+  'use strict';
+
+  var totalsEl = document.getElementById('cost-totals');
+  if (!totalsEl) return; // Not the costs page
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  var state = {
+    calls: 0,
+    tokens_in: 0,
+    tokens_out: 0,
+    cost_usd: 0,
+    by_operation: {},
+    by_agent: {},
+    by_provider_model: {},
+    confidence_histogram: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    uptime_secs: 0,
+    tokens_per_sec: 0
+  };
+
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+  var costUsd = document.getElementById('cost-usd');
+  var costCalls = document.getElementById('cost-calls');
+  var tokensIn = document.getElementById('cost-tokens-in');
+  var tokensOut = document.getElementById('cost-tokens-out');
+  var throughputIn = document.getElementById('cost-throughput-in');
+  var throughputOut = document.getElementById('cost-throughput-out');
+  var uptimeEl = document.getElementById('cost-uptime');
+  var tpsEl = document.getElementById('cost-tps');
+  var opTable = document.getElementById('cost-by-operation');
+  var agentTable = document.getElementById('cost-by-agent');
+  var providerTable = document.getElementById('cost-by-provider');
+  var confChart = document.getElementById('confidence-chart');
+  var sseStatus = document.getElementById('cost-sse-status');
+
+  // ── Formatting helpers ─────────────────────────────────────────────────────
+  function fmtUsd(n) {
+    return '$' + n.toFixed(4);
+  }
+
+  function fmtNum(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return String(n);
+  }
+
+  function fmtUptime(secs) {
+    if (secs < 60) return Math.round(secs) + 's';
+    if (secs < 3600) return Math.round(secs / 60) + 'm ' + Math.round(secs % 60) + 's';
+    var h = Math.floor(secs / 3600);
+    var m = Math.round((secs % 3600) / 60);
+    return h + 'h ' + m + 'm';
+  }
+
+  function confBadge(avg) {
+    if (avg >= 0.8) return '<span class="badge badge-sm badge-success">' + avg.toFixed(2) + '</span>';
+    if (avg >= 0.5) return '<span class="badge badge-sm badge-warning">' + avg.toFixed(2) + '</span>';
+    return '<span class="badge badge-sm badge-error">' + avg.toFixed(2) + '</span>';
+  }
+
+  // ── Render functions ───────────────────────────────────────────────────────
+  function renderTotals() {
+    costUsd.textContent = fmtUsd(state.cost_usd);
+    costCalls.textContent = state.calls + ' calls';
+    tokensIn.textContent = fmtNum(state.tokens_in);
+    tokensOut.textContent = fmtNum(state.tokens_out);
+
+    if (state.uptime_secs > 0) {
+      var tIn = (state.tokens_in / state.uptime_secs).toFixed(1);
+      var tOut = (state.tokens_out / state.uptime_secs).toFixed(1);
+      throughputIn.textContent = tIn + ' tok/s';
+      throughputOut.textContent = tOut + ' tok/s';
+      tpsEl.textContent = tOut + ' tok/s out';
+    }
+    uptimeEl.textContent = fmtUptime(state.uptime_secs);
+
+    // Flash animation
+    costUsd.classList.add('cost-flash');
+    setTimeout(function () { costUsd.classList.remove('cost-flash'); }, 400);
+  }
+
+  function renderOpTable() {
+    var tbody = opTable.querySelector('tbody');
+    var ops = Object.keys(state.by_operation);
+    if (ops.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center opacity-40 py-4">No data yet</td></tr>';
+      return;
+    }
+    var rows = ops.sort().map(function (op) {
+      var s = state.by_operation[op];
+      var avg = s.calls > 0 ? s.avg_confidence : 0;
+      return '<tr><td class="font-mono text-sm">' + op +
+        '</td><td class="text-right">' + s.calls +
+        '</td><td class="text-right">' + fmtNum(s.tokens_in) +
+        '</td><td class="text-right">' + fmtNum(s.tokens_out) +
+        '</td><td class="text-right font-mono">' + fmtUsd(s.cost_usd) +
+        '</td><td class="text-right">' + confBadge(avg) +
+        '</td></tr>';
+    });
+    tbody.innerHTML = rows.join('');
+  }
+
+  function renderAgentTable() {
+    var tbody = agentTable.querySelector('tbody');
+    var agents = Object.keys(state.by_agent);
+    if (agents.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center opacity-40 py-4">No data yet</td></tr>';
+      return;
+    }
+    // Sort by cost descending
+    agents.sort(function (a, b) {
+      return (state.by_agent[b].cost_usd || 0) - (state.by_agent[a].cost_usd || 0);
+    });
+    var rows = agents.map(function (agent) {
+      var s = state.by_agent[agent];
+      var total_tok = (s.tokens_in || 0) + (s.tokens_out || 0);
+      var avg = s.calls > 0 ? s.avg_confidence : 0;
+      return '<tr><td class="font-mono text-sm">' + agent +
+        '</td><td class="text-right">' + s.calls +
+        '</td><td class="text-right">' + fmtNum(total_tok) +
+        '</td><td class="text-right font-mono">' + fmtUsd(s.cost_usd) +
+        '</td><td class="text-right">' + confBadge(avg) +
+        '</td></tr>';
+    });
+    tbody.innerHTML = rows.join('');
+  }
+
+  function renderProviderTable() {
+    var tbody = providerTable.querySelector('tbody');
+    var keys = Object.keys(state.by_provider_model);
+    if (keys.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center opacity-40 py-4">No data yet</td></tr>';
+      return;
+    }
+    keys.sort(function (a, b) {
+      return (state.by_provider_model[b].cost_usd || 0) - (state.by_provider_model[a].cost_usd || 0);
+    });
+    var rows = keys.map(function (k) {
+      var s = state.by_provider_model[k];
+      var total_tok = (s.tokens_in || 0) + (s.tokens_out || 0);
+      return '<tr><td class="font-mono text-sm">' + k +
+        '</td><td class="text-right">' + s.calls +
+        '</td><td class="text-right">' + fmtNum(total_tok) +
+        '</td><td class="text-right font-mono">' + fmtUsd(s.cost_usd) +
+        '</td></tr>';
+    });
+    tbody.innerHTML = rows.join('');
+  }
+
+  function renderConfidenceChart() {
+    var hist = state.confidence_histogram;
+    var max = Math.max.apply(null, hist) || 1;
+
+    // Clear previous
+    confChart.innerHTML = '';
+
+    var svg = d3.select(confChart)
+      .append('svg')
+      .attr('width', '100%')
+      .attr('height', 200);
+
+    var width = confChart.clientWidth || 400;
+    var barWidth = Math.floor((width - 40) / 10);
+    var labels = ['0.0', '0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7', '0.8', '0.9'];
+
+    var g = svg.append('g').attr('transform', 'translate(20, 10)');
+
+    g.selectAll('rect')
+      .data(hist)
+      .enter()
+      .append('rect')
+      .attr('x', function (d, i) { return i * barWidth; })
+      .attr('y', function (d) { return 150 - (d / max) * 150; })
+      .attr('width', barWidth - 2)
+      .attr('height', function (d) { return (d / max) * 150; })
+      .attr('rx', 2)
+      .attr('fill', function (d, i) {
+        if (i >= 8) return 'oklch(0.7 0.15 145)';  // green — sure
+        if (i >= 5) return 'oklch(0.75 0.15 55)';   // amber — unsure
+        return 'oklch(0.65 0.15 25)';                // red — unreliable
+      })
+      .attr('opacity', 0.85);
+
+    // Count labels on bars
+    g.selectAll('.bar-label')
+      .data(hist)
+      .enter()
+      .append('text')
+      .attr('x', function (d, i) { return i * barWidth + barWidth / 2 - 1; })
+      .attr('y', function (d) { return 150 - (d / max) * 150 - 4; })
+      .attr('text-anchor', 'middle')
+      .attr('fill', 'currentColor')
+      .attr('font-size', '10px')
+      .attr('opacity', 0.7)
+      .text(function (d) { return d > 0 ? d : ''; });
+
+    // X-axis labels
+    g.selectAll('.x-label')
+      .data(labels)
+      .enter()
+      .append('text')
+      .attr('x', function (d, i) { return i * barWidth + barWidth / 2 - 1; })
+      .attr('y', 168)
+      .attr('text-anchor', 'middle')
+      .attr('fill', 'currentColor')
+      .attr('font-size', '10px')
+      .attr('opacity', 0.5)
+      .text(function (d) { return d; });
+  }
+
+  function renderAll() {
+    renderTotals();
+    renderOpTable();
+    renderAgentTable();
+    renderProviderTable();
+    renderConfidenceChart();
+  }
+
+  // ── Load initial snapshot ──────────────────────────────────────────────────
+  function loadSnapshot() {
+    fetch('/__forge/inspect/costs')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.totals) {
+          state.calls = data.totals.calls || 0;
+          state.tokens_in = data.totals.tokens_in || 0;
+          state.tokens_out = data.totals.tokens_out || 0;
+          state.cost_usd = data.totals.cost_usd || 0;
+        }
+        state.by_operation = data.by_operation || {};
+        state.by_agent = data.by_agent || {};
+        state.by_provider_model = data.by_provider_model || {};
+        state.confidence_histogram = data.confidence_histogram || state.confidence_histogram;
+        state.uptime_secs = data.uptime_secs || 0;
+        state.tokens_per_sec = data.tokens_per_sec || 0;
+        renderAll();
+      })
+      .catch(function (err) {
+        console.warn('[costs] Failed to load snapshot:', err);
+      });
+  }
+
+  // ── SSE live updates ───────────────────────────────────────────────────────
+  function connectSSE() {
+    var source = new EventSource('/__forge/events');
+
+    source.onopen = function () {
+      sseStatus.textContent = 'Live';
+      sseStatus.className = 'badge badge-sm badge-success';
+    };
+
+    source.onerror = function () {
+      sseStatus.textContent = 'Disconnected';
+      sseStatus.className = 'badge badge-sm badge-error';
+    };
+
+    source.onmessage = function (e) {
+      try {
+        var event = JSON.parse(e.data);
+        if (event.event === 'llm_response') {
+          handleLLMResponse(event);
+        }
+      } catch (err) { /* ignore malformed */ }
+    };
+  }
+
+  function handleLLMResponse(ev) {
+    var ti = ev.tokens_in || 0;
+    var to = ev.tokens_out || 0;
+    var cost = ev.cost_usd || 0;
+    var conf = ev.confidence || 0;
+    var op = ev.operation || 'unknown';
+    var agent = ev.agent || '(anonymous)';
+    var providerModel = (ev.provider || 'unknown') + '/' + (ev.model || 'unknown');
+
+    // Update totals
+    state.calls += 1;
+    state.tokens_in += ti;
+    state.tokens_out += to;
+    state.cost_usd += cost;
+
+    // Confidence histogram
+    var bucket = Math.min(Math.floor(conf * 10), 9);
+    state.confidence_histogram[bucket] += 1;
+
+    // By operation
+    if (!state.by_operation[op]) {
+      state.by_operation[op] = { calls: 0, tokens_in: 0, tokens_out: 0, cost_usd: 0, avg_confidence: 0, _conf_sum: 0 };
+    }
+    var opS = state.by_operation[op];
+    opS.calls += 1;
+    opS.tokens_in += ti;
+    opS.tokens_out += to;
+    opS.cost_usd += cost;
+    opS._conf_sum = (opS._conf_sum || 0) + conf;
+    opS.avg_confidence = opS._conf_sum / opS.calls;
+
+    // By agent
+    if (!state.by_agent[agent]) {
+      state.by_agent[agent] = { calls: 0, tokens_in: 0, tokens_out: 0, cost_usd: 0, avg_confidence: 0, _conf_sum: 0 };
+    }
+    var agS = state.by_agent[agent];
+    agS.calls += 1;
+    agS.tokens_in += ti;
+    agS.tokens_out += to;
+    agS.cost_usd += cost;
+    agS._conf_sum = (agS._conf_sum || 0) + conf;
+    agS.avg_confidence = agS._conf_sum / agS.calls;
+
+    // By provider/model
+    if (!state.by_provider_model[providerModel]) {
+      state.by_provider_model[providerModel] = { calls: 0, tokens_in: 0, tokens_out: 0, cost_usd: 0, avg_confidence: 0 };
+    }
+    var pmS = state.by_provider_model[providerModel];
+    pmS.calls += 1;
+    pmS.tokens_in += ti;
+    pmS.tokens_out += to;
+    pmS.cost_usd += cost;
+
+    renderAll();
+  }
+
+  // ── Uptime ticker ──────────────────────────────────────────────────────────
+  setInterval(function () {
+    state.uptime_secs += 1;
+    uptimeEl.textContent = fmtUptime(state.uptime_secs);
+    if (state.uptime_secs > 0) {
+      tpsEl.textContent = (state.tokens_out / state.uptime_secs).toFixed(1) + ' tok/s out';
+    }
+  }, 1000);
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  loadSnapshot();
+  connectSSE();
+})();

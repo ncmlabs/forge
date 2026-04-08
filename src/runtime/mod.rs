@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod confidence;
+pub mod cost_aggregator;
 pub mod event_bus;
 pub mod executor;
 pub mod html;
