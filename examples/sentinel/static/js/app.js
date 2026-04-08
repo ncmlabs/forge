@@ -186,7 +186,10 @@ function escapeHtml(text) {
       wardens.forEach(function (w) {
         var tripped = w.circuit_breaker_tripped;
         var dotCls = tripped ? 'degraded' : 'running';
-        children += '<li><div class="tree-node-card" data-node-type="warden">'
+        var wardenIdx = wardens.indexOf(w);
+        children += '<li><div class="tree-node-card" data-node-type="warden"'
+          + ' data-warden-idx="' + wardenIdx + '"'
+          + ' onclick="window._selectWarden(' + wardenIdx + ')">'
           + '<span class="state-dot ' + dotCls + '"></span>'
           + '<span class="node-type">warden</span>'
           + '<span class="node-name">' + escapeHtml(w.name) + '</span>';
@@ -294,7 +297,43 @@ function escapeHtml(text) {
     if (selectedAgentId) showAgentDetail(selectedAgentId);
   }
 
-  // ── Agent Detail Panel ───────────────────────────────────────
+  // ── Detail Panel (Agent + Warden) ─────────────────────────────
+
+  var cachedWardens = [];
+
+  window._selectWarden = function (idx) {
+    selectedAgentId = null;
+    var w = cachedWardens[idx];
+    if (!w) return;
+
+    // Mark selected
+    var cards = treeRoot.querySelectorAll('.tree-node-card');
+    for (var i = 0; i < cards.length; i++) cards[i].classList.remove('selected');
+    var sel = treeRoot.querySelector('[data-warden-idx="' + idx + '"]');
+    if (sel) sel.classList.add('selected');
+
+    var html = '<div class="flex items-center gap-2 mb-3">'
+      + '<span class="state-dot ' + (w.circuit_breaker_tripped ? 'degraded' : 'running') + '"></span>'
+      + '<span class="font-bold">' + escapeHtml(w.name) + '</span>'
+      + '<span class="node-type">warden</span></div>';
+
+    html += '<div class="detail-section">Supervision</div>';
+    html += detailField('Managed agents', (w.managed_agents || []).join(', '));
+    html += detailField('Degraded agents', (w.degraded_agents || []).length > 0
+      ? w.degraded_agents.join(', ') : 'none');
+    html += detailField('Circuit breaker', w.circuit_breaker_tripped ? 'TRIPPED' : 'ok');
+
+    var retries = w.retry_counts || {};
+    var retryKeys = Object.keys(retries);
+    if (retryKeys.length > 0) {
+      html += '<div class="detail-section">Retries</div>';
+      retryKeys.forEach(function (k) {
+        html += detailField(k, retries[k]);
+      });
+    }
+
+    detailContent.innerHTML = html;
+  };
 
   window._selectAgent = function (id) {
     selectedAgentId = id;
@@ -635,6 +674,7 @@ function escapeHtml(text) {
       var topology = results[0];
       var agents = results[1];
       var wardens = results[2];
+      cachedWardens = wardens;
       buildTree(topology, agents, wardens);
       renderWardens(wardens);
     }).catch(function () {
