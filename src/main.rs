@@ -1000,10 +1000,15 @@ async fn serve_program(
         // Build system runtime (if declared) and inject shared infrastructure (#140)
         let topology = executor.extract_topology();
         let system_runtime = match executor.build_system_runtime() {
-            Ok(Some(sr)) => Some(
-                sr.with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
-                    .with_shared_warden_snapshots(warden_snapshots.clone()),
-            ),
+            Ok(Some(sr)) => {
+                let mut sr = sr
+                    .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
+                    .with_shared_warden_snapshots(warden_snapshots.clone());
+                if let Some(ref storage) = inspect_storage {
+                    sr = sr.with_shared_storage(storage.clone());
+                }
+                Some(sr)
+            }
             Ok(None) => None,
             Err(e) => {
                 eprintln!("Warning: failed to build system runtime: {e}");
@@ -1155,10 +1160,15 @@ async fn serve_with_watch(
         // Build system runtime (if declared) and inject shared infrastructure (#140)
         let topology = executor.extract_topology();
         let system_runtime = match executor.build_system_runtime() {
-            Ok(Some(sr)) => Some(
-                sr.with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
-                    .with_shared_warden_snapshots(warden_snapshots.clone()),
-            ),
+            Ok(Some(sr)) => {
+                let mut sr = sr
+                    .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
+                    .with_shared_warden_snapshots(warden_snapshots.clone());
+                if let Some(ref storage) = inspect_storage {
+                    sr = sr.with_shared_storage(storage.clone());
+                }
+                Some(sr)
+            }
             Ok(None) => None,
             Err(e) => {
                 eprintln!("Warning: failed to build system runtime: {e}");

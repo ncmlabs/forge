@@ -68,6 +68,7 @@ pub struct WardedRuntime {
     blueprints: HashMap<String, AgentBlueprint>,
     event_bus: SharedEventBus,
     instance_registry: SharedInstanceRegistry,
+    storage: Option<crate::runtime::storage::SharedStorage>,
     signal_tx: mpsc::Sender<AgentSignal>,
     signal_rx: mpsc::Receiver<AgentSignal>,
     start: Instant,
@@ -144,6 +145,7 @@ impl WardedRuntime {
             signal_rx,
             start: Instant::now(),
             degraded_agents: HashSet::new(),
+            storage: None,
             shared_snapshots: None,
         }
     }
@@ -209,6 +211,7 @@ impl WardedRuntime {
             signal_rx,
             start: Instant::now(),
             degraded_agents: HashSet::new(),
+            storage: None,
             shared_snapshots: None,
         }
     }
@@ -237,6 +240,11 @@ impl WardedRuntime {
     /// Replace the instance registry (call before spawning agents).
     pub fn set_instance_registry(&mut self, registry: SharedInstanceRegistry) {
         self.instance_registry = registry;
+    }
+
+    /// Inject shared storage so agents can use data.store/data.get.
+    pub fn set_storage(&mut self, storage: crate::runtime::storage::SharedStorage) {
+        self.storage = Some(storage);
     }
 
     /// Build a read-only snapshot of current warden state.
@@ -309,7 +317,7 @@ impl WardedRuntime {
             blueprint.registry.clone(),
             blueprint.tracer.clone(),
             blueprint.program.clone(),
-            None, // TODO: wire storage for warded agents
+            self.storage.clone(),
             Some(self.instance_registry.clone()),
         )
         .with_warden_signal(self.signal_tx.clone());

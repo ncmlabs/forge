@@ -369,8 +369,21 @@ function escapeHtml(text) {
           html += '<div class="detail-section">Memory</div>';
           Object.keys(data.memory).forEach(function (k) {
             var v = data.memory[k];
-            var display = typeof v === 'object' ? JSON.stringify(v) : String(v);
-            if (display.length > 60) display = display.substring(0, 57) + '...';
+            // Extract value from ConfidentValue envelope if present
+            var display;
+            if (v && typeof v === 'object' && 'value' in v) {
+              var inner = v.value;
+              if (inner && typeof inner === 'object') {
+                // Value is tagged: {"Text":"hello"} or {"Number":42}
+                var keys = Object.keys(inner);
+                display = keys.length === 1 ? String(inner[keys[0]]) : JSON.stringify(inner);
+              } else {
+                display = String(inner);
+              }
+            } else {
+              display = typeof v === 'object' ? JSON.stringify(v) : String(v);
+            }
+            if (display.length > 80) display = display.substring(0, 77) + '...';
             html += detailField(k, display);
           });
         }
