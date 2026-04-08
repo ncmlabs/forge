@@ -1,0 +1,10 @@
+# FORGE Observer — standalone runtime inspector
+# Start: forge serve examples/observer/server.forge -s examples/observer/shared.forge
+
+[server]
+host = "127.0.0.1"
+port = 3002
+
+[server.static]
+root = "examples/observer/static"
+prefix = "/static"

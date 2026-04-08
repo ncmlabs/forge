@@ -44,6 +44,14 @@ export default defineConfig({
       },
       testMatch: '**/sentinel-*-real.spec.ts',
     },
+    {
+      name: 'observer',
+      use: {
+        browserName: 'chromium',
+        baseURL: 'http://localhost:3002',
+      },
+      testMatch: '**/observer-*.spec.ts',
+    },
   ],
 
   webServer: [
@@ -70,6 +78,13 @@ export default defineConfig({
           ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
           : { FORGE_MOCK: '1' }),
       },
+    },
+    {
+      command: 'cargo run -- serve examples/observer/server.forge -s examples/observer/shared.forge',
+      cwd: '../../',
+      url: 'http://localhost:3002/static/index.html',
+      reuseExistingServer: true,
+      timeout: 120_000,
     },
   ],
 });
