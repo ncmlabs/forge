@@ -136,6 +136,7 @@ pub enum AgentSignal {
     Timeout { agent_name: String },
     Hallucination { agent_name: String, detail: String },
     BudgetExceeded { agent_name: String, detail: String },
+    Crash { agent_name: String },
 }
 
 // ── Stuck Detector ───────────────────────────────────────────────────────────

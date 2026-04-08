@@ -1016,6 +1016,11 @@ async fn serve_program(
             }
         };
 
+        // Collect signal senders before system runtime is consumed (issue #143)
+        let signal_senders = system_runtime
+            .as_ref()
+            .map(|sr| sr.collect_signal_senders());
+
         // Cost aggregator (issue #142) — subscribe before server consumes events_tx
         let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
             forge::runtime::cost_aggregator::CostAggregator::new(),
@@ -1033,6 +1038,9 @@ async fn serve_program(
                 .with_warden_snapshots(warden_snapshots)
                 .with_cost_aggregator(cost_aggregator);
 
+        if let Some(senders) = signal_senders {
+            server = server.with_signal_senders(senders);
+        }
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);
         }
@@ -1186,6 +1194,11 @@ async fn serve_with_watch(
             }
         };
 
+        // Collect signal senders before system runtime is consumed (issue #143)
+        let signal_senders = system_runtime
+            .as_ref()
+            .map(|sr| sr.collect_signal_senders());
+
         // Cost aggregator (issue #142)
         let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
             forge::runtime::cost_aggregator::CostAggregator::new(),
@@ -1204,6 +1217,9 @@ async fn serve_with_watch(
                 .with_warden_snapshots(warden_snapshots)
                 .with_cost_aggregator(cost_aggregator);
 
+        if let Some(senders) = signal_senders {
+            server = server.with_signal_senders(senders);
+        }
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);
         }
