@@ -1,12 +1,17 @@
 // FORGE agent instance registry — issue #82
 // Tracks all living agent instances at runtime for discovery and composition.
 // Principle VI (Self-Reference): agents need to discover and compose with other agents.
+// Extended for introspection (issue #139): stores AgentContext refs for deep inspection.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use std::sync::Mutex;
+
 use uuid::Uuid;
+
+use crate::runtime::agent::AgentContext;
 
 // ── Instance Status ─────────────────────────────────────────────────────────
 
@@ -28,6 +33,71 @@ pub struct InstanceInfo {
     pub lifecycle_state: Option<String>,
     pub spawned_at: Instant,
     pub status: InstanceStatus,
+    /// Optional handle to the agent's runtime context (for deep introspection).
+    pub context: Option<Arc<Mutex<AgentContext>>>,
+}
+
+impl InstanceInfo {
+    /// Lightweight JSON summary (no context lock required).
+    pub fn to_json_summary(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.instance_id.to_string(),
+            "name": self.agent_name,
+            "alias": self.alias,
+            "lifecycle_state": self.lifecycle_state,
+            "uptime_ms": self.spawned_at.elapsed().as_millis() as u64,
+            "status": match self.status {
+                InstanceStatus::Running => "running",
+                InstanceStatus::Stopping => "stopping",
+            },
+        })
+    }
+
+    /// Deep JSON snapshot — locks AgentContext to read memory, timers, stuck state.
+    pub fn to_json_deep(&self) -> serde_json::Value {
+        let mut obj = self.to_json_summary();
+        if let Some(ref ctx_lock) = self.context {
+            if let Ok(ctx) = ctx_lock.try_lock() {
+                // Memory fields
+                let memory = ctx
+                    .memory
+                    .to_json()
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .unwrap_or(serde_json::Value::Null);
+                obj["memory"] = memory;
+
+                // Timer states
+                let timer_map: serde_json::Map<String, serde_json::Value> = ctx
+                    .timer_manager
+                    .all_states()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(format!("{:?}", v))))
+                    .collect();
+                obj["timers"] = serde_json::Value::Object(timer_map);
+
+                // Stuck / hallucination flags
+                obj["stuck"] = serde_json::Value::Bool(ctx.stuck_detector.is_stuck());
+                obj["hallucinating"] =
+                    serde_json::Value::Bool(ctx.stuck_detector.is_hallucinating());
+
+                // Event sink counts
+                obj["event_count"] = serde_json::json!(ctx.event_sink.emitted.len());
+                obj["escalation_count"] = serde_json::json!(ctx.event_sink.escalations.len());
+
+                // Knowledge store
+                if let Some(ref ks) = ctx.knowledge_store {
+                    obj["knowledge_count"] = serde_json::json!(ks.entry_count());
+                }
+
+                // Lifecycle state from state machine
+                if let Some(ref sm) = ctx.state_machine {
+                    obj["lifecycle_state"] = serde_json::json!(sm.current);
+                }
+            }
+        }
+        obj
+    }
 }
 
 // ── Instance Registry ───────────────────────────────────────────────────────
@@ -59,6 +129,25 @@ impl InstanceRegistry {
 
     /// Register a new agent instance with an optional alias. Returns the generated instance ID.
     pub fn register(&mut self, agent_name: &str, alias: Option<&str>) -> Uuid {
+        self.register_inner(agent_name, alias, None)
+    }
+
+    /// Register a new agent instance with a shared AgentContext for deep introspection.
+    pub fn register_with_context(
+        &mut self,
+        agent_name: &str,
+        alias: Option<&str>,
+        context: Arc<Mutex<AgentContext>>,
+    ) -> Uuid {
+        self.register_inner(agent_name, alias, Some(context))
+    }
+
+    fn register_inner(
+        &mut self,
+        agent_name: &str,
+        alias: Option<&str>,
+        context: Option<Arc<Mutex<AgentContext>>>,
+    ) -> Uuid {
         let id = Uuid::new_v4();
         let info = InstanceInfo {
             instance_id: id,
@@ -67,6 +156,7 @@ impl InstanceRegistry {
             lifecycle_state: None,
             spawned_at: Instant::now(),
             status: InstanceStatus::Running,
+            context,
         };
         self.by_id.insert(id, info);
         self.by_name

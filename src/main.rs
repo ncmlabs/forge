@@ -974,11 +974,13 @@ async fn serve_program(
         if let Some(parent) = storage_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
+        let mut inspect_storage: Option<forge::runtime::storage::SharedStorage> = None;
         let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
             Ok(storage) => {
                 // Seed content/ directory into storage (#59)
                 seed_content_dir(file, &storage);
                 let shared = std::sync::Arc::new(storage);
+                inspect_storage = Some(shared.clone());
                 executor.with_storage(shared)
             }
             Err(e) => {
@@ -994,6 +996,15 @@ async fn serve_program(
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_event_bus(event_bus)
                 .with_events_tx(events_tx);
+
+        // Wire introspection handles (#139)
+        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+        );
+        server = server.with_instance_registry(instance_registry);
+        if let Some(storage) = inspect_storage {
+            server = server.with_inspect_storage(storage);
+        }
 
         // Wire webhook secrets from config
         if let Some(ref srv_config) = config.server {
@@ -1091,10 +1102,12 @@ async fn serve_with_watch(
         if let Some(parent) = storage_path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
+        let mut inspect_storage: Option<forge::runtime::storage::SharedStorage> = None;
         let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
             Ok(storage) => {
                 seed_content_dir(file, &storage);
                 let shared = std::sync::Arc::new(storage);
+                inspect_storage = Some(shared.clone());
                 executor.with_storage(shared)
             }
             Err(e) => {
@@ -1111,6 +1124,15 @@ async fn serve_with_watch(
                 .with_watch_mode(true)
                 .with_event_bus(event_bus)
                 .with_events_tx(events_tx.clone());
+
+        // Wire introspection handles (#139)
+        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+        );
+        server = server.with_instance_registry(instance_registry);
+        if let Some(storage) = inspect_storage {
+            server = server.with_inspect_storage(storage);
+        }
 
         // Wire webhook secrets from config
         if let Some(ref srv_config) = config.server {

@@ -73,6 +73,11 @@ impl RetryTracker {
     pub fn reset_agent(&mut self, agent: &str, ft: FailureType) {
         self.counts.remove(&(agent.to_string(), ft));
     }
+
+    /// Return all failure counts as (agent, failure_type) → count.
+    pub fn all_counts(&self) -> &HashMap<(String, FailureType), u64> {
+        &self.counts
+    }
 }
 
 // ── Policy Resolver ─────────────────────────────────────────────────────────
