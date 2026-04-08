@@ -37,6 +37,8 @@ pub struct AppState {
     pub executor: SwappableExecutor,
     /// Broadcast channel for SSE reload notifications (only in watch mode).
     pub reload_tx: Option<broadcast::Sender<()>>,
+    /// Broadcast channel for live trace events (SSE).
+    pub events_tx: Option<broadcast::Sender<String>>,
     /// Shared event bus for webhook → agent event delivery.
     pub event_bus: Option<SharedEventBus>,
     /// HMAC secrets keyed by webhook endpoint name.
@@ -83,6 +85,7 @@ impl ForgeServer {
             state: AppState {
                 executor: Arc::new(RwLock::new(executor)),
                 reload_tx: None,
+                events_tx: None,
                 event_bus: None,
                 webhook_secrets: HashMap::new(),
             },
@@ -144,6 +147,12 @@ impl ForgeServer {
         self.state.executor.clone()
     }
 
+    /// Attach a live trace event broadcast channel for the SSE endpoint.
+    pub fn with_events_tx(mut self, tx: broadcast::Sender<String>) -> Self {
+        self.state.events_tx = Some(tx);
+        self
+    }
+
     /// Get a handle to the reload broadcast sender (for the watcher to signal reloads).
     pub fn reload_sender(&self) -> Option<broadcast::Sender<()>> {
         self.state.reload_tx.clone()
@@ -165,6 +174,11 @@ impl ForgeServer {
         // SSE reload endpoint (watch mode only)
         if self.watch_mode {
             router = router.route("/__forge/reload", get(handle_sse_reload));
+        }
+
+        // SSE live trace endpoint (always in serve mode when events channel is wired)
+        if self.state.events_tx.is_some() {
+            router = router.route("/__forge/events", get(handle_sse_events));
         }
 
         // CORS
@@ -200,6 +214,9 @@ impl ForgeServer {
         }
         if self.watch_mode {
             println!("  SSE reload:   /__forge/reload");
+        }
+        if self.state.events_tx.is_some() {
+            println!("  SSE trace:    /__forge/events");
         }
         let executor = self.state.executor.read().unwrap();
         let endpoints = executor.endpoints();
@@ -380,6 +397,24 @@ async fn handle_sse_reload(
 
     let stream = BroadcastStream::new(rx).filter_map(|result| match result {
         Ok(()) => Some(Ok(Event::default().data("reload"))),
+        Err(_) => None, // lagged — skip
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// SSE endpoint for live trace event streaming.
+async fn handle_sse_events(
+    State(state): State<AppState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let rx = state
+        .events_tx
+        .as_ref()
+        .expect("SSE events route registered without events channel")
+        .subscribe();
+
+    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
+        Ok(json) => Some(Ok(Event::default().data(json))),
         Err(_) => None, // lagged — skip
     });
 

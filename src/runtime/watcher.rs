@@ -23,6 +23,7 @@ pub async fn watch_and_reload(
     file: PathBuf,
     swappable: SwappableExecutor,
     reload_tx: Option<broadcast::Sender<()>>,
+    events_tx: Option<broadcast::Sender<String>>,
 ) -> anyhow::Result<WatchAction> {
     let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
 
@@ -102,7 +103,7 @@ pub async fn watch_and_reload(
             return Ok(WatchAction::RestartServer);
         }
 
-        if forge_changed && attempt_reload(&file, &swappable) {
+        if forge_changed && attempt_reload(&file, &swappable, &events_tx) {
             // Notify connected browsers to reload
             if let Some(ref tx) = reload_tx {
                 let _ = tx.send(());
@@ -135,7 +136,11 @@ fn is_forge_file(path: &Path) -> bool {
 
 /// Attempt to reload the executor from the source file.
 /// Returns true on success, false on failure.
-fn attempt_reload(file: &Path, swappable: &SwappableExecutor) -> bool {
+fn attempt_reload(
+    file: &Path,
+    swappable: &SwappableExecutor,
+    events_tx: &Option<broadcast::Sender<String>>,
+) -> bool {
     eprint!("File changed -- reloading... ");
 
     let source = match std::fs::read_to_string(file) {
@@ -183,13 +188,13 @@ fn attempt_reload(file: &Path, swappable: &SwappableExecutor) -> bool {
     // Build new executor
     let config = crate::config::ForgeConfig::load_or_default();
 
-    let tracer = if std::env::var("FORGE_TRACE")
+    let trace_env = std::env::var("FORGE_TRACE")
         .map(|v| v == "1")
-        .unwrap_or(false)
-    {
-        Some(crate::tracer::Tracer::new())
-    } else {
-        None
+        .unwrap_or(false);
+    let tracer = match (events_tx, trace_env) {
+        (Some(tx), _) => Some(crate::tracer::Tracer::with_live(tx.clone())),
+        (None, true) => Some(crate::tracer::Tracer::new()),
+        (None, false) => None,
     };
 
     let registry = match crate::llm::registry::ProviderRegistry::from_config(config.clone()) {

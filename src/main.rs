@@ -777,6 +777,7 @@ async fn build_program(
 fn try_build_executor_multi(
     file: &Path,
     sources: &[PathBuf],
+    events_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Result<
     (
         forge::runtime::executor::TaskExecutor,
@@ -785,7 +786,7 @@ fn try_build_executor_multi(
     anyhow::Error,
 > {
     if sources.is_empty() {
-        return try_build_executor(file);
+        return try_build_executor(file, events_tx);
     }
 
     // Multi-file: parse all, merge, then build
@@ -840,13 +841,13 @@ fn try_build_executor_multi(
     })?;
 
     let config = forge::config::ForgeConfig::load_or_default();
-    let tracer = if std::env::var("FORGE_TRACE")
+    let trace_env = std::env::var("FORGE_TRACE")
         .map(|v| v == "1")
-        .unwrap_or(false)
-    {
-        Some(forge::tracer::Tracer::new())
-    } else {
-        None
+        .unwrap_or(false);
+    let tracer = match (&events_tx, trace_env) {
+        (Some(tx), _) => Some(forge::tracer::Tracer::with_live(tx.clone())),
+        (None, true) => Some(forge::tracer::Tracer::new()),
+        (None, false) => None,
     };
 
     let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
@@ -871,6 +872,7 @@ fn try_build_executor_multi(
 /// Returns the executor and config on success, or renders diagnostics and returns an error.
 fn try_build_executor(
     file: &Path,
+    events_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Result<
     (
         forge::runtime::executor::TaskExecutor,
@@ -909,13 +911,13 @@ fn try_build_executor(
 
     let config = forge::config::ForgeConfig::load_or_default();
 
-    let tracer = if std::env::var("FORGE_TRACE")
+    let trace_env = std::env::var("FORGE_TRACE")
         .map(|v| v == "1")
-        .unwrap_or(false)
-    {
-        Some(forge::tracer::Tracer::new())
-    } else {
-        None
+        .unwrap_or(false);
+    let tracer = match (&events_tx, trace_env) {
+        (Some(tx), _) => Some(forge::tracer::Tracer::with_live(tx.clone())),
+        (None, true) => Some(forge::tracer::Tracer::new()),
+        (None, false) => None,
     };
 
     let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
@@ -954,10 +956,12 @@ async fn serve_program(
         serve_with_watch(file, sources, cli_host, cli_port).await
     } else {
         // Non-watch mode: build once and serve. Exits on errors.
-        let (executor, config) = match try_build_executor_multi(file, sources) {
-            Ok(r) => r,
-            Err(_) => std::process::exit(1),
-        };
+        let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+        let (executor, config) =
+            match try_build_executor_multi(file, sources, Some(events_tx.clone())) {
+                Ok(r) => r,
+                Err(_) => std::process::exit(1),
+            };
 
         // Create event bus for webhook → agent event delivery
         let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
@@ -988,7 +992,8 @@ async fn serve_program(
 
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
-                .with_event_bus(event_bus);
+                .with_event_bus(event_bus)
+                .with_events_tx(events_tx);
 
         // Wire webhook secrets from config
         if let Some(ref srv_config) = config.server {
@@ -1065,11 +1070,15 @@ async fn serve_with_watch(
 ) -> anyhow::Result<()> {
     use forge::runtime::watcher::WatchAction;
 
+    // Create events channel outside the loop so SSE connections survive config restarts.
+    let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+
     loop {
-        let (executor, config) = match try_build_executor_multi(file, sources) {
-            Ok(r) => r,
-            Err(_) => std::process::exit(1),
-        };
+        let (executor, config) =
+            match try_build_executor_multi(file, sources, Some(events_tx.clone())) {
+                Ok(r) => r,
+                Err(_) => std::process::exit(1),
+            };
 
         // Create event bus for webhook → agent event delivery
         let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
@@ -1100,7 +1109,8 @@ async fn serve_with_watch(
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_watch_mode(true)
-                .with_event_bus(event_bus);
+                .with_event_bus(event_bus)
+                .with_events_tx(events_tx.clone());
 
         // Wire webhook secrets from config
         if let Some(ref srv_config) = config.server {
@@ -1118,10 +1128,17 @@ async fn serve_with_watch(
 
         let swappable = server.swappable_executor();
         let reload_tx = server.reload_sender();
+        let watcher_events_tx = Some(events_tx.clone());
 
         let watch_file = file.to_path_buf();
         let watcher_handle = tokio::spawn(async move {
-            forge::runtime::watcher::watch_and_reload(watch_file, swappable, reload_tx).await
+            forge::runtime::watcher::watch_and_reload(
+                watch_file,
+                swappable,
+                reload_tx,
+                watcher_events_tx,
+            )
+            .await
         });
 
         tokio::select! {
