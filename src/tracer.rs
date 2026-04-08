@@ -4,6 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::broadcast;
 
 type TraceLog = Vec<(String, serde_json::Value)>;
 
@@ -11,6 +12,7 @@ type TraceLog = Vec<(String, serde_json::Value)>;
 pub struct Tracer {
     start: Instant,
     captured: Option<Arc<Mutex<TraceLog>>>,
+    live_tx: Option<broadcast::Sender<String>>,
 }
 
 impl Default for Tracer {
@@ -34,6 +36,7 @@ impl Tracer {
         Self {
             start: Instant::now(),
             captured: None,
+            live_tx: None,
         }
     }
 
@@ -42,6 +45,16 @@ impl Tracer {
         Self {
             start: Instant::now(),
             captured: Some(Arc::new(Mutex::new(Vec::new()))),
+            live_tx: None,
+        }
+    }
+
+    /// Create a tracer that broadcasts events to an SSE channel (for live streaming).
+    pub fn with_live(tx: broadcast::Sender<String>) -> Self {
+        Self {
+            start: Instant::now(),
+            captured: None,
+            live_tx: Some(tx),
         }
     }
 
@@ -72,6 +85,9 @@ impl Tracer {
         }
         if let Some(ref buf) = self.captured {
             buf.lock().unwrap().push((event.to_string(), obj.clone()));
+        }
+        if let Some(ref tx) = self.live_tx {
+            let _ = tx.send(obj.to_string());
         }
         eprintln!("{}", obj);
     }
@@ -129,6 +145,12 @@ impl Tracer {
                 "success": success,
             }),
         );
+    }
+
+    // ── Say tracing (issue #138) ──────────────────────────────────────────────
+
+    pub fn say(&self, text: &str) {
+        self.emit("say", serde_json::json!({ "text": text }));
     }
 
     // ── Flow / wave / stage tracing ──────────────────────────────────────────

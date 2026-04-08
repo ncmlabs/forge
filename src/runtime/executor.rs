@@ -465,6 +465,9 @@ impl TaskExecutor {
                 Stmt::Say(expr) => {
                     let val = self.eval_expr(expr, env).await?;
                     let text = format!("{}", val.value);
+                    if let Some(ref tracer) = self.tracer {
+                        tracer.say(&text);
+                    }
                     println!("{}", text);
                     self.output.lock().unwrap().push(text);
                 }
