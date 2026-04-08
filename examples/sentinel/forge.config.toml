@@ -1,0 +1,25 @@
+# FORGE Sentinel — configuration
+# Start: forge serve examples/sentinel/server.forge -s examples/sentinel/shared.forge --watch
+
+[llm]
+default = "sentinel-provider"
+
+[providers.sentinel-provider]
+type = "openai-compat"
+model = "qwen3.5:27b"
+base_url = "http://192.168.10.195:11434/v1"
+api_key = "not-required"
+timeout_secs = 120
+
+[server]
+host = "127.0.0.1"
+port = 3001
+
+[server.static]
+root = "examples/sentinel/static"
+prefix = "/static"
+
+[skills]
+skill_dirs = ["examples/sentinel/skills"]
+timeout_secs = 60
+max_turns = 5

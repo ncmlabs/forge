@@ -1,0 +1,30 @@
+#! boundary: shared
+
+# ── Types ────────────────────────────────────────────────────────
+
+type ScanResult
+  score: Text
+  summary: Text
+  timestamp: Text
+
+# ── Events ───────────────────────────────────────────────────────
+
+event ScanRequested
+  trigger: Text
+
+event ScanComplete
+  score: Text
+  summary: Text
+
+event HealthDegraded
+  old_state: Text
+  new_state: Text
+
+# ── Lifecycle ────────────────────────────────────────────────────
+
+states RepoHealth
+  healthy -> degraded
+  degraded -> critical
+  critical -> degraded
+  degraded -> healthy
+  critical -> healthy
