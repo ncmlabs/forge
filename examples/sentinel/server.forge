@@ -323,7 +323,8 @@ flow repo_scan
 
   stage publish
     needs score.*, gather_git.*, gather_metrics.*, analyze.*
-    data.store("scan:latest", gather_git + "\n" + gather_metrics)
+    signals = "{gather_git}\n{gather_metrics}"
+    data.store("scan:latest", signals)
     data.store("health:latest", score)
     data.store("analysis:latest", analyze)
     emit ScanComplete(score: score, summary: analyze)

@@ -6,10 +6,10 @@ default = "sentinel-provider"
 
 [providers.sentinel-provider]
 type = "openai-compat"
-model = "qwen3.5:27b"
+model = "qwen3-coder:latest"
 base_url = "http://192.168.10.195:11434/v1"
 api_key = "not-required"
-timeout_secs = 120
+timeout_secs = 300
 
 [server]
 host = "127.0.0.1"
