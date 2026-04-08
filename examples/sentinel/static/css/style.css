@@ -458,3 +458,166 @@ code {
 .insight-card:hover {
   border-left-color: oklch(var(--s));
 }
+
+/* Constrain long LLM output inside insight cards */
+.insight-card .card-body p {
+  max-height: 200px;
+  overflow-y: auto;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+/* Prevent grid columns from overflowing into siblings */
+.grid > div { min-width: 0; }
+
+/* Force card bodies to respect their container width */
+.card-body { overflow: hidden; }
+.card-body p, .card-body pre {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Metric cards should sit above any overflow */
+.metric-card {
+  position: relative;
+  z-index: 1;
+}
+
+/* Health badge: truncate when LLM returns verbose classification */
+#health-badge {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Dashboard commits section */
+.dashboard-commits {
+  max-height: 320px;
+  overflow-y: auto;
+  font-size: 0.8rem;
+}
+
+/* Scan results analysis */
+.scan-analysis {
+  max-height: 400px;
+  overflow-y: auto;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* ── Topology Graph ──────────────────────────────────────────── */
+
+.topo-container {
+  width: 100%;
+  height: calc(100vh - 280px);
+  min-height: 400px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: oklch(var(--b2) / 0.3);
+}
+
+.topo-container svg { display: block; }
+
+/* Nodes */
+.topo-node { cursor: pointer; }
+
+.topo-node .node-circle {
+  stroke-width: 2px;
+  transition: stroke-width 0.15s, filter 0.15s;
+}
+
+.topo-node .node-circle.system  { fill: oklch(0.7 0.15 145);  stroke: oklch(0.55 0.15 145); }
+.topo-node .node-circle.warden  { fill: oklch(0.75 0.15 55);  stroke: oklch(0.6 0.15 55); }
+.topo-node .node-circle.agent   { fill: oklch(0.65 0.12 250); stroke: oklch(0.5 0.12 250); }
+
+.topo-node .node-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-anchor: middle;
+  fill: oklch(var(--bc));
+  pointer-events: none;
+}
+
+.topo-node .node-type-label {
+  font-size: 9px;
+  text-anchor: middle;
+  fill: oklch(var(--bc) / 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+}
+
+/* Selected node */
+.topo-node.selected .node-circle {
+  stroke-width: 4px;
+  filter: drop-shadow(0 0 6px oklch(var(--p) / 0.5));
+}
+
+/* Thinking / active */
+.topo-node.thinking .node-circle {
+  animation: topo-thinking 1.5s ease-in-out infinite;
+}
+
+@keyframes topo-thinking {
+  0%, 100% { stroke-width: 2px; filter: none; }
+  50% { stroke-width: 4px; filter: drop-shadow(0 0 8px oklch(0.7 0.15 250 / 0.5)); }
+}
+
+/* Pulse ring */
+.topo-node .pulse-ring {
+  fill: none;
+  stroke-width: 2px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.topo-node .pulse-ring.system  { stroke: oklch(0.7 0.15 145); }
+.topo-node .pulse-ring.warden  { stroke: oklch(0.75 0.15 55); }
+.topo-node .pulse-ring.agent   { stroke: oklch(0.65 0.12 250); }
+
+/* Health badge on warden nodes */
+.health-dot { stroke: oklch(var(--b1)); stroke-width: 1.5px; }
+.health-dot.ok       { fill: oklch(0.72 0.19 154); }
+.health-dot.degraded { fill: oklch(0.80 0.15 84); }
+.health-dot.critical { fill: oklch(0.65 0.22 29); }
+
+/* Links */
+.topo-link {
+  stroke: oklch(var(--bc) / 0.15);
+  stroke-width: 1.5px;
+  fill: none;
+}
+
+.topo-link.supervises { stroke-dasharray: 5 3; }
+
+.topo-link.wired {
+  stroke: oklch(0.6 0.1 250 / 0.35);
+  stroke-width: 2px;
+}
+
+/* Edge glow on event flow */
+.topo-link.edge-active {
+  stroke: oklch(0.65 0.15 145);
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 4px oklch(0.65 0.15 145 / 0.6));
+  transition: stroke 0.2s, stroke-width 0.2s;
+}
+
+/* Marching ants for flowing data */
+.topo-link.edge-flowing {
+  stroke-dasharray: 8 4;
+  animation: topo-dash-flow 0.6s linear infinite;
+}
+
+@keyframes topo-dash-flow {
+  to { stroke-dashoffset: -12; }
+}
+
+/* Arrow markers */
+.topo-arrow { fill: oklch(0.6 0.1 250 / 0.5); }
+.topo-arrow.active { fill: oklch(0.65 0.15 145); }

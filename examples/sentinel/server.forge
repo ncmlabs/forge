@@ -37,6 +37,7 @@ pure nav_bar
     insights_cls = "btn btn-sm btn-ghost"
     api_cls = "btn btn-sm btn-ghost"
     obs_cls = "btn btn-sm btn-ghost"
+    topo_cls = "btn btn-sm btn-ghost"
     if active == "dashboard"
       dash_cls = "btn btn-sm btn-primary"
     if active == "insights"
@@ -45,7 +46,9 @@ pure nav_bar
       api_cls = "btn btn-sm btn-primary"
     if active == "observer"
       obs_cls = "btn btn-sm btn-primary"
-    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/dashboard\" class=\"btn btn-ghost text-xl font-bold\">SENTINEL</a><div class=\"flex gap-2\"><a href=\"/dashboard\" class=\"{!dash_cls}\">Dashboard</a><a href=\"/insights\" class=\"{!insights_cls}\">Insights</a><a href=\"/observer\" class=\"{!obs_cls}\">Observer</a><a href=\"/api_health\" class=\"{!api_cls}\">API</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
+    if active == "topology"
+      topo_cls = "btn btn-sm btn-primary"
+    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/dashboard\" class=\"btn btn-ghost text-xl font-bold\">SENTINEL</a><div class=\"flex gap-2\"><a href=\"/dashboard\" class=\"{!dash_cls}\">Dashboard</a><a href=\"/insights\" class=\"{!insights_cls}\">Insights</a><a href=\"/observer\" class=\"{!obs_cls}\">Observer</a><a href=\"/topology\" class=\"{!topo_cls}\">Topology</a><a href=\"/api_health\" class=\"{!api_cls}\">API</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
 
 pure page_layout
   needs title: Text, nav: Html, body: Html
@@ -379,6 +382,11 @@ pure observer_body
   do
     give "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><div><h1 class=\"text-3xl font-bold\">Agent Observer</h1><p class=\"opacity-60 mt-1\">Live agent tree with real-time trace events</p></div><div class=\"flex items-center gap-3\"><span id=\"sse-status\" class=\"badge badge-sm badge-ghost\">Connecting...</span><button id=\"scan-trigger-obs\" class=\"btn btn-primary btn-sm\">Run Scan</button></div></div><div class=\"grid grid-cols-1 lg:grid-cols-3 gap-6\"><div class=\"lg:col-span-2\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">System Topology</h2><div id=\"tree-root\" class=\"agent-tree\"><div class=\"skeleton h-8 w-3/4 mb-2\"></div><div class=\"skeleton h-8 w-1/2 mb-2 ml-8\"></div><div class=\"skeleton h-8 w-2/3 mb-2 ml-16\"></div><div class=\"skeleton h-8 w-1/2 ml-16\"></div></div></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Live Events</h2><div id=\"event-log\" class=\"forge-activity\" style=\"max-height:400px;overflow-y:auto\"><div class=\"log-title\">FORGE Runtime</div><div class=\"text-sm opacity-40 py-4 text-center\" id=\"event-log-empty\">Waiting for events...</div></div></div></div></div><div><div id=\"agent-detail\" class=\"card bg-base-100 shadow-md agent-detail-panel\"><div class=\"card-body p-4\"><div class=\"flex justify-between items-center mb-3\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60\">Agent Detail</h2><button id=\"detail-close\" class=\"btn btn-xs btn-circle btn-ghost\">X</button></div><div id=\"detail-content\"><p class=\"text-sm opacity-40 py-8 text-center\">Click an agent node to inspect</p></div></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Wardens</h2><div id=\"warden-panel\"><div class=\"skeleton h-6 w-full mb-2\"></div><div class=\"skeleton h-6 w-3/4\"></div></div></div></div></div></div></div>"
 
+pure topology_body
+  gives Html
+  do
+    give "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><div><h1 class=\"text-3xl font-bold\">Agent Topology</h1><p class=\"opacity-60 mt-1\">Force-directed graph — live supervision &amp; event flow</p></div><div class=\"flex items-center gap-3\"><span id=\"topo-sse-status\" class=\"badge badge-sm badge-ghost\">Connecting...</span><button id=\"topo-scan-trigger\" class=\"btn btn-primary btn-sm\">Run Scan</button></div></div><div class=\"grid grid-cols-1 lg:grid-cols-3 gap-6\"><div class=\"lg:col-span-2\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><div class=\"flex items-center justify-between mb-3\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60\">Network Graph</h2><div class=\"flex gap-2 text-xs opacity-60\"><span class=\"flex items-center gap-1\"><span class=\"inline-block w-3 h-3 rounded-full\" style=\"background:oklch(0.7 0.15 145)\"></span> system</span><span class=\"flex items-center gap-1\"><span class=\"inline-block w-3 h-3 rounded-full\" style=\"background:oklch(0.75 0.15 55)\"></span> warden</span><span class=\"flex items-center gap-1\"><span class=\"inline-block w-3 h-3 rounded-full\" style=\"background:oklch(0.65 0.12 250)\"></span> agent</span></div></div><div id=\"topo-container\" class=\"topo-container\"><svg id=\"topo-svg\" width=\"100%\" height=\"100%\"></svg></div></div></div></div><div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><div class=\"flex justify-between items-center mb-3\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60\">Node Detail</h2><button id=\"topo-detail-close\" class=\"btn btn-xs btn-circle btn-ghost\">X</button></div><div id=\"topo-detail-content\"><p class=\"text-sm opacity-40 py-8 text-center\">Click a node to inspect</p></div></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Live Events</h2><div id=\"topo-event-log\" class=\"forge-activity\" style=\"max-height:300px;overflow-y:auto\"><div class=\"text-sm opacity-40 py-4 text-center\" id=\"topo-event-log-empty\">Waiting for events...</div></div></div></div></div></div></div><script src=\"https://d3js.org/d3.v7.min.js\"></script><script src=\"/static/js/topology.js\"></script>"
+
 # ── Endpoint Helpers ──────────────────────────────────────────────
 #
 # Tasks that handle data.get with default fallback — endpoints
@@ -454,9 +462,9 @@ endpoint dashboard() -> Html
   commits = get_recent_commits()
   insight_raw = dashboard_insight()
   insight = insight_card("Latest Insight", insight_raw, "medium")
-  header = "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-8\"><div><h1 class=\"text-4xl font-bold\">Repo Health</h1><p class=\"opacity-60 mt-1\">FORGE monitoring FORGE</p></div><div class=\"text-right\">{!badge}</div></div>"
+  header = "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-8\" style=\"max-height:120px;overflow:hidden\"><div><h1 class=\"text-4xl font-bold\">Repo Health</h1><p class=\"opacity-60 mt-1\">FORGE monitoring FORGE</p></div><div class=\"text-right flex-shrink-0\">{!badge}</div></div>"
   cards = "<div class=\"grid grid-cols-1 md:grid-cols-3 gap-4 mb-8\">{!vel_card} {!branch_card} {!size_card}</div>"
-  content_section = "<div class=\"grid grid-cols-1 lg:grid-cols-2 gap-8\"><div><h2 class=\"text-2xl font-bold mb-4\">Recent Commits</h2><pre class=\"text-sm font-mono whitespace-pre-wrap\">{commits}</pre></div><div><h2 class=\"text-2xl font-bold mb-4\">AI Insights</h2>{!insight}<a id=\"scan-trigger\" href=\"/observer?scan=1\" class=\"btn btn-primary btn-sm mt-4\">Run Scan</a></div></div>"
+  content_section = "<div class=\"grid grid-cols-1 lg:grid-cols-2 gap-8\"><div><h2 class=\"text-2xl font-bold mb-4\">Recent Commits</h2><pre class=\"text-sm font-mono whitespace-pre-wrap dashboard-commits\">{commits}</pre></div><div><h2 class=\"text-2xl font-bold mb-4\">AI Insights</h2>{!insight}<a id=\"scan-trigger\" href=\"/observer?scan=1\" class=\"btn btn-primary btn-sm mt-4\">Run Scan</a></div></div>"
   body = header + cards + content_section + "</div>"
   give page_layout("Sentinel — FORGE Health Dashboard", nav, body)
 
@@ -466,7 +474,7 @@ endpoint scan_now() -> Html
   health = dashboard_health()
   analysis = scan_analysis()
   badge = health_badge(health, "fresh scan")
-  body = "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><h1 class=\"text-3xl font-bold\">Scan Results</h1>{!badge}</div><div id=\"scan-results\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body\"><h3 class=\"card-title\">Flow Result</h3><p class=\"text-sm opacity-70\">{result}</p></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body\"><h3 class=\"card-title\">Analysis</h3><p class=\"text-sm whitespace-pre-wrap\">{analysis}</p></div></div></div><a href=\"/dashboard\" class=\"btn btn-ghost mt-6\">Back to Dashboard</a></div>"
+  body = "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><h1 class=\"text-3xl font-bold\">Scan Results</h1>{!badge}</div><div id=\"scan-results\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body\"><h3 class=\"card-title\">Flow Result</h3><p class=\"text-sm opacity-70\">{result}</p></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body\"><h3 class=\"card-title\">Analysis</h3><p class=\"text-sm whitespace-pre-wrap scan-analysis\">{analysis}</p></div></div></div><a href=\"/dashboard\" class=\"btn btn-ghost mt-6\">Back to Dashboard</a></div>"
   give page_layout("Scan — Sentinel", nav, body)
 
 endpoint insights() -> Html
@@ -482,6 +490,12 @@ endpoint observer() -> Html
   nav = nav_bar("observer")
   body = observer_body()
   give page_layout("Observer — Sentinel", nav, body)
+
+<<<<<<< HEAD
+endpoint topology() -> Html
+  nav = nav_bar("topology")
+  body = topology_body()
+  give page_layout("Topology — Sentinel", nav, body)
 
 endpoint api_health() -> Text
   health = health_or_unknown()
