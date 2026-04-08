@@ -579,8 +579,11 @@ function escapeHtml(text) {
       }
     }
 
-    // Auto-refresh data when scan completes
-    if (type === 'flow_complete' || type === 'http_response') {
+    // Auto-refresh and re-enable scan button when scan completes
+    if (type === 'flow_complete') {
+      finishScan();
+    }
+    if (type === 'http_response') {
       refreshData();
     }
   }
@@ -638,28 +641,33 @@ function escapeHtml(text) {
 
   // ── Scan Trigger ─────────────────────────────────────────────
 
+  var scanRunning = false;
+
+  function finishScan() {
+    scanRunning = false;
+    if (scanTrigger) {
+      scanTrigger.classList.remove('loading');
+      scanTrigger.textContent = 'Run Scan';
+      scanTrigger.disabled = false;
+    }
+    refreshData();
+  }
+
   if (scanTrigger) {
     scanTrigger.addEventListener('click', function (e) {
       e.preventDefault();
+      if (scanRunning) return;
+      scanRunning = true;
       scanTrigger.classList.add('loading');
       scanTrigger.textContent = 'Scanning...';
       scanTrigger.disabled = true;
 
-      // Fire-and-forget: don't await the slow scan response.
-      // The SSE event stream shows real-time progress, and the
-      // flow_complete event signals when the scan is done.
+      // Fire-and-forget — SSE flow_complete event will re-enable the button
       fetch('/scan_now').then(function () {
-        refreshData();
-      }).catch(function () {});
-
-      // Re-enable button after a short delay so user can see events flowing.
-      // The actual scan may take 60-80s with slow LLM, but the button
-      // shouldn't block the entire UI.
-      setTimeout(function () {
-        scanTrigger.classList.remove('loading');
-        scanTrigger.textContent = 'Run Scan';
-        scanTrigger.disabled = false;
-      }, 3000);
+        finishScan();
+      }).catch(function () {
+        finishScan();
+      });
     });
   }
 
