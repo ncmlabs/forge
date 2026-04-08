@@ -101,34 +101,8 @@ document.addEventListener('DOMContentLoaded', function () {
   if (scanBtn) {
     scanBtn.addEventListener('click', function (e) {
       e.preventDefault();
-      var container = document.getElementById('scan-results');
-      if (!container) return;
-
-      container.innerHTML = '';
-      container.appendChild(createActivityLog(SCAN_STEPS));
-      scanBtn.classList.add('loading');
-      scanBtn.disabled = true;
-
-      fetch('/scan_now')
-        .then(function (r) { return r.text(); })
-        .then(function (html) {
-          var parser = new DOMParser();
-          var doc = parser.parseFromString(html, 'text/html');
-          var newResults = doc.getElementById('scan-results');
-          if (newResults) {
-            container.innerHTML = newResults.innerHTML;
-          } else {
-            container.innerHTML = html;
-          }
-          scanBtn.classList.remove('loading');
-          scanBtn.disabled = false;
-          refreshHealth();
-        })
-        .catch(function (err) {
-          container.innerHTML = '<div class="alert alert-error">' + escapeHtml(err.message) + '</div>';
-          scanBtn.classList.remove('loading');
-          scanBtn.disabled = false;
-        });
+      // Navigate to observer and trigger scan there for full live experience
+      window.location.href = '/observer?scan=1';
     });
   }
 });
@@ -565,6 +539,11 @@ function escapeHtml(text) {
         setTimeout(function (el) { el.classList.remove('active'); }, 1500, wiringLabels[i]);
       }
     }
+
+    // Auto-refresh data when scan completes
+    if (type === 'flow_complete' || type === 'http_response') {
+      refreshData();
+    }
   }
 
   function appendLogEntry(cls, icon, label, detail, tsMs) {
@@ -624,19 +603,24 @@ function escapeHtml(text) {
     scanTrigger.addEventListener('click', function (e) {
       e.preventDefault();
       scanTrigger.classList.add('loading');
+      scanTrigger.textContent = 'Scanning...';
       scanTrigger.disabled = true;
 
-      fetch('/scan_now')
-        .then(function () {
-          scanTrigger.classList.remove('loading');
-          scanTrigger.disabled = false;
-          // Refresh agents and wardens after scan
-          refreshData();
-        })
-        .catch(function () {
-          scanTrigger.classList.remove('loading');
-          scanTrigger.disabled = false;
-        });
+      // Fire-and-forget: don't await the slow scan response.
+      // The SSE event stream shows real-time progress, and the
+      // flow_complete event signals when the scan is done.
+      fetch('/scan_now').then(function () {
+        refreshData();
+      }).catch(function () {});
+
+      // Re-enable button after a short delay so user can see events flowing.
+      // The actual scan may take 60-80s with slow LLM, but the button
+      // shouldn't block the entire UI.
+      setTimeout(function () {
+        scanTrigger.classList.remove('loading');
+        scanTrigger.textContent = 'Run Scan';
+        scanTrigger.disabled = false;
+      }, 3000);
     });
   }
 
@@ -670,5 +654,14 @@ function escapeHtml(text) {
   connectSSE();                         // Start event stream
   setInterval(refreshAgentsOnly, 5000); // Poll agent state every 5s
   setInterval(refreshData, 30000);      // Full topology refresh every 30s
+
+  // Auto-trigger scan if redirected from dashboard with ?scan=1
+  if (window.location.search.indexOf('scan=1') !== -1) {
+    // Remove param from URL to prevent re-trigger on refresh
+    history.replaceState(null, '', '/observer');
+    setTimeout(function () {
+      if (scanTrigger) scanTrigger.click();
+    }, 1000);
+  }
 
 })();
