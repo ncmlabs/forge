@@ -491,6 +491,7 @@ endpoint observer() -> Html
   body = observer_body()
   give page_layout("Observer — Sentinel", nav, body)
 
+<<<<<<< HEAD
 endpoint topology() -> Html
   nav = nav_bar("topology")
   body = topology_body()
