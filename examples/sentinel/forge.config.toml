@@ -6,7 +6,7 @@ default = "sentinel-provider"
 
 [providers.sentinel-provider]
 type = "openai-compat"
-model = "qwen3-coder:latest"
+model = "gemma4:31b"
 base_url = "http://192.168.10.195:11434/v1"
 api_key = "not-required"
 timeout_secs = 300

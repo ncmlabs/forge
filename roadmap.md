@@ -56,10 +56,13 @@ Everything in this document exists to reach that moment.
 | M3 — Core Runtime | Async executor, flows, pools, agents, events, timers, providers | Done | 2026-04-02 |
 | M4 — Build System | `forge build` standalone binaries, multi-file composition, agent REPL | Done | 2026-04-03 |
 | M5 — Ecosystem Core | Persistent memory, knowledge categories, instance registry, spawn/find/retire, system runtime, forge-sensei specialist spawning | Done | 2026-04-04 |
-| M6 — Web Runtime | HTML templates, static serving, hot-reload, HTTP client, markdown, webhooks | In Progress | — |
-| M7 — WASM Compilation | Cranelift backend for pure functions, browser WASM target | Open | — |
-| M8 — Wiki Showcase | First real FORGE application: wiki with search agent, fact-checking pool, warden supervision | Open | — |
-| M9 — Layer 1 Complete | All tracks done, conformance suite finalized, documentation complete | Open | — |
+| M6 — Web Runtime | HTML templates, static serving, hot-reload, HTTP client, markdown, webhooks | Done | 2026-04-05 |
+| M7 — Skill Bridge | exec primitive, host skill bridge, tool-use providers, skill E2E test | Done | 2026-04-07 |
+| M8 — Wiki Showcase | First real FORGE app: wiki with search agent, fact-checking pool, warden supervision, 52 tests | Done | 2026-04-07 |
+| M9 — Sentinel | Killer app: AI-powered repo health dashboard showcasing all 17 primitives | Done | 2026-04-08 |
+| M10 — Observer | Elixir-style real-time agent traceability: SSE stream, inspect API, topology viz, cost tracking | In Progress | — |
+| M11 — WASM Compilation | Cranelift backend for pure functions, browser WASM target | Open | — |
+| M12 — Layer 1 Complete | All tracks done, conformance suite finalized, documentation complete | Open | — |
 | M10 — Layer 2: Toolkit | Agents that generate FORGE code from descriptions | Future | — |
 | M11 — Layer 3: Factory | Spec in → running system out, no human writes code | Future | — |
 | M12 — Layer 4: Self-Improvement | Factory watches itself and optimizes deployed systems | Future | — |
@@ -84,7 +87,7 @@ The substrate for agent birth, learning, specialization, discovery, communicatio
 | #87 | `system` declaration runtime — orchestration, event routing, warden integration | Done |
 | #88 | Specialist spawning — forge-sensei creates domain expert apprentices | Done |
 
-### Track B — Web & Capabilities: 6/9
+### Track B — Web & Capabilities: 9/9 COMPLETE
 
 Web runtime, HTTP client, data persistence, and external integrations.
 
@@ -96,23 +99,37 @@ Web runtime, HTTP client, data persistence, and external integrations.
 | #47 | Hot-reload development mode | Done |
 | #49 | Markdown rendering | Done |
 | #51 | HTTP client: `web.fetch`, `web.post` | Done |
-| #52 | Webhook and callback support | Open |
+| #52 | Webhook and callback support | Done |
+| #40 | `exec` primitive, host skill bridge, tool-use providers | Done |
 | #50 | Vector embeddings and semantic search | Open |
-| #40 | Host skill bridge and Slack adapter | Open |
 
-### Track C — Wiki Showcase: 0/7
+### Track C — Wiki Showcase: 7/7 COMPLETE
 
 The first real FORGE application — a wiki powered by agents, pools, and wardens.
 
 | Issue | Feature | Status |
 |-------|---------|--------|
-| #59 | Wiki architecture and system wiring | Open |
-| #60 | Content agent with lifecycle states | Open |
-| #61 | Search agent with confidence gating | Open |
-| #62 | Doc generation flow from source | Open |
-| #63 | Fact-checking pool with majority vote | Open |
-| #64 | Warden supervision for wiki agents | Open |
-| #65 | End-to-end wiki acceptance tests | Open |
+| #59 | Wiki architecture and system wiring | Done |
+| #60 | Content agent with lifecycle states | Done |
+| #61 | Search agent with confidence gating | Done |
+| #62 | Doc generation flow from source | Done |
+| #63 | Fact-checking pool with majority vote | Done |
+| #64 | Warden supervision for wiki agents | Done |
+| #65 | End-to-end wiki acceptance tests (52 tests) | Done |
+
+### Track E — Observer: 0/7 CRITICAL
+
+Elixir-style real-time agent traceability — tap into any running agent, see memory, trace decisions, inspect supervision tree.
+
+| Issue | Feature | Status |
+|-------|---------|--------|
+| #138 | Live trace stream: `/__forge/events` SSE endpoint | Open |
+| #139 | Runtime introspection API: `/__forge/inspect/*` | Open |
+| #140 | Sentinel live scan UX: SSE-driven progress | Open |
+| #141 | Agent topology visualization: live graph with tap-to-inspect | Open |
+| #142 | Cost and confidence dashboard: token economy visibility | Open |
+| #143 | Failure injection: test warden policies | Open |
+| #144 | Standalone Observer app | Open |
 
 ### Track D — WASM Compilation: 0/4
 
@@ -129,11 +146,12 @@ Cranelift backend for compiling FORGE to WebAssembly.
 
 ```
 Track A ████████████████████ 9/9  (100%)  — Ecosystem Core
-Track B █████████████░░░░░░░ 6/9  ( 67%)  — Web & Capabilities
-Track C ░░░░░░░░░░░░░░░░░░░░ 0/7  (  0%)  — Wiki Showcase
+Track B ████████████████████ 9/9  (100%)  — Web & Capabilities
+Track C ████████████████████ 7/7  (100%)  — Wiki Showcase
 Track D ░░░░░░░░░░░░░░░░░░░░ 0/4  (  0%)  — WASM Compilation
+Track E ░░░░░░░░░░░░░░░░░░░░ 0/7  (  0%)  — Observer [CRITICAL]
 ─────────────────────────────────────────
-Overall ████████████████████ 15/29 ( 52%)
+Overall ████████████████░░░░ 25/36 ( 69%)
 ```
 
 ---
@@ -1043,9 +1061,12 @@ Phase 1 (months 1-3): Layer 1 — Build FORGE
   ✅ forge-sensei: self-referential learning agent
   ✅ CLI: parse / check / run / cost / build / trace
   ✅ Test suite — no real API calls (30 unit + 36 conformance)
+  ✅ Web runtime (HTML, HTTP client, static serving, webhooks)
+  ✅ Host skill bridge (exec, SKILL.md, tool-use providers)
+  ✅ Wiki showcase (7 issues, 52 tests, full documentation)
+  ✅ Sentinel killer app (17 primitives, AI-powered repo health)
+  ⬜ Observer (real-time agent tracing, topology viz, cost tracking) [CRITICAL]
   ⬜ WASM compilation (Cranelift backend)
-  ⬜ Web runtime (HTML, HTTP client, static serving)
-  ⬜ Wiki showcase (first real application)
   Goal: tic-tac-toe system runs end-to-end ✅
 
 Phase 2 (months 4-5): Layer 2 — Build the toolkit
@@ -1095,5 +1116,5 @@ Everything in this document exists to reach that moment.
 
 *FORGE — Making It Real · Master Roadmap v2.0*
 *Layers: Substrate → Toolkit → Factory → Self-improvement*
-*Layer 1 progress: 78% complete (56/72 issues) · Track A ecosystem core: 100%*
-*Last updated: 2026-04-04*
+*Layer 1 progress: 69% complete (25/36 tracks) · Tracks A+B+C: 100% · Observer: CRITICAL*
+*Last updated: 2026-04-08*
