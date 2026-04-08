@@ -206,9 +206,17 @@ fn attempt_reload(
         }
     };
 
-    let new_executor =
+    let mut new_executor =
         crate::runtime::executor::TaskExecutor::new(program, std::sync::Arc::new(registry), tracer)
             .with_config(config);
+
+    // Preserve storage handle from the old executor (#140)
+    {
+        let old_guard = swappable.read().unwrap();
+        if let Some(storage) = old_guard.storage_handle() {
+            new_executor = new_executor.with_storage(storage);
+        }
+    }
 
     let endpoint_count = new_executor.endpoints().len();
 

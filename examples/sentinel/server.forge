@@ -456,7 +456,7 @@ endpoint dashboard() -> Html
   insight = insight_card("Latest Insight", insight_raw, "medium")
   header = "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-8\"><div><h1 class=\"text-4xl font-bold\">Repo Health</h1><p class=\"opacity-60 mt-1\">FORGE monitoring FORGE</p></div><div class=\"text-right\">{!badge}</div></div>"
   cards = "<div class=\"grid grid-cols-1 md:grid-cols-3 gap-4 mb-8\">{!vel_card} {!branch_card} {!size_card}</div>"
-  content_section = "<div class=\"grid grid-cols-1 lg:grid-cols-2 gap-8\"><div><h2 class=\"text-2xl font-bold mb-4\">Recent Commits</h2><pre class=\"text-sm font-mono whitespace-pre-wrap\">{commits}</pre></div><div><h2 class=\"text-2xl font-bold mb-4\">AI Insights</h2>{!insight}<a href=\"/scan_now\" class=\"btn btn-primary btn-sm mt-4\">Run Scan</a></div></div>"
+  content_section = "<div class=\"grid grid-cols-1 lg:grid-cols-2 gap-8\"><div><h2 class=\"text-2xl font-bold mb-4\">Recent Commits</h2><pre class=\"text-sm font-mono whitespace-pre-wrap\">{commits}</pre></div><div><h2 class=\"text-2xl font-bold mb-4\">AI Insights</h2>{!insight}<a id=\"scan-trigger\" href=\"/observer?scan=1\" class=\"btn btn-primary btn-sm mt-4\">Run Scan</a></div></div>"
   body = header + cards + content_section + "</div>"
   give page_layout("Sentinel — FORGE Health Dashboard", nav, body)
 

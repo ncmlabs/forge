@@ -274,6 +274,11 @@ impl TaskExecutor {
         self
     }
 
+    /// Get a clone of the storage handle (used to preserve storage across hot-reloads).
+    pub fn storage_handle(&self) -> Option<crate::runtime::storage::SharedStorage> {
+        self.storage.clone()
+    }
+
     /// Configure persistent memory storage (issue #57).
     pub fn with_persistent_memory(
         mut self,
