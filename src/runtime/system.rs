@@ -47,6 +47,7 @@ pub struct SystemRuntime {
     wiring: Vec<Vec<String>>,        // parsed compose chains as alias sequences
     event_bus: SharedEventBus,
     instance_registry: SharedInstanceRegistry,
+    storage: Option<crate::runtime::storage::SharedStorage>,
     blueprints: HashMap<String, AgentBlueprint>,
     warded_runtimes: Vec<WardedRuntime>,
     unsupervised_blueprints: Vec<String>, // aliases not covered by any warden
@@ -180,6 +181,7 @@ impl SystemRuntime {
             wiring,
             event_bus,
             instance_registry,
+            storage: None,
             blueprints,
             warded_runtimes,
             unsupervised_blueprints,
@@ -204,6 +206,31 @@ impl SystemRuntime {
             .into_iter()
             .map(|wr| wr.with_shared_snapshots(snaps.clone()))
             .collect();
+        self
+    }
+
+    /// Replace event bus and instance registry with pre-existing shared instances.
+    /// Call BEFORE `.start()` to share infrastructure with the HTTP server.
+    pub fn with_shared_infrastructure(
+        mut self,
+        event_bus: SharedEventBus,
+        instance_registry: SharedInstanceRegistry,
+    ) -> Self {
+        self.event_bus = event_bus.clone();
+        self.instance_registry = instance_registry.clone();
+        for wr in &mut self.warded_runtimes {
+            wr.set_event_bus(event_bus.clone());
+            wr.set_instance_registry(instance_registry.clone());
+        }
+        self
+    }
+
+    /// Inject shared storage so system agents can use data.store/data.get.
+    pub fn with_shared_storage(mut self, storage: crate::runtime::storage::SharedStorage) -> Self {
+        self.storage = Some(storage.clone());
+        for wr in &mut self.warded_runtimes {
+            wr.set_storage(storage.clone());
+        }
         self
     }
 
@@ -304,7 +331,7 @@ impl SystemRuntime {
             blueprint.registry.clone(),
             blueprint.tracer.clone(),
             blueprint.program.clone(),
-            None,
+            self.storage.clone(),
             Some(self.instance_registry.clone()),
         );
 

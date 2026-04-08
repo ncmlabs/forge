@@ -274,6 +274,11 @@ impl TaskExecutor {
         self
     }
 
+    /// Get a clone of the storage handle (used to preserve storage across hot-reloads).
+    pub fn storage_handle(&self) -> Option<crate::runtime::storage::SharedStorage> {
+        self.storage.clone()
+    }
+
     /// Configure persistent memory storage (issue #57).
     pub fn with_persistent_memory(
         mut self,
@@ -427,6 +432,40 @@ impl TaskExecutor {
         }
 
         Err(RuntimeError::NoMainFunction)
+    }
+
+    /// Extract a static topology snapshot from the compiled system declaration
+    /// without starting the system runtime. Returns `None` if no system is declared.
+    pub fn extract_topology(&self) -> Option<crate::runtime::system::TopologySnapshot> {
+        self.build_system_runtime()
+            .ok()
+            .flatten()
+            .map(|rt| rt.topology_snapshot())
+    }
+
+    /// Build a SystemRuntime from the program's system declaration without
+    /// starting it. Returns `None` if no system is declared.
+    pub fn build_system_runtime(
+        &self,
+    ) -> Result<Option<crate::runtime::system::SystemRuntime>, RuntimeError> {
+        let system_decl = self.program.items.iter().find_map(|item| match &item.node {
+            TopLevel::System(s) => Some(s),
+            _ => None,
+        });
+        match system_decl {
+            Some(decl) => {
+                let system_config = self.config.as_ref().and_then(|c| c.system.as_ref());
+                let runtime = crate::runtime::system::SystemRuntime::new(
+                    decl,
+                    &self.program,
+                    self.providers.clone(),
+                    self.tracer.clone(),
+                    system_config,
+                )?;
+                Ok(Some(runtime))
+            }
+            None => Ok(None),
+        }
     }
 
     // ── Statement execution ───────────────────────────────────────────────────

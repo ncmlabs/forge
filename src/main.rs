@@ -963,8 +963,13 @@ async fn serve_program(
                 Err(_) => std::process::exit(1),
             };
 
-        // Create event bus for webhook → agent event delivery
+        // Create shared infrastructure for both HTTP server and system runtime (#140)
         let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+        );
+        let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
+            Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
         // Create storage for data.store/data.get/data.list/data.delete (#59)
         let storage_path = file
@@ -992,18 +997,37 @@ async fn serve_program(
             }
         };
 
+        // Build system runtime (if declared) and inject shared infrastructure (#140)
+        let topology = executor.extract_topology();
+        let system_runtime = match executor.build_system_runtime() {
+            Ok(Some(sr)) => {
+                let mut sr = sr
+                    .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
+                    .with_shared_warden_snapshots(warden_snapshots.clone());
+                if let Some(ref storage) = inspect_storage {
+                    sr = sr.with_shared_storage(storage.clone());
+                }
+                Some(sr)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                eprintln!("Warning: failed to build system runtime: {e}");
+                None
+            }
+        };
+
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_event_bus(event_bus)
-                .with_events_tx(events_tx);
+                .with_events_tx(events_tx)
+                .with_instance_registry(instance_registry)
+                .with_warden_snapshots(warden_snapshots);
 
-        // Wire introspection handles (#139)
-        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
-            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
-        );
-        server = server.with_instance_registry(instance_registry);
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);
+        }
+        if let Some(topo) = topology {
+            server = server.with_topology(topo);
         }
 
         // Wire webhook secrets from config
@@ -1018,6 +1042,15 @@ async fn serve_program(
         }
         if let Some(port) = cli_port {
             server = server.with_port(port);
+        }
+
+        // Spawn system runtime as background task (#140)
+        if let Some(sr) = system_runtime {
+            tokio::spawn(async move {
+                if let Err(e) = sr.start().await {
+                    eprintln!("System runtime error: {e}");
+                }
+            });
         }
 
         server.run().await
@@ -1091,8 +1124,13 @@ async fn serve_with_watch(
                 Err(_) => std::process::exit(1),
             };
 
-        // Create event bus for webhook → agent event delivery
+        // Create shared infrastructure for both HTTP server and system runtime (#140)
         let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+        );
+        let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
+            Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
         // Create storage for data.store/data.get/data.list/data.delete (#59)
         let storage_path = file
@@ -1119,19 +1157,38 @@ async fn serve_with_watch(
             }
         };
 
+        // Build system runtime (if declared) and inject shared infrastructure (#140)
+        let topology = executor.extract_topology();
+        let system_runtime = match executor.build_system_runtime() {
+            Ok(Some(sr)) => {
+                let mut sr = sr
+                    .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
+                    .with_shared_warden_snapshots(warden_snapshots.clone());
+                if let Some(ref storage) = inspect_storage {
+                    sr = sr.with_shared_storage(storage.clone());
+                }
+                Some(sr)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                eprintln!("Warning: failed to build system runtime: {e}");
+                None
+            }
+        };
+
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_watch_mode(true)
                 .with_event_bus(event_bus)
-                .with_events_tx(events_tx.clone());
+                .with_events_tx(events_tx.clone())
+                .with_instance_registry(instance_registry)
+                .with_warden_snapshots(warden_snapshots);
 
-        // Wire introspection handles (#139)
-        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
-            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
-        );
-        server = server.with_instance_registry(instance_registry);
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);
+        }
+        if let Some(topo) = topology {
+            server = server.with_topology(topo);
         }
 
         // Wire webhook secrets from config
@@ -1146,6 +1203,15 @@ async fn serve_with_watch(
         }
         if let Some(port) = cli_port {
             server = server.with_port(port);
+        }
+
+        // Spawn system runtime as background task (#140)
+        if let Some(sr) = system_runtime {
+            tokio::spawn(async move {
+                if let Err(e) = sr.start().await {
+                    eprintln!("System runtime error: {e}");
+                }
+            });
         }
 
         let swappable = server.swappable_executor();
