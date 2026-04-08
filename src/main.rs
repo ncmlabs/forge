@@ -992,6 +992,9 @@ async fn serve_program(
             }
         };
 
+        // Extract static topology before moving executor into server (#140)
+        let topology = executor.extract_topology();
+
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_event_bus(event_bus)
@@ -1004,6 +1007,9 @@ async fn serve_program(
         server = server.with_instance_registry(instance_registry);
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);
+        }
+        if let Some(topo) = topology {
+            server = server.with_topology(topo);
         }
 
         // Wire webhook secrets from config
@@ -1119,6 +1125,9 @@ async fn serve_with_watch(
             }
         };
 
+        // Extract static topology before moving executor into server (#140)
+        let topology = executor.extract_topology();
+
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_watch_mode(true)
@@ -1132,6 +1141,9 @@ async fn serve_with_watch(
         server = server.with_instance_registry(instance_registry);
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);
+        }
+        if let Some(topo) = topology {
+            server = server.with_topology(topo);
         }
 
         // Wire webhook secrets from config

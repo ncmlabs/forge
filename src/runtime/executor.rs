@@ -429,6 +429,29 @@ impl TaskExecutor {
         Err(RuntimeError::NoMainFunction)
     }
 
+    /// Extract a static topology snapshot from the compiled system declaration
+    /// without starting the system runtime. Returns `None` if no system is declared.
+    pub fn extract_topology(&self) -> Option<crate::runtime::system::TopologySnapshot> {
+        let system_decl = self
+            .program
+            .items
+            .iter()
+            .find_map(|item| match &item.node {
+                TopLevel::System(s) => Some(s),
+                _ => None,
+            })?;
+        let system_config = self.config.as_ref().and_then(|c| c.system.as_ref());
+        let runtime = crate::runtime::system::SystemRuntime::new(
+            system_decl,
+            &self.program,
+            self.providers.clone(),
+            self.tracer.clone(),
+            system_config,
+        )
+        .ok()?;
+        Some(runtime.topology_snapshot())
+    }
+
     // ── Statement execution ───────────────────────────────────────────────────
 
     /// Execute a list of statements. `give` propagates as `GiveSignal` error

@@ -286,6 +286,7 @@ agent analyst
     insight = reason "You are a repository analyst. Based on this scan data, provide one key insight or recommendation in 2-3 sentences.\n\nHealth score: {score}\n\nRaw signals:\n{summary}"
     memory.insight_count = memory.insight_count + 1
     memory.last_insight = insight
+    data.store("insight:latest", insight)
     say "Analyst generated new insight"
 
   on latest_insight

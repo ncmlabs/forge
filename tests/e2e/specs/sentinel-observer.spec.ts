@@ -1,15 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { ObserverPage } from '../pages/sentinel.page';
 
-// Mock data matching FORGE inspect API shapes
-const MOCK_TOPOLOGY = {
-  system_name: 'repo_sentinel',
-  bindings: [['inspector', 'git_inspector'], ['analyst', 'analyst']],
-  wiring: [['inspector', 'analyst']],
-  subscribers: [{ event: 'ScanComplete', agent: 'analyst', has_filter: false }],
-  routes: { git_inspector: ['analyst'] },
-};
-
+// Mock data for agents/wardens (these need a running system runtime, not available in serve mode)
 const MOCK_AGENTS = [
   { id: '00000000-0000-0000-0000-000000000001', name: 'git_inspector', alias: 'inspector', lifecycle_state: 'active', uptime_ms: 12000, status: 'running' },
   { id: '00000000-0000-0000-0000-000000000002', name: 'analyst', alias: 'analyst', lifecycle_state: 'active', uptime_ms: 11500, status: 'running' },
@@ -35,11 +27,9 @@ const MOCK_WARDENS = [
   { name: 'sentinel_supervisor', managed_agents: ['git_inspector', 'analyst'], degraded_agents: [], retry_counts: {}, circuit_breaker_tripped: false },
 ];
 
-function setupMockAPIs(page: import('@playwright/test').Page) {
+/** Mock only agents and wardens (topology is real from the compiled system declaration). */
+function setupAgentMocks(page: import('@playwright/test').Page) {
   return Promise.all([
-    page.route('**/__forge/inspect/topology', (route) =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_TOPOLOGY) })
-    ),
     page.route('**/__forge/inspect/agents/00000000-*', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_AGENT_DEEP) })
     ),
@@ -53,22 +43,21 @@ function setupMockAPIs(page: import('@playwright/test').Page) {
 }
 
 test.describe('Sentinel Observer — Live Agent Tree (issue #140)', () => {
-  test('observer page loads with tree structure', async ({ page }) => {
-    await setupMockAPIs(page);
+  test('observer page loads with real topology tree', async ({ page }) => {
+    await setupAgentMocks(page);
     const observer = new ObserverPage(page);
     await observer.goto();
     await observer.expectNavVisible();
     await observer.expectTreeLoaded();
 
-    // System + warden + 2 agents = 4 tree-node-cards
-    const count = await observer.treeNodeCount();
-    expect(count).toBeGreaterThanOrEqual(4);
-
+    // System node from real topology
     const systemNode = observer.treeRoot.locator('.tree-node-card[data-node-type="system"]');
     await expect(systemNode).toBeVisible();
+    await expect(systemNode).toContainText('repo_sentinel');
 
-    const wardenNode = observer.treeRoot.locator('.tree-node-card[data-node-type="warden"]');
-    await expect(wardenNode).toBeVisible();
+    // Warden from mock + 2 agents = at least 4 nodes
+    const count = await observer.treeNodeCount();
+    expect(count).toBeGreaterThanOrEqual(4);
   });
 
   test('SSE connection establishes', async ({ page }) => {
@@ -79,7 +68,7 @@ test.describe('Sentinel Observer — Live Agent Tree (issue #140)', () => {
   });
 
   test('tree nodes have state attributes', async ({ page }) => {
-    await setupMockAPIs(page);
+    await setupAgentMocks(page);
     const observer = new ObserverPage(page);
     await observer.goto();
     await observer.expectTreeLoaded();
@@ -94,18 +83,15 @@ test.describe('Sentinel Observer — Live Agent Tree (issue #140)', () => {
   });
 
   test('clicking agent shows detail panel with memory', async ({ page }) => {
-    await setupMockAPIs(page);
+    await setupAgentMocks(page);
     const observer = new ObserverPage(page);
     await observer.goto();
     await observer.expectTreeLoaded();
 
     const agentNode = observer.treeRoot.locator('.tree-node-card[data-node-type="agent"]').first();
     await agentNode.click();
-
-    // Node should get selected class
     await expect(agentNode).toHaveClass(/selected/);
 
-    // Detail panel should show fields from deep inspection
     await observer.expectDetailPanel();
     const detailText = await observer.detailContent.textContent();
     expect(detailText).toContain('Lifecycle');
@@ -114,17 +100,15 @@ test.describe('Sentinel Observer — Live Agent Tree (issue #140)', () => {
   });
 
   test('detail panel closes on X button', async ({ page }) => {
-    await setupMockAPIs(page);
+    await setupAgentMocks(page);
     const observer = new ObserverPage(page);
     await observer.goto();
     await observer.expectTreeLoaded();
 
-    // Open detail
     const agentNode = observer.treeRoot.locator('.tree-node-card[data-node-type="agent"]').first();
     await agentNode.click();
     await observer.expectDetailPanel();
 
-    // Close
     await observer.detailClose.click();
     await expect(observer.detailContent).toContainText('Click an agent node to inspect');
   });
@@ -156,12 +140,10 @@ test.describe('Sentinel Observer — Live Agent Tree (issue #140)', () => {
     const observer = new ObserverPage(page);
     await observer.goto();
     await observer.expectNavVisible();
-
     await expect(observer.observerLink).toHaveClass(/btn-primary/);
   });
 
   test('skeleton screens visible before data loads', async ({ page }) => {
-    // Delay API responses to observe skeletons
     await page.route('**/__forge/inspect/**', async (route) => {
       await new Promise((r) => setTimeout(r, 2000));
       await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
@@ -183,17 +165,16 @@ test.describe('Sentinel Observer — Live Agent Tree (issue #140)', () => {
   });
 
   test('warden panel renders warden data', async ({ page }) => {
-    await setupMockAPIs(page);
+    await setupAgentMocks(page);
     const observer = new ObserverPage(page);
     await observer.goto();
     await observer.expectTreeLoaded();
 
-    // Warden panel should show the warden name
     await expect(observer.wardenPanel).toContainText('sentinel_supervisor');
   });
 
-  test('tree shows wiring labels', async ({ page }) => {
-    await setupMockAPIs(page);
+  test('tree shows real wiring labels from topology', async ({ page }) => {
+    // No mocks needed — topology is populated from the compiled system declaration
     const observer = new ObserverPage(page);
     await observer.goto();
     await observer.expectTreeLoaded();

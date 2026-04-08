@@ -78,6 +78,27 @@ html {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+/* ── Content containment ───────────────────────────────────── */
+
+main .container {
+  overflow-x: hidden;
+}
+
+.insight-card .card-body p,
+.card-body .text-sm.whitespace-pre-wrap {
+  max-height: 12rem;
+  overflow-y: auto;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+pre {
+  max-height: 16rem;
+  overflow-y: auto;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
 /* ── Prose overrides for DaisyUI ────────────────────────────── */
 
 .prose code::before,
