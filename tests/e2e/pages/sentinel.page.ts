@@ -69,7 +69,7 @@ export class ObserverPage extends SentinelBasePage {
 
   async expectTreeLoaded() {
     // Wait for skeleton to be replaced with actual tree nodes
-    await expect(this.treeRoot.locator('ul')).toBeVisible({ timeout: 15_000 });
+    await expect(this.treeRoot.locator('ul').first()).toBeVisible({ timeout: 15_000 });
     await expect(this.treeNodes.first()).toBeVisible({ timeout: 15_000 });
   }
 

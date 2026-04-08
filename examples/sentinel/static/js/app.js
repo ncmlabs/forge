@@ -194,6 +194,8 @@ function escapeHtml(text) {
   function buildTree(topology, agents, wardens) {
     var html = '<ul>';
     var systemName = topology.system_name || 'system';
+    var bindings = topology.bindings || [];
+    var wiring = topology.wiring || [];
 
     // System root node
     html += '<li><div class="tree-node-card" data-node-type="system">'
@@ -202,52 +204,54 @@ function escapeHtml(text) {
       + '<span class="node-name">' + escapeHtml(systemName) + '</span>'
       + '</div>';
 
+    // Collect all children into a single <ul>
+    var children = '';
+
     // Wardens with their managed agents
     if (wardens && wardens.length > 0) {
-      html += '<ul>';
       wardens.forEach(function (w) {
         var tripped = w.circuit_breaker_tripped;
         var dotCls = tripped ? 'degraded' : 'running';
-        html += '<li><div class="tree-node-card" data-node-type="warden">'
+        children += '<li><div class="tree-node-card" data-node-type="warden">'
           + '<span class="state-dot ' + dotCls + '"></span>'
           + '<span class="node-type">warden</span>'
           + '<span class="node-name">' + escapeHtml(w.name) + '</span>';
         if (tripped) {
-          html += ' <span class="flag-badge warn">circuit open</span>';
+          children += ' <span class="flag-badge warn">circuit open</span>';
         }
-        html += '</div>';
+        children += '</div>';
 
-        // Agents managed by this warden
         var managed = w.managed_agents || [];
         if (managed.length > 0) {
-          html += '<ul>';
+          children += '<ul>';
           managed.forEach(function (agentName) {
             var agent = findAgentByName(agents, agentName);
-            html += buildAgentNode(agent, agentName, topology.bindings);
+            children += buildAgentNode(agent, agentName, bindings);
           });
-          html += '</ul>';
+          children += '</ul>';
         }
-        html += '</li>';
+        children += '</li>';
       });
-      html += '</ul>';
-    } else {
-      // No wardens — show agents directly
-      html += '<ul>';
+    } else if (agents && agents.length > 0) {
+      // No wardens — show running agents directly
       agents.forEach(function (a) {
-        html += buildAgentNode(a, a.name, topology.bindings);
+        children += buildAgentNode(a, a.name, bindings);
       });
-      html += '</ul>';
+    } else if (bindings.length > 0) {
+      // No live agents — show static topology from bindings
+      bindings.forEach(function (b) {
+        children += buildAgentNode(null, b[1], bindings);
+      });
     }
 
-    // Wiring labels
-    var wiring = topology.wiring || [];
-    if (wiring.length > 0) {
-      html += '<ul>';
-      wiring.forEach(function (chain) {
-        html += '<li><div class="wiring-label" data-node-type="wiring">'
-          + chain.join(' >> ') + '</div></li>';
-      });
-      html += '</ul>';
+    // Wiring labels as children
+    wiring.forEach(function (chain) {
+      children += '<li><div class="wiring-label" data-node-type="wiring">'
+        + chain.join(' >> ') + '</div></li>';
+    });
+
+    if (children) {
+      html += '<ul>' + children + '</ul>';
     }
 
     html += '</li></ul>';
