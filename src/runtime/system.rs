@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -14,12 +15,15 @@ use serde::Serialize;
 use crate::ast::*;
 use crate::config::SystemConfig;
 use crate::llm::registry::ProviderRegistry;
-use crate::runtime::agent::AgentProcess;
+use crate::runtime::agent::{AgentProcess, AgentSignal};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
 use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
 use crate::runtime::warded::{AgentBlueprint, SharedWardenSnapshots, WardedRuntime};
 use crate::tracer::Tracer;
+
+/// Shared map of agent name → signal sender for failure injection (issue #143).
+pub type SharedSignalSenders = Arc<tokio::sync::RwLock<HashMap<String, mpsc::Sender<AgentSignal>>>>;
 
 // ── Introspection Snapshot ─────────────────────────────────────────────────
 
@@ -445,5 +449,18 @@ impl SystemRuntime {
     /// Get a reference to the shared instance registry.
     pub fn instance_registry(&self) -> &SharedInstanceRegistry {
         &self.instance_registry
+    }
+
+    /// Collect signal senders from all warded runtimes (issue #143).
+    /// Must be called **before** `start()` consumes self.
+    pub fn collect_signal_senders(&self) -> SharedSignalSenders {
+        let mut map = HashMap::new();
+        for warded in &self.warded_runtimes {
+            let tx = warded.signal_sender();
+            for agent_name in warded.managed_agent_names() {
+                map.insert(agent_name, tx.clone());
+            }
+        }
+        Arc::new(tokio::sync::RwLock::new(map))
     }
 }

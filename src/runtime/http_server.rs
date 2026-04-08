@@ -27,7 +27,7 @@ use crate::runtime::event_bus::SharedEventBus;
 use crate::runtime::executor::{EndpointResult, TaskExecutor};
 use crate::runtime::instance_registry::SharedInstanceRegistry;
 use crate::runtime::storage::SharedStorage;
-use crate::runtime::system::TopologySnapshot;
+use crate::runtime::system::{SharedSignalSenders, TopologySnapshot};
 use crate::runtime::warded::SharedWardenSnapshots;
 
 // ── Swappable executor for hot-reload ───────────────────────────────────────
@@ -58,6 +58,8 @@ pub struct AppState {
     pub topology: Option<TopologySnapshot>,
     /// Shared cost aggregator for token economy visibility (issue #142).
     pub cost_aggregator: Option<SharedCostAggregator>,
+    /// Signal senders for failure injection (issue #143).
+    pub signal_senders: Option<SharedSignalSenders>,
 }
 
 impl AppState {
@@ -108,6 +110,7 @@ impl ForgeServer {
                 warden_snapshots: None,
                 topology: None,
                 cost_aggregator: None,
+                signal_senders: None,
             },
             host,
             port,
@@ -203,6 +206,12 @@ impl ForgeServer {
         self
     }
 
+    /// Attach signal senders for failure injection (issue #143).
+    pub fn with_signal_senders(mut self, senders: SharedSignalSenders) -> Self {
+        self.state.signal_senders = Some(senders);
+        self
+    }
+
     /// Get a handle to the reload broadcast sender (for the watcher to signal reloads).
     pub fn reload_sender(&self) -> Option<broadcast::Sender<()>> {
         self.state.reload_tx.clone()
@@ -240,6 +249,12 @@ impl ForgeServer {
             .route("/__forge/inspect/storage", get(handle_inspect_storage))
             .route("/__forge/inspect/costs", get(handle_inspect_costs));
 
+        // Failure injection endpoint (issue #143)
+        router = router.route(
+            "/__forge/inject/:failure_type",
+            axum::routing::post(handle_inject),
+        );
+
         // CORS
         let cors = if self.cors_origins.is_empty() {
             CorsLayer::new().allow_origin(Any)
@@ -276,6 +291,9 @@ impl ForgeServer {
         }
         if self.state.events_tx.is_some() {
             println!("  SSE trace:    /__forge/events");
+        }
+        if self.state.signal_senders.is_some() {
+            println!("  Inject:       /__forge/inject/:type");
         }
         let executor = self.state.executor.read().unwrap();
         let endpoints = executor.endpoints();
@@ -599,6 +617,101 @@ async fn handle_inspect_costs(State(state): State<AppState>) -> Response {
     };
     let snapshot = agg.read().await.snapshot();
     json_response(StatusCode::OK, snapshot)
+}
+
+/// POST /__forge/inject/:failure_type — inject a failure signal into the warden (issue #143).
+async fn handle_inject(
+    State(state): State<AppState>,
+    Path(failure_type): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    // Parse failure type from path
+    let signal_kind = match failure_type.as_str() {
+        "stuck" | "crash" | "timeout" | "hallucination" | "budget" => failure_type.as_str(),
+        other => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({"error": format!("unknown failure type: '{}'", other), "valid": ["stuck", "crash", "timeout", "hallucination", "budget"]}),
+            );
+        }
+    };
+
+    // Parse JSON body for agent name
+    let body_json: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({"error": "invalid JSON body, expected {\"agent\": \"<name>\"}"}),
+            );
+        }
+    };
+    let agent_name = match body_json.get("agent").and_then(|v| v.as_str()) {
+        Some(name) => name.to_string(),
+        None => {
+            return json_response(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({"error": "missing 'agent' field in request body"}),
+            );
+        }
+    };
+
+    // Get signal senders
+    let Some(ref senders) = state.signal_senders else {
+        return json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({"error": "no system runtime active — failure injection requires a running system with wardens"}),
+        );
+    };
+
+    // Find sender for the requested agent
+    let guard = senders.read().await;
+    let Some(tx) = guard.get(&agent_name) else {
+        let available: Vec<&String> = guard.keys().collect();
+        return json_response(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({"error": format!("agent '{}' not found in any warden", agent_name), "available_agents": available}),
+        );
+    };
+
+    // Build the signal
+    use crate::runtime::agent::AgentSignal;
+    let signal = match signal_kind {
+        "stuck" => AgentSignal::Stuck {
+            agent_name: agent_name.clone(),
+        },
+        "crash" => AgentSignal::Crash {
+            agent_name: agent_name.clone(),
+        },
+        "timeout" => AgentSignal::Timeout {
+            agent_name: agent_name.clone(),
+        },
+        "hallucination" => AgentSignal::Hallucination {
+            agent_name: agent_name.clone(),
+            detail: "injected via /__forge/inject".to_string(),
+        },
+        "budget" => AgentSignal::BudgetExceeded {
+            agent_name: agent_name.clone(),
+            detail: "injected via /__forge/inject".to_string(),
+        },
+        _ => unreachable!(),
+    };
+
+    // Send signal (non-blocking)
+    match tx.try_send(signal) {
+        Ok(()) => json_response(
+            StatusCode::OK,
+            serde_json::json!({"injected": signal_kind, "agent": agent_name}),
+        ),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({"error": "signal channel full — warden may be overloaded"}),
+        ),
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({"error": "warden runtime has shut down"}),
+        ),
+    }
 }
 
 /// Helper: build a JSON response with the given status code.

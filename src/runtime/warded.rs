@@ -226,6 +226,16 @@ impl WardedRuntime {
         &self.instance_registry
     }
 
+    /// Clone the signal sender for external injection (issue #143).
+    pub fn signal_sender(&self) -> mpsc::Sender<AgentSignal> {
+        self.signal_tx.clone()
+    }
+
+    /// Return the list of managed agent names (from blueprints).
+    pub fn managed_agent_names(&self) -> Vec<String> {
+        self.blueprints.keys().cloned().collect()
+    }
+
     /// Attach a shared snapshot handle for introspection.
     pub fn with_shared_snapshots(mut self, snaps: SharedWardenSnapshots) -> Self {
         self.shared_snapshots = Some(snaps);
@@ -399,6 +409,14 @@ impl WardedRuntime {
                                 agent_name,
                                 failure_type: FailureType::Budget,
                                 detail,
+                            };
+                            self.handle_signal(fs).await?;
+                        }
+                        Some(AgentSignal::Crash { agent_name }) => {
+                            let fs = FailureSignal {
+                                agent_name,
+                                failure_type: FailureType::Crash,
+                                detail: "injected crash signal".to_string(),
                             };
                             self.handle_signal(fs).await?;
                         }
