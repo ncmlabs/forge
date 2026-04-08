@@ -101,7 +101,7 @@ pure insight_card
 task get_recent_commits
   gives Text
   do
-    result = exec "git log --oneline -20"
+    result = exec "git log --oneline -10"
     when result.sure -> give result
     when result.unsure -> give "Partial data:\n{result}"
     else -> give "Could not retrieve commits"
@@ -109,7 +109,7 @@ task get_recent_commits
 task get_commit_velocity
   gives Text
   do
-    result = exec "git log --since='7 days ago' --oneline | wc -l"
+    result = exec "git log --since=7.days --oneline | wc -l | tr -d ' '"
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "0"
@@ -125,26 +125,26 @@ task get_code_churn
 task get_branch_hygiene
   gives Text
   do
-    result = exec "git branch --no-merged development 2>/dev/null | wc -l"
+    result = exec "git branch --no-merged development | wc -l | tr -d ' '"
     when result.sure -> give result
     when result.unsure -> give result
-    else -> give "unknown"
+    else -> give "0"
 
 task get_codebase_size
   gives Text
   do
-    result = exec "find src -name '*.rs' 2>/dev/null | xargs wc -l 2>/dev/null | tail -1"
+    result = exec "find src -name *.rs | xargs wc -l | tail -1 | tr -dc 0-9"
     when result.sure -> give result
     when result.unsure -> give result
-    else -> give "unknown"
+    else -> give "0"
 
 task get_build_status
   gives Text
   do
-    result = exec "cargo check 2>&1 | tail -5"
-    when result.sure -> give result
-    when result.unsure -> give "Build status unclear:\n{result}"
-    else -> give "Build check failed"
+    result = exec "cargo check"
+    when result.sure -> give "passing"
+    when result.unsure -> give "warnings"
+    else -> give "failing"
 
 # ── Composition Analysis Tasks ───────────────────────────────────
 #
@@ -155,7 +155,7 @@ task get_build_status
 task analyze_velocity
   gives Text
   do
-    analysis = exec "git log --since='7 days ago' --oneline" >> reason "Analyze this commit velocity data. How active is development? Rate as high/medium/low and explain briefly:\n{_pipe}"
+    analysis = exec "git log --since=7.days --oneline" >> reason "Analyze this commit velocity data. How active is development? Rate as high/medium/low and explain briefly:\n{_pipe}"
     when analysis.sure -> give analysis
     when analysis.unsure -> give "Uncertain analysis: {analysis}"
     else -> give "Could not analyze velocity"
@@ -210,16 +210,17 @@ task health_assessor
   needs signals: Text
   gives Text
   do
-    assessment = reason "You are a repository health assessor. Evaluate these signals and respond with exactly one word: healthy, degraded, or critical. Then add a one-sentence explanation.\n\nSignals:\n{signals}"
-    when assessment.sure -> give assessment
-    when assessment.unsure -> give "degraded — uncertain assessment"
-    else -> give "healthy — default (assessment failed)"
+    assessment = reason "You are a repository health assessor. Evaluate these signals and respond with EXACTLY one word: healthy, degraded, or critical. Do not add any explanation.\n\nSignals:\n{signals}"
+    label = classify assessment into ["healthy", "degraded", "critical"]
+    when label.sure -> give label
+    when label.unsure -> give "degraded"
+    else -> give "healthy"
 
 task health_fallback
   needs signals: Text
   gives Text
   do
-    give "healthy — assessment timed out, defaulting to healthy"
+    give "healthy"
 
 pool health_panel
   workers: health_assessor * 3
@@ -260,7 +261,7 @@ agent git_inspector
     memory.last_health = health
     memory.commit_velocity = velocity
     data.store("scan:latest", signals)
-    data.store("health:latest", health)
+    data.store("health:label", health)
     emit ScanComplete(score: health, summary: signals)
     give health
 
@@ -318,14 +319,14 @@ flow repo_scan
   stage score
     needs analyze.*
     signals = "Analysis:\n{analyze}"
-    health = health_panel("assess", signals)
-    give health
+    label = health_panel("assess", signals)
+    give label
 
   stage publish
     needs score.*, gather_git.*, gather_metrics.*, analyze.*
     signals = "{gather_git}\n{gather_metrics}"
     data.store("scan:latest", signals)
-    data.store("health:latest", score)
+    data.store("health:label", score)
     data.store("analysis:latest", analyze)
     emit ScanComplete(score: score, summary: analyze)
     give "Scan complete — health: {score}"
@@ -374,7 +375,7 @@ system repo_sentinel
 task dashboard_health
   gives Text
   do
-    raw = data.get("health:latest")
+    raw = data.get("health:label")
     if raw == ""
       give "unknown"
     give raw
@@ -414,7 +415,7 @@ task insights_analysis
 task health_or_unknown
   gives Text
   do
-    raw = data.get("health:latest")
+    raw = data.get("health:label")
     if raw == ""
       give "unknown"
     give raw
