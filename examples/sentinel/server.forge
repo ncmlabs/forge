@@ -37,6 +37,7 @@ pure nav_bar
     scan_cls = "btn btn-sm btn-ghost"
     insights_cls = "btn btn-sm btn-ghost"
     api_cls = "btn btn-sm btn-ghost"
+    obs_cls = "btn btn-sm btn-ghost"
     if active == "dashboard"
       dash_cls = "btn btn-sm btn-primary"
     if active == "scan"
@@ -45,7 +46,9 @@ pure nav_bar
       insights_cls = "btn btn-sm btn-primary"
     if active == "api"
       api_cls = "btn btn-sm btn-primary"
-    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/dashboard\" class=\"btn btn-ghost text-xl font-bold\">SENTINEL</a><div class=\"flex gap-2\"><a href=\"/dashboard\" class=\"{!dash_cls}\">Dashboard</a><a href=\"/scan_now\" class=\"{!scan_cls}\">Scan</a><a href=\"/insights\" class=\"{!insights_cls}\">Insights</a><a href=\"/api_health\" class=\"{!api_cls}\">API</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
+    if active == "observer"
+      obs_cls = "btn btn-sm btn-primary"
+    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/dashboard\" class=\"btn btn-ghost text-xl font-bold\">SENTINEL</a><div class=\"flex gap-2\"><a href=\"/dashboard\" class=\"{!dash_cls}\">Dashboard</a><a href=\"/scan_now\" class=\"{!scan_cls}\">Scan</a><a href=\"/insights\" class=\"{!insights_cls}\">Insights</a><a href=\"/observer\" class=\"{!obs_cls}\">Observer</a><a href=\"/api_health\" class=\"{!api_cls}\">API</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
 
 pure page_layout
   needs title: Text, nav: Html, body: Html
@@ -367,6 +370,17 @@ system repo_sentinel
 
   inspector >> analyst
 
+# ── Observer Page ────────────────────────────────────────────────
+#
+# Live agent tree visualization with SSE event stream.
+# The HTML is a skeleton — JS populates it from inspect APIs.
+# Demonstrates: endpoint, pure, inspect API consumption
+
+pure observer_body
+  gives Html
+  do
+    give "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><div><h1 class=\"text-3xl font-bold\">Agent Observer</h1><p class=\"opacity-60 mt-1\">Live agent tree with real-time trace events</p></div><div class=\"flex items-center gap-3\"><span id=\"sse-status\" class=\"badge badge-sm badge-ghost\">Connecting...</span><button id=\"scan-trigger-obs\" class=\"btn btn-primary btn-sm\">Run Scan</button></div></div><div class=\"grid grid-cols-1 lg:grid-cols-3 gap-6\"><div class=\"lg:col-span-2\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">System Topology</h2><div id=\"tree-root\" class=\"agent-tree\"><div class=\"skeleton h-8 w-3/4 mb-2\"></div><div class=\"skeleton h-8 w-1/2 mb-2 ml-8\"></div><div class=\"skeleton h-8 w-2/3 mb-2 ml-16\"></div><div class=\"skeleton h-8 w-1/2 ml-16\"></div></div></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Live Events</h2><div id=\"event-log\" class=\"forge-activity\" style=\"max-height:400px;overflow-y:auto\"><div class=\"log-title\">FORGE Runtime</div><div class=\"text-sm opacity-40 py-4 text-center\" id=\"event-log-empty\">Waiting for events...</div></div></div></div></div><div><div id=\"agent-detail\" class=\"card bg-base-100 shadow-md agent-detail-panel\"><div class=\"card-body p-4\"><div class=\"flex justify-between items-center mb-3\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60\">Agent Detail</h2><button id=\"detail-close\" class=\"btn btn-xs btn-circle btn-ghost\">X</button></div><div id=\"detail-content\"><p class=\"text-sm opacity-40 py-8 text-center\">Click an agent node to inspect</p></div></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Wardens</h2><div id=\"warden-panel\"><div class=\"skeleton h-6 w-full mb-2\"></div><div class=\"skeleton h-6 w-3/4\"></div></div></div></div></div></div></div>"
+
 # ── Endpoint Helpers ──────────────────────────────────────────────
 #
 # Tasks that handle data.get with default fallback — endpoints
@@ -463,6 +477,11 @@ endpoint insights() -> Html
   deep_card = insight_card("Deep Analysis (Skill)", deep, "high")
   body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">AI Insights</h1>{!latest_card} {!analysis_card} {!deep_card}<a href=\"/dashboard\" class=\"btn btn-ghost mt-4\">Back to Dashboard</a></div>"
   give page_layout("Insights — Sentinel", nav, body)
+
+endpoint observer() -> Html
+  nav = nav_bar("observer")
+  body = observer_body()
+  give page_layout("Observer — Sentinel", nav, body)
 
 endpoint api_health() -> Text
   health = health_or_unknown()

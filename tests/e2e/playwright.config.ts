@@ -20,25 +20,45 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { browserName: 'chromium' },
-      testIgnore: '**/warden-real.spec.ts',
+      testIgnore: ['**/warden-real.spec.ts', '**/sentinel-*.spec.ts'],
     },
     {
       name: 'real-api',
       use: { browserName: 'chromium' },
       testMatch: '**/warden-real.spec.ts',
     },
+    {
+      name: 'sentinel',
+      use: {
+        browserName: 'chromium',
+        baseURL: 'http://localhost:3001',
+      },
+      testMatch: '**/sentinel-*.spec.ts',
+    },
   ],
 
-  webServer: {
-    command: 'cargo run -- serve examples/wiki/server.forge -s examples/wiki/shared.forge',
-    cwd: '../../',
-    url: 'http://localhost:3000/home',
-    reuseExistingServer: true,
-    timeout: 120_000,
-    env: {
-      ...(process.env.ANTHROPIC_API_KEY
-        ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
-        : { FORGE_MOCK: '1' }),
+  webServer: [
+    {
+      command: 'cargo run -- serve examples/wiki/server.forge -s examples/wiki/shared.forge',
+      cwd: '../../',
+      url: 'http://localhost:3000/home',
+      reuseExistingServer: true,
+      timeout: 120_000,
+      env: {
+        ...(process.env.ANTHROPIC_API_KEY
+          ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
+          : { FORGE_MOCK: '1' }),
+      },
     },
-  },
+    {
+      command: 'cargo run -- serve examples/sentinel/server.forge -s examples/sentinel/shared.forge',
+      cwd: '../../',
+      url: 'http://localhost:3001/dashboard',
+      reuseExistingServer: true,
+      timeout: 120_000,
+      env: {
+        FORGE_MOCK: '1',
+      },
+    },
+  ],
 });
