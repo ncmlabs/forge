@@ -4,7 +4,6 @@ export class SentinelBasePage {
   readonly page: Page;
   readonly navbar: Locator;
   readonly dashboardLink: Locator;
-  readonly scanLink: Locator;
   readonly insightsLink: Locator;
   readonly observerLink: Locator;
   readonly apiLink: Locator;
@@ -14,7 +13,6 @@ export class SentinelBasePage {
     this.page = page;
     this.navbar = page.locator('.navbar');
     this.dashboardLink = this.navbar.getByRole('link', { name: 'Dashboard' });
-    this.scanLink = this.navbar.getByRole('link', { name: 'Scan' });
     this.insightsLink = this.navbar.getByRole('link', { name: 'Insights' });
     this.observerLink = this.navbar.getByRole('link', { name: 'Observer' });
     this.apiLink = this.navbar.getByRole('link', { name: 'API' });
@@ -24,7 +22,6 @@ export class SentinelBasePage {
   async expectNavVisible() {
     await expect(this.navbar).toBeVisible();
     await expect(this.dashboardLink).toBeVisible();
-    await expect(this.scanLink).toBeVisible();
     await expect(this.insightsLink).toBeVisible();
     await expect(this.observerLink).toBeVisible();
     await expect(this.apiLink).toBeVisible();

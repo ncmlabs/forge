@@ -34,21 +34,18 @@ pure nav_bar
   gives Html
   do
     dash_cls = "btn btn-sm btn-ghost"
-    scan_cls = "btn btn-sm btn-ghost"
     insights_cls = "btn btn-sm btn-ghost"
     api_cls = "btn btn-sm btn-ghost"
     obs_cls = "btn btn-sm btn-ghost"
     if active == "dashboard"
       dash_cls = "btn btn-sm btn-primary"
-    if active == "scan"
-      scan_cls = "btn btn-sm btn-primary"
     if active == "insights"
       insights_cls = "btn btn-sm btn-primary"
     if active == "api"
       api_cls = "btn btn-sm btn-primary"
     if active == "observer"
       obs_cls = "btn btn-sm btn-primary"
-    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/dashboard\" class=\"btn btn-ghost text-xl font-bold\">SENTINEL</a><div class=\"flex gap-2\"><a href=\"/dashboard\" class=\"{!dash_cls}\">Dashboard</a><a href=\"/scan_now\" class=\"{!scan_cls}\">Scan</a><a href=\"/insights\" class=\"{!insights_cls}\">Insights</a><a href=\"/observer\" class=\"{!obs_cls}\">Observer</a><a href=\"/api_health\" class=\"{!api_cls}\">API</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
+    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/dashboard\" class=\"btn btn-ghost text-xl font-bold\">SENTINEL</a><div class=\"flex gap-2\"><a href=\"/dashboard\" class=\"{!dash_cls}\">Dashboard</a><a href=\"/insights\" class=\"{!insights_cls}\">Insights</a><a href=\"/observer\" class=\"{!obs_cls}\">Observer</a><a href=\"/api_health\" class=\"{!api_cls}\">API</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
 
 pure page_layout
   needs title: Text, nav: Html, body: Html
@@ -439,6 +436,10 @@ task health_or_unknown
 #
 # HTTP routes for the dashboard, scan trigger, insights, and API.
 # Demonstrates: endpoint, Html/Text return types, data.get, task calls
+
+endpoint home() -> Html
+  nav = nav_bar("dashboard")
+  give page_layout("Sentinel", nav, "<script>window.location.replace('/dashboard')</script>")
 
 endpoint dashboard() -> Html
   nav = nav_bar("dashboard")

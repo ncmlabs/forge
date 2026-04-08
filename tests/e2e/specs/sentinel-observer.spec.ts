@@ -136,7 +136,7 @@ test.describe('Sentinel Observer — Live Agent Tree (issue #140)', () => {
     expect(restored).toBe(initial);
   });
 
-  test('nav bar has all five links', async ({ page }) => {
+  test('nav bar has all four links', async ({ page }) => {
     const observer = new ObserverPage(page);
     await observer.goto();
     await observer.expectNavVisible();
