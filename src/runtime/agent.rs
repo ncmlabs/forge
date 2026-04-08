@@ -368,6 +368,11 @@ impl AgentProcess {
             executor = executor.with_instance_registry(ir);
         }
 
+        // Wire storage for data.store/data.get operations (#140)
+        if let Some(ref store) = storage {
+            executor = executor.with_storage(store.clone());
+        }
+
         // Wire persistent memory storage into executor (issue #57)
         if decl.memory_persistent {
             if let Some(ref store) = storage {
