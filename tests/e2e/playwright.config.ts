@@ -34,6 +34,15 @@ export default defineConfig({
         baseURL: 'http://localhost:3001',
       },
       testMatch: '**/sentinel-*.spec.ts',
+      testIgnore: '**/sentinel-*-real.spec.ts',
+    },
+    {
+      name: 'sentinel-real',
+      use: {
+        browserName: 'chromium',
+        baseURL: 'http://localhost:3001',
+      },
+      testMatch: '**/sentinel-*-real.spec.ts',
     },
   ],
 
@@ -57,7 +66,9 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: 120_000,
       env: {
-        FORGE_MOCK: '1',
+        ...(process.env.ANTHROPIC_API_KEY
+          ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
+          : { FORGE_MOCK: '1' }),
       },
     },
   ],
