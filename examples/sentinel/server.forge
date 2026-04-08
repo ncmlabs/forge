@@ -474,9 +474,7 @@ endpoint insights() -> Html
   analysis = insights_analysis()
   latest_card = insight_card("Latest AI Insight", latest, "medium")
   analysis_card = insight_card("Last Analysis Summary", analysis, "high")
-  deep = deep_analysis()
-  deep_card = insight_card("Deep Analysis (Skill)", deep, "high")
-  body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">AI Insights</h1>{!latest_card} {!analysis_card} {!deep_card}<a href=\"/dashboard\" class=\"btn btn-ghost mt-4\">Back to Dashboard</a></div>"
+  body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">AI Insights</h1>{!latest_card} {!analysis_card}<p class=\"text-sm opacity-50 mt-4\">Deep analysis available via Observer &gt; Run Scan</p><a href=\"/dashboard\" class=\"btn btn-ghost mt-4\">Back to Dashboard</a></div>"
   give page_layout("Insights — Sentinel", nav, body)
 
 endpoint observer() -> Html
