@@ -1,14 +1,17 @@
 // FORGE introspection API integration tests — issue #139
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use forge::config::ForgeConfig;
 use forge::llm::registry::ProviderRegistry;
+use forge::runtime::agent::{AgentContext, TimerManager};
+use forge::runtime::confidence::{ConfidentValue, Value};
 use forge::runtime::event_bus::EventBus;
 use forge::runtime::executor::TaskExecutor;
 use forge::runtime::http_server::ForgeServer;
 use forge::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
+use forge::runtime::memory::AgentMemory;
 use forge::runtime::storage::ForgeStorage;
 use forge::runtime::system::TopologySnapshot;
 use forge::runtime::warded::{SharedWardenSnapshots, WardenSnapshot};
@@ -168,6 +171,57 @@ async fn inspect_agent_by_id_returns_summary() {
     assert_eq!(body["name"], "test_agent");
     assert_eq!(body["alias"], "my_alias");
     assert_eq!(body["status"], "running");
+}
+
+#[tokio::test]
+async fn inspect_agent_deep_returns_memory_and_flags() {
+    let registry: SharedInstanceRegistry =
+        Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+
+    // Build an AgentContext with memory fields
+    let mut memory = AgentMemory::empty();
+    memory.set(
+        "scan_count",
+        ConfidentValue::deterministic(Value::Number(5.0)),
+    );
+    memory.set(
+        "last_health",
+        ConfidentValue::deterministic(Value::Text("healthy".to_string())),
+    );
+
+    let ctx = AgentContext::new(memory, None, None, TimerManager::empty(), 3);
+    let ctx_ref = Arc::new(Mutex::new(ctx));
+
+    let id = {
+        let mut guard = registry.write().await;
+        guard.register_with_context("git_inspector", Some("inspector"), ctx_ref)
+    };
+
+    let base = spawn_inspect_server(Some(registry), None, None, None, None).await;
+    let resp = reqwest::get(format!("{base}/__forge/inspect/agents/{id}"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    // Verify agent metadata
+    assert_eq!(body["name"], "git_inspector");
+    assert_eq!(body["alias"], "inspector");
+    assert_eq!(body["status"], "running");
+
+    // Verify deep inspection: memory fields present
+    assert!(body.get("memory").is_some(), "missing memory field");
+    let mem = &body["memory"];
+    assert!(mem.get("scan_count").is_some(), "missing scan_count in memory");
+    assert!(mem.get("last_health").is_some(), "missing last_health in memory");
+
+    // Verify stuck/hallucination flags
+    assert_eq!(body["stuck"], false);
+    assert_eq!(body["hallucinating"], false);
+
+    // Verify event counts
+    assert_eq!(body["event_count"], 0);
+    assert_eq!(body["escalation_count"], 0);
 }
 
 // ── /inspect/topology ──────────────────────────────────────────
