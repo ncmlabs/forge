@@ -998,6 +998,10 @@ async fn serve_program(
                 .with_events_tx(events_tx);
 
         // Wire introspection handles (#139)
+        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+        );
+        server = server.with_instance_registry(instance_registry);
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);
         }
@@ -1122,6 +1126,10 @@ async fn serve_with_watch(
                 .with_events_tx(events_tx.clone());
 
         // Wire introspection handles (#139)
+        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+        );
+        server = server.with_instance_registry(instance_registry);
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage);
         }

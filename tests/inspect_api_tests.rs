@@ -212,8 +212,14 @@ async fn inspect_agent_deep_returns_memory_and_flags() {
     // Verify deep inspection: memory fields present
     assert!(body.get("memory").is_some(), "missing memory field");
     let mem = &body["memory"];
-    assert!(mem.get("scan_count").is_some(), "missing scan_count in memory");
-    assert!(mem.get("last_health").is_some(), "missing last_health in memory");
+    assert!(
+        mem.get("scan_count").is_some(),
+        "missing scan_count in memory"
+    );
+    assert!(
+        mem.get("last_health").is_some(),
+        "missing last_health in memory"
+    );
 
     // Verify stuck/hallucination flags
     assert_eq!(body["stuck"], false);
