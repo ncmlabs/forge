@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Sentinel Observer: live agent tree visualization** — new `/observer` endpoint with CSS-based agent hierarchy tree, real-time SSE event stream, agent detail panel with memory/timer/flag inspection, warden health panel, and slow-LLM UX compensation (skeleton screens, thinking indicators, elapsed timers, stale detection); Playwright E2E tests for observer and dashboard; consumes `/__forge/inspect/*` and `/__forge/events` APIs client-side (#140)
-- **Static topology extraction in serve mode** — `TaskExecutor::extract_topology()` populates the `/__forge/inspect/topology` endpoint from the compiled system declaration without starting the system runtime; observer tree now shows real system structure in serve mode (#140)
+- **System runtime in serve mode** — `forge serve` now boots the system runtime (agents + wardens) as a background task alongside the HTTP server when a `system` declaration is present; shared `event_bus`, `instance_registry`, and `warden_snapshots` allow the observer to show live agent state, memory, and warden health; `TaskExecutor::build_system_runtime()` + `SystemRuntime::with_shared_infrastructure()` enable infrastructure sharing between HTTP server and agent runtime (#140)
 
 ### Fixed
 - **Sentinel dashboard overflow** — long LLM analysis text now contained with `max-height` and scroll; prevents text from breaking out of cards and overlapping metric grid (#140)

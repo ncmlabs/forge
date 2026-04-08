@@ -207,6 +207,22 @@ impl SystemRuntime {
         self
     }
 
+    /// Replace event bus and instance registry with pre-existing shared instances.
+    /// Call BEFORE `.start()` to share infrastructure with the HTTP server.
+    pub fn with_shared_infrastructure(
+        mut self,
+        event_bus: SharedEventBus,
+        instance_registry: SharedInstanceRegistry,
+    ) -> Self {
+        self.event_bus = event_bus.clone();
+        self.instance_registry = instance_registry.clone();
+        for wr in &mut self.warded_runtimes {
+            wr.set_event_bus(event_bus.clone());
+            wr.set_instance_registry(instance_registry.clone());
+        }
+        self
+    }
+
     /// Parse wiring compose expressions into alias chains.
     /// `a >> b >> c` becomes `["a", "b", "c"]`.
     fn parse_wiring(exprs: &[Spanned<Expr>]) -> Result<Vec<Vec<String>>, RuntimeError> {

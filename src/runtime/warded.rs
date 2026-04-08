@@ -229,6 +229,16 @@ impl WardedRuntime {
         self
     }
 
+    /// Replace the event bus (call before spawning agents).
+    pub fn set_event_bus(&mut self, bus: SharedEventBus) {
+        self.event_bus = bus;
+    }
+
+    /// Replace the instance registry (call before spawning agents).
+    pub fn set_instance_registry(&mut self, registry: SharedInstanceRegistry) {
+        self.instance_registry = registry;
+    }
+
     /// Build a read-only snapshot of current warden state.
     pub fn snapshot(&self) -> WardenSnapshot {
         let now_ms = self.timestamp_ms();
