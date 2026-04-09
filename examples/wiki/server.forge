@@ -16,6 +16,8 @@ use
   data.store
   data.get
   data.list
+  data.embed
+  data.search
 
 # ── Pure HTML Helpers ────────────────────────────────────────────
 #
@@ -572,6 +574,37 @@ endpoint admin_fact_check(slug: Text) -> Html
   rendered = markdown.render(report)
   body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Fact-Check Report</h1><p class=\"mb-4\">Verifying page: <code>{slug}</code></p><div class=\"prose max-w-none\">{!rendered}</div><a href=\"/docs?slug={slug}\" class=\"btn btn-ghost mt-4\">Back to page</a></div>"
   give page_layout("Fact Check — FORGE", nav, body)
+
+# ── Semantic Search (#50) ────────────────────────────────────────
+
+task embed_page
+  needs slug: Text
+  gives Text
+  do
+    content = data.get("page:{slug}")
+    if content == ""
+      give "not found: {slug}"
+    id = data.embed(content)
+    data.store("embed:{slug}", id)
+    give id
+
+task format_search_results
+  needs query: Text
+  gives Text
+  do
+    results = data.search(query, 5)
+    items = []
+    for r in results
+      items = items + ["{r.id}: {r.content} (score: {r.score})"]
+    give items.join("\n")
+
+endpoint api_embed(slug: Text) -> Text
+  id = embed_page(slug)
+  give id
+
+endpoint api_semantic_search(q: Text) -> Text
+  text = format_search_results(q)
+  give text
 
 # -- Entry Point --
 

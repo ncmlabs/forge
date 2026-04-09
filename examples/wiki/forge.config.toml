@@ -10,6 +10,14 @@ model = "claude-sonnet-4-20250514"
 api_key = "${ANTHROPIC_API_KEY}"
 timeout_secs = 60
 
+[providers.mock]
+type = "mock"
+model = "mock-model"
+
+[embeddings]
+provider = "mock"
+dimensions = 64
+
 [server]
 host = "127.0.0.1"
 port = 3000
