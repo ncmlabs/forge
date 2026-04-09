@@ -33,7 +33,7 @@ hex = "0.4"
 subtle = "2"
 toml = "1.1"
 dirs = "6"
-axum = "0.7"
+axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 redb = "2"
 notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
