@@ -1,0 +1,9 @@
+{
+  "name": "command_argv_expression",
+  "category": "parser",
+  "description": "Command expression with structured argv and env modifier",
+  "input": "task test_cmd\n  do\n    result = command [\"git\", \"status\"]\n    result = command [\"cargo\", \"test\"] in \"/project\" timeout 5m\n    result = command [\"cargo\", \"build\"] env { RUST_LOG: \"debug\", TARGET: arch }\n    handle = command [\"long\"] in \"/dir\" timeout 30m background true env { KEY: val }\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

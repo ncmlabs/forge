@@ -55,7 +55,7 @@ keyword = @{
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
     | "match" | "recall" | "learn" | "spawn" | "find" | "retire"
-    | "exec" | "exportable" | "import" | "from" | "as" )
+    | "exec" | "exportable" | "import" | "from" | "as" | "command" | "background" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -559,7 +559,8 @@ postfix_op   = {
 }
 
 pipe_term = {
-    exec_expr
+    command_expr
+  | exec_expr
   | find_expr
   | reason_expr
   | classify_expr
@@ -578,6 +579,18 @@ find_expr = {
 }
 
 exec_expr     = { "exec" ~ _s ~ string_arg }
+
+// --- command expression (issue #160) — modifiers are order-independent ---
+command_arg = { array_lit | string_arg }
+command_modifier = {
+    "in" ~ _s ~ string_arg
+  | "timeout" ~ _s ~ duration
+  | "background" ~ _s ~ bool_lit
+  | "env" ~ _s ~ env_map
+}
+command_expr = { "command" ~ _s ~ command_arg ~ (_s ~ command_modifier)* }
+env_map      = { "{" ~ _s_opt ~ env_entry ~ (_s_opt ~ "," ~ _s_opt ~ env_entry)* ~ _s_opt ~ "}" }
+env_entry    = { ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 reason_expr   = { "reason" ~ _s ~ string_arg }
 classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list }
 search_expr   = { "search" ~ _s ~ string_arg }

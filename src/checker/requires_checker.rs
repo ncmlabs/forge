@@ -183,6 +183,17 @@ fn check_requires_expr(
                 .with_help("use a `pure` function instead"),
             );
         }
+        Expr::Command(_) => {
+            diagnostics.push(
+                Diagnostic::warning(
+                    file,
+                    "requires clause uses `command` which runs an external process",
+                    expr.span.start..expr.span.end,
+                    "external processes are non-deterministic — preconditions should be deterministic",
+                )
+                .with_help("use a `pure` function instead"),
+            );
+        }
         // Leaves: literals, idents, type access — always deterministic
         Expr::NumberLit(_) | Expr::BoolLit(_) | Expr::Ident(_) | Expr::TypeAccess(_, _) => {}
     }

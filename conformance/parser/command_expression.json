@@ -1,0 +1,9 @@
+{
+  "name": "command_expression",
+  "category": "parser",
+  "description": "Command expression with optional in, timeout, background modifiers",
+  "input": "task test_cmd\n  do\n    result = command \"shell command here\"\n    result = command \"shell command\" in \"/working/dir\"\n    result = command \"shell command\" timeout 60s\n    result = command \"shell command\" in \"/dir\" timeout 60s\n    handle = command \"shell command\" background true timeout 30m\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

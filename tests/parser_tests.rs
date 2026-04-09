@@ -262,6 +262,184 @@ fn parse_exec_with_variable() {
 }
 
 #[test]
+fn parse_command_basic() {
+    let prog = parse_task_with("x = command \"git status\"");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(matches!(&cmd.cmd.node, Expr::Template(_)));
+            assert!(cmd.working_dir.is_none());
+            assert!(cmd.timeout.is_none());
+            assert!(cmd.background.is_none());
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_with_working_dir() {
+    let prog = parse_task_with("x = command \"ls\" in \"/tmp\"");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(cmd.working_dir.is_some());
+            assert!(cmd.timeout.is_none());
+            assert!(cmd.background.is_none());
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_with_timeout() {
+    let prog = parse_task_with("x = command \"slow\" timeout 60s");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(cmd.working_dir.is_none());
+            let dur = cmd.timeout.as_ref().unwrap();
+            assert_eq!(dur.node.value, 60);
+            assert!(matches!(dur.node.unit, DurationUnit::Seconds));
+            assert!(cmd.background.is_none());
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_all_modifiers() {
+    let prog = parse_task_with("x = command \"build\" in \"/project\" timeout 30m background true");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(cmd.working_dir.is_some());
+            let dur = cmd.timeout.as_ref().unwrap();
+            assert_eq!(dur.node.value, 30);
+            assert!(matches!(dur.node.unit, DurationUnit::Minutes));
+            assert!(cmd.background.as_ref().unwrap().node);
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_reordered_modifiers() {
+    let prog = parse_task_with("x = command \"run\" background true timeout 5m");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(cmd.working_dir.is_none());
+            let dur = cmd.timeout.as_ref().unwrap();
+            assert_eq!(dur.node.value, 5);
+            assert!(matches!(dur.node.unit, DurationUnit::Minutes));
+            assert!(cmd.background.as_ref().unwrap().node);
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_with_variable() {
+    let prog = parse_task_with("x = command cmd_var");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(matches!(&cmd.cmd.node, Expr::Ident(name) if name == "cmd_var"));
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_argv_basic() {
+    let prog = parse_task_with("x = command [\"git\", \"status\"]");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(matches!(&cmd.cmd.node, Expr::ArrayLit(elems) if elems.len() == 2));
+            assert!(cmd.working_dir.is_none());
+            assert!(cmd.timeout.is_none());
+            assert!(cmd.env.is_none());
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_argv_with_variable() {
+    let prog = parse_task_with("x = command [\"git\", \"commit\", \"-m\", msg]");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => match &cmd.cmd.node {
+            Expr::ArrayLit(elems) => {
+                assert_eq!(elems.len(), 4);
+                assert!(matches!(&elems[3].node, Expr::Ident(name) if name == "msg"));
+            }
+            _ => panic!("expected ArrayLit"),
+        },
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_argv_with_modifiers() {
+    let prog = parse_task_with("x = command [\"cargo\", \"test\"] in \"/project\" timeout 5m");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(matches!(&cmd.cmd.node, Expr::ArrayLit(elems) if elems.len() == 2));
+            assert!(cmd.working_dir.is_some());
+            let dur = cmd.timeout.as_ref().unwrap();
+            assert_eq!(dur.node.value, 5);
+            assert!(matches!(dur.node.unit, DurationUnit::Minutes));
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_with_env() {
+    let prog = parse_task_with("x = command \"build\" env { RUST_LOG: \"debug\" }");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(matches!(&cmd.cmd.node, Expr::Template(_)));
+            let entries = cmd.env.as_ref().unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].node.key.node, "RUST_LOG");
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_argv_with_env() {
+    let prog = parse_task_with(
+        "x = command [\"cargo\", \"build\"] env { RUST_LOG: \"debug\", TARGET: arch }",
+    );
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(matches!(&cmd.cmd.node, Expr::ArrayLit(elems) if elems.len() == 2));
+            let entries = cmd.env.as_ref().unwrap();
+            assert_eq!(entries.len(), 2);
+            assert_eq!(entries[0].node.key.node, "RUST_LOG");
+            assert_eq!(entries[1].node.key.node, "TARGET");
+            assert!(matches!(&entries[1].node.value.node, Expr::Ident(name) if name == "arch"));
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_command_all_modifiers_with_env() {
+    let prog = parse_task_with(
+        "x = command [\"run\"] in \"/dir\" timeout 5m background true env { KEY: val }",
+    );
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Command(cmd) => {
+            assert!(matches!(&cmd.cmd.node, Expr::ArrayLit(_)));
+            assert!(cmd.working_dir.is_some());
+            assert!(cmd.timeout.is_some());
+            assert!(cmd.background.as_ref().unwrap().node);
+            let entries = cmd.env.as_ref().unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].node.key.node, "KEY");
+        }
+        other => panic!("expected Command, got {:?}", other),
+    }
+}
+
+#[test]
 fn parse_try_or_expression() {
     let prog = parse_task_with("x = try search \"query\" or \"default\"");
     match bind_expr(first_stmt(&prog)) {
