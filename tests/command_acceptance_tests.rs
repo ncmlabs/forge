@@ -94,6 +94,7 @@ async fn command_fail_routes_to_else() {
 // ── Runtime: working directory ──────────────────────────────────
 
 #[tokio::test]
+#[cfg(not(target_os = "windows"))]
 async fn command_workdir() {
     let program = parse_file("examples/command_workdir.forge");
     let mock = MockProvider::new("mock").with_default("mock");
