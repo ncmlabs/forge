@@ -1,8 +1,8 @@
 # FORGE
 
 [![CI](https://github.com/ncmlabs/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/ncmlabs/forge/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ncmlabs/forge)](https://github.com/ncmlabs/forge/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-Layer%201%20Active-brightgreen.svg)]()
 
 **The programming language for oracle-augmented computation.**
 
@@ -28,22 +28,68 @@ These are not hard problems. They are problems that exist because every existing
 
 ---
 
-## Quick start
+## Installation
+
+### Download a pre-built binary (recommended)
+
+Pre-built binaries are available for every release at [**github.com/ncmlabs/forge/releases**](https://github.com/ncmlabs/forge/releases/latest).
+
+| Platform | Archive |
+|----------|---------|
+| macOS Apple Silicon | `forge-aarch64-apple-darwin.tar.gz` |
+| macOS Intel | `forge-x86_64-apple-darwin.tar.gz` |
+| Linux x86_64 | `forge-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `forge-aarch64-unknown-linux-gnu.tar.gz` |
+| Windows x64 | `forge-x86_64-pc-windows-msvc.zip` |
+
+**macOS / Linux one-liner** (downloads the latest release and puts `forge` on your PATH):
 
 ```bash
-# Build from source
+# Replace TARGET with your platform, e.g. aarch64-apple-darwin
+TARGET=aarch64-apple-darwin
+curl -sL "https://github.com/ncmlabs/forge/releases/latest/download/forge-${TARGET}.tar.gz" \
+  | tar xz && sudo mv forge /usr/local/bin/
+```
+
+### Install from source
+
+Requires [Rust](https://rustup.rs/) 1.85 or later:
+
+```bash
+cargo install --git https://github.com/ncmlabs/forge.git
+```
+
+### Build from source (for development)
+
+```bash
 git clone https://github.com/ncmlabs/forge.git
 cd forge
 cargo build --release
+# binary is at target/release/forge
+```
 
+### Verify
+
+```bash
+forge --help
+```
+
+---
+
+## Quick start
+
+```bash
 # Validate a FORGE program
-cargo run -- check examples/hello.forge
+forge check examples/hello.forge
 
 # Run with configured LLM provider
-cargo run -- run examples/hello.forge
+forge run examples/hello.forge
+
+# Serve a web app with hot-reload
+forge serve examples/wiki/ --watch
 
 # Build a standalone agent binary
-cargo run -- build workflows/forge-sensei.forge -o bin/forge-sensei
+forge build examples/hello.forge -o bin/hello
 
 # Run all tests (no API calls — uses mock provider)
 cargo test
