@@ -1,5 +1,12 @@
 # FORGE Observer — standalone runtime inspector
 # Start: forge serve examples/observer/server.forge -s examples/observer/shared.forge
+# No LLM calls — mock provider is fine.
+
+[llm]
+default = "mock"
+
+[providers.mock]
+type = "mock"
 
 [server]
 host = "127.0.0.1"

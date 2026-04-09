@@ -16,6 +16,7 @@ var ForgeObserver = (function () {
   var STORAGE_KEY = 'forge-observer-server';
   var DEFAULT_URL = 'http://localhost:3001';
   var connecting = false;
+  var serverConnected = false; // true once topology fetch succeeds
 
   // ── Initialization ─────────────────────────────────────────
 
@@ -57,8 +58,12 @@ var ForgeObserver = (function () {
       });
     });
 
-    // Status updates from API layer
-    ForgeAPI.onStatus(updateStatus);
+    // Status updates from API layer — only update badge if not already connected
+    ForgeAPI.onStatus(function (status) {
+      // Once server is confirmed reachable, don't let SSE reconnection downgrade the badge
+      if (serverConnected && (status === 'reconnecting' || status === 'connecting')) return;
+      updateStatus(status);
+    });
 
     // Check URL params
     var params = new URLSearchParams(window.location.search);
@@ -105,6 +110,7 @@ var ForgeObserver = (function () {
     // Verify server is reachable by fetching topology
     ForgeAPI.fetchJSON('/__forge/inspect/topology').then(function (topology) {
       connecting = false;
+      serverConnected = true;
       connectBtn.classList.add('hidden');
       disconnectBtn.classList.remove('hidden');
       urlInput.disabled = true;
@@ -125,6 +131,7 @@ var ForgeObserver = (function () {
   function handleDisconnect() {
     ForgeAPI.disconnectSSE();
     connecting = false;
+    serverConnected = false;
     connectBtn.classList.remove('hidden');
     connectBtn.disabled = false;
     connectBtn.textContent = 'Connect';
