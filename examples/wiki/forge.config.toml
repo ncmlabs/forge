@@ -14,6 +14,17 @@ timeout_secs = 60
 type = "mock"
 model = "mock-model"
 
+# Uncomment for real embeddings with Ollama:
+# [providers.ollama]
+# type = "ollama"
+# base_url = "http://localhost:11434/v1"
+# model = "gemma3:4b"
+#
+# [embeddings]
+# provider = "ollama"
+# model = "nomic-embed-text"
+# dimensions = 768
+
 [embeddings]
 provider = "mock"
 dimensions = 64
