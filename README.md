@@ -594,7 +594,7 @@ task analyze_contract
 
 ## What's built — and what's next
 
-### Working today (Layer 1 — ~90% complete)
+### v0.1.0 — Layer 1 complete (Phase 1 shipped)
 
 ```
 ✅ task + reason + when         — oracle reasoning with uncertainty handling
@@ -609,16 +609,20 @@ task analyze_contract
 ✅ warden supervision            — crash recovery, stuck detection, escalation policies
 ✅ system orchestration          — multi-agent wiring with shared event bus
 ✅ forge build                   — standalone native binaries with CLI + REPL
+✅ Web runtime                   — HTML templates, static serving, hot-reload, markdown
+✅ HTTP client + webhooks        — web.fetch, web.post, HMAC-verified webhooks
+✅ exec + skill bridge           — CLI execution, SKILL.md ecosystem, tool-use
+✅ data operations               — persistent KV storage (redb), vector embeddings, semantic search
+✅ Observer                      — live SSE tracing, introspection API, D3 topology, cost dashboard
+✅ Wiki showcase                 — documentation wiki using all 14 primitives (52 tests)
+✅ Sentinel                      — AI-powered repo health dashboard (17 primitives)
 ✅ forge-sensei                  — self-referential learning agent (FORGE teaching FORGE)
-✅ Wiki showcase                 — documentation wiki using all 14 primitives
 ```
 
 ### Coming next
 
 ```
-⬜ Web runtime                   — HTML templates, static serving, hot-reload
-⬜ HTTP client                   — web.fetch, webhooks, external integrations
-⬜ WASM compilation              — Cranelift backend, browser target
+⬜ WASM compilation              — Cranelift backend, browser target (v0.2.0)
 ```
 
 ### Future layers
@@ -736,7 +740,7 @@ FORGE is most valuable in systems where:
 
 Three things determine whether this reaches its potential:
 
-**Engineering:** Layer 1 is ~90% complete — parser, seven semantic checkers, async runtime with 15 modules, agent lifecycle (spawn/find/retire), knowledge system, system orchestration, and a 36-test conformance suite are operational. Layer 2 (toolkit agents that generate FORGE code) is the next frontier. Error messages are structured data designed for agent repair loops.
+**Engineering:** Layer 1 shipped as v0.1.0 — parser (609 PEG rules), seven semantic checkers, async runtime with 15 modules, agent lifecycle (spawn/find/retire), knowledge system, system orchestration, web runtime, observer, and 883 tests are operational. Layer 2 (toolkit agents that generate FORGE code) is the next frontier. Error messages are structured data designed for agent repair loops.
 
 **Capability:** The factory model depends on LLMs that can write reliable FORGE code. Today's models can handle simple programs. Complex multi-agent systems with subtle invariants require the repair loop to run multiple times. The factory becomes more powerful as models improve.
 
@@ -753,33 +757,37 @@ Three things determine whether this reaches its potential:
 | `roadmap.md` | Architecture, milestones, track progress, and layer model |
 | `CHANGELOG.md` | All notable changes in Keep a Changelog format |
 | `providers.md` | Provider abstraction: trait, registry, implementations, config |
-| `examples/` | 17 example programs demonstrating all language primitives |
+| `examples/` | 30 example programs and 4 showcase apps demonstrating all language primitives |
 | `workflows/` | Real FORGE programs: dev-cycle workflow, forge-sensei learning agent |
-| `conformance/` | Language-agnostic JSON test suite — 36 tests covering parser, checkers, and runtime |
+| `conformance/` | Language-agnostic JSON test suite — 84 tests covering parser, checkers, and runtime |
 
 ---
 
 ## Current status
 
-**Layer 1 — the substrate — is approximately 90% complete.** 56 of 72 tracked issues are closed.
+**v0.1.0 released.** Layer 1 — the substrate — is complete. 63 of 72 tracked issues are closed.
 
-- **Parser**: PEG grammar (609 rules) covering all language primitives with comprehensive error diagnostics
+- **Parser**: PEG grammar (609 rules) covering all 14 language primitives with comprehensive error diagnostics
 - **Semantic checkers** (7): purity, boundary, states, requires, uncertain, spawn, warden
 - **Runtime**: 15-module async execution engine — agents, flows, pools, events, timers, knowledge, supervision
 - **Agent ecosystem**: spawn/find/retire lifecycle, knowledge stores with categories, instance registry, system orchestration
+- **Web runtime**: HTML templates, HTTP client/server, static serving, hot-reload, webhooks, markdown
+- **Data operations**: Persistent KV storage (redb), vector embeddings, semantic search
+- **Observer**: Live SSE tracing, introspection API, D3 topology visualization, cost dashboard, failure injection
 - **Build system**: `forge build` compiles agents to standalone CLI binaries with handler subcommands and interactive REPL
 - **Providers**: Anthropic, OpenAI-compatible, Ollama, Groq — swap with a config line
-- **forge-sensei**: Self-referential learning agent written in FORGE that teaches FORGE, with mastery progression and specialist spawning
-- **Test suite**: 30 unit tests + 36 conformance tests (all run with mock provider — no API calls)
-- **CLI**: `forge parse`, `forge check`, `forge run`, `forge build`, `forge trace`, `forge cost`
+- **Showcase apps**: Wiki (52 tests), Sentinel (17 primitives), Observer (standalone SPA), forge-sensei
+- **Test suite**: 883 tests — unit, conformance, integration, E2E (all core tests run with mock provider — no API calls)
+- **CLI**: `forge parse`, `forge check`, `forge run`, `forge build`, `forge serve`, `forge trace`, `forge cost`
 
 ```bash
 # Try it
 cargo build
 cargo run -- check examples/hello.forge       # semantic validation
 cargo run -- run examples/hello.forge          # execute with LLM
+cargo run -- serve examples/wiki/ --watch      # web app with hot-reload
 cargo run -- build examples/hello.forge -o bin/hello  # standalone binary
-cargo test                                     # all tests, no API calls
+cargo test                                     # 883 tests, no API calls
 ```
 
 See the [roadmap](roadmap.md) for milestone tracking and detailed progress.
@@ -809,4 +817,4 @@ cargo fmt --check && cargo clippy -- -D warnings && cargo test
 
 ---
 
-*FORGE is under active development. Layer 1 is ~90% complete with 56/72 issues closed. Track A (Ecosystem Core) is 100% done. See the [roadmap](roadmap.md) for details.*
+*FORGE v0.1.0 is released. Layer 1 (the substrate) is complete with 63/72 issues closed and 883 tests passing. Tracks A, B, C, and E are 100% done. WASM compilation (Track D) is planned for v0.2.0. See the [roadmap](roadmap.md) for details.*
