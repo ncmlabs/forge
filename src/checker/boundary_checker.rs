@@ -481,6 +481,11 @@ fn check_refs_in_expr(
             if let Some(ref dir) = cmd_expr.working_dir {
                 check_refs_in_expr(dir, boundary, registry, file, diagnostics);
             }
+            if let Some(ref entries) = cmd_expr.env {
+                for entry in entries {
+                    check_refs_in_expr(&entry.node.value, boundary, registry, file, diagnostics);
+                }
+            }
         }
         Expr::Search(inner) => {
             if boundary != BoundaryKind::Server {

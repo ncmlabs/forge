@@ -489,19 +489,54 @@ fn build_exec_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     Ok(Spanned::new(Expr::Exec(Box::new(arg)), span))
 }
 
+fn build_command_arg(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let inner = pair.into_inner().next().unwrap();
+    match inner.as_rule() {
+        Rule::array_lit => {
+            let span = to_span(&inner);
+            let mut elems = Vec::new();
+            for child in inner.into_inner() {
+                if child.as_rule() == Rule::expr {
+                    elems.push(build_expr(child)?);
+                }
+            }
+            Ok(Spanned::new(Expr::ArrayLit(elems), span))
+        }
+        Rule::string_arg => build_string_arg(inner),
+        _ => Err(parse_error(&inner, "expected string or array")),
+    }
+}
+
+fn build_env_map(pair: Pair) -> anyhow::Result<Vec<Spanned<EnvEntry>>> {
+    let mut entries = Vec::new();
+    for child in pair.into_inner() {
+        if child.as_rule() == Rule::env_entry {
+            let span = to_span(&child);
+            let mut inner = child.into_inner();
+            let key_pair = inner.next().unwrap();
+            let key = spanned(key_pair.as_str().to_string(), &key_pair);
+            let value = build_expr(inner.next().unwrap())?;
+            entries.push(Spanned::new(EnvEntry { key, value }, span));
+        }
+    }
+    Ok(entries)
+}
+
 fn build_command_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let span = to_span(&pair);
     let mut inner = pair.into_inner();
-    let cmd = build_string_arg(inner.next().unwrap())?;
+    let cmd = build_command_arg(inner.next().unwrap())?;
     let mut working_dir = None;
     let mut timeout = None;
     let mut background = None;
+    let mut env = None;
     for modifier in inner {
         let child = modifier.into_inner().next().unwrap();
         match child.as_rule() {
             Rule::string_arg => working_dir = Some(Box::new(build_string_arg(child)?)),
             Rule::duration => timeout = Some(build_duration(child)?),
             Rule::bool_lit => background = Some(spanned(build_bool_lit(child.clone()), &child)),
+            Rule::env_map => env = Some(build_env_map(child)?),
             _ => {}
         }
     }
@@ -511,6 +546,7 @@ fn build_command_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
             working_dir,
             timeout,
             background,
+            env,
         }),
         span,
     ))

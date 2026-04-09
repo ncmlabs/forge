@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `command` expression primitive with optional `in`, `timeout`, and `background` modifiers (#160)
+- Structured argv form for `command`: `command ["git", "commit", "-m", msg]` — safe, no injection (#160)
+- `env` modifier for `command`: `command "build" env { RUST_LOG: "debug" }` (#160)
 
 ## [0.1.0] - 2026-04-09
 

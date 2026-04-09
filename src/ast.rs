@@ -510,6 +510,13 @@ pub struct CommandExpr {
     pub working_dir: Option<Box<Spanned<Expr>>>,
     pub timeout: Option<Spanned<Duration>>,
     pub background: Option<Spanned<bool>>,
+    pub env: Option<Vec<Spanned<EnvEntry>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnvEntry {
+    pub key: Spanned<String>,
+    pub value: Spanned<Expr>,
 }
 
 #[derive(Debug, Clone)]
