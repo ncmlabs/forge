@@ -152,11 +152,15 @@ impl PoolExecutor {
         for _ in 0..self.worker_count {
             match &self.worker_kind {
                 WorkerKind::Task(task_decl) => {
+                    let cmd_mgr = std::sync::Arc::new(std::sync::Mutex::new(
+                        crate::runtime::command_manager::CommandManager::new(),
+                    ));
                     let executor = TaskExecutor::new(
                         self.program.clone(),
                         self.providers.clone(),
                         self.tracer.clone(),
-                    );
+                    )
+                    .with_command_manager(cmd_mgr);
                     let decl = task_decl.clone();
                     let args = args.to_vec();
                     join_set.spawn(async move { executor.call_task(&decl, args).await });
@@ -371,11 +375,15 @@ impl PoolExecutor {
 
     async fn try_fallback(&self, args: &[ConfidentValue]) -> Option<ConfidentValue> {
         let fallback_name = self.decl.fallback.as_ref()?;
+        let cmd_mgr = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::runtime::command_manager::CommandManager::new(),
+        ));
         let executor = TaskExecutor::new(
             self.program.clone(),
             self.providers.clone(),
             self.tracer.clone(),
-        );
+        )
+        .with_command_manager(cmd_mgr);
 
         // Look up the fallback as a task
         let task = self

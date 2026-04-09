@@ -360,9 +360,13 @@ impl AgentProcess {
             tracer.clone(),
         )));
 
+        let cmd_mgr = Arc::new(Mutex::new(
+            crate::runtime::command_manager::CommandManager::new(),
+        ));
         let mut executor = TaskExecutor::new(program, registry, tracer)
             .with_agent_context(context.clone())
-            .with_timer_engine(timer_engine.clone());
+            .with_timer_engine(timer_engine.clone())
+            .with_command_manager(cmd_mgr);
 
         // Wire instance registry into executor (issue #82)
         if let Some(ir) = instance_registry {

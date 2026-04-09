@@ -206,9 +206,13 @@ fn attempt_reload(
         }
     };
 
+    let cmd_mgr = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::runtime::command_manager::CommandManager::new(),
+    ));
     let mut new_executor =
         crate::runtime::executor::TaskExecutor::new(program, std::sync::Arc::new(registry), tracer)
-            .with_config(config);
+            .with_config(config)
+            .with_command_manager(cmd_mgr);
 
     // Preserve storage handle from the old executor (#140)
     {
