@@ -12,6 +12,7 @@ pub struct ForgeConfig {
     pub web: Option<WebConfig>,
     pub exec: Option<ExecConfig>,
     pub skills: Option<SkillsConfig>,
+    pub embeddings: Option<EmbeddingsConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -122,6 +123,20 @@ impl SkillsConfig {
                 defaults
             })
     }
+}
+
+/// Configuration for vector embeddings (issue #50).
+/// References an existing [providers.*] entry for base_url and api_key.
+#[derive(Debug, Deserialize, Clone)]
+pub struct EmbeddingsConfig {
+    /// Name of the provider from [providers.*] to use for embeddings.
+    pub provider: String,
+    /// Embedding model name (overrides the provider's chat model).
+    pub model: Option<String>,
+    /// Embedding vector dimensions (auto-detected if not set).
+    pub dimensions: Option<usize>,
+    /// Cost per 1K input tokens for embedding calls.
+    pub cost_per_1k_tokens: Option<f32>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -400,6 +415,7 @@ impl ForgeConfig {
             web: None,
             exec: None,
             skills: None,
+            embeddings: None,
         }
     }
 }
@@ -454,6 +470,7 @@ mod tests {
             web: None,
             exec: None,
             skills: None,
+            embeddings: None,
         };
         assert!(matches!(
             config.validate(),
@@ -502,6 +519,7 @@ mod tests {
             web: None,
             exec: None,
             skills: None,
+            embeddings: None,
         };
         assert!(matches!(
             config.validate(),

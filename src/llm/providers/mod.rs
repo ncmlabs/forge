@@ -1,5 +1,5 @@
-use crate::config::ProviderConfig;
-use crate::llm::BoxedProvider;
+use crate::config::{EmbeddingsConfig, ProviderConfig};
+use crate::llm::{BoxedEmbeddingProvider, BoxedProvider};
 use std::sync::Arc;
 
 pub mod anthropic;
@@ -96,5 +96,54 @@ pub fn build_provider(name: &str, config: &ProviderConfig) -> Result<BoxedProvid
         "mock" => Ok(Arc::new(mock::MockProvider::new(name))),
 
         other => Err(format!("unknown provider type '{}' for '{}'", other, name)),
+    }
+}
+
+/// Build an embedding provider from config.
+/// The `embed_config` references a provider from [providers.*] for connection details.
+pub fn build_embedding_provider(
+    provider_config: &ProviderConfig,
+    embed_config: &EmbeddingsConfig,
+) -> Result<BoxedEmbeddingProvider, String> {
+    let provider_name = &embed_config.provider;
+    match provider_config.type_.as_str() {
+        "anthropic" => Err(
+            "Anthropic does not support embeddings. Use an OpenAI-compatible provider (e.g., Ollama with nomic-embed-text).".to_string()
+        ),
+
+        "openai" | "openai-compat" | "ollama" | "vllm" | "lmstudio" => {
+            let base_url = provider_config
+                .base_url
+                .as_deref()
+                .unwrap_or("https://api.openai.com/v1");
+            let model = embed_config
+                .model
+                .as_deref()
+                .or(provider_config.model.as_deref())
+                .ok_or_else(|| format!(
+                    "embedding provider '{}' requires a model (set [embeddings].model or [providers.{}].model)",
+                    provider_name, provider_name
+                ))?;
+            let api_key = provider_config
+                .api_key
+                .as_deref()
+                .unwrap_or("not-required");
+            let dimensions = embed_config.dimensions.unwrap_or(768);
+            let cost = embed_config.cost_per_1k_tokens.unwrap_or(0.0);
+            let timeout = provider_config.timeout_secs.unwrap_or(30);
+
+            Ok(Arc::new(openai_compat::OpenAICompatEmbeddingProvider::new(
+                provider_name, api_key, model, base_url, dimensions, cost, timeout,
+            )))
+        }
+
+        "mock" => {
+            let dimensions = embed_config.dimensions.unwrap_or(64);
+            Ok(Arc::new(mock::MockEmbeddingProvider::new(provider_name, dimensions)))
+        }
+
+        other => Err(format!(
+            "provider type '{}' does not support embeddings", other
+        )),
     }
 }
