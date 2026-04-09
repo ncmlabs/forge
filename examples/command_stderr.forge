@@ -1,0 +1,10 @@
+# command acceptance test: stderr capture
+task run_stderr
+  gives Text
+  do
+    result = command "echo err_output >&2"
+    when result.sure -> give result.stderr
+    else -> give "FAILED"
+
+fn main
+  say run_stderr()

@@ -1,0 +1,10 @@
+# command acceptance test: working directory via in modifier
+task run_pwd
+  gives Text
+  do
+    result = command "pwd" in "/tmp"
+    when result.sure -> give result.stdout
+    else -> give "FAILED"
+
+fn main
+  say run_pwd()

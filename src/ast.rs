@@ -311,6 +311,17 @@ pub struct Duration {
     pub unit: DurationUnit,
 }
 
+impl Duration {
+    pub fn to_std(&self) -> std::time::Duration {
+        match self.unit {
+            DurationUnit::Seconds => std::time::Duration::from_secs(self.value),
+            DurationUnit::Minutes => std::time::Duration::from_secs(self.value * 60),
+            DurationUnit::Hours => std::time::Duration::from_secs(self.value * 3600),
+            DurationUnit::Days => std::time::Duration::from_secs(self.value * 86400),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum DurationUnit {
     Seconds,

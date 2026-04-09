@@ -2217,9 +2217,127 @@ impl TaskExecutor {
                 }
 
                 // ── command expression (issue #160, runtime in #161) ─────────
-                Expr::Command(_) => Err(RuntimeError::FlowError(
-                    "command expression not yet implemented at runtime (issue #161)".to_string(),
-                )),
+                Expr::Command(cmd_expr) => {
+                    // 1. Evaluate the command argument
+                    let cmd_val = self.eval_expr(&cmd_expr.cmd, env).await?;
+
+                    // 2. Build process based on argv vs string mode
+                    let (mut process, cmd_display) = match &cmd_val.value {
+                        Value::Array(items) | Value::List(items) => {
+                            let argv: Vec<String> =
+                                items.iter().map(|item| format!("{}", item.value)).collect();
+                            if argv.is_empty() {
+                                return Err(RuntimeError::FlowError(
+                                    "command requires at least one element in argv array"
+                                        .to_string(),
+                                ));
+                            }
+                            let mut cmd = tokio::process::Command::new(&argv[0]);
+                            cmd.args(&argv[1..]);
+                            let display = argv.join(" ");
+                            (cmd, display)
+                        }
+                        Value::Text(s) => {
+                            let mut cmd = tokio::process::Command::new("sh");
+                            cmd.arg("-c").arg(s);
+                            (cmd, s.clone())
+                        }
+                        other => {
+                            return Err(RuntimeError::TypeError {
+                                expected: "Text or Array".to_string(),
+                                got: format!("{}", other),
+                            });
+                        }
+                    };
+
+                    // 3. Apply working directory
+                    if let Some(ref wd_expr) = cmd_expr.working_dir {
+                        let wd = self.eval_expr(wd_expr, env).await?;
+                        process.current_dir(format!("{}", wd.value));
+                    }
+
+                    // 4. Apply environment variables
+                    if let Some(ref entries) = cmd_expr.env {
+                        for entry in entries {
+                            let val = self.eval_expr(&entry.node.value, env).await?;
+                            process.env(&entry.node.key.node, format!("{}", val.value));
+                        }
+                    }
+
+                    // 5. Determine timeout (default 30s)
+                    let timeout_dur = cmd_expr
+                        .timeout
+                        .as_ref()
+                        .map(|t| t.node.to_std())
+                        .unwrap_or(std::time::Duration::from_secs(30));
+
+                    // 6. Reject background mode (see #162)
+                    if matches!(cmd_expr.background, Some(ref s) if s.node) {
+                        return Err(RuntimeError::FlowError(
+                            "background commands not yet supported (see #162)".to_string(),
+                        ));
+                    }
+
+                    // 7. Trace and spawn
+                    if let Some(ref tracer) = self.tracer {
+                        tracer.command_call(&cmd_display);
+                    }
+
+                    let start = std::time::Instant::now();
+                    let result = tokio::time::timeout(timeout_dur, process.output()).await;
+                    let elapsed = start.elapsed();
+
+                    // 8. Build structured result
+                    match result {
+                        Ok(Ok(output)) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout)
+                                .trim_end()
+                                .to_string();
+                            let stderr = String::from_utf8_lossy(&output.stderr)
+                                .trim_end()
+                                .to_string();
+                            let success = output.status.success();
+                            let exit_code = output.status.code().unwrap_or(-1) as f64;
+                            let confidence = if success { 0.9 } else { 0.3 };
+
+                            let mut fields = HashMap::new();
+                            fields.insert(
+                                "stdout".to_string(),
+                                ConfidentValue::from_exec(Value::Text(stdout), confidence),
+                            );
+                            fields.insert(
+                                "stderr".to_string(),
+                                ConfidentValue::from_exec(Value::Text(stderr), confidence),
+                            );
+                            fields.insert(
+                                "exit_code".to_string(),
+                                ConfidentValue::from_exec(Value::Number(exit_code), confidence),
+                            );
+                            fields.insert(
+                                "success".to_string(),
+                                ConfidentValue::from_exec(Value::Bool(success), confidence),
+                            );
+
+                            if let Some(ref tracer) = self.tracer {
+                                tracer.command_return(
+                                    &cmd_display,
+                                    success,
+                                    elapsed.as_millis() as u64,
+                                );
+                            }
+
+                            Ok(ConfidentValue::from_exec(Value::Record(fields), confidence))
+                        }
+                        Ok(Err(e)) => Err(RuntimeError::FlowError(format!(
+                            "command failed to spawn: {}",
+                            e
+                        ))),
+                        Err(_) => Err(RuntimeError::FlowError(format!(
+                            "command timed out after {:?}: {}",
+                            timeout_dur, cmd_display
+                        ))),
+                    }
+                }
 
                 // ── LLM expressions ───────────────────────────────────────────
                 Expr::Reason(prompt_expr) => {
