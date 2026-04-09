@@ -10,6 +10,7 @@ use forge::portability::{
     AgentSchema, SchemaField, SchemaKnowledgeConfig,
 };
 use forge::runtime::agent::AgentProcess;
+use forge::runtime::command_manager::CommandManager;
 use forge::runtime::confidence::{ConfidentValue, Value};
 use forge::runtime::knowledge_store::KnowledgeStore;
 
@@ -569,9 +570,11 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     };
 
     let skill_exec = build_skill_executor(&config_clone, &providers, tracer.as_ref());
+    let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let mut executor =
         forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
-            .with_config(config_clone);
+            .with_config(config_clone)
+            .with_command_manager(cmd_mgr);
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }
@@ -660,12 +663,14 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     };
 
     let skill_exec = build_skill_executor(&config_clone, &providers, tracer.as_ref());
+    let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
         Arc::clone(&providers),
         tracer,
     )
-    .with_config(config_clone);
+    .with_config(config_clone)
+    .with_command_manager(cmd_mgr);
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }
@@ -855,12 +860,14 @@ fn try_build_executor_multi(
     let providers = Arc::new(registry);
 
     let skill_exec = build_skill_executor(&config, &providers, tracer.as_ref());
+    let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
         Arc::clone(&providers),
         tracer,
     )
-    .with_config(config.clone());
+    .with_config(config.clone())
+    .with_command_manager(cmd_mgr);
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }
@@ -925,9 +932,11 @@ fn try_build_executor(
     let providers = Arc::new(registry);
 
     let skill_exec = build_skill_executor(&config, &providers, tracer.as_ref());
+    let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let mut executor =
         forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
-            .with_config(config.clone());
+            .with_config(config.clone())
+            .with_command_manager(cmd_mgr);
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }

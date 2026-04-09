@@ -487,6 +487,11 @@ fn check_refs_in_expr(
                 }
             }
         }
+        Expr::CommandMethod(_, args) => {
+            for arg in args {
+                check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
+            }
+        }
         Expr::Search(inner) => {
             if boundary != BoundaryKind::Server {
                 let boundary_name = match boundary {

@@ -1,0 +1,15 @@
+# command acceptance test: background mode — spawn, poll status, get output
+task run_bg
+  gives Text
+  do
+    handle = command "echo bg_hello" background true timeout 10s
+    wait = command "sleep 0.2"
+    status = command.status(handle)
+    output = command.output(handle)
+    when status.sure -> say status.status
+    else -> say "uncertain"
+    when output.sure -> give output.stdout
+    else -> give "no_output"
+
+fn main
+  say run_bg()

@@ -360,9 +360,13 @@ impl AgentProcess {
             tracer.clone(),
         )));
 
+        let cmd_mgr = Arc::new(Mutex::new(
+            crate::runtime::command_manager::CommandManager::new(),
+        ));
         let mut executor = TaskExecutor::new(program, registry, tracer)
             .with_agent_context(context.clone())
-            .with_timer_engine(timer_engine.clone());
+            .with_timer_engine(timer_engine.clone())
+            .with_command_manager(cmd_mgr);
 
         // Wire instance registry into executor (issue #82)
         if let Some(ir) = instance_registry {
@@ -655,6 +659,11 @@ impl AgentProcess {
 
         // Shutdown: cancel all active timers
         self.timer_engine.lock().unwrap().cancel_all();
+
+        // Shutdown: cancel all background commands (issue #162)
+        if let Some(mgr) = self.executor.command_manager() {
+            mgr.lock().unwrap().shutdown_all();
+        }
 
         // Wait for forwarder tasks to finish
         for h in handles {

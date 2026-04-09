@@ -552,6 +552,19 @@ fn build_command_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     ))
 }
 
+fn build_command_method_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let method_pair = inner.next().unwrap();
+    let method = spanned(method_pair.as_str().to_string(), &method_pair);
+    let args = if let Some(arg_list) = inner.next() {
+        build_arg_list(arg_list)?
+    } else {
+        Vec::new()
+    };
+    Ok(Spanned::new(Expr::CommandMethod(method, args), span))
+}
+
 fn build_reason_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let span = to_span(&pair);
     let inner = pair.into_inner().next().unwrap();
@@ -609,6 +622,7 @@ fn build_try_or_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
 fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
+        Rule::command_method_expr => build_command_method_expr(inner),
         Rule::command_expr => build_command_expr(inner),
         Rule::exec_expr => build_exec_expr(inner),
         Rule::find_expr => build_find_expr(inner),

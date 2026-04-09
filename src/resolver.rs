@@ -204,6 +204,29 @@ impl CapabilityRegistry {
             },
         );
 
+        // command.status / command.output / command.cancel — issue #162
+        caps.insert(
+            "command.status".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "command.output".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "command.cancel".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Unit,
+            },
+        );
+
         Self { capabilities: caps }
     }
 
@@ -414,7 +437,7 @@ fn infer_type(expr: &Spanned<Expr>) -> Option<ForgeType> {
         Expr::Template(_) => Some(ForgeType::Text),
         Expr::Reason(_) => Some(ForgeType::Text),
         Expr::Exec(_) => Some(ForgeType::Text),
-        Expr::Command(_) => Some(ForgeType::Text),
+        Expr::Command(_) | Expr::CommandMethod(_, _) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Classification),
         Expr::Search(_) => Some(ForgeType::Results),
         Expr::Compose(parts) => parts.last().and_then(infer_type),
@@ -430,7 +453,7 @@ fn infer_input_type(expr: &Spanned<Expr>) -> Option<ForgeType> {
         Expr::Call(_) => Some(ForgeType::Text),
         Expr::Reason(_) => Some(ForgeType::Text),
         Expr::Exec(_) => Some(ForgeType::Text),
-        Expr::Command(_) => Some(ForgeType::Text),
+        Expr::Command(_) | Expr::CommandMethod(_, _) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Text),
         Expr::Search(_) => Some(ForgeType::Text),
         _ => None,
