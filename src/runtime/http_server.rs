@@ -257,14 +257,20 @@ impl ForgeServer {
 
         // CORS
         let cors = if self.cors_origins.is_empty() {
-            CorsLayer::new().allow_origin(Any)
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
         } else {
             let origins: Vec<_> = self
                 .cors_origins
                 .iter()
                 .filter_map(|o| o.parse().ok())
                 .collect();
-            CorsLayer::new().allow_origin(origins)
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods(Any)
+                .allow_headers(Any)
         };
 
         let router = if let Some(ref root) = self.static_root {
