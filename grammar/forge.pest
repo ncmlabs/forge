@@ -559,7 +559,8 @@ postfix_op   = {
 }
 
 pipe_term = {
-    command_expr
+    command_method_expr
+  | command_expr
   | exec_expr
   | find_expr
   | reason_expr
@@ -589,6 +590,8 @@ command_modifier = {
   | "env" ~ _s ~ env_map
 }
 command_expr = { "command" ~ _s ~ command_arg ~ (_s ~ command_modifier)* }
+command_method_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+command_method_expr = { "command" ~ "." ~ command_method_name ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
 env_map      = { "{" ~ _s_opt ~ env_entry ~ (_s_opt ~ "," ~ _s_opt ~ env_entry)* ~ _s_opt ~ "}" }
 env_entry    = { ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 reason_expr   = { "reason" ~ _s ~ string_arg }

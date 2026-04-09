@@ -1,0 +1,11 @@
+{
+  "name": "command_background_spawn",
+  "category": "runtime",
+  "description": "Background command returns handle immediately and emits bg_spawn trace",
+  "input": "task run\n  gives Text\n  do\n    h = command \"echo bg_test\" background true timeout 10s\n    give h\n\nfn main\n  say run()\n",
+  "mock_responses": [],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": ["command_call", "command_bg_spawn"]
+  }
+}

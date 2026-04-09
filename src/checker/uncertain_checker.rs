@@ -140,6 +140,7 @@ fn expr_is_oracle(expr: &Spanned<Expr>) -> bool {
             | Expr::Recall(_)
             | Expr::Exec(_)
             | Expr::Command(_)
+            | Expr::CommandMethod(_, _)
     )
 }
 

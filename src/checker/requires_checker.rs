@@ -183,7 +183,7 @@ fn check_requires_expr(
                 .with_help("use a `pure` function instead"),
             );
         }
-        Expr::Command(_) => {
+        Expr::Command(_) | Expr::CommandMethod(_, _) => {
             diagnostics.push(
                 Diagnostic::warning(
                     file,

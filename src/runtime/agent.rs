@@ -656,6 +656,11 @@ impl AgentProcess {
         // Shutdown: cancel all active timers
         self.timer_engine.lock().unwrap().cancel_all();
 
+        // Shutdown: cancel all background commands (issue #162)
+        if let Some(mgr) = self.executor.command_manager() {
+            mgr.lock().unwrap().shutdown_all();
+        }
+
         // Wait for forwarder tasks to finish
         for h in handles {
             let _ = h.await;

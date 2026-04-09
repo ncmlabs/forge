@@ -9,6 +9,7 @@ use forge::checker::boundary_checker;
 use forge::diagnostic::{Diagnostic, DiagnosticKind};
 use forge::llm::providers::mock::MockProvider;
 use forge::llm::registry::ProviderRegistry;
+use forge::runtime::command_manager::CommandManager;
 use forge::runtime::executor::TaskExecutor;
 use forge::tracer::Tracer;
 
@@ -263,7 +264,9 @@ async fn test_run_ok(test: &ConformanceTest) -> Result<(), String> {
 
     let mock = build_mock(test);
     let tracer = Tracer::with_capture();
-    let executor = TaskExecutor::new(program, mock_registry(mock), Some(tracer.clone()));
+    let mgr = std::sync::Arc::new(std::sync::Mutex::new(CommandManager::new()));
+    let executor = TaskExecutor::new(program, mock_registry(mock), Some(tracer.clone()))
+        .with_command_manager(mgr);
 
     executor
         .run()
@@ -289,7 +292,9 @@ async fn test_run_error(test: &ConformanceTest) -> Result<(), String> {
 
     let mock = build_mock(test);
     let tracer = Tracer::with_capture();
-    let executor = TaskExecutor::new(program, mock_registry(mock), Some(tracer.clone()));
+    let mgr = std::sync::Arc::new(std::sync::Mutex::new(CommandManager::new()));
+    let executor = TaskExecutor::new(program, mock_registry(mock), Some(tracer.clone()))
+        .with_command_manager(mgr);
 
     match executor.run().await {
         Ok(_) => Err("expected run_error but execution succeeded".to_string()),

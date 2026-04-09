@@ -10,6 +10,7 @@ use crate::ast::*;
 use crate::llm::registry::ProviderRegistry;
 use crate::llm::CompletionRequest;
 use crate::runtime::agent::{AgentContext, EmittedEvent};
+use crate::runtime::command_manager::SharedCommandManager;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::instance_registry::{InstanceInfo, InstanceStatus};
 use crate::runtime::timer_engine::TimerEngine;
@@ -148,6 +149,8 @@ pub struct TaskExecutor {
     embedding_provider: Option<crate::llm::BoxedEmbeddingProvider>,
     /// Vector index for semantic search (issue #50).
     vector_index: Option<crate::runtime::vector_index::SharedVectorIndex>,
+    /// Command manager for background process lifecycle (issue #162).
+    command_manager: Option<SharedCommandManager>,
 }
 
 impl Clone for TaskExecutor {
@@ -175,6 +178,7 @@ impl Clone for TaskExecutor {
             skill_executor: self.skill_executor.clone(),
             embedding_provider: self.embedding_provider.clone(),
             vector_index: self.vector_index.clone(),
+            command_manager: self.command_manager.clone(),
         }
     }
 }
@@ -231,6 +235,7 @@ impl TaskExecutor {
             skill_executor: None,
             embedding_provider: None,
             vector_index: None,
+            command_manager: None,
         }
     }
 
@@ -296,6 +301,17 @@ impl TaskExecutor {
     /// Get a clone of the storage handle (used to preserve storage across hot-reloads).
     pub fn storage_handle(&self) -> Option<crate::runtime::storage::SharedStorage> {
         self.storage.clone()
+    }
+
+    /// Attach a command manager for background process lifecycle (issue #162).
+    pub fn with_command_manager(mut self, mgr: SharedCommandManager) -> Self {
+        self.command_manager = Some(mgr);
+        self
+    }
+
+    /// Get a reference to the command manager.
+    pub fn command_manager(&self) -> Option<&SharedCommandManager> {
+        self.command_manager.as_ref()
     }
 
     /// Configure persistent memory storage (issue #57).
@@ -2271,14 +2287,42 @@ impl TaskExecutor {
                         .map(|t| t.node.to_std())
                         .unwrap_or(std::time::Duration::from_secs(30));
 
-                    // 6. Reject background mode (see #162)
+                    // 6. Background mode — spawn and return handle (issue #162)
                     if matches!(cmd_expr.background, Some(ref s) if s.node) {
-                        return Err(RuntimeError::FlowError(
-                            "background commands not yet supported (see #162)".to_string(),
-                        ));
+                        let mgr = self.command_manager.as_ref().ok_or_else(|| {
+                            RuntimeError::Unsupported(
+                                "background commands require a command manager".to_string(),
+                            )
+                        })?;
+
+                        process.stdout(std::process::Stdio::piped());
+                        process.stderr(std::process::Stdio::piped());
+
+                        if let Some(ref tracer) = self.tracer {
+                            tracer.command_call(&cmd_display);
+                        }
+
+                        let child = process.spawn().map_err(|e| {
+                            RuntimeError::FlowError(format!(
+                                "background command failed to spawn: {}",
+                                e
+                            ))
+                        })?;
+
+                        let handle_id = mgr
+                            .lock()
+                            .unwrap()
+                            .spawn_background(child, cmd_display.clone(), Some(timeout_dur))
+                            .map_err(RuntimeError::FlowError)?;
+
+                        if let Some(ref tracer) = self.tracer {
+                            tracer.command_bg_spawn(&cmd_display, &handle_id);
+                        }
+
+                        return Ok(ConfidentValue::deterministic(Value::Text(handle_id)));
                     }
 
-                    // 7. Trace and spawn
+                    // 7. Trace and spawn (synchronous)
                     if let Some(ref tracer) = self.tracer {
                         tracer.command_call(&cmd_display);
                     }
@@ -2336,6 +2380,43 @@ impl TaskExecutor {
                             "command timed out after {:?}: {}",
                             timeout_dur, cmd_display
                         ))),
+                    }
+                }
+
+                // ── command.method() expressions (issue #162) ────────────────
+                Expr::CommandMethod(method, args) => {
+                    let mut arg_vals = Vec::new();
+                    for arg in args {
+                        arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                    }
+                    let mgr = self.command_manager.as_ref().ok_or_else(|| {
+                        RuntimeError::Unsupported(
+                            "command.* requires a command manager".to_string(),
+                        )
+                    })?;
+                    let handle = arg_vals
+                        .first()
+                        .map(|v| format!("{}", v.value))
+                        .unwrap_or_default();
+                    match method.node.as_str() {
+                        "status" => mgr
+                            .lock()
+                            .unwrap()
+                            .status(&handle)
+                            .map_err(RuntimeError::FlowError),
+                        "output" => mgr
+                            .lock()
+                            .unwrap()
+                            .output(&handle)
+                            .map_err(RuntimeError::FlowError),
+                        "cancel" => {
+                            mgr.lock()
+                                .unwrap()
+                                .cancel(&handle)
+                                .map_err(RuntimeError::FlowError)?;
+                            Ok(ConfidentValue::deterministic(Value::Unit))
+                        }
+                        other => Err(RuntimeError::Unsupported(format!("command.{}()", other))),
                     }
                 }
 

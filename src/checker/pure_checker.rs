@@ -334,7 +334,7 @@ fn check_pure_expr(
                 span_end: expr.span.end,
             });
         }
-        Expr::Command(_) => {
+        Expr::Command(_) | Expr::CommandMethod(_, _) => {
             errors.push(CheckError::PureUsesLlm {
                 name: fn_name.to_string(),
                 op: "command",

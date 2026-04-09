@@ -487,6 +487,8 @@ pub enum Expr {
     Exec(Box<Spanned<Expr>>),
     /// `command "cmd" [in "dir"] [timeout 60s] [background true]`
     Command(CommandExpr),
+    /// `command.status(handle)` / `command.output(handle)` / `command.cancel(handle)`
+    CommandMethod(Spanned<String>, Vec<Spanned<CallArg>>),
     /// `find "alias"` / `find all template [where lifecycle == state]`
     Find(Box<FindExpr>),
     /// `try expr or expr`

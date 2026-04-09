@@ -2,6 +2,7 @@
 // See issues #9 (executor), #11 (agent), #12 (pool) for full implementation
 
 pub mod agent;
+pub mod command_manager;
 pub mod confidence;
 pub mod cost_aggregator;
 pub mod event_bus;

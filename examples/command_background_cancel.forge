@@ -1,0 +1,13 @@
+# command acceptance test: background mode — cancel a running process
+task run_cancel
+  gives Text
+  do
+    handle = command "sleep 60" background true timeout 30s
+    command.cancel(handle)
+    wait = command "sleep 0.2"
+    status = command.status(handle)
+    when status.sure -> give status.status
+    else -> give "unknown"
+
+fn main
+  say run_cancel()

@@ -208,7 +208,7 @@ impl CostWalker {
             Expr::Exec(_) => {
                 // exec has zero token cost (direct CLI, no LLM)
             }
-            Expr::Command(_) => {
+            Expr::Command(_) | Expr::CommandMethod(_, _) => {
                 // command has zero token cost (direct CLI, no LLM)
             }
             Expr::TryOr(a, b) => {

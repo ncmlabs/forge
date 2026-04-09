@@ -381,6 +381,27 @@ impl Tracer {
         );
     }
 
+    pub fn command_bg_spawn(&self, command: &str, handle: &str) {
+        self.emit(
+            "command_bg_spawn",
+            serde_json::json!({
+                "command": command,
+                "handle": handle,
+            }),
+        );
+    }
+
+    pub fn command_bg_complete(&self, handle: &str, success: bool, duration_ms: u64) {
+        self.emit(
+            "command_bg_complete",
+            serde_json::json!({
+                "handle": handle,
+                "success": success,
+                "duration_ms": duration_ms,
+            }),
+        );
+    }
+
     // ── Skill tracing (issue #40) ──────────────────────────────────────────
 
     pub fn skill_call(&self, skill_name: &str) {
