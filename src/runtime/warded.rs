@@ -2,7 +2,7 @@
 // Orchestrates agent lifecycle management: spawns agents as tokio tasks,
 // monitors for crashes/stuck, and executes warden response decisions.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -11,11 +11,32 @@ use tokio::task::JoinHandle;
 
 use crate::ast::*;
 use crate::llm::registry::ProviderRegistry;
+use uuid::Uuid;
+
+use serde::Serialize;
+use tokio::sync::RwLock;
+
 use crate::runtime::agent::{AgentProcess, AgentSignal};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
+use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
 use crate::runtime::warden::{FailureSignal, WardAction, Warden};
 use crate::tracer::Tracer;
+
+// ── Introspection Snapshot ─────────────────────────────────────────────────
+
+/// Read-only snapshot of warden state for introspection (issue #139).
+#[derive(Debug, Clone, Serialize)]
+pub struct WardenSnapshot {
+    pub name: String,
+    pub managed_agents: Vec<String>,
+    pub degraded_agents: Vec<String>,
+    pub retry_counts: HashMap<String, u64>,
+    pub circuit_breaker_tripped: bool,
+}
+
+/// Shared handle for HTTP handlers to read warden snapshots.
+pub type SharedWardenSnapshots = Arc<RwLock<Vec<WardenSnapshot>>>;
 
 // ── AgentBlueprint ──────────────────────────────────────────────────────────
 
@@ -35,6 +56,7 @@ pub struct AgentBlueprint {
 pub struct ManagedAgent {
     pub blueprint: AgentBlueprint,
     pub handle: JoinHandle<Result<(), RuntimeError>>,
+    pub instance_id: Uuid,
 }
 
 // ── WardedRuntime ───────────────────────────────────────────────────────────
@@ -45,9 +67,16 @@ pub struct WardedRuntime {
     agents: HashMap<String, ManagedAgent>,
     blueprints: HashMap<String, AgentBlueprint>,
     event_bus: SharedEventBus,
+    instance_registry: SharedInstanceRegistry,
+    storage: Option<crate::runtime::storage::SharedStorage>,
     signal_tx: mpsc::Sender<AgentSignal>,
     signal_rx: mpsc::Receiver<AgentSignal>,
     start: Instant,
+    /// Agents that have been escalated and removed from active supervision.
+    /// The wiki continues running with degraded features for these agents.
+    pub degraded_agents: HashSet<String>,
+    /// Shared snapshot handle updated on state changes (for introspection).
+    shared_snapshots: Option<SharedWardenSnapshots>,
 }
 
 impl WardedRuntime {
@@ -66,7 +95,7 @@ impl WardedRuntime {
         for item in &program.items {
             match &item.node {
                 TopLevel::Agent(a) => {
-                    agent_decls.insert(a.name.node.clone(), a.clone());
+                    agent_decls.insert(a.name.node.clone(), a.as_ref().clone());
                 }
                 TopLevel::States(s) => {
                     states_decls.insert(s.name.node.clone(), s.clone());
@@ -103,20 +132,162 @@ impl WardedRuntime {
         let event_bus: SharedEventBus =
             Arc::new(tokio::sync::RwLock::new(EventBus::new(tracer.clone())));
 
+        let instance_registry: SharedInstanceRegistry =
+            Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+
         Self {
             warden: Warden::new(warden_decl, tracer),
             agents: HashMap::new(),
             blueprints,
             event_bus,
+            instance_registry,
             signal_tx,
             signal_rx,
             start: Instant::now(),
+            degraded_agents: HashSet::new(),
+            storage: None,
+            shared_snapshots: None,
+        }
+    }
+
+    /// Build a WardedRuntime that shares an existing event bus and instance registry,
+    /// used by SystemRuntime to coordinate across multiple wardens.
+    pub fn with_shared_infrastructure(
+        warden_decl: WardenDecl,
+        program: &Program,
+        registry: Arc<ProviderRegistry>,
+        tracer: Option<Tracer>,
+        event_bus: SharedEventBus,
+        instance_registry: SharedInstanceRegistry,
+    ) -> Self {
+        // Collect agent and states declarations from the program
+        let mut agent_decls: HashMap<String, AgentDecl> = HashMap::new();
+        let mut states_decls: HashMap<String, StatesDecl> = HashMap::new();
+
+        for item in &program.items {
+            match &item.node {
+                TopLevel::Agent(a) => {
+                    agent_decls.insert(a.name.node.clone(), a.as_ref().clone());
+                }
+                TopLevel::States(s) => {
+                    states_decls.insert(s.name.node.clone(), s.clone());
+                }
+                _ => {}
+            }
+        }
+
+        // Build blueprints for each managed agent
+        let mut blueprints = HashMap::new();
+        for managed_name in &warden_decl.manages {
+            if let Some(agent_decl) = agent_decls.get(&managed_name.node) {
+                let states = agent_decl
+                    .lifecycle
+                    .as_ref()
+                    .and_then(|lc| states_decls.get(&lc.node))
+                    .cloned();
+
+                blueprints.insert(
+                    managed_name.node.clone(),
+                    AgentBlueprint {
+                        decl: agent_decl.clone(),
+                        states,
+                        program: program.clone(),
+                        registry: registry.clone(),
+                        tracer: tracer.clone(),
+                    },
+                );
+            }
+        }
+
+        let (signal_tx, signal_rx) = mpsc::channel::<AgentSignal>(64);
+
+        Self {
+            warden: Warden::new(warden_decl, tracer),
+            agents: HashMap::new(),
+            blueprints,
+            event_bus,
+            instance_registry,
+            signal_tx,
+            signal_rx,
+            start: Instant::now(),
+            degraded_agents: HashSet::new(),
+            storage: None,
+            shared_snapshots: None,
         }
     }
 
     /// Get a reference to the shared event bus.
     pub fn event_bus(&self) -> &SharedEventBus {
         &self.event_bus
+    }
+
+    /// Get a reference to the shared instance registry.
+    pub fn instance_registry(&self) -> &SharedInstanceRegistry {
+        &self.instance_registry
+    }
+
+    /// Clone the signal sender for external injection (issue #143).
+    pub fn signal_sender(&self) -> mpsc::Sender<AgentSignal> {
+        self.signal_tx.clone()
+    }
+
+    /// Return the list of managed agent names (from blueprints).
+    pub fn managed_agent_names(&self) -> Vec<String> {
+        self.blueprints.keys().cloned().collect()
+    }
+
+    /// Attach a shared snapshot handle for introspection.
+    pub fn with_shared_snapshots(mut self, snaps: SharedWardenSnapshots) -> Self {
+        self.shared_snapshots = Some(snaps);
+        self
+    }
+
+    /// Replace the event bus (call before spawning agents).
+    pub fn set_event_bus(&mut self, bus: SharedEventBus) {
+        self.event_bus = bus;
+    }
+
+    /// Replace the instance registry (call before spawning agents).
+    pub fn set_instance_registry(&mut self, registry: SharedInstanceRegistry) {
+        self.instance_registry = registry;
+    }
+
+    /// Inject shared storage so agents can use data.store/data.get.
+    pub fn set_storage(&mut self, storage: crate::runtime::storage::SharedStorage) {
+        self.storage = Some(storage);
+    }
+
+    /// Build a read-only snapshot of current warden state.
+    pub fn snapshot(&self) -> WardenSnapshot {
+        let now_ms = self.timestamp_ms();
+        let retry_counts: HashMap<String, u64> = self
+            .warden
+            .retry_tracker
+            .all_counts()
+            .iter()
+            .map(|((agent, ft), count)| (format!("{}:{:?}", agent, ft), *count))
+            .collect();
+        WardenSnapshot {
+            name: self.warden.decl.name.node.clone(),
+            managed_agents: self.agents.keys().cloned().collect(),
+            degraded_agents: self.degraded_agents.iter().cloned().collect(),
+            retry_counts,
+            circuit_breaker_tripped: self.warden.circuit_breaker_tripped(now_ms),
+        }
+    }
+
+    /// Push current snapshot to the shared handle (if wired).
+    async fn update_shared_snapshot(&self) {
+        if let Some(ref shared) = self.shared_snapshots {
+            let snap = self.snapshot();
+            let mut guard = shared.write().await;
+            // Replace our entry (find by name) or append
+            if let Some(pos) = guard.iter().position(|s| s.name == snap.name) {
+                guard[pos] = snap;
+            } else {
+                guard.push(snap);
+            }
+        }
     }
 
     fn timestamp_ms(&self) -> u64 {
@@ -129,7 +300,19 @@ impl WardedRuntime {
         for name in names {
             self.spawn_one(&name).await?;
         }
+        // Trace supervision tree after startup
+        self.trace_supervision_tree();
+        self.update_shared_snapshot().await;
         Ok(())
+    }
+
+    /// Emit a supervision tree trace event showing active and degraded agents.
+    fn trace_supervision_tree(&self) {
+        if let Some(tracer) = self.warden.tracer() {
+            let active: Vec<&str> = self.agents.keys().map(|s| s.as_str()).collect();
+            let degraded: Vec<&str> = self.degraded_agents.iter().map(|s| s.as_str()).collect();
+            tracer.supervision_tree(&self.warden.decl.name.node, &active, &degraded);
+        }
     }
 
     /// Spawn a single agent by name.
@@ -144,10 +327,19 @@ impl WardedRuntime {
             blueprint.registry.clone(),
             blueprint.tracer.clone(),
             blueprint.program.clone(),
+            self.storage.clone(),
+            Some(self.instance_registry.clone()),
         )
         .with_warden_signal(self.signal_tx.clone());
 
         process = process.with_event_bus(self.event_bus.clone()).await;
+
+        let context_ref = process.context().clone();
+        let instance_id =
+            self.instance_registry
+                .write()
+                .await
+                .register_with_context(name, None, context_ref);
 
         let handle = tokio::spawn(async move { process.run().await });
 
@@ -156,15 +348,20 @@ impl WardedRuntime {
             ManagedAgent {
                 blueprint: blueprint.clone(),
                 handle,
+                instance_id,
             },
         );
 
         Ok(())
     }
 
-    /// Stop an agent by aborting its tokio task.
-    fn stop_agent(&mut self, name: &str) {
+    /// Stop an agent by aborting its tokio task and unregistering from the instance registry.
+    async fn stop_agent(&mut self, name: &str) {
         if let Some(agent) = self.agents.remove(name) {
+            self.instance_registry
+                .write()
+                .await
+                .unregister(&agent.instance_id);
             agent.handle.abort();
         }
     }
@@ -180,7 +377,7 @@ impl WardedRuntime {
             }
 
             tokio::select! {
-                // Check for stuck signals from agents
+                // Check for agent signals (stuck, timeout, hallucination, budget)
                 signal = self.signal_rx.recv() => {
                     match signal {
                         Some(AgentSignal::Stuck { agent_name }) => {
@@ -188,6 +385,38 @@ impl WardedRuntime {
                                 agent_name,
                                 failure_type: FailureType::Stuck,
                                 detail: "stuck detector triggered".to_string(),
+                            };
+                            self.handle_signal(fs).await?;
+                        }
+                        Some(AgentSignal::Timeout { agent_name }) => {
+                            let fs = FailureSignal {
+                                agent_name,
+                                failure_type: FailureType::Timeout,
+                                detail: "handler execution timed out".to_string(),
+                            };
+                            self.handle_signal(fs).await?;
+                        }
+                        Some(AgentSignal::Hallucination { agent_name, detail }) => {
+                            let fs = FailureSignal {
+                                agent_name,
+                                failure_type: FailureType::Hallucination,
+                                detail,
+                            };
+                            self.handle_signal(fs).await?;
+                        }
+                        Some(AgentSignal::BudgetExceeded { agent_name, detail }) => {
+                            let fs = FailureSignal {
+                                agent_name,
+                                failure_type: FailureType::Budget,
+                                detail,
+                            };
+                            self.handle_signal(fs).await?;
+                        }
+                        Some(AgentSignal::Crash { agent_name }) => {
+                            let fs = FailureSignal {
+                                agent_name,
+                                failure_type: FailureType::Crash,
+                                detail: "injected crash signal".to_string(),
                             };
                             self.handle_signal(fs).await?;
                         }
@@ -227,11 +456,24 @@ impl WardedRuntime {
             // Check circuit breaker after every signal
             let now = self.timestamp_ms();
             if self.warden.circuit_breaker_tripped(now) {
-                return Err(RuntimeError::Unsupported(format!(
-                    "warden '{}' circuit breaker tripped",
+                // Graceful degradation: stop all agents, mark as degraded, but don't crash
+                eprintln!(
+                    "[warden] CIRCUIT BREAKER: warden '{}' tripped — stopping all agents. \
+                     Deterministic endpoints continue serving.",
                     self.warden.decl.name.node,
-                )));
+                );
+                let names: Vec<String> = self.agents.keys().cloned().collect();
+                for name in names {
+                    self.stop_agent(&name).await;
+                    self.degraded_agents.insert(name);
+                }
+                self.trace_supervision_tree();
+                self.update_shared_snapshot().await;
+                break;
             }
+
+            // Update shared snapshot after state changes
+            self.update_shared_snapshot().await;
         }
 
         Ok(())
@@ -263,19 +505,30 @@ impl WardedRuntime {
         let agent_name = action.agent_name.clone();
 
         match action.response {
-            WardResponse::Nudge | WardResponse::Restart | WardResponse::Replace => {
-                // v1: all three are restart (nudge with memory hint and replace with config deferred)
-                self.stop_agent(&agent_name);
+            WardResponse::Nudge
+            | WardResponse::Downgrade
+            | WardResponse::Restart
+            | WardResponse::Replace => {
+                // v1: all four are restart (nudge with memory hint, downgrade model tier, and replace with config deferred)
+                self.stop_agent(&agent_name).await;
                 if self.blueprints.contains_key(&agent_name) {
                     self.spawn_one(&agent_name).await?;
                 }
             }
             WardResponse::Escalate => {
-                self.stop_agent(&agent_name);
-                return Err(RuntimeError::Unsupported(format!(
-                    "warden '{}' escalated for agent '{}'",
-                    action.warden_name, agent_name
-                )));
+                // Graceful degradation: stop the agent but continue running.
+                // The wiki serves deterministic endpoints while the agent is degraded.
+                self.stop_agent(&agent_name).await;
+                self.degraded_agents.insert(agent_name.clone());
+
+                eprintln!(
+                    "[warden] ESCALATED: warden '{}' escalated agent '{}' \
+                     (failure: {:?}, retries: {}). Agent removed from supervision.",
+                    action.warden_name, agent_name, action.failure_type, action.retry_count
+                );
+
+                self.trace_supervision_tree();
+                return Ok(()); // Continue running — do not crash the runtime
             }
         }
 
@@ -283,6 +536,18 @@ impl WardedRuntime {
         self.apply_scope(action.scope, &agent_name).await?;
 
         Ok(())
+    }
+
+    /// Adopt a running agent into warden supervision.
+    pub fn adopt(&mut self, name: &str, blueprint: AgentBlueprint) {
+        self.warden.adopt(name);
+        self.blueprints.insert(name.to_string(), blueprint);
+    }
+
+    /// Release an agent from warden supervision (does NOT stop the agent).
+    pub fn release(&mut self, name: &str) {
+        self.warden.release(name);
+        self.blueprints.remove(name);
     }
 
     /// Apply scope: restart affected agents beyond the failing one.
@@ -302,7 +567,7 @@ impl WardedRuntime {
                     .cloned()
                     .collect();
                 for name in other_names {
-                    self.stop_agent(&name);
+                    self.stop_agent(&name).await;
                     self.spawn_one(&name).await?;
                 }
             }

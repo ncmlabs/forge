@@ -13,7 +13,8 @@ flow matchmaking
 
   stage find_opponents
     candidates = search "players near rank {request.rank}"
-    give candidates
+    when candidates.sure -> give candidates
+    else -> give "no matches"
 
   stage select_best
     needs find_opponents.candidates

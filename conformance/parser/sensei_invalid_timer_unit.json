@@ -1,0 +1,12 @@
+{
+  "name": "sensei_invalid_timer_unit",
+  "category": "parser",
+  "description": "Timer with invalid unit fails to parse",
+  "input": "agent bot\n  timer check: 5x\n\n  on start\n    say \"hi\"\n",
+  "expected": {
+    "outcome": "parse_error",
+    "error_contains": [
+      "expected"
+    ]
+  }
+}

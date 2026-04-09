@@ -1,0 +1,10 @@
+{
+  "name": "sensei_requires_guard_valid",
+  "category": "checker",
+  "subcategory": "states",
+  "description": "Agent with requires lifecycle guard compiles cleanly",
+  "input": "states MasteryLevel\n  novice -> apprentice when score >= 40\n  apprentice -> journeyman when score >= 70\n  journeyman -> expert when score >= 90\n  expert -> expert\n\ntype AssessmentResult\n  passed: Bool\n  prediction: Text\n  expected: Text\n  gap_topic: Text\n\nagent sensei\n  lifecycle: MasteryLevel\n  memory\n    score: Number\n\n  on assess(test: Text, expected: Text)\n    requires lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: give AssessmentResult(passed: false, prediction: \"\", expected: expected, gap_topic: \"Must reach apprentice\")\n    say \"Assessing...\"\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

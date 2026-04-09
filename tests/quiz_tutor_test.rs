@@ -24,7 +24,7 @@ fn load_quiz_tutor() -> (
         .items
         .iter()
         .find_map(|item| match &item.node {
-            TopLevel::Agent(a) => Some(a.clone()),
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
             _ => None,
         })
         .expect("no agent in program");
@@ -73,6 +73,8 @@ async fn quiz_tutor_full_session() {
         mock_registry(),
         None,
         program,
+        None,
+        None,
     );
 
     // 1. Start the session — should initialize memory and ask first question
@@ -154,6 +156,8 @@ async fn quiz_tutor_requires_guard_rejects_early_answer() {
         mock_registry(),
         None,
         program,
+        None,
+        None,
     );
 
     // Answering before start should be rejected by requires guard
@@ -184,7 +188,15 @@ async fn quiz_tutor_stuck_detection() {
     reg.register("mock", Arc::new(mock));
     let registry = Arc::new(reg);
 
-    let agent = AgentProcess::new(agent_decl, states_decl.as_ref(), registry, None, program);
+    let agent = AgentProcess::new(
+        agent_decl,
+        states_decl.as_ref(),
+        registry,
+        None,
+        program,
+        None,
+        None,
+    );
 
     // Start session
     agent.dispatch("start", HashMap::new()).await.unwrap();

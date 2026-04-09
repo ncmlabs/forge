@@ -1,0 +1,7 @@
+# exec acceptance test: exec in pure function should be rejected
+pure bad_pure
+  needs x: Text
+  gives Text
+  do
+    result = exec x
+    give result

@@ -1,7 +1,7 @@
 use crate::config::ProviderConfig;
 use crate::llm::{
-    CompletionRequest, CompletionResponse, LLMProvider, ProviderCapabilities, ProviderError,
-    QualityTier,
+    CompletionRequest, CompletionResponse, EmbeddingProvider, EmbeddingRequest, EmbeddingResponse,
+    LLMProvider, ProviderCapabilities, ProviderError, QualityTier,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -276,11 +276,172 @@ impl LLMProvider for OpenAICompatProvider {
 
         Ok(CompletionResponse {
             content,
+            tool_calls: vec![],
             tokens_in,
             tokens_out,
             latency_ms,
             model_used: resp.model,
             provider_name: self.name.clone(),
+            cost_usd,
+        })
+    }
+}
+
+// ── OpenAI-compatible Embedding Provider ─────────────────────────────────────
+
+pub struct OpenAICompatEmbeddingProvider {
+    name: String,
+    client: Client,
+    base_url: String,
+    api_key: String,
+    model: String,
+    dimensions: usize,
+    cost_per_1k_tokens: f32,
+    timeout: std::time::Duration,
+}
+
+impl OpenAICompatEmbeddingProvider {
+    pub fn new(
+        name: &str,
+        api_key: &str,
+        model: &str,
+        base_url: &str,
+        dimensions: usize,
+        cost_per_1k_tokens: f32,
+        timeout_secs: u64,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            client: Client::new(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key: api_key.to_string(),
+            model: model.to_string(),
+            dimensions,
+            cost_per_1k_tokens,
+            timeout: std::time::Duration::from_secs(timeout_secs),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct OAIEmbeddingRequest<'a> {
+    model: &'a str,
+    input: &'a [String],
+}
+
+#[derive(Deserialize)]
+struct OAIEmbeddingResponse {
+    data: Vec<OAIEmbeddingData>,
+    usage: OAIEmbeddingUsage,
+    model: String,
+}
+
+#[derive(Deserialize)]
+struct OAIEmbeddingData {
+    embedding: Vec<f32>,
+    #[allow(dead_code)]
+    index: usize,
+}
+
+#[derive(Deserialize)]
+struct OAIEmbeddingUsage {
+    prompt_tokens: u32,
+    #[allow(dead_code)]
+    total_tokens: u32,
+}
+
+#[async_trait]
+impl EmbeddingProvider for OpenAICompatEmbeddingProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn embedding_dimensions(&self) -> usize {
+        self.dimensions
+    }
+
+    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, ProviderError> {
+        let body = OAIEmbeddingRequest {
+            model: request.model.as_deref().unwrap_or(&self.model),
+            input: &request.texts,
+        };
+
+        let url = format!("{}/embeddings", self.base_url);
+
+        let http_resp = self
+            .client
+            .post(&url)
+            .header("authorization", format!("Bearer {}", self.api_key))
+            .header("content-type", "application/json")
+            .timeout(self.timeout)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    ProviderError::Timeout {
+                        secs: self.timeout.as_secs(),
+                    }
+                } else if e.is_connect() {
+                    ProviderError::Unavailable {
+                        provider: self.name.clone(),
+                        reason: format!("cannot connect to {}: {}", self.base_url, e),
+                    }
+                } else {
+                    ProviderError::Network(e.to_string())
+                }
+            })?;
+
+        let status = http_resp.status();
+
+        if status == 429 {
+            let retry_after = http_resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(30);
+            return Err(ProviderError::RateLimited {
+                provider: self.name.clone(),
+                retry_after_secs: retry_after,
+            });
+        }
+
+        if !status.is_success() {
+            let err: OAIError = http_resp.json().await.unwrap_or(OAIError {
+                error: OAIErrorBody {
+                    message: format!("HTTP {}", status),
+                    code: None,
+                },
+            });
+            return Err(ProviderError::Rejected {
+                provider: self.name.clone(),
+                reason: err.error.message,
+            });
+        }
+
+        let resp: OAIEmbeddingResponse =
+            http_resp
+                .json()
+                .await
+                .map_err(|e| ProviderError::InvalidResponse {
+                    provider: self.name.clone(),
+                    reason: e.to_string(),
+                })?;
+
+        let tokens_used = resp.usage.prompt_tokens;
+        let cost_usd = (tokens_used as f32 / 1000.0) * self.cost_per_1k_tokens;
+
+        let mut embeddings: Vec<Vec<f32>> = resp.data.into_iter().map(|d| d.embedding).collect();
+
+        // Sort by index to ensure order matches input
+        // (OpenAI API may return embeddings out of order)
+        embeddings.truncate(request.texts.len());
+
+        Ok(EmbeddingResponse {
+            embeddings,
+            model_used: resp.model,
+            tokens_used,
             cost_usd,
         })
     }

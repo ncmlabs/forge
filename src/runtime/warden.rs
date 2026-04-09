@@ -73,6 +73,11 @@ impl RetryTracker {
     pub fn reset_agent(&mut self, agent: &str, ft: FailureType) {
         self.counts.remove(&(agent.to_string(), ft));
     }
+
+    /// Return all failure counts as (agent, failure_type) → count.
+    pub fn all_counts(&self) -> &HashMap<(String, FailureType), u64> {
+        &self.counts
+    }
 }
 
 // ── Policy Resolver ─────────────────────────────────────────────────────────
@@ -183,9 +188,40 @@ impl Warden {
         }
     }
 
+    /// Get a reference to the tracer, if any.
+    pub fn tracer(&self) -> Option<&Tracer> {
+        self.tracer.as_ref()
+    }
+
     /// Get the list of managed names.
     pub fn managed_names(&self) -> Vec<&str> {
         self.decl.manages.iter().map(|m| m.node.as_str()).collect()
+    }
+
+    /// Dynamically add an agent name to the manages list.
+    pub fn adopt(&mut self, agent_name: &str) {
+        // Avoid duplicates
+        if !self.decl.manages.iter().any(|m| m.node == agent_name) {
+            self.decl.manages.push(Spanned::new(
+                agent_name.to_string(),
+                Span { start: 0, end: 0 },
+            ));
+        }
+    }
+
+    /// Remove an agent name from the manages list and clear its retry state.
+    pub fn release(&mut self, agent_name: &str) {
+        self.decl.manages.retain(|m| m.node != agent_name);
+        // Clear all retry tracker state for the released agent
+        for ft in [
+            FailureType::Stuck,
+            FailureType::Crash,
+            FailureType::Hallucination,
+            FailureType::Budget,
+            FailureType::Timeout,
+        ] {
+            self.retry_tracker.reset_agent(agent_name, ft);
+        }
     }
 }
 
@@ -194,5 +230,6 @@ fn duration_to_ms(d: &Duration) -> u64 {
         DurationUnit::Seconds => d.value * 1000,
         DurationUnit::Minutes => d.value * 60 * 1000,
         DurationUnit::Hours => d.value * 3600 * 1000,
+        DurationUnit::Days => d.value * 86400 * 1000,
     }
 }

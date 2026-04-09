@@ -1,0 +1,9 @@
+{
+  "name": "knowledge_agent_compile_ok",
+  "category": "checker",
+  "description": "Agent with knowledge store, proper recall dispatch, and learn compiles cleanly",
+  "input": "use\n  llm.reason\n\nagent learner\n  memory\n    count: Number\n  knowledge store: \".forge-knowledge/test\"\n    max_entries: 1000\n\n  on query(q: Text)\n    prior = recall \"{q}\"\n    when prior.sure -> give prior\n    else -> escalate to human\n\n  on train(fact: Text)\n    learn \"{fact}\"\n    say \"Learned\"\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

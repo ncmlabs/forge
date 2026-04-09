@@ -126,6 +126,18 @@ fn pure_reports_all_violations() {
 }
 
 #[test]
+fn pure_rejects_exec() {
+    let source =
+        "pure bad\n  needs x: Text\n  gives Text\n  do\n    result = exec x\n    give result\n";
+    let program = parse(source).unwrap();
+    let errors = check(&program);
+    assert_eq!(errors.len(), 1);
+    assert!(
+        matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "exec")
+    );
+}
+
+#[test]
 fn multiple_pure_fns_all_checked() {
     let source = "\
 pure bad1\n  needs x: Text\n  gives Text\n  do\n    give reason x\n\

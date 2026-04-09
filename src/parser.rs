@@ -95,6 +95,14 @@ fn build_template_string(pair: Pair) -> anyhow::Result<Vec<Spanned<TemplatePart>
                         expr.span,
                     ));
                 }
+                Rule::template_interp_raw => {
+                    let expr_pair = inner.into_inner().next().unwrap();
+                    let expr = build_expr(expr_pair)?;
+                    parts.push(Spanned::new(
+                        TemplatePart::RawInterp(Box::new(expr.clone())),
+                        expr.span,
+                    ));
+                }
                 _ => {}
             }
         }
@@ -108,7 +116,7 @@ fn build_plain_template_string(pair: Pair) -> anyhow::Result<String> {
     for part in parts {
         match part.node {
             TemplatePart::Text(part_text) => text.push_str(&part_text),
-            TemplatePart::Interp(_) => {
+            TemplatePart::Interp(_) | TemplatePart::RawInterp(_) => {
                 return Err(anyhow::anyhow!(
                     "classify labels must be plain strings without interpolation"
                 ));
@@ -137,6 +145,10 @@ fn build_type_name(pair: Pair) -> anyhow::Result<Spanned<TypeName>> {
             "Conversation" => TypeName::Conversation,
             "Profile" => TypeName::Profile,
             "SearchResults" => TypeName::SearchResults,
+            "Request" => TypeName::Request,
+            "Response" => TypeName::Response,
+            "Headers" => TypeName::Headers,
+            "Html" => TypeName::Html,
             other => TypeName::Custom(other.to_string()),
         },
         Rule::ident => TypeName::Custom(first.as_str().to_string()),
@@ -188,6 +200,8 @@ fn build_duration(pair: Pair) -> anyhow::Result<Spanned<Duration>> {
         (stripped.parse::<u64>()?, DurationUnit::Hours)
     } else if let Some(stripped) = s.strip_suffix('m') {
         (stripped.parse::<u64>()?, DurationUnit::Minutes)
+    } else if let Some(stripped) = s.strip_suffix('d') {
+        (stripped.parse::<u64>()?, DurationUnit::Days)
     } else if let Some(stripped) = s.strip_suffix('s') {
         (stripped.parse::<u64>()?, DurationUnit::Seconds)
     } else {
@@ -205,6 +219,97 @@ fn build_field_def(ident_pair: Pair, type_pair: Pair) -> anyhow::Result<Spanned<
     Ok(Spanned::new(
         FieldDef { name, type_name },
         Span { start, end },
+    ))
+}
+
+fn build_import_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+
+    let layer_list = inner.next().unwrap();
+    let mut layers = Vec::new();
+    for child in layer_list.into_inner() {
+        if child.as_rule() == Rule::ident {
+            let layer = match child.as_str() {
+                "knowledge" => ImportLayer::Knowledge,
+                "memory" => ImportLayer::Memory,
+                "config" => ImportLayer::Config,
+                other => {
+                    return Err(parse_error(
+                        &child,
+                        &format!("unknown import layer: {}", other),
+                    ))
+                }
+            };
+            layers.push(spanned(layer, &child));
+        }
+    }
+
+    let source_pair = inner.next().unwrap();
+    let source = {
+        let sp = to_span(&source_pair);
+        let parts = build_template_string(source_pair)?;
+        Spanned::new(Expr::Template(parts), sp)
+    };
+
+    let alias_pair = inner.next().unwrap();
+    let alias = spanned(alias_pair.as_str().to_string(), &alias_pair);
+
+    Ok(Spanned::new(
+        TopLevel::Import(ImportDecl {
+            layers,
+            source,
+            alias,
+        }),
+        span,
+    ))
+}
+
+fn build_knowledge_block(pair: Pair) -> anyhow::Result<Spanned<KnowledgeDecl>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let store_path_pair = inner.next().unwrap();
+    let store_path = {
+        let sp = to_span(&store_path_pair);
+        let parts = build_template_string(store_path_pair)?;
+        Spanned::new(Expr::Template(parts), sp)
+    };
+
+    let mut max_entries = None;
+    let mut retention = None;
+    let mut imports = Vec::new();
+
+    for child in inner {
+        if child.as_rule() == Rule::knowledge_option {
+            let opt_inner = child.into_inner().next().unwrap();
+            match opt_inner.as_rule() {
+                Rule::number_lit => {
+                    let val = build_number_lit(opt_inner.clone())?;
+                    max_entries = Some(spanned(val, &opt_inner));
+                }
+                Rule::duration => {
+                    retention = Some(build_duration(opt_inner)?);
+                }
+                Rule::ident_list => {
+                    for id in opt_inner.into_inner() {
+                        if id.as_rule() == Rule::ident {
+                            imports.push(spanned(id.as_str().to_string(), &id));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(Spanned::new(
+        KnowledgeDecl {
+            store_path,
+            max_entries,
+            retention,
+            imports,
+        },
+        span,
     ))
 }
 
@@ -252,6 +357,10 @@ fn build_atom(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
                 "Conversation" => TypeName::Conversation,
                 "Profile" => TypeName::Profile,
                 "SearchResults" => TypeName::SearchResults,
+                "Request" => TypeName::Request,
+                "Response" => TypeName::Response,
+                "Headers" => TypeName::Headers,
+                "Html" => TypeName::Html,
                 other => TypeName::Custom(other.to_string()),
             };
             Ok(Spanned::new(
@@ -340,6 +449,10 @@ fn build_constructor_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         "Conversation" => TypeName::Conversation,
         "Profile" => TypeName::Profile,
         "SearchResults" => TypeName::SearchResults,
+        "Request" => TypeName::Request,
+        "Response" => TypeName::Response,
+        "Headers" => TypeName::Headers,
+        "Html" => TypeName::Html,
         other => TypeName::Custom(other.to_string()),
     };
     let args = if let Some(arg_list) = inner.next() {
@@ -369,6 +482,13 @@ fn build_string_arg(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     }
 }
 
+fn build_exec_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let span = to_span(&pair);
+    let inner = pair.into_inner().next().unwrap();
+    let arg = build_string_arg(inner)?;
+    Ok(Spanned::new(Expr::Exec(Box::new(arg)), span))
+}
+
 fn build_reason_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let span = to_span(&pair);
     let inner = pair.into_inner().next().unwrap();
@@ -381,6 +501,13 @@ fn build_search_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let inner = pair.into_inner().next().unwrap();
     let arg = build_string_arg(inner)?;
     Ok(Spanned::new(Expr::Search(Box::new(arg)), span))
+}
+
+fn build_recall_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let span = to_span(&pair);
+    let inner = pair.into_inner().next().unwrap();
+    let arg = build_string_arg(inner)?;
+    Ok(Spanned::new(Expr::Recall(Box::new(arg)), span))
 }
 
 fn build_classify_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
@@ -419,9 +546,12 @@ fn build_try_or_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
 fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
+        Rule::exec_expr => build_exec_expr(inner),
+        Rule::find_expr => build_find_expr(inner),
         Rule::reason_expr => build_reason_expr(inner),
         Rule::classify_expr => build_classify_expr(inner),
         Rule::search_expr => build_search_expr(inner),
+        Rule::recall_expr => build_recall_expr(inner),
         Rule::try_or_expr => build_try_or_expr(inner),
         Rule::constructor_expr => build_constructor_expr(inner),
         Rule::call_expr => build_call_expr(inner),
@@ -429,6 +559,43 @@ fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         _ => Err(parse_error(
             &inner,
             &format!("unexpected pipe_term rule: {:?}", inner.as_rule()),
+        )),
+    }
+}
+
+fn build_find_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let first = inner.next().unwrap();
+
+    // If the first child is an ident, this is `find all <template> [where lifecycle == <state>]`
+    // If the first child is a string_arg, this is `find <alias>`
+    match first.as_rule() {
+        Rule::ident => {
+            // `find all <template>` — first ident is the template name
+            let template = spanned(first.as_str().to_string(), &first);
+            let kind = if let Some(state_pair) = inner.next() {
+                // `find all <template> where lifecycle == <state>`
+                let state = spanned(state_pair.as_str().to_string(), &state_pair);
+                FindKind::AllByTemplateFiltered(template, state)
+            } else {
+                FindKind::AllByTemplate(template)
+            };
+            Ok(Spanned::new(Expr::Find(Box::new(FindExpr { kind })), span))
+        }
+        Rule::string_arg => {
+            // `find <alias>`
+            let alias = build_string_arg(first)?;
+            Ok(Spanned::new(
+                Expr::Find(Box::new(FindExpr {
+                    kind: FindKind::ByAlias(alias),
+                })),
+                span,
+            ))
+        }
+        _ => Err(parse_error(
+            &first,
+            &format!("unexpected find_expr child: {:?}", first.as_rule()),
         )),
     }
 }
@@ -713,12 +880,22 @@ fn build_give_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
     let span = to_span(&pair);
     let mut inner = pair.into_inner();
     let expr = build_expr(inner.next().unwrap())?;
-    let with_expr = if let Some(call_pair) = inner.next() {
-        Some(build_call_expr(call_pair)?)
+    let metas = if let Some(meta_list) = inner.next() {
+        meta_list
+            .into_inner()
+            .map(|meta_pair| {
+                let meta_span = to_span(&meta_pair);
+                let mut parts = meta_pair.into_inner();
+                let key_pair = parts.next().unwrap();
+                let key = spanned(key_pair.as_str().to_string(), &key_pair);
+                let value = build_expr(parts.next().unwrap())?;
+                Ok(Spanned::new(GiveMeta { key, value }, meta_span))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?
     } else {
-        None
+        Vec::new()
     };
-    Ok(Spanned::new(Stmt::Give(expr, with_expr), span))
+    Ok(Spanned::new(Stmt::Give(expr, metas), span))
 }
 
 fn build_say_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
@@ -819,6 +996,181 @@ fn build_forward_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
     let what = build_expr(inner.next().unwrap())?;
     let to = build_expr(inner.next().unwrap())?;
     Ok(Spanned::new(Stmt::Forward(what, to), span))
+}
+
+fn build_learn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let child = inner.next().unwrap();
+
+    let source = match child.as_rule() {
+        Rule::learn_from_interaction => {
+            let arg_list = child.into_inner().next().unwrap();
+            let args = build_arg_list(arg_list)?;
+            LearnSource::FromInteraction(args)
+        }
+        Rule::learn_from_document => {
+            let string_arg = child.into_inner().next().unwrap();
+            let expr = build_string_arg(string_arg)?;
+            LearnSource::FromDocument(expr)
+        }
+        Rule::learn_direct => {
+            let string_arg = child.into_inner().next().unwrap();
+            let expr = build_string_arg(string_arg)?;
+            LearnSource::Direct(expr)
+        }
+        _ => {
+            return Err(parse_error(
+                &child,
+                &format!("unexpected learn rule: {:?}", child.as_rule()),
+            ));
+        }
+    };
+
+    // Parse optional category clause
+    let category = if let Some(cat_pair) = inner.next() {
+        let string_arg = cat_pair.into_inner().next().unwrap();
+        Some(build_string_arg(string_arg)?)
+    } else {
+        None
+    };
+
+    Ok(Spanned::new(
+        Stmt::Learn(Spanned::new(source, span), category),
+        span,
+    ))
+}
+
+fn build_spawn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
+    let span = to_span(&pair);
+    let inner = pair.into_inner();
+
+    // Peek at the structure to determine if there's a binding prefix.
+    // Grammar: (ident ~ "=" ~)? ~ "spawn" ~ ident ~ ("as" ~ string_arg)? ~ (spawn_option)*
+    // The children are: optional binding ident, template ident, optional alias, zero+ options.
+    let mut binding: Option<Spanned<String>> = None;
+    let mut template: Option<Spanned<String>> = None;
+    let mut alias: Option<Spanned<Expr>> = None;
+    let mut options: Vec<Spanned<SpawnOption>> = Vec::new();
+
+    for child in inner {
+        match child.as_rule() {
+            Rule::ident => {
+                // First ident could be binding or template.
+                // If we haven't set template yet and binding is already set, this is template.
+                // If neither is set, we tentatively store as template;
+                // but if another ident follows, the first was binding.
+                if template.is_none() {
+                    if binding.is_none() {
+                        // Could be binding or template — store tentatively
+                        template = Some(spanned(child.as_str().to_string(), &child));
+                    } else {
+                        template = Some(spanned(child.as_str().to_string(), &child));
+                    }
+                } else {
+                    // We already have a template, so the previous template was actually binding
+                    binding = template.take();
+                    template = Some(spanned(child.as_str().to_string(), &child));
+                }
+            }
+            Rule::string_arg => {
+                // This is the alias after "as"
+                alias = Some(build_string_arg(child)?);
+            }
+            Rule::spawn_option => {
+                let opt_span = to_span(&child);
+                let opt_inner = child.into_inner().next().unwrap();
+                let option = match opt_inner.as_rule() {
+                    Rule::spawn_knowledge_option => {
+                        let pred = opt_inner.into_inner().next().unwrap(); // spawn_knowledge_pred
+                        let cat_str_arg = pred.into_inner().next().unwrap(); // string_arg
+                        let cat_expr = build_string_arg(cat_str_arg)?;
+                        // Extract the string value from the template expression
+                        let cat_name = match &cat_expr.node {
+                            Expr::Template(parts) => parts
+                                .iter()
+                                .filter_map(|p| match &p.node {
+                                    TemplatePart::Text(t) => Some(t.as_str()),
+                                    _ => None,
+                                })
+                                .collect::<String>(),
+                            _ => String::new(),
+                        };
+                        SpawnOption::KnowledgeFilter(Spanned::new(cat_name, cat_expr.span))
+                    }
+                    Rule::spawn_confidence_cap_option => {
+                        let expr_pair = opt_inner.into_inner().next().unwrap();
+                        let expr = build_expr(expr_pair)?;
+                        SpawnOption::ConfidenceCap(expr)
+                    }
+                    Rule::spawn_memory_option => {
+                        let mut mem_inner = opt_inner.into_inner();
+                        let field_pair = mem_inner.next().unwrap();
+                        let field = spanned(field_pair.as_str().to_string(), &field_pair);
+                        let expr_pair = mem_inner.next().unwrap();
+                        let val = build_expr(expr_pair)?;
+                        SpawnOption::MemoryInit(field, val)
+                    }
+                    _ => {
+                        return Err(parse_error(
+                            &opt_inner,
+                            &format!("unexpected spawn option: {:?}", opt_inner.as_rule()),
+                        ));
+                    }
+                };
+                options.push(Spanned::new(option, opt_span));
+            }
+            _ => {}
+        }
+    }
+
+    let template =
+        template.ok_or_else(|| anyhow::anyhow!("spawn statement missing template agent name"))?;
+
+    Ok(Spanned::new(
+        Stmt::Spawn(Box::new(SpawnStmt {
+            binding,
+            template,
+            alias,
+            options,
+        })),
+        span,
+    ))
+}
+
+fn build_retire_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
+    let span = to_span(&pair);
+    let inner = pair.into_inner();
+
+    let mut target: Option<Spanned<Expr>> = None;
+    let mut knowledge_export: Option<Spanned<Expr>> = None;
+
+    for child in inner {
+        match child.as_rule() {
+            Rule::string_arg => {
+                // First string_arg is the target alias
+                if target.is_none() {
+                    target = Some(build_string_arg(child)?);
+                }
+            }
+            Rule::retire_option => {
+                let opt_inner = child.into_inner().next().unwrap();
+                if opt_inner.as_rule() == Rule::retire_knowledge_export {
+                    let path_arg = opt_inner.into_inner().next().unwrap();
+                    knowledge_export = Some(build_string_arg(path_arg)?);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Spanned::new(
+        Stmt::Retire(Box::new(RetireStmt {
+            target,
+            knowledge_export,
+        })),
+        span,
+    ))
 }
 
 // ── Control flow statements ──────────────────────────────────
@@ -1041,12 +1393,15 @@ fn build_statement(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
         Rule::match_stmt | Rule::match_stmt_i3 => build_match_stmt(inner),
         Rule::if_else_stmt | Rule::if_else_stmt_i3 => build_if_else_stmt(inner),
         Rule::for_loop | Rule::for_loop_i3 => build_for_loop(inner),
+        Rule::spawn_stmt | Rule::spawn_stmt_i3 => build_spawn_stmt(inner),
+        Rule::retire_stmt | Rule::retire_stmt_i3 => build_retire_stmt(inner),
         Rule::bind_stmt => build_bind_stmt(inner),
         Rule::give_stmt => build_give_stmt(inner),
         Rule::say_stmt => build_say_stmt(inner),
         Rule::escalate_stmt => build_escalate_stmt(inner),
         Rule::memory_update_stmt => build_memory_update_stmt(inner),
         Rule::emit_stmt => build_emit_stmt(inner),
+        Rule::learn_stmt => build_learn_stmt(inner),
         Rule::transition_stmt => build_transition_stmt(inner),
         Rule::start_timer_stmt => build_start_timer_stmt(inner),
         Rule::cancel_timer_stmt => build_cancel_timer_stmt(inner),
@@ -1466,12 +1821,15 @@ fn build_on_handler(pair: Pair) -> anyhow::Result<Spanned<OnHandler>> {
 
 fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     let span = to_span(&pair);
+    let exportable = pair.as_str().starts_with("exportable");
     let mut inner = pair.into_inner();
     let name_pair = inner.next().unwrap();
     let name = spanned(name_pair.as_str().to_string(), &name_pair);
 
     let mut lifecycle = None;
     let mut memory = Vec::new();
+    let mut memory_persistent = false;
+    let mut knowledge = None;
     let mut timers = Vec::new();
     let mut subscriptions = Vec::new();
     let mut warden_override = Vec::new();
@@ -1487,7 +1845,14 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
                 let lc_ident = child.into_inner().next().unwrap();
                 lifecycle = Some(spanned(lc_ident.as_str().to_string(), &lc_ident));
             }
+            Rule::knowledge_block => {
+                knowledge = Some(build_knowledge_block(child)?);
+            }
             Rule::memory_block => {
+                // Detect optional "persistent" keyword: grammar puts it on the
+                // first line right after "memory", before the newline.
+                let first_line = child.as_str().lines().next().unwrap_or("");
+                memory_persistent = first_line.contains("persistent");
                 let mem_children: Vec<Pair> = child.into_inner().collect();
                 let mut i = 0;
                 while i + 1 < mem_children.len() {
@@ -1560,16 +1925,19 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     }
 
     Ok(Spanned::new(
-        TopLevel::Agent(AgentDecl {
+        TopLevel::Agent(Box::new(AgentDecl {
+            exportable,
             name,
             lifecycle,
             memory,
+            memory_persistent,
+            knowledge,
             timers,
             subscriptions,
             warden_override,
             handlers,
             stuck_policy,
-        }),
+        })),
         span,
     ))
 }
@@ -1669,6 +2037,7 @@ fn build_ward_response(pair: &Pair) -> anyhow::Result<Spanned<WardResponse>> {
     let span = to_span(pair);
     let wr = match pair.as_str() {
         "nudge" => WardResponse::Nudge,
+        "downgrade" => WardResponse::Downgrade,
         "restart" => WardResponse::Restart,
         "replace" => WardResponse::Replace,
         "escalate" => WardResponse::Escalate,
@@ -1949,6 +2318,7 @@ fn build_program(pairs: Pairs) -> anyhow::Result<Program> {
             Rule::top_level => {
                 let inner = pair.into_inner().next().unwrap();
                 let item = match inner.as_rule() {
+                    Rule::import_decl => build_import_decl(inner)?,
                     Rule::use_decl => build_use_decl(inner)?,
                     Rule::task_decl => build_task_decl(inner)?,
                     Rule::pure_decl => build_pure_decl(inner)?,

@@ -80,6 +80,17 @@ fn check_requires_expr(
                 .with_help("use a `pure` function instead"),
             );
         }
+        Expr::Recall(_) => {
+            diagnostics.push(
+                Diagnostic::warning(
+                    file,
+                    "requires clause uses knowledge operation `recall`",
+                    expr.span.start..expr.span.end,
+                    "knowledge retrieval is non-deterministic — preconditions should be deterministic",
+                )
+                .with_help("use a `pure` function instead"),
+            );
+        }
         Expr::TryOr(a, b) => {
             diagnostics.push(
                 Diagnostic::warning(
@@ -142,10 +153,35 @@ fn check_requires_expr(
         }
         Expr::Template(parts) => {
             for part in parts {
-                if let TemplatePart::Interp(inner) = &part.node {
-                    check_requires_expr(inner, task_names, file, diagnostics);
+                match &part.node {
+                    TemplatePart::Interp(inner) | TemplatePart::RawInterp(inner) => {
+                        check_requires_expr(inner, task_names, file, diagnostics);
+                    }
+                    _ => {}
                 }
             }
+        }
+        Expr::Find(_) => {
+            diagnostics.push(
+                Diagnostic::warning(
+                    file,
+                    "requires clause uses `find` which queries runtime state",
+                    expr.span.start..expr.span.end,
+                    "runtime state is non-deterministic — preconditions should be deterministic",
+                )
+                .with_help("use a `pure` function instead"),
+            );
+        }
+        Expr::Exec(_) => {
+            diagnostics.push(
+                Diagnostic::warning(
+                    file,
+                    "requires clause uses `exec` which runs an external process",
+                    expr.span.start..expr.span.end,
+                    "external processes are non-deterministic — preconditions should be deterministic",
+                )
+                .with_help("use a `pure` function instead"),
+            );
         }
         // Leaves: literals, idents, type access — always deterministic
         Expr::NumberLit(_) | Expr::BoolLit(_) | Expr::Ident(_) | Expr::TypeAccess(_, _) => {}

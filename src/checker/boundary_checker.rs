@@ -4,8 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BoundaryKind, Expr, FieldDef, Program, Spanned, Stmt, TaskBody, TemplatePart, TopLevel,
-    TypeName,
+    BoundaryKind, Expr, FieldDef, FindKind, LearnSource, Program, Spanned, SpawnOption, Stmt,
+    TaskBody, TemplatePart, TopLevel, TypeName,
 };
 use crate::diagnostic::Diagnostic;
 
@@ -157,7 +157,7 @@ fn top_level_name_and_kind(item: &TopLevel) -> Option<(String, SymbolKind)> {
         TopLevel::Contract(d) => Some((d.name.node.clone(), SymbolKind::Contract)),
         TopLevel::System(d) => Some((d.name.node.clone(), SymbolKind::System)),
         TopLevel::Warden(d) => Some((d.name.node.clone(), SymbolKind::System)),
-        TopLevel::Use(_) | TopLevel::FnMain(_) => None,
+        TopLevel::Use(_) | TopLevel::FnMain(_) | TopLevel::Import(_) => None,
     }
 }
 
@@ -275,7 +275,8 @@ fn check_cross_boundary_refs(
             | TopLevel::States(_)
             | TopLevel::TypeDef(_)
             | TopLevel::Contract(_)
-            | TopLevel::System(_) => {}
+            | TopLevel::System(_)
+            | TopLevel::Import(_) => {}
         }
     }
 }
@@ -303,10 +304,10 @@ fn check_refs_in_stmt(
         Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
             check_refs_in_expr(expr, boundary, registry, file, diagnostics);
         }
-        Stmt::Give(expr, with_expr) => {
+        Stmt::Give(expr, metas) => {
             check_refs_in_expr(expr, boundary, registry, file, diagnostics);
-            if let Some(w) = with_expr {
-                check_refs_in_expr(w, boundary, registry, file, diagnostics);
+            for meta in metas {
+                check_refs_in_expr(&meta.node.value, boundary, registry, file, diagnostics);
             }
         }
         Stmt::Emit(name, args) => {
@@ -379,6 +380,42 @@ fn check_refs_in_stmt(
             }
             check_refs_in_expr(expr, boundary, registry, file, diagnostics);
         }
+        Stmt::Learn(source, category) => {
+            match &source.node {
+                LearnSource::Direct(expr) | LearnSource::FromDocument(expr) => {
+                    check_refs_in_expr(expr, boundary, registry, file, diagnostics);
+                }
+                LearnSource::FromInteraction(args) => {
+                    for arg in args {
+                        check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
+                    }
+                }
+            }
+            if let Some(cat_expr) = category {
+                check_refs_in_expr(cat_expr, boundary, registry, file, diagnostics);
+            }
+        }
+        Stmt::Spawn(s) => {
+            if let Some(ref alias) = s.alias {
+                check_refs_in_expr(alias, boundary, registry, file, diagnostics);
+            }
+            for opt in &s.options {
+                match &opt.node {
+                    SpawnOption::ConfidenceCap(expr) | SpawnOption::MemoryInit(_, expr) => {
+                        check_refs_in_expr(expr, boundary, registry, file, diagnostics);
+                    }
+                    SpawnOption::KnowledgeFilter(_) => {}
+                }
+            }
+        }
+        Stmt::Retire(r) => {
+            if let Some(ref target) = r.target {
+                check_refs_in_expr(target, boundary, registry, file, diagnostics);
+            }
+            if let Some(ref export_path) = r.knowledge_export {
+                check_refs_in_expr(export_path, boundary, registry, file, diagnostics);
+            }
+        }
         // No expressions to walk
         Stmt::TransitionTo(_)
         | Stmt::StartTimer { .. }
@@ -436,7 +473,26 @@ fn check_refs_in_expr(
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
             }
         }
-        Expr::Reason(inner) | Expr::Search(inner) => {
+        Expr::Reason(inner) | Expr::Recall(inner) | Expr::Exec(inner) => {
+            check_refs_in_expr(inner, boundary, registry, file, diagnostics);
+        }
+        Expr::Search(inner) => {
+            if boundary != BoundaryKind::Server {
+                let boundary_name = match boundary {
+                    BoundaryKind::Client => "client",
+                    BoundaryKind::Shared => "shared",
+                    _ => unreachable!(),
+                };
+                diagnostics.push(
+                    Diagnostic::error(
+                        file,
+                        format!("search is not allowed in {} boundary", boundary_name),
+                        expr.span.start..expr.span.end,
+                        "search makes network requests and can only be used in server boundary files",
+                    )
+                    .with_help("move this code to a file with `#! boundary: server`"),
+                );
+            }
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
         }
         Expr::Classify(c) => {
@@ -458,7 +514,35 @@ fn check_refs_in_expr(
         Expr::UnaryOp(_, a) | Expr::Paren(a) | Expr::FieldAccess(a, _) | Expr::GlobAccess(a) => {
             check_refs_in_expr(a, boundary, registry, file, diagnostics);
         }
-        Expr::MethodCall(inner, _, args) => {
+        Expr::MethodCall(inner, method, args) => {
+            // Boundary enforcement: web.fetch and web.post are server-only
+            if let Expr::Ident(ref ns) = inner.node {
+                if ns == "web"
+                    && (method.node == "fetch" || method.node == "post")
+                    && boundary != BoundaryKind::Server
+                {
+                    let boundary_name = match boundary {
+                        BoundaryKind::Client => "client",
+                        BoundaryKind::Shared => "shared",
+                        _ => unreachable!(),
+                    };
+                    diagnostics.push(
+                        Diagnostic::error(
+                            file,
+                            format!(
+                                "web.{}() is not allowed in {} boundary",
+                                method.node, boundary_name
+                            ),
+                            inner.span.start..method.span.end,
+                            format!(
+                                "web.{}() can only be used in server boundary files",
+                                method.node
+                            ),
+                        )
+                        .with_help("move this code to a file with `#! boundary: server`"),
+                    );
+                }
+            }
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
             for arg in args {
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
@@ -471,9 +555,17 @@ fn check_refs_in_expr(
         }
         Expr::Template(parts) => {
             for part in parts {
-                if let TemplatePart::Interp(inner) = &part.node {
-                    check_refs_in_expr(inner, boundary, registry, file, diagnostics);
+                match &part.node {
+                    TemplatePart::Interp(inner) | TemplatePart::RawInterp(inner) => {
+                        check_refs_in_expr(inner, boundary, registry, file, diagnostics);
+                    }
+                    _ => {}
                 }
+            }
+        }
+        Expr::Find(f) => {
+            if let FindKind::ByAlias(inner) = &f.kind {
+                check_refs_in_expr(inner, boundary, registry, file, diagnostics);
             }
         }
         // Leaves: literals, type access — no symbol references

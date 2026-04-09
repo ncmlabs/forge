@@ -21,6 +21,10 @@ pub enum ForgeType {
     Conversation,
     Profile,
     SearchResults,
+    Request,
+    Response,
+    Headers,
+    Html,
     Embedding,
     Duration,
     Named(String),
@@ -43,6 +47,10 @@ impl std::fmt::Display for ForgeType {
             ForgeType::Conversation => write!(f, "Conversation"),
             ForgeType::Profile => write!(f, "Profile"),
             ForgeType::SearchResults => write!(f, "SearchResults"),
+            ForgeType::Request => write!(f, "Request"),
+            ForgeType::Response => write!(f, "Response"),
+            ForgeType::Headers => write!(f, "Headers"),
+            ForgeType::Html => write!(f, "Html"),
             ForgeType::Embedding => write!(f, "Embedding"),
             ForgeType::Duration => write!(f, "Duration"),
             ForgeType::Named(s) => write!(f, "{s}"),
@@ -64,7 +72,7 @@ pub struct CapabilitySignature {
 // ── Confidence source ────────────────────────────────────────
 
 /// Tags how a value's confidence was determined.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ConfidenceSource {
     /// Pure function — always 1.0
     Deterministic,
@@ -74,6 +82,14 @@ pub enum ConfidenceSource {
     ConsensusAgreement(f32),
     /// Propagated from upstream
     Derived(f32),
+    /// Retrieved from knowledge store (confidence = retrieval relevance)
+    KnowledgeRecall(f32),
+    /// Imported from an external agent package (confidence = capped value)
+    ImportedKnowledge(f32),
+    /// From direct CLI execution — always uncertain (external process)
+    ExecResult(f32),
+    /// From an external skill invocation (host-provided capability)
+    SkillInvocation(f32),
 }
 
 // ── Conversions ──────────────────────────────────────────────
@@ -93,6 +109,10 @@ pub fn from_type_name(tn: &TypeName) -> ForgeType {
         TypeName::Conversation => ForgeType::Conversation,
         TypeName::Profile => ForgeType::Profile,
         TypeName::SearchResults => ForgeType::SearchResults,
+        TypeName::Request => ForgeType::Request,
+        TypeName::Response => ForgeType::Response,
+        TypeName::Headers => ForgeType::Headers,
+        TypeName::Html => ForgeType::Html,
         TypeName::Custom(s) => ForgeType::Named(s.clone()),
         TypeName::Array(inner, size) => ForgeType::Array(Box::new(from_type_name(inner)), *size),
     }
@@ -110,6 +130,10 @@ pub fn is_compatible(from: &ForgeType, to: &ForgeType) -> bool {
     }
     // POC: Text >> anything always works
     if *from == ForgeType::Text {
+        return true;
+    }
+    // Html is compatible with Text (Html can flow where Text is expected)
+    if *from == ForgeType::Html && *to == ForgeType::Text {
         return true;
     }
     // Arrays: compatible if element types match (ignore size)

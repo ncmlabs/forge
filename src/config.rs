@@ -8,6 +8,11 @@ pub struct ForgeConfig {
     pub llm: LLMConfig,
     pub providers: HashMap<String, ProviderConfig>,
     pub server: Option<ServerConfig>,
+    pub system: Option<SystemConfig>,
+    pub web: Option<WebConfig>,
+    pub exec: Option<ExecConfig>,
+    pub skills: Option<SkillsConfig>,
+    pub embeddings: Option<EmbeddingsConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -15,6 +20,52 @@ pub struct ServerConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub cors_origins: Option<Vec<String>>,
+    #[serde(rename = "static")]
+    pub static_files: Option<StaticConfig>,
+    /// HMAC secrets for webhook signature verification, keyed by endpoint name.
+    /// Example: `webhook_secrets = { github_push = "my-secret" }`
+    pub webhook_secrets: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct StaticConfig {
+    pub root: Option<String>,
+    pub prefix: Option<String>,
+}
+
+impl StaticConfig {
+    pub fn root_or_default(&self) -> &str {
+        self.root.as_deref().unwrap_or("static")
+    }
+
+    pub fn prefix_or_default(&self) -> &str {
+        self.prefix.as_deref().unwrap_or("/static")
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SystemConfig {
+    pub max_agents: Option<usize>,
+    pub max_memory_mb: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WebConfig {
+    pub timeout_secs: Option<u64>,
+    pub max_redirects: Option<usize>,
+    pub search_provider: Option<String>,
+    pub search_api_key: Option<String>,
+    pub search_url: Option<String>,
+}
+
+impl WebConfig {
+    pub fn timeout_or_default(&self) -> u64 {
+        self.timeout_secs.unwrap_or(30)
+    }
+
+    pub fn max_redirects_or_default(&self) -> usize {
+        self.max_redirects.unwrap_or(10)
+    }
 }
 
 impl ServerConfig {
@@ -25,6 +76,67 @@ impl ServerConfig {
     pub fn port_or_default(&self) -> u16 {
         self.port.unwrap_or(3000)
     }
+}
+
+/// Configuration for the `exec` primitive (CLI execution).
+#[derive(Debug, Deserialize, Clone)]
+pub struct ExecConfig {
+    pub default_timeout: Option<u64>,
+    pub default_dir: Option<String>,
+    pub allowed_commands: Option<Vec<String>>,
+    pub denied_commands: Option<Vec<String>>,
+    pub max_output_bytes: Option<usize>,
+}
+
+impl ExecConfig {
+    pub fn timeout_or_default(&self) -> u64 {
+        self.default_timeout.unwrap_or(30)
+    }
+}
+
+/// Configuration for the skill bridge (SKILL.md loading and execution).
+#[derive(Debug, Deserialize, Clone)]
+pub struct SkillsConfig {
+    pub skill_dirs: Option<Vec<String>>,
+    pub timeout_secs: Option<u64>,
+    pub max_turns: Option<usize>,
+}
+
+impl SkillsConfig {
+    pub fn timeout_or_default(&self) -> u64 {
+        self.timeout_secs.unwrap_or(30)
+    }
+
+    pub fn max_turns_or_default(&self) -> usize {
+        self.max_turns.unwrap_or(10)
+    }
+
+    pub fn skill_dirs_or_default(&self) -> Vec<std::path::PathBuf> {
+        self.skill_dirs
+            .as_ref()
+            .map(|dirs| dirs.iter().map(std::path::PathBuf::from).collect())
+            .unwrap_or_else(|| {
+                let mut defaults = vec![std::path::PathBuf::from("./skills")];
+                if let Some(home) = dirs::home_dir() {
+                    defaults.push(home.join(".forge/skills"));
+                }
+                defaults
+            })
+    }
+}
+
+/// Configuration for vector embeddings (issue #50).
+/// References an existing [providers.*] entry for base_url and api_key.
+#[derive(Debug, Deserialize, Clone)]
+pub struct EmbeddingsConfig {
+    /// Name of the provider from [providers.*] to use for embeddings.
+    pub provider: String,
+    /// Embedding model name (overrides the provider's chat model).
+    pub model: Option<String>,
+    /// Embedding vector dimensions (auto-detected if not set).
+    pub dimensions: Option<usize>,
+    /// Cost per 1K input tokens for embedding calls.
+    pub cost_per_1k_tokens: Option<f32>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -64,6 +176,14 @@ pub struct CapabilityOverride {
 }
 
 impl ForgeConfig {
+    /// Parse a ForgeConfig from a TOML string (used by embedded configs in built binaries).
+    pub fn from_toml_str(s: &str) -> Result<Self, ConfigError> {
+        let config: ForgeConfig =
+            toml::from_str(s).map_err(|e| ConfigError::ParseError(e.to_string()))?;
+        config.validate()?;
+        Ok(config)
+    }
+
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ConfigError::FileNotFound(path.display().to_string(), e.to_string()))?;
@@ -71,6 +191,26 @@ impl ForgeConfig {
             toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))?;
         config.validate()?;
         Ok(config)
+    }
+
+    /// Resolve the config file path that would be used by `load_or_default`.
+    pub fn resolve_path() -> Option<std::path::PathBuf> {
+        if let Ok(path) = std::env::var("FORGE_CONFIG") {
+            let p = std::path::PathBuf::from(path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        let search_paths = [
+            Some(std::path::PathBuf::from("forge.config.toml")),
+            dirs::home_dir().map(|d| d.join(".forge/config.toml")),
+        ];
+        for path in search_paths.iter().flatten() {
+            if path.exists() {
+                return Some(path.clone());
+            }
+        }
+        None
     }
 
     pub fn load_or_default() -> Self {
@@ -143,6 +283,8 @@ impl ForgeConfig {
                 host: None,
                 port: None,
                 cors_origins: None,
+                static_files: None,
+                webhook_secrets: None,
             });
             server.host = Some(host);
         }
@@ -152,8 +294,37 @@ impl ForgeConfig {
                     host: None,
                     port: None,
                     cors_origins: None,
+                    static_files: None,
+                    webhook_secrets: None,
                 });
                 server.port = Some(val);
+            }
+        }
+
+        // FORGE_STATIC_ROOT override
+        if let Ok(root) = std::env::var("FORGE_STATIC_ROOT") {
+            let server = config.server.get_or_insert(ServerConfig {
+                host: None,
+                port: None,
+                cors_origins: None,
+                static_files: None,
+                webhook_secrets: None,
+            });
+            let static_cfg = server.static_files.get_or_insert(StaticConfig {
+                root: None,
+                prefix: None,
+            });
+            static_cfg.root = Some(root);
+        }
+
+        // FORGE_MAX_AGENTS override
+        if let Ok(val) = std::env::var("FORGE_MAX_AGENTS") {
+            if let Ok(n) = val.parse::<usize>() {
+                let system = config.system.get_or_insert(SystemConfig {
+                    max_agents: None,
+                    max_memory_mb: None,
+                });
+                system.max_agents = Some(n);
             }
         }
 
@@ -207,6 +378,14 @@ impl ForgeConfig {
                 config.base_url = Some(expand_env_var(url));
             }
         }
+        if let Some(ref mut web) = self.web {
+            if let Some(key) = &web.search_api_key {
+                web.search_api_key = Some(expand_env_var(key));
+            }
+            if let Some(url) = &web.search_url {
+                web.search_url = Some(expand_env_var(url));
+            }
+        }
     }
 
     pub fn default_mock_config() -> Self {
@@ -232,6 +411,11 @@ impl ForgeConfig {
             },
             providers,
             server: None,
+            system: None,
+            web: None,
+            exec: None,
+            skills: None,
+            embeddings: None,
         }
     }
 }
@@ -282,6 +466,11 @@ mod tests {
             },
             providers: HashMap::new(),
             server: None,
+            system: None,
+            web: None,
+            exec: None,
+            skills: None,
+            embeddings: None,
         };
         assert!(matches!(
             config.validate(),
@@ -326,6 +515,11 @@ mod tests {
             },
             providers,
             server: None,
+            system: None,
+            web: None,
+            exec: None,
+            skills: None,
+            embeddings: None,
         };
         assert!(matches!(
             config.validate(),
@@ -359,6 +553,35 @@ model = "mock-model"
         assert_eq!(config.llm.default, "mock");
         assert!(config.providers.contains_key("mock"));
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn parse_toml_with_static_config() {
+        let toml_str = r#"
+[llm]
+default = "mock"
+
+[providers.mock]
+type = "mock"
+
+[server.static]
+root = "public"
+prefix = "/assets"
+"#;
+        let config: ForgeConfig = toml::from_str(toml_str).unwrap();
+        let static_cfg = config.server.unwrap().static_files.unwrap();
+        assert_eq!(static_cfg.root_or_default(), "public");
+        assert_eq!(static_cfg.prefix_or_default(), "/assets");
+    }
+
+    #[test]
+    fn static_config_defaults() {
+        let cfg = StaticConfig {
+            root: None,
+            prefix: None,
+        };
+        assert_eq!(cfg.root_or_default(), "static");
+        assert_eq!(cfg.prefix_or_default(), "/static");
     }
 
     #[test]

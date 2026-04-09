@@ -1,0 +1,13 @@
+{
+  "name": "sensei_task_answer_else",
+  "category": "runtime",
+  "description": "Task answer_forge_question falls through to else branch on very low confidence",
+  "input": "use\n  llm.reason\n\ntask answer_forge_question\n  needs question: Text, context: Text\n  gives Text\n  do\n    result = reason \"You are forge-sensei. Using this prior knowledge:\\n{context}\\n\\nAnswer this FORGE question: {question}\"\n    when result.sure -> give result\n    when result.unsure -> give \"Uncertain: {result}\"\n    else -> give \"I could not answer this question confidently.\"\n\nfn main\n  result = answer_forge_question(\"What is quantum forge theory?\", \"No relevant context.\")\n  say result\n",
+  "mock_responses": [
+    {"text": "I have no idea.", "confidence": 0.15}
+  ],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": ["task_call", "llm_request", "llm_response", "when_dispatch", "task_return"]
+  }
+}

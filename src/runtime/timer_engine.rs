@@ -43,6 +43,7 @@ fn ast_duration_to_std(dur: &crate::ast::Duration) -> std::time::Duration {
         DurationUnit::Seconds => dur.value,
         DurationUnit::Minutes => dur.value * 60,
         DurationUnit::Hours => dur.value * 3600,
+        DurationUnit::Days => dur.value * 86400,
     };
     std::time::Duration::from_secs(secs)
 }

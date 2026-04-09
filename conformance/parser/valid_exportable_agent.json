@@ -1,0 +1,9 @@
+{
+  "name": "valid_exportable_agent",
+  "category": "parser",
+  "description": "Agent with exportable modifier parses successfully",
+  "input": "use\n  llm.reason\n\nexportable agent learner\n  memory\n    count: Number\n  knowledge store: \".forge-knowledge/test\"\n\n  on query(q: Text)\n    prior = recall \"{q}\"\n    when prior.sure -> give prior\n    else -> escalate to human\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

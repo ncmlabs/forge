@@ -1,0 +1,13 @@
+[project]
+name = "tictactoe"
+version = "0.1.0"
+description = "Multi-agent tic-tac-toe game system"
+
+[build]
+entry = "platform.forge"
+output = "tictactoe"
+sources = [
+  "room_agent.forge",
+  "ai_opponent.forge",
+  "matchmaking.forge",
+]

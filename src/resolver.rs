@@ -84,6 +84,15 @@ pub struct CapabilityRegistry {
 }
 
 impl CapabilityRegistry {
+    /// Create a registry with builtins + external skill capabilities.
+    pub fn with_skills(skill_signatures: HashMap<String, CapabilitySignature>) -> Self {
+        let mut registry = Self::builtin();
+        for (name, sig) in skill_signatures {
+            registry.capabilities.insert(name, sig);
+        }
+        registry
+    }
+
     /// Create a registry with all built-in capabilities.
     pub fn builtin() -> Self {
         let mut caps = HashMap::new();
@@ -110,9 +119,44 @@ impl CapabilityRegistry {
             },
         );
         caps.insert(
+            "web.fetch".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "web.post".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
             "data.store".into(),
             CapabilitySignature {
                 inputs: vec![ForgeType::Text, ForgeType::Text],
+                output: ForgeType::Unit,
+            },
+        );
+        caps.insert(
+            "data.get".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "data.list".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "data.delete".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
                 output: ForgeType::Unit,
             },
         );
@@ -121,6 +165,42 @@ impl CapabilityRegistry {
             CapabilitySignature {
                 inputs: vec![ForgeType::Text],
                 output: ForgeType::Embedding,
+            },
+        );
+        caps.insert(
+            "data.search".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Results,
+            },
+        );
+
+        caps.insert(
+            "html.layout".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Html],
+                output: ForgeType::Html,
+            },
+        );
+        caps.insert(
+            "html.escape".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        caps.insert(
+            "markdown.render".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Html,
+            },
+        );
+        caps.insert(
+            "asset".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
             },
         );
 
@@ -143,6 +223,17 @@ impl CheckContext {
     pub fn new(_file: &str) -> Self {
         Self {
             registry: CapabilityRegistry::builtin(),
+            errors: Vec::new(),
+        }
+    }
+
+    /// Create a check context with external skill capabilities registered.
+    pub fn with_skills(
+        _file: &str,
+        skill_signatures: HashMap<String, CapabilitySignature>,
+    ) -> Self {
+        Self {
+            registry: CapabilityRegistry::with_skills(skill_signatures),
             errors: Vec::new(),
         }
     }
@@ -209,8 +300,14 @@ impl CheckContext {
 
     fn check_stmt_composition(&mut self, stmt: &Spanned<Stmt>) {
         match &stmt.node {
-            Stmt::Bind(_, expr) | Stmt::Give(expr, _) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
+            Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
                 self.check_expr_composition(expr);
+            }
+            Stmt::Give(expr, metas) => {
+                self.check_expr_composition(expr);
+                for meta in metas {
+                    self.check_expr_composition(&meta.node.value);
+                }
             }
             Stmt::When(when) => {
                 for clause in &when.clauses {
@@ -316,6 +413,7 @@ fn infer_type(expr: &Spanned<Expr>) -> Option<ForgeType> {
         Expr::BoolLit(_) => Some(ForgeType::Bool),
         Expr::Template(_) => Some(ForgeType::Text),
         Expr::Reason(_) => Some(ForgeType::Text),
+        Expr::Exec(_) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Classification),
         Expr::Search(_) => Some(ForgeType::Results),
         Expr::Compose(parts) => parts.last().and_then(infer_type),
@@ -330,6 +428,7 @@ fn infer_input_type(expr: &Spanned<Expr>) -> Option<ForgeType> {
         // Most callables accept Text in the POC
         Expr::Call(_) => Some(ForgeType::Text),
         Expr::Reason(_) => Some(ForgeType::Text),
+        Expr::Exec(_) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Text),
         Expr::Search(_) => Some(ForgeType::Text),
         _ => None,
@@ -390,7 +489,11 @@ mod tests {
         assert!(registry.resolve("llm.classify").is_some());
         assert!(registry.resolve("web.search").is_some());
         assert!(registry.resolve("data.store").is_some());
+        assert!(registry.resolve("data.get").is_some());
+        assert!(registry.resolve("data.list").is_some());
+        assert!(registry.resolve("data.delete").is_some());
         assert!(registry.resolve("data.embed").is_some());
+        assert!(registry.resolve("data.search").is_some());
         assert!(registry.resolve("magic.wand").is_none());
     }
 }

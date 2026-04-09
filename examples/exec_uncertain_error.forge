@@ -1,0 +1,7 @@
+# exec acceptance test: exec result used without when = uncertain error
+task bad_task
+  needs cmd: Text
+  gives Text
+  do
+    result = exec cmd
+    give result

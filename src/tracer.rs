@@ -4,6 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::broadcast;
 
 type TraceLog = Vec<(String, serde_json::Value)>;
 
@@ -11,6 +12,7 @@ type TraceLog = Vec<(String, serde_json::Value)>;
 pub struct Tracer {
     start: Instant,
     captured: Option<Arc<Mutex<TraceLog>>>,
+    live_tx: Option<broadcast::Sender<String>>,
 }
 
 impl Default for Tracer {
@@ -27,6 +29,7 @@ pub struct LLMResponseInfo<'a> {
     pub tokens_out: u32,
     pub cost_usd: f32,
     pub confidence: f32,
+    pub agent_name: Option<&'a str>,
 }
 
 impl Tracer {
@@ -34,6 +37,7 @@ impl Tracer {
         Self {
             start: Instant::now(),
             captured: None,
+            live_tx: None,
         }
     }
 
@@ -42,6 +46,16 @@ impl Tracer {
         Self {
             start: Instant::now(),
             captured: Some(Arc::new(Mutex::new(Vec::new()))),
+            live_tx: None,
+        }
+    }
+
+    /// Create a tracer that broadcasts events to an SSE channel (for live streaming).
+    pub fn with_live(tx: broadcast::Sender<String>) -> Self {
+        Self {
+            start: Instant::now(),
+            captured: None,
+            live_tx: Some(tx),
         }
     }
 
@@ -73,6 +87,9 @@ impl Tracer {
         if let Some(ref buf) = self.captured {
             buf.lock().unwrap().push((event.to_string(), obj.clone()));
         }
+        if let Some(ref tx) = self.live_tx {
+            let _ = tx.send(obj.to_string());
+        }
         eprintln!("{}", obj);
     }
 
@@ -87,18 +104,19 @@ impl Tracer {
     }
 
     pub fn llm_response(&self, info: &LLMResponseInfo) {
-        self.emit(
-            "llm_response",
-            serde_json::json!({
-                "operation": info.operation,
-                "provider": info.provider,
-                "model": info.model,
-                "tokens_in": info.tokens_in,
-                "tokens_out": info.tokens_out,
-                "cost_usd": info.cost_usd,
-                "confidence": info.confidence,
-            }),
-        );
+        let mut data = serde_json::json!({
+            "operation": info.operation,
+            "provider": info.provider,
+            "model": info.model,
+            "tokens_in": info.tokens_in,
+            "tokens_out": info.tokens_out,
+            "cost_usd": info.cost_usd,
+            "confidence": info.confidence,
+        });
+        if let Some(agent) = info.agent_name {
+            data["agent"] = serde_json::json!(agent);
+        }
+        self.emit("llm_response", data);
     }
 
     pub fn when_dispatch(&self, subject: &str, level: &str, matched: bool) {
@@ -129,6 +147,12 @@ impl Tracer {
                 "success": success,
             }),
         );
+    }
+
+    // ── Say tracing (issue #138) ──────────────────────────────────────────────
+
+    pub fn say(&self, text: &str) {
+        self.emit("say", serde_json::json!({ "text": text }));
     }
 
     // ── Flow / wave / stage tracing ──────────────────────────────────────────
@@ -309,6 +333,61 @@ impl Tracer {
                 "endpoint": endpoint,
                 "status": status,
                 "duration_ms": duration_ms,
+            }),
+        );
+    }
+
+    // ── Exec tracing (issue #40) ──────────────────────────────────────────
+
+    pub fn exec_call(&self, command: &str) {
+        self.emit(
+            "exec_call",
+            serde_json::json!({
+                "command": command,
+            }),
+        );
+    }
+
+    pub fn exec_return(&self, command: &str, success: bool, duration_ms: u64) {
+        self.emit(
+            "exec_return",
+            serde_json::json!({
+                "command": command,
+                "success": success,
+                "duration_ms": duration_ms,
+            }),
+        );
+    }
+
+    // ── Skill tracing (issue #40) ──────────────────────────────────────────
+
+    pub fn skill_call(&self, skill_name: &str) {
+        self.emit(
+            "skill_call",
+            serde_json::json!({
+                "skill": skill_name,
+            }),
+        );
+    }
+
+    pub fn skill_return(&self, skill_name: &str, success: bool, duration_ms: u64) {
+        self.emit(
+            "skill_return",
+            serde_json::json!({
+                "skill": skill_name,
+                "success": success,
+                "duration_ms": duration_ms,
+            }),
+        );
+    }
+
+    pub fn supervision_tree(&self, warden: &str, active: &[&str], degraded: &[&str]) {
+        self.emit(
+            "supervision_tree",
+            serde_json::json!({
+                "warden": warden,
+                "active_agents": active,
+                "degraded_agents": degraded,
             }),
         );
     }

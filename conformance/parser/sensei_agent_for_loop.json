@@ -1,0 +1,9 @@
+{
+  "name": "sensei_agent_for_loop",
+  "category": "parser",
+  "description": "Agent handler with for loop over array parameter parses successfully",
+  "input": "type AssessmentResult\n  passed: Bool\n  prediction: Text\n  expected: Text\n  gap_topic: Text\n\nexportable agent forge_sensei\n  memory\n    interaction_count: Number\n\n  on batch_assess(tests: Text[], expectations: Text[])\n    passed = 0\n    total = 0\n    for test in tests\n      total = total + 1\n      say \"testing\"\n    say \"done\"\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

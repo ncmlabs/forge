@@ -1,0 +1,23 @@
+# FORGE Sentinel — configuration
+# Start: forge serve examples/sentinel/server.forge -s examples/sentinel/shared.forge --watch
+
+[llm]
+default = "sentinel-provider"
+
+[providers.sentinel-provider]
+type = "anthropic"
+model = "claude-sonnet-4-20250514"
+timeout_secs = 60
+
+[server]
+host = "127.0.0.1"
+port = 3001
+
+[server.static]
+root = "examples/sentinel/static"
+prefix = "/static"
+
+[skills]
+skill_dirs = ["examples/sentinel/skills"]
+timeout_secs = 60
+max_turns = 5

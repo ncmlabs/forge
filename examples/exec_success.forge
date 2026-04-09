@@ -1,0 +1,11 @@
+# exec acceptance test: successful command produces output
+task run_echo
+  needs msg: Text
+  gives Text
+  do
+    result = exec "echo {msg}"
+    when result.sure -> give result
+    else -> give "FAILED"
+
+fn main
+  say run_echo("hello_from_exec")

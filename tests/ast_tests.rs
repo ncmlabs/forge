@@ -96,21 +96,16 @@ fn ast_confidence_aware_task() {
         clauses: vec![
             sp(WhenClause {
                 predicate: sure_above,
-                body: sp(Stmt::Give(sp(Expr::Ident("result".into())), None)),
+                body: sp(Stmt::Give(sp(Expr::Ident("result".into())), vec![])),
             }),
             sp(WhenClause {
                 predicate: sure,
                 body: sp(Stmt::Give(
                     sp(Expr::Ident("result".into())),
-                    Some(sp(Expr::Call(CallExpr {
-                        name: sp("flag".into()),
-                        args: vec![sp(CallArg {
-                            label: None,
-                            value: sp(Expr::Template(vec![sp(TemplatePart::Text(
-                                "low-confidence".into(),
-                            ))])),
-                        })],
-                    }))),
+                    vec![sp(GiveMeta {
+                        key: sp("status".into()),
+                        value: sp(Expr::NumberLit(200.0)),
+                    })],
                 )),
             }),
             sp(WhenClause {
@@ -123,14 +118,14 @@ fn ast_confidence_aware_task() {
                             value: sp(Expr::Ident("message".into())),
                         })],
                     })),
-                    None,
+                    vec![],
                 )),
             }),
         ],
         else_body: Some(sp(ElseClause {
             body: sp(Stmt::Give(
                 sp(Expr::TypeAccess(sp(TypeName::Intent), sp("unknown".into()))),
-                None,
+                vec![],
             )),
         })),
     };
@@ -226,7 +221,7 @@ fn ast_task_with_if_fails() {
                     })],
                 })),
             )),
-            sp(Stmt::Give(sp(Expr::Ident("result".into())), None)),
+            sp(Stmt::Give(sp(Expr::Ident("result".into())), vec![])),
         ])),
         if_fails: Some(vec![sp(Stmt::Give(
             sp(Expr::Constructor(ConstructorExpr {
@@ -244,7 +239,7 @@ fn ast_task_with_if_fails() {
                     }),
                 ],
             })),
-            None,
+            vec![],
         ))]),
     };
     let _ = format!("{:?}", task.clone());
@@ -336,7 +331,7 @@ fn ast_flow_with_stages() {
                                 value: sp(Expr::Ident("checked".into())),
                             })],
                         })),
-                        None,
+                        vec![],
                     )),
                 ],
             }),
@@ -409,6 +404,7 @@ fn ast_pool_first() {
 #[test]
 fn ast_agent() {
     let agent = AgentDecl {
+        exportable: false,
         name: sp("support_bot".into()),
         lifecycle: None,
         memory: vec![
@@ -421,6 +417,8 @@ fn ast_agent() {
                 type_name: sp(TypeName::Profile),
             }),
         ],
+        memory_persistent: false,
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         handlers: vec![
@@ -464,7 +462,7 @@ fn ast_agent() {
                         None,
                         sp(Expr::Ident("updated_history".into())),
                     )),
-                    sp(Stmt::Give(sp(Expr::Ident("response".into())), None)),
+                    sp(Stmt::Give(sp(Expr::Ident("response".into())), vec![])),
                 ],
             }),
             sp(OnHandler {
@@ -784,7 +782,7 @@ fn ast_pure_decl() {
                     Box::new(sp(Expr::NumberLit(8.0))),
                 ))),
             )),
-            None,
+            vec![],
         ))],
     };
     let top = sp(TopLevel::Pure(pure.clone()));
@@ -893,7 +891,7 @@ fn ast_endpoint_decl() {
                     value: sp(Expr::Ident("req".into())),
                 })],
             })),
-            None,
+            vec![],
         ))],
     };
     let top = sp(TopLevel::Endpoint(endpoint.clone()));
@@ -975,6 +973,7 @@ fn ast_requires_clause() {
 #[test]
 fn ast_agent_v3() {
     let agent = AgentDecl {
+        exportable: false,
         name: sp("room_agent".into()),
         lifecycle: Some(sp("RoomLifecycle".into())),
         memory: vec![
@@ -987,6 +986,8 @@ fn ast_agent_v3() {
                 type_name: sp(TypeName::Number),
             }),
         ],
+        memory_persistent: false,
+        knowledge: None,
         timers: vec![sp(TimerField {
             name: sp("reconnect_window".into()),
             duration: sp(Duration {
@@ -1115,13 +1116,13 @@ fn ast_match_block() {
                     "Winner".into(),
                     vec![sp(Pattern::Binding("sym".into()))],
                 )),
-                body: sp(Stmt::Give(sp(Expr::Ident("sym".into())), None)),
+                body: sp(Stmt::Give(sp(Expr::Ident("sym".into())), vec![])),
             }),
             sp(MatchArm {
                 pattern: sp(Pattern::Constructor("Draw".into(), vec![])),
                 body: sp(Stmt::Give(
                     sp(Expr::Template(vec![sp(TemplatePart::Text("draw".into()))])),
-                    None,
+                    vec![],
                 )),
             }),
             sp(MatchArm {
@@ -1130,7 +1131,7 @@ fn ast_match_block() {
                     sp(Expr::Template(vec![sp(TemplatePart::Text(
                         "ongoing".into(),
                     ))])),
-                    None,
+                    vec![],
                 )),
             }),
         ],
@@ -1149,21 +1150,21 @@ fn ast_if_else_block() {
             sp(BinOp::Gt),
             Box::new(sp(Expr::NumberLit(0.0))),
         )),
-        then_body: vec![sp(Stmt::Give(sp(Expr::Ident("x".into())), None))],
+        then_body: vec![sp(Stmt::Give(sp(Expr::Ident("x".into())), vec![]))],
         else_ifs: vec![(
             sp(Expr::BinOp(
                 Box::new(sp(Expr::Ident("x".into()))),
                 sp(BinOp::Eq),
                 Box::new(sp(Expr::NumberLit(0.0))),
             )),
-            vec![sp(Stmt::Give(sp(Expr::NumberLit(0.0)), None))],
+            vec![sp(Stmt::Give(sp(Expr::NumberLit(0.0)), vec![]))],
         )],
         else_body: Some(vec![sp(Stmt::Give(
             sp(Expr::UnaryOp(
                 sp(UnaryOp::Neg),
                 Box::new(sp(Expr::Ident("x".into()))),
             )),
-            None,
+            vec![],
         ))]),
     };
     let stmt = Stmt::IfElse(Box::new(block));

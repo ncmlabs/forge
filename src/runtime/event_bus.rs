@@ -24,6 +24,14 @@ pub struct EventPayload {
     pub fields: HashMap<String, ConfidentValue>,
 }
 
+/// Metadata about a subscription (for introspection, no channel handle).
+#[derive(Debug, Clone)]
+pub struct SubscriptionInfo {
+    pub event_name: String,
+    pub agent_id: String,
+    pub has_filter: bool,
+}
+
 /// A registered subscriber on the bus.
 pub struct Subscriber {
     pub agent_id: String,
@@ -34,6 +42,10 @@ pub struct Subscriber {
 /// Central event bus for inter-agent communication.
 pub struct EventBus {
     subscribers: HashMap<String, Vec<Subscriber>>,
+    /// Routing table for system wiring: source_agent → list of target agents.
+    /// When an event is published by a source agent, it is also forwarded
+    /// to all target agents in the routing table.
+    routes: HashMap<String, Vec<String>>,
     tracer: Option<Tracer>,
     channel_capacity: usize,
 }
@@ -48,6 +60,7 @@ impl EventBus {
     pub fn new(tracer: Option<Tracer>) -> Self {
         Self {
             subscribers: HashMap::new(),
+            routes: HashMap::new(),
             tracer,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
         }
@@ -76,7 +89,17 @@ impl EventBus {
         rx
     }
 
+    /// Add a routing rule: events from `source_agent` are forwarded to `target_agent`.
+    /// Used by SystemRuntime to implement wiring (e.g., `a >> b`).
+    pub fn add_route(&mut self, source_agent: &str, target_agent: &str) {
+        self.routes
+            .entry(source_agent.to_string())
+            .or_default()
+            .push(target_agent.to_string());
+    }
+
     /// Publish an event to all subscribers matching the event name.
+    /// Also applies routing rules to forward events to downstream agents.
     /// Filter evaluation is agent-side — the bus delivers to all name-matched subscribers.
     /// Returns the number of successful deliveries.
     pub fn publish(&self, payload: &EventPayload) -> usize {
@@ -113,6 +136,13 @@ impl EventBus {
                         );
                     }
                 }
+            }
+        }
+
+        // Apply routing rules: forward to downstream agents
+        if let Some(targets) = self.routes.get(&payload.source_agent) {
+            for target in targets {
+                delivered += if self.forward(payload, target) { 1 } else { 0 };
             }
         }
 
@@ -155,6 +185,26 @@ impl EventBus {
     /// Number of subscribers for a given event name.
     pub fn subscriber_count(&self, event_name: &str) -> usize {
         self.subscribers.get(event_name).map_or(0, |s| s.len())
+    }
+
+    /// Return metadata for all active subscriptions (for introspection).
+    pub fn subscription_info(&self) -> Vec<SubscriptionInfo> {
+        let mut info = Vec::new();
+        for (event_name, subs) in &self.subscribers {
+            for sub in subs {
+                info.push(SubscriptionInfo {
+                    event_name: event_name.clone(),
+                    agent_id: sub.agent_id.clone(),
+                    has_filter: sub.filter.is_some(),
+                });
+            }
+        }
+        info
+    }
+
+    /// Return the routing table (source_agent → [target_agents]).
+    pub fn route_info(&self) -> &HashMap<String, Vec<String>> {
+        &self.routes
     }
 
     /// Close the bus: drop all subscribers, closing their channels.
@@ -277,6 +327,32 @@ mod tests {
     fn subscriber_count_empty() {
         let bus = EventBus::new(None);
         assert_eq!(bus.subscriber_count("Foo"), 0);
+    }
+
+    #[test]
+    fn subscription_info_returns_all_subscriptions() {
+        let mut bus = EventBus::new(None);
+        let _rx1 = bus.subscribe("Foo", "agent-a", None);
+        let _rx2 = bus.subscribe("Foo", "agent-b", None);
+        let _rx3 = bus.subscribe("Bar", "agent-a", None);
+
+        let mut info = bus.subscription_info();
+        info.sort_by(|a, b| (&a.event_name, &a.agent_id).cmp(&(&b.event_name, &b.agent_id)));
+        assert_eq!(info.len(), 3);
+        assert_eq!(info[0].event_name, "Bar");
+        assert_eq!(info[0].agent_id, "agent-a");
+        assert!(!info[0].has_filter);
+    }
+
+    #[test]
+    fn route_info_returns_routing_table() {
+        let mut bus = EventBus::new(None);
+        bus.add_route("inspector", "analyst");
+        bus.add_route("inspector", "logger");
+
+        let routes = bus.route_info();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes["inspector"], vec!["analyst", "logger"]);
     }
 
     #[test]

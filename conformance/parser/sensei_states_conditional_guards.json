@@ -1,0 +1,9 @@
+{
+  "name": "sensei_states_conditional_guards",
+  "category": "parser",
+  "description": "States with when conditional guards on transitions parse successfully",
+  "input": "states MasteryLevel\n  novice -> apprentice when conformance_score >= 40\n  apprentice -> journeyman when conformance_score >= 70\n  journeyman -> expert when conformance_score >= 90\n  expert -> expert\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

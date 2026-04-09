@@ -1,0 +1,614 @@
+#! boundary: server
+
+# ================================================================
+# FORGE Wiki — Server
+# ================================================================
+# The ultimate dogfooding showcase: a real documentation wiki
+# built with FORGE, demonstrating all 14 language primitives.
+#
+# Start: forge serve examples/wiki/server.forge \
+#          -s examples/wiki/shared.forge --watch
+# ================================================================
+
+use
+  llm.reason
+  llm.classify
+  data.store
+  data.get
+  data.list
+  data.embed
+  data.search
+
+# ── Pure HTML Helpers ────────────────────────────────────────────
+#
+# All rendering is deterministic — no LLM calls allowed.
+# Demonstrates: pure, boundary: server
+
+pure wiki_head
+  needs title: Text
+  gives Html
+  do
+    give "<head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>{title}</title><link rel=\"icon\" href=\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>F</text></svg>\"><link href=\"https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css\" rel=\"stylesheet\" type=\"text/css\" /><script src=\"https://cdn.tailwindcss.com\"></script><link href=\"https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css\" rel=\"stylesheet\" /><link rel=\"stylesheet\" href=\"/static/css/style.css\"></head>"
+
+pure nav_bar
+  needs active: Text
+  gives Html
+  do
+    home_cls = "btn btn-sm btn-ghost"
+    docs_cls = "btn btn-sm btn-ghost"
+    search_cls = "btn btn-sm btn-ghost"
+    ask_cls = "btn btn-sm btn-ghost"
+    if active == "home"
+      home_cls = "btn btn-sm btn-primary"
+    if active == "docs"
+      docs_cls = "btn btn-sm btn-primary"
+    if active == "search"
+      search_cls = "btn btn-sm btn-primary"
+    if active == "ask"
+      ask_cls = "btn btn-sm btn-primary"
+    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/home\" class=\"btn btn-ghost text-xl font-bold\">FORGE</a><div class=\"flex gap-2\"><a href=\"/home\" class=\"{!home_cls}\">Home</a><a href=\"/docs?slug=getting-started\" class=\"{!docs_cls}\">Docs</a><a href=\"/search_page\" class=\"{!search_cls}\">Search</a><a href=\"/ask_form\" class=\"{!ask_cls}\">Ask</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
+
+pure docs_sidebar
+  needs active_slug: Text
+  gives Html
+  do
+    give "<aside class=\"w-64 shrink-0 hidden lg:block\"><ul class=\"menu bg-base-200 rounded-box w-full\"><li class=\"menu-title\">Getting Started</li><li><a href=\"/docs?slug=getting-started\" class=\"{!active_slug}\">Quick Start</a></li><li><a href=\"/docs?slug=principles\">First Principles</a></li><li class=\"menu-title\">Reference</li><li><a href=\"/docs?slug=task\">task</a></li><li><a href=\"/docs?slug=agent\">agent</a></li><li><a href=\"/docs?slug=flow\">flow</a></li><li><a href=\"/docs?slug=pool\">pool</a></li><li><a href=\"/docs?slug=system\">system</a></li><li><a href=\"/docs?slug=event\">event</a></li><li><a href=\"/docs?slug=states\">states</a></li><li><a href=\"/docs?slug=when\">when</a></li><li><a href=\"/docs?slug=pure\">pure</a></li><li><a href=\"/docs?slug=boundary\">boundary</a></li><li><a href=\"/docs?slug=requires\">requires</a></li><li><a href=\"/docs?slug=warden\">warden</a></li><li class=\"menu-title\">Generated</li><li><a href=\"/docs?slug=auto-reference\">Auto Reference</a></li><li><a href=\"/docs?slug=fact-check-report\">Fact-Check Report</a></li><li class=\"menu-title\">About</li><li><a href=\"/docs?slug=roadmap\">Roadmap</a></li></ul></aside>"
+
+pure hero_section
+  gives Html
+  do
+    give "<div class=\"hero min-h-[60vh] bg-gradient-to-br from-primary/10 to-secondary/10\"><div class=\"hero-content text-center\"><div class=\"max-w-2xl\"><h1 class=\"text-5xl font-bold\">FORGE</h1><p class=\"text-xl py-6\">The language for trustworthy AI agent systems. Built-in honesty, determinism boundaries, and supervision — because agents that lie, hallucinate, or run unsupervised are not production-ready.</p><div class=\"flex gap-4 justify-center\"><a href=\"/docs?slug=getting-started\" class=\"btn btn-primary\">Get Started</a><a href=\"/search_page\" class=\"btn btn-outline\">Explore Docs</a></div></div></div></div>"
+
+pure feature_cards
+  gives Html
+  do
+    give "<div class=\"container mx-auto px-4 py-12\"><h2 class=\"text-3xl font-bold text-center mb-8\">Why FORGE?</h2><div class=\"grid grid-cols-1 md:grid-cols-3 gap-6\"><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Honesty by Default</h3><p>Every LLM call returns <code>uncertain&lt;T&gt;</code>. You must handle confidence explicitly — no silent hallucinations.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Determinism Boundary</h3><p><code>pure</code> functions cannot call LLMs. The compiler enforces the boundary between deterministic and oracle-augmented code.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Supervision Trees</h3><p>Agents crash, get stuck, or hallucinate. <code>warden</code> declarations handle it — retry, restart, escalate.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Token Economy</h3><p>Budget limits are language-level. The compiler tracks cost before any LLM is called.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Composition</h3><p>Everything pipelines with <code>&gt;&gt;</code>. Flows, agents, pools — all composable, all parallelizable.</p></div></div><div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h3 class=\"card-title\">Agent Lifecycle</h3><p>Agents are born, learn, specialize, discover each other, and retire — preserving knowledge for the next generation.</p></div></div></div></div>"
+
+pure page_layout
+  needs title: Text, nav: Html, body: Html
+  gives Html
+  do
+    head = wiki_head(title)
+    give "<!DOCTYPE html><html data-theme=\"light\">{!head}<body class=\"min-h-screen bg-base-100\">{!nav}<main>{!body}</main><footer class=\"footer footer-center p-4 bg-base-200 text-base-content mt-12\"><p>Built with FORGE — the language for trustworthy AI agent systems</p></footer><script src=\"https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js\"></script><script src=\"/static/js/forge-highlight.js\"></script><script src=\"/static/js/app.js\"></script></body></html>"
+
+pure docs_layout
+  needs title: Text, sidebar: Html, content: Html
+  gives Html
+  do
+    nav = nav_bar("docs")
+    head = wiki_head("FORGE Docs — {title}")
+    give "<!DOCTYPE html><html data-theme=\"light\">{!head}<body class=\"min-h-screen bg-base-100\">{!nav}<div class=\"container mx-auto px-4 py-8 flex gap-8\">{!sidebar}<article class=\"prose max-w-none flex-1\">{!content}</article></div><footer class=\"footer footer-center p-4 bg-base-200 text-base-content mt-12\"><p>Built with FORGE</p></footer><script src=\"https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js\"></script><script src=\"/static/js/forge-highlight.js\"></script><script src=\"/static/js/app.js\"></script></body></html>"
+
+pure not_found_page
+  needs slug: Text
+  gives Html
+  do
+    nav = nav_bar("")
+    body = "<div class=\"container mx-auto px-4 py-16 text-center\"><h1 class=\"text-4xl font-bold mb-4\">Page Not Found</h1><p class=\"text-lg mb-8\">No documentation found for <code>{slug}</code>.</p><a href=\"/home\" class=\"btn btn-primary\">Back to Home</a></div>"
+    give page_layout("Not Found — FORGE", nav, body)
+
+pure search_results_html
+  needs query: Text, results: Text
+  gives Html
+  do
+    nav = nav_bar("search")
+    body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Search</h1><form id=\"search-form\" method=\"GET\" action=\"/search_page\" class=\"mb-8\"><div class=\"join w-full max-w-lg\"><input type=\"text\" name=\"q\" value=\"{query}\" class=\"input input-bordered join-item flex-1\" placeholder=\"Search documentation...\" /><button type=\"submit\" class=\"btn btn-primary join-item\">Search</button></div></form><div id=\"search-results\" class=\"prose max-w-none\">{!results}</div></div>"
+    give page_layout("Search — FORGE", nav, body)
+
+pure qa_page
+  needs question: Text, answer: Html, confidence: Text
+  gives Html
+  do
+    nav = nav_bar("ask")
+    badge_cls = "badge badge-outline"
+    if confidence == "high confidence"
+      badge_cls = "badge badge-success badge-outline"
+    if confidence == "medium confidence"
+      badge_cls = "badge badge-warning badge-outline"
+    if confidence == "low confidence"
+      badge_cls = "badge badge-error badge-outline"
+    badge = "<span class=\"{badge_cls}\">{confidence}</span>"
+    body = "<div id=\"ask-container\" class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-2\">Answer</h1>{!badge}<div class=\"card bg-base-100 shadow-xl mt-4\"><div id=\"qa-result\" class=\"card-body prose max-w-none\">{!answer}</div></div><div class=\"mt-6\"><a href=\"/ask_form\" class=\"btn btn-ghost\">Ask another question</a></div></div>"
+    give page_layout("Q&A — FORGE", nav, body)
+
+pure ask_form_page
+  gives Html
+  do
+    nav = nav_bar("ask")
+    body = "<div id=\"ask-container\" class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-6\">Ask about FORGE</h1><form id=\"ask-form\" action=\"/ask_page\" method=\"GET\"><textarea name=\"question\" class=\"textarea textarea-bordered w-full\" rows=\"4\" placeholder=\"What would you like to know about FORGE?\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Ask</button></form></div>"
+    give page_layout("Ask — FORGE", nav, body)
+
+pure confidence_tier
+  needs answer: Text
+  gives Text
+  do
+    if answer.contains("don't have enough information")
+      give "low confidence"
+    if answer.contains("not fully confident")
+      give "medium confidence"
+    give "high confidence"
+
+# ── Content Tasks ────────────────────────────────────────────────
+#
+# Demonstrates: task, data.store, data.get
+
+task seed_page
+  needs slug: Text, content: Text
+  gives Unit
+  do
+    data.store("page:{slug}", content)
+    say "Seeded: {slug}"
+
+task load_page
+  needs slug: Text
+  gives Text
+  do
+    content = data.get("page:{slug}")
+    give content
+
+task gather_docs
+  gives Text
+  do
+    pages = data.list("page:")
+    docs = []
+    for key in pages
+      content = data.get(key)
+      docs = docs + ["--- {key} ---\n{content}"]
+    give docs.join("\n\n")
+
+# ── Search Task ──────────────────────────────────────────────────
+#
+# LLM-powered search with confidence gating (issue #61).
+# Demonstrates: task, when, classify, reason, data.list, gather_docs
+
+task search_docs
+  needs query: Text
+  gives Text
+  do
+    if query == ""
+      give ""
+    docs = gather_docs()
+    intent = classify query into ["reference", "tutorial", "troubleshooting", "general"]
+    results = reason "You are a FORGE documentation search engine. Use the documentation below to provide accurate excerpts.\n\n{docs}\n\nSearch query: '{query}' (intent: {intent})\n\nIMPORTANT: Every page reference MUST be a markdown link. Use the format [slug](/docs?slug=slug) for every page you mention. Example: - [agent](/docs?slug=agent) — Core FORGE entity\n\nList the most relevant pages with one-line excerpt from their actual content. Format as a markdown list."
+    when results.sure -> give results
+    when results.unsure -> give "Partial matches found (confidence is moderate):\n{results}"
+    else -> give "No confident results for: {query}"
+
+# ── Q&A Task ─────────────────────────────────────────────────────
+#
+# LLM-powered Q&A with confidence gating (issue #61).
+# Demonstrates: task, when, reason, gather_docs
+
+task answer_question
+  needs question: Text
+  gives Text
+  do
+    if question == ""
+      give ""
+    docs = gather_docs()
+    answer = reason "You are a FORGE language expert. Use ONLY the documentation below to answer. Do not invent syntax.\n\n{docs}\n\nIMPORTANT: Every time you mention a FORGE concept that has a doc page, you MUST link it using markdown. Use the format [name](/docs?slug=slug). Available doc slugs: getting-started, principles, roadmap, home, task, agent, flow, pool, system, event, states, when, pure, boundary, requires, warden. For example, write [pool](/docs?slug=pool) not just 'pool'. Never mention a concept as plain text if it has a doc slug.\n\nQuestion: {question}"
+    when answer.sure -> give answer
+    when answer.unsure -> give "I'm not fully confident, but here's what I found:\n{answer}"
+    else -> give "I don't have enough information to answer that reliably."
+
+# ── Content Agent ────────────────────────────────────────────────
+#
+# Full CRUD content manager with lifecycle states (issue #60).
+# Manages page lifecycle through typed state machine transitions,
+# with persistent memory, requires guards, and event emission.
+
+agent content_manager
+  lifecycle: PageLifecycle
+  memory persistent
+    pages: Text[]
+    edit_history: Text[]
+    total_edits: Number
+
+  on start
+    say "ContentAgent ready."
+
+  on create_page(slug: Text, title: Text, content: Text)
+    requires slug.length > 0 on fail: give "slug required"
+    requires title.length > 0 on fail: give "title required"
+    page_data = "{title}\n---\n{content}"
+    data.store("page:{slug}", page_data)
+    memory.pages = memory.pages + [slug]
+    memory.total_edits = memory.total_edits + 1
+    emit PageCreated(slug: slug, title: title)
+    give "Created: {slug}"
+
+  on update_page(slug: Text, content: Text)
+    requires slug.length > 0 on fail: give "slug required"
+    existing = data.get("page:{slug}")
+    if existing == ""
+      give "page not found: {slug}"
+    data.store("page:{slug}", content)
+    memory.edit_history = memory.edit_history + [slug]
+    memory.total_edits = memory.total_edits + 1
+    emit PageUpdated(slug: slug)
+    give "Updated: {slug}"
+
+  on submit_for_review(slug: Text)
+    requires lifecycle == draft on fail: give "page must be in draft to submit for review"
+    existing = data.get("page:{slug}")
+    if existing == ""
+      give "page not found: {slug}"
+    transition to review
+    give "Submitted for review: {slug}"
+
+  on publish_page(slug: Text)
+    requires lifecycle == review on fail: give "page must be in review to publish"
+    existing = data.get("page:{slug}")
+    if existing == ""
+      give "page not found: {slug}"
+    transition to published
+    emit PagePublished(slug: slug)
+    give "Published: {slug}"
+
+  on reject_page(slug: Text)
+    requires lifecycle == review on fail: give "page must be in review to reject"
+    transition to draft
+    give "Rejected, back to draft: {slug}"
+
+  on archive_page(slug: Text)
+    requires lifecycle == published on fail: give "page must be published to archive"
+    transition to archived
+    give "Archived: {slug}"
+
+  on restore_page(slug: Text)
+    requires lifecycle == archived on fail: give "page must be archived to restore"
+    transition to draft
+    give "Restored to draft: {slug}"
+
+  on list_pages
+    give memory.pages
+
+  on stats
+    give "Total pages: {memory.pages.length}, Total edits: {memory.total_edits}"
+
+agent search_agent
+  memory persistent
+    index_version: Number
+    query_count: Number
+  subscribe PageUpdated
+  subscribe PageCreated
+  subscribe PagePublished
+
+  on start
+    say "SearchAgent: ready."
+    memory.index_version = 1
+    memory.query_count = 0
+
+  on PageUpdated
+    say "Content updated, index version bumped."
+    memory.index_version = memory.index_version + 1
+
+  on PageCreated
+    say "New page indexed."
+    memory.index_version = memory.index_version + 1
+
+  on PagePublished
+    say "Published page noted."
+
+  on search(query: Text)
+    memory.query_count = memory.query_count + 1
+    results = search_docs(query)
+    give results
+
+  on ask(question: Text)
+    memory.query_count = memory.query_count + 1
+    answer = answer_question(question)
+    give answer
+
+  on stats
+    give "Index v{memory.index_version}, {memory.query_count} queries processed"
+
+# ── Doc Generation Flow ─────────────────────────────────────────
+#
+# Auto-generates reference docs from FORGE source files (issue #62).
+# DAG: scan_files -> [extract_* (parallel)] -> generate_reference -> fact_check -> publish
+#
+# Parallelism:
+#   Wave 0: scan_files
+#   Wave 1: extract_tasks, extract_agents, extract_flows  (parallel)
+#   Wave 2: generate_reference
+#   Wave 3: fact_check
+#   Wave 4: publish
+
+flow generate_docs
+  needs sources: Text
+  gives Text
+
+  stage scan_files
+    say "Loaded documentation content"
+    give sources
+
+  stage extract_tasks
+    needs scan_files.*
+    signatures = reason "Extract all task declarations from the FORGE documentation below.\nFor each task, format as:\n\n### task_name\n**Parameters:** list each parameter with type\n**Returns:** return type\n**Description:** one-line description\n\nUse ONLY what appears in the documentation. Do not invent syntax.\nIf no tasks are documented, write 'None documented yet.' and nothing else.\n\nDocumentation:\n{scan_files}"
+    when signatures.sure -> give signatures
+    when signatures.unsure -> give signatures
+    else -> give "None documented yet."
+
+  stage extract_agents
+    needs scan_files.*
+    signatures = reason "Extract all agent declarations from the FORGE documentation below.\nFor each agent, format as:\n\n### agent_name\n**States:** list state names\n**Memory:** list memory fields with types\n**Handlers:** list handler names\n**Description:** one-line description\n\nUse ONLY what appears in the documentation. Do not invent syntax.\nIf no agents are documented, write 'None documented yet.' and nothing else.\n\nDocumentation:\n{scan_files}"
+    when signatures.sure -> give signatures
+    when signatures.unsure -> give signatures
+    else -> give "None documented yet."
+
+  stage extract_flows
+    needs scan_files.*
+    signatures = reason "Extract all flow declarations from the FORGE documentation below.\nFor each flow, format as:\n\n### flow_name\n**Stages:** list stage names in order\n**Dependencies:** describe stage dependencies\n**Description:** one-line description\n\nUse ONLY what appears in the documentation. Do not invent syntax.\nIf no flows are documented, write 'None documented yet.' and nothing else.\n\nDocumentation:\n{scan_files}"
+    when signatures.sure -> give signatures
+    when signatures.unsure -> give signatures
+    else -> give "None documented yet."
+
+  stage generate_reference
+    needs extract_tasks.*, extract_agents.*, extract_flows.*
+    reference = reason "Generate a FORGE reference document in Markdown.\n\nRules:\n- NEVER use placeholder phrases like 'Documentation not provided', 'Expected Content', 'Required Information', or 'Status: not provided'.\n- If a category has no entries, omit that section entirely.\n- Start with a one-paragraph overview of FORGE.\n- Use ## headings for categories (Tasks, Agents, Flows) and ### for each item.\n- Include code examples only if they appear in the extracted data.\n\nExtracted data:\n\n## Tasks\n{extract_tasks}\n\n## Agents\n{extract_agents}\n\n## Flows\n{extract_flows}"
+    intro = "> *Auto-generated by a FORGE flow from the wiki documentation. See the [Fact-Check Report](/docs?slug=fact-check-report) for verification.*\n\n"
+    full = intro + reference
+    data.store("page:auto-reference", full)
+    when reference.sure -> give reference
+    when reference.unsure -> give reference
+    else -> give "Could not generate reference documentation."
+
+  stage fact_check
+    needs generate_reference.*
+    report = verify_document(generate_reference)
+    intro = "> *Auto-generated by a FORGE fact-checking pool — 3 independent workers per claim, majority vote. Verifies the [Auto Reference](/docs?slug=auto-reference).*\n\n"
+    full = intro + report
+    data.store("page:fact-check-report", full)
+    when report.sure -> give report
+    when report.unsure -> give report
+    else -> give "Fact-checking could not complete."
+
+  stage publish
+    needs generate_reference.*, fact_check.*
+    emit PageUpdated(slug: "auto-reference")
+    give "Reference docs generated, verified, and published"
+
+# ── Fact-Checking Pool ───────────────────────────────────────────
+#
+# Demonstrates: pool with majority vote, per-claim verification (#63).
+# Three independent checkers evaluate each claim; 2/3 must agree.
+# Conservative: uncertain claims (split decision) marked NEEDS_REVIEW.
+
+task extract_claims
+  needs document: Text
+  gives Text
+  do
+    claims = reason "Extract individual factual claims from this FORGE documentation. Return one claim per line, nothing else. Only extract verifiable factual statements.\n\nDocument:\n{document}"
+    when claims.sure -> give claims
+    when claims.unsure -> give claims
+    else -> give ""
+
+task fact_checker
+  needs claim: Text
+  gives Text
+  do
+    result = reason "Is this claim about FORGE accurate? FORGE has 14 primitives: task, pure, flow, agent, pool, system, warden, event, states, when, boundary, requires, spawn, find. Answer with exactly YES or NO followed by a brief explanation.\n\nClaim: {claim}"
+    when result.sure -> give result
+    when result.unsure -> give "UNCERTAIN: {result}"
+    else -> give "UNCERTAIN: could not verify"
+
+task fact_check_fallback
+  needs claim: Text
+  gives Text
+  do
+    give "TIMEOUT: verification timed out"
+
+pool fact_check_panel
+  workers: fact_checker * 3
+  strategy: majority
+  timeout: 30s
+  fallback: fact_check_fallback
+
+pool fact_check_detail
+  workers: fact_checker * 3
+  strategy: all
+  timeout: 30s
+
+task classify_verdict
+  needs verdict: Text
+  gives Text
+  do
+    when verdict.sure -> give "PASS"
+    when verdict.unsure -> give "NEEDS_REVIEW"
+    else -> give "FAIL"
+
+task format_verdicts
+  needs individual: Text
+  gives Text
+  do
+    parts = individual.split(" | ")
+    result = ""
+    for v in parts
+      result = result + "- " + v.trim() + "\n"
+    give result
+
+task verify_document
+  needs document: Text
+  gives Text
+  do
+    raw_claims = extract_claims(document)
+    if raw_claims == ""
+      give "No verifiable claims found."
+    claims = raw_claims.split("\n")
+    pass_count = 0
+    review_count = 0
+    fail_count = 0
+    claim_number = 0
+    body = ""
+    for claim in claims
+      trimmed = claim.trim()
+      label = ""
+      if trimmed.length > 0
+        verdict = fact_check_panel("check", trimmed)
+        label = classify_verdict(verdict)
+        individual = fact_check_detail("check", trimmed)
+        verdicts_text = individual.join(" | ")
+        verdicts_list = format_verdicts(verdicts_text)
+        claim_number = claim_number + 1
+        heading = "### {claim_number}. " + label + "\n\n> " + trimmed + "\n\n<details><summary>Individual verdicts (3 workers)</summary>\n\n" + verdicts_list + "\n</details>\n\n"
+        body = body + heading
+      if label == "PASS"
+        pass_count = pass_count + 1
+      if label == "NEEDS_REVIEW"
+        review_count = review_count + 1
+      if label == "FAIL"
+        fail_count = fail_count + 1
+    if body == ""
+      give "No verifiable claims found."
+    summary = "# Fact-Check Report\n\n| Status | Count |\n|--------|-------|\n| PASS | {pass_count} |\n| NEEDS_REVIEW | {review_count} |\n| FAIL | {fail_count} |\n| **Total** | **{claim_number}** |\n\n---\n\n## Claims\n\n"
+    give summary + body
+
+# ── QA Agent ─────────────────────────────────────────────────────
+#
+# Demonstrates: agent with persistent memory, delegating to tasks.
+# Wraps answer_question with tracking and supervised lifecycle.
+
+agent qa_agent
+  memory persistent
+    question_count: Number
+    last_question: Text
+
+  on start
+    say "QAAgent: ready."
+    memory.question_count = 0
+    memory.last_question = ""
+
+  on ask(question: Text)
+    memory.question_count = memory.question_count + 1
+    memory.last_question = question
+    answer = answer_question(question)
+    give answer
+
+  on stats
+    give "QA: {memory.question_count} questions answered"
+
+# ── Warden ───────────────────────────────────────────────────────
+#
+# Demonstrates: warden supervision with all failure policies (#64).
+# Manages three agents: content, search, and QA.
+
+warden wiki_supervisor
+  manages [search_agent, content_manager, qa_agent]
+
+  on hallucination: restart, self
+    after 3: escalate
+
+  on stuck: nudge, self
+    after 5: restart
+
+  on crash: restart, self
+    after 3: escalate
+
+  on timeout: restart, self
+
+  on budget: downgrade, self
+    after 2: escalate
+
+  max_retries 10 per 1h then escalate
+
+# ── System Wiring ────────────────────────────────────────────────
+#
+# Demonstrates: system, composition, spawn, find
+
+system forge_wiki
+  use
+    content: content_manager
+    search: search_agent
+    qa: qa_agent
+
+  content >> search >> qa
+
+# ── Endpoints ────────────────────────────────────────────────────
+#
+# Demonstrates: endpoint, Html return type, data.get, task calls
+
+endpoint home() -> Html
+  nav = nav_bar("home")
+  hero = hero_section()
+  cards = feature_cards()
+  give page_layout("FORGE — The Language for Trustworthy AI", nav, hero + cards)
+
+endpoint docs(slug: Text) -> Html
+  content = data.get("page:{slug}")
+  rendered = markdown.render(content)
+  sidebar = docs_sidebar(slug)
+  give docs_layout(slug, sidebar, rendered)
+
+endpoint search_page(q: Text) -> Html
+  results = search_docs(q)
+  rendered = markdown.render(results)
+  give search_results_html(q, rendered)
+
+endpoint ask_form() -> Html
+  nav = nav_bar("ask")
+  body = "<div id=\"ask-container\" class=\"container mx-auto px-4 py-8 max-w-3xl\"><h1 class=\"text-3xl font-bold mb-6\">Ask about FORGE</h1><form id=\"ask-form\" action=\"/ask_page\" method=\"GET\"><textarea name=\"question\" class=\"textarea textarea-bordered w-full\" rows=\"4\" placeholder=\"What would you like to know about FORGE?\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Ask</button></form></div>"
+  give page_layout("Ask — FORGE", nav, body)
+
+endpoint ask_page(question: Text) -> Html
+  answer = answer_question(question)
+  rendered = markdown.render(answer)
+  confidence = confidence_tier(answer)
+  give qa_page(question, rendered, confidence)
+
+endpoint api_search(q: Text) -> Text
+  results = search_docs(q)
+  give results
+
+endpoint admin_generate_docs() -> Html
+  nav = nav_bar("")
+  docs = gather_docs()
+  result = generate_docs(docs)
+  body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Doc Generation</h1><div class=\"alert alert-success\"><span>{result}</span></div><a href=\"/docs?slug=auto-reference\" class=\"btn btn-primary mt-4\">View Generated Reference</a><a href=\"/docs?slug=fact-check-report\" class=\"btn btn-outline mt-4 ml-2\">View Fact-Check Report</a></div>"
+  give page_layout("Admin — Generate Docs", nav, body)
+
+endpoint admin_fact_check(slug: Text) -> Html
+  nav = nav_bar("")
+  content = data.get("page:{slug}")
+  report = verify_document(content)
+  rendered = markdown.render(report)
+  body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">Fact-Check Report</h1><p class=\"mb-4\">Verifying page: <code>{slug}</code></p><div class=\"prose max-w-none\">{!rendered}</div><a href=\"/docs?slug={slug}\" class=\"btn btn-ghost mt-4\">Back to page</a></div>"
+  give page_layout("Fact Check — FORGE", nav, body)
+
+# ── Semantic Search (#50) ────────────────────────────────────────
+
+task embed_page
+  needs slug: Text
+  gives Text
+  do
+    content = data.get("page:{slug}")
+    if content == ""
+      give "not found: {slug}"
+    id = data.embed(content)
+    data.store("embed:{slug}", id)
+    give id
+
+task format_search_results
+  needs query: Text
+  gives Text
+  do
+    results = data.search(query, 5)
+    items = []
+    for r in results
+      items = items + ["{r.id}: {r.content} (score: {r.score})"]
+    give items.join("\n")
+
+endpoint api_embed(slug: Text) -> Text
+  id = embed_page(slug)
+  give id
+
+endpoint api_semantic_search(q: Text) -> Text
+  text = format_search_results(q)
+  give text
+
+# -- Entry Point --
+
+fn main
+  say "=== FORGE Wiki ==="
+  say "Content is seeded automatically from content/ directory by forge serve."
+  say "Run: forge serve examples/wiki/server.forge -s examples/wiki/shared.forge --watch"

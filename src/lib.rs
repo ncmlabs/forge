@@ -1,12 +1,16 @@
 pub mod ast;
+pub mod build;
 pub mod checker;
+pub mod compose;
 pub mod config;
 pub mod cost_estimator;
 pub mod diagnostic;
 pub mod fleet;
 pub mod llm;
+pub mod manifest;
 pub mod parser;
 pub mod planner;
+pub mod portability;
 pub mod resolver;
 pub mod runtime;
 pub mod tracer;

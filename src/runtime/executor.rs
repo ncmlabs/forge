@@ -3,6 +3,7 @@
 // calls LLM providers. See issue #9.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::ast::*;
@@ -10,6 +11,7 @@ use crate::llm::registry::ProviderRegistry;
 use crate::llm::CompletionRequest;
 use crate::runtime::agent::{AgentContext, EmittedEvent};
 use crate::runtime::confidence::{ConfidentValue, Value};
+use crate::runtime::instance_registry::{InstanceInfo, InstanceStatus};
 use crate::runtime::timer_engine::TimerEngine;
 use crate::tracer::{LLMResponseInfo, Tracer};
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -48,7 +50,21 @@ pub enum RuntimeError {
 
     // Control flow — not a real error, used to propagate `give` values
     #[error("give signal (internal)")]
-    GiveSignal(ConfidentValue),
+    GiveSignal(ConfidentValue, Option<u16>, Option<String>),
+
+    // Control flow — not a real error, used to signal graceful agent retirement
+    #[error("retire signal (internal)")]
+    RetireSignal,
+}
+
+/// Result from executing an endpoint, including optional response metadata.
+#[derive(Debug, Clone)]
+pub struct EndpointResult {
+    pub value: ConfidentValue,
+    pub status: Option<u16>,
+    pub content_type: Option<String>,
+    /// Content-type inferred from the endpoint's return type annotation.
+    pub default_content_type: Option<String>,
 }
 
 // ── Environment (scope stack) ─────────────────────────────────────────────────
@@ -73,6 +89,14 @@ impl Env {
     }
 
     pub(crate) fn bind(&mut self, name: &str, value: ConfidentValue) {
+        // If the variable already exists in an outer scope, update it there
+        // (reassignment semantics). Otherwise, create in the current scope.
+        for scope in self.scopes.iter_mut().rev() {
+            if scope.contains_key(name) {
+                scope.insert(name.to_string(), value);
+                return;
+            }
+        }
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), value);
         }
@@ -96,7 +120,6 @@ impl Env {
 
 // ── Task Executor ─────────────────────────────────────────────────────────────
 
-#[derive(Clone)]
 pub struct TaskExecutor {
     program: Program,
     providers: Arc<ProviderRegistry>,
@@ -109,6 +132,51 @@ pub struct TaskExecutor {
     output: Arc<Mutex<Vec<String>>>,
     agent_context: Option<Arc<Mutex<AgentContext>>>,
     timer_engine: Option<Arc<Mutex<TimerEngine>>>,
+    storage: Option<crate::runtime::storage::SharedStorage>,
+    instance_registry: Option<crate::runtime::instance_registry::SharedInstanceRegistry>,
+    event_bus: Option<crate::runtime::event_bus::SharedEventBus>,
+    agent_name: Option<String>,
+    memory_persistent: bool,
+    config: Option<crate::config::ForgeConfig>,
+    /// When true, template strings produce `Value::Html` and auto-escape interpolated values.
+    html_context: AtomicBool,
+    /// Standalone knowledge store for endpoint/webhook context (no agent required).
+    knowledge_store: Option<Arc<Mutex<crate::runtime::knowledge_store::KnowledgeStore>>>,
+    /// Skill executor for LLM-mediated skill bridge (issue #40).
+    skill_executor: Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
+    /// Embedding provider for data.embed/data.search (issue #50).
+    embedding_provider: Option<crate::llm::BoxedEmbeddingProvider>,
+    /// Vector index for semantic search (issue #50).
+    vector_index: Option<crate::runtime::vector_index::SharedVectorIndex>,
+}
+
+impl Clone for TaskExecutor {
+    fn clone(&self) -> Self {
+        Self {
+            program: self.program.clone(),
+            providers: self.providers.clone(),
+            tracer: self.tracer.clone(),
+            task_map: self.task_map.clone(),
+            pure_map: self.pure_map.clone(),
+            flow_map: self.flow_map.clone(),
+            pool_map: self.pool_map.clone(),
+            endpoint_map: self.endpoint_map.clone(),
+            output: self.output.clone(),
+            agent_context: self.agent_context.clone(),
+            timer_engine: self.timer_engine.clone(),
+            storage: self.storage.clone(),
+            instance_registry: self.instance_registry.clone(),
+            event_bus: self.event_bus.clone(),
+            agent_name: self.agent_name.clone(),
+            memory_persistent: self.memory_persistent,
+            config: self.config.clone(),
+            html_context: AtomicBool::new(self.html_context.load(Ordering::Relaxed)),
+            knowledge_store: self.knowledge_store.clone(),
+            skill_executor: self.skill_executor.clone(),
+            embedding_provider: self.embedding_provider.clone(),
+            vector_index: self.vector_index.clone(),
+        }
+    }
 }
 
 impl TaskExecutor {
@@ -152,7 +220,44 @@ impl TaskExecutor {
             output: Arc::new(Mutex::new(Vec::new())),
             agent_context: None,
             timer_engine: None,
+            storage: None,
+            instance_registry: None,
+            event_bus: None,
+            agent_name: None,
+            memory_persistent: false,
+            config: None,
+            html_context: AtomicBool::new(false),
+            knowledge_store: None,
+            skill_executor: None,
+            embedding_provider: None,
+            vector_index: None,
         }
+    }
+
+    /// Attach a ForgeConfig for system runtime configuration.
+    pub fn with_config(mut self, config: crate::config::ForgeConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    /// Attach a skill executor for LLM-mediated skill bridge (issue #40).
+    pub fn with_skill_executor(
+        mut self,
+        executor: Arc<crate::runtime::skill_executor::SkillExecutor>,
+    ) -> Self {
+        self.skill_executor = Some(executor);
+        self
+    }
+
+    /// Attach embedding provider and vector index for data.embed/data.search (issue #50).
+    pub fn with_embeddings(
+        mut self,
+        provider: crate::llm::BoxedEmbeddingProvider,
+        index: crate::runtime::vector_index::SharedVectorIndex,
+    ) -> Self {
+        self.embedding_provider = Some(provider);
+        self.vector_index = Some(index);
+        self
     }
 
     /// Attach an agent context for agent statement execution.
@@ -164,6 +269,44 @@ impl TaskExecutor {
     /// Attach an async timer engine for timer operations (issue #20).
     pub fn with_timer_engine(mut self, engine: Arc<Mutex<TimerEngine>>) -> Self {
         self.timer_engine = Some(engine);
+        self
+    }
+
+    /// Attach the instance registry for runtime agent discovery (issue #82).
+    pub fn with_instance_registry(
+        mut self,
+        registry: crate::runtime::instance_registry::SharedInstanceRegistry,
+    ) -> Self {
+        self.instance_registry = Some(registry);
+        self
+    }
+
+    /// Attach the event bus for inter-agent communication (issue #83).
+    pub fn with_event_bus(mut self, bus: crate::runtime::event_bus::SharedEventBus) -> Self {
+        self.event_bus = Some(bus);
+        self
+    }
+
+    /// Attach storage for `data.store`/`data.get`/`data.list`/`data.delete` capabilities.
+    pub fn with_storage(mut self, storage: crate::runtime::storage::SharedStorage) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Get a clone of the storage handle (used to preserve storage across hot-reloads).
+    pub fn storage_handle(&self) -> Option<crate::runtime::storage::SharedStorage> {
+        self.storage.clone()
+    }
+
+    /// Configure persistent memory storage (issue #57).
+    pub fn with_persistent_memory(
+        mut self,
+        storage: crate::runtime::storage::SharedStorage,
+        agent_name: String,
+    ) -> Self {
+        self.storage = Some(storage);
+        self.agent_name = Some(agent_name);
+        self.memory_persistent = true;
         self
     }
 
@@ -187,12 +330,38 @@ impl TaskExecutor {
         &self.endpoint_map
     }
 
-    /// Execute an endpoint body with the given arguments.
+    /// Get the event bus reference (for webhook wiring).
+    pub fn event_bus(&self) -> Option<&crate::runtime::event_bus::SharedEventBus> {
+        self.event_bus.as_ref()
+    }
+
+    /// Attach a standalone knowledge store for endpoint/webhook context.
+    /// Allows `recall` and `learn` to work outside agent handlers.
+    pub fn with_knowledge_store(
+        mut self,
+        ks: crate::runtime::knowledge_store::KnowledgeStore,
+    ) -> Self {
+        self.knowledge_store = Some(Arc::new(Mutex::new(ks)));
+        self
+    }
+
+    /// Check if an OutputType includes Html.
+    fn returns_html_output(gives: &Option<Spanned<OutputType>>) -> bool {
+        gives.as_ref().is_some_and(|ot| {
+            ot.node
+                .types
+                .iter()
+                .any(|t| matches!(&t.node, TypeName::Html))
+        })
+    }
+
+    /// Execute an endpoint body with the given arguments and optional request context.
     pub async fn exec_endpoint(
         &self,
         name: &str,
         args: HashMap<String, ConfidentValue>,
-    ) -> Result<ConfidentValue, RuntimeError> {
+        request: Option<ConfidentValue>,
+    ) -> Result<EndpointResult, RuntimeError> {
         let endpoint = self
             .endpoint_map
             .get(name)
@@ -200,35 +369,121 @@ impl TaskExecutor {
                 name: name.to_string(),
             })?;
 
+        // Derive default content-type from return type annotation
+        let default_ct = endpoint.return_type.as_ref().and_then(|ot| {
+            ot.node.types.first().and_then(|tn| match &tn.node {
+                crate::ast::TypeName::Html => Some("text/html".to_string()),
+                crate::ast::TypeName::Text => Some("text/plain".to_string()),
+                _ => None,
+            })
+        });
+
         let mut env = Env::new();
+        if let Some(req) = request {
+            env.bind("request", req);
+        }
         for (k, v) in args {
             env.bind(&k, v);
         }
 
-        match self.exec_stmts(&endpoint.body, &mut env).await {
-            Ok(val) => Ok(val),
-            Err(RuntimeError::GiveSignal(val)) => Ok(val),
-            Err(e) => Err(e),
+        // Set html_context if this endpoint returns Html
+        let prev_html = self.html_context.load(Ordering::Relaxed);
+        if Self::returns_html_output(&endpoint.return_type) {
+            self.html_context.store(true, Ordering::Relaxed);
         }
+
+        let result = match self.exec_stmts(&endpoint.body, &mut env).await {
+            Ok(val) => Ok(EndpointResult {
+                value: val,
+                status: None,
+                content_type: None,
+                default_content_type: default_ct,
+            }),
+            Err(RuntimeError::GiveSignal(val, status, content_type)) => Ok(EndpointResult {
+                value: val,
+                status,
+                content_type,
+                default_content_type: default_ct,
+            }),
+            Err(e) => Err(e),
+        };
+
+        self.html_context.store(prev_html, Ordering::Relaxed);
+        result
     }
 
-    /// Run the program starting from `fn main`
+    /// Run the program starting from `fn main`, or from a `system` declaration
+    /// if no `fn main` is present.
     pub async fn run(&self) -> Result<ConfidentValue, RuntimeError> {
-        let main_decl = self
-            .program
-            .items
-            .iter()
-            .find_map(|item| match &item.node {
-                TopLevel::FnMain(m) => Some(m),
-                _ => None,
-            })
-            .ok_or(RuntimeError::NoMainFunction)?;
+        // Try fn main first
+        let main_decl = self.program.items.iter().find_map(|item| match &item.node {
+            TopLevel::FnMain(m) => Some(m),
+            _ => None,
+        });
 
-        let mut env = Env::new();
-        match self.exec_stmts(&main_decl.body, &mut env).await {
-            Ok(val) => Ok(val),
-            Err(RuntimeError::GiveSignal(val)) => Ok(val),
-            Err(e) => Err(e),
+        if let Some(main_decl) = main_decl {
+            let mut env = Env::new();
+            return match self.exec_stmts(&main_decl.body, &mut env).await {
+                Ok(val) => Ok(val),
+                Err(RuntimeError::GiveSignal(val, ..)) => Ok(val),
+                Err(RuntimeError::RetireSignal) => Ok(ConfidentValue::deterministic(Value::Unit)),
+                Err(e) => Err(e),
+            };
+        }
+
+        // Fall back to system declaration
+        let system_decl = self.program.items.iter().find_map(|item| match &item.node {
+            TopLevel::System(s) => Some(s),
+            _ => None,
+        });
+
+        if let Some(system_decl) = system_decl {
+            let system_config = self.config.as_ref().and_then(|c| c.system.as_ref());
+            let system_runtime = crate::runtime::system::SystemRuntime::new(
+                system_decl,
+                &self.program,
+                self.providers.clone(),
+                self.tracer.clone(),
+                system_config,
+            )?;
+            system_runtime.start().await?;
+            return Ok(ConfidentValue::deterministic(Value::Unit));
+        }
+
+        Err(RuntimeError::NoMainFunction)
+    }
+
+    /// Extract a static topology snapshot from the compiled system declaration
+    /// without starting the system runtime. Returns `None` if no system is declared.
+    pub fn extract_topology(&self) -> Option<crate::runtime::system::TopologySnapshot> {
+        self.build_system_runtime()
+            .ok()
+            .flatten()
+            .map(|rt| rt.topology_snapshot())
+    }
+
+    /// Build a SystemRuntime from the program's system declaration without
+    /// starting it. Returns `None` if no system is declared.
+    pub fn build_system_runtime(
+        &self,
+    ) -> Result<Option<crate::runtime::system::SystemRuntime>, RuntimeError> {
+        let system_decl = self.program.items.iter().find_map(|item| match &item.node {
+            TopLevel::System(s) => Some(s),
+            _ => None,
+        });
+        match system_decl {
+            Some(decl) => {
+                let system_config = self.config.as_ref().and_then(|c| c.system.as_ref());
+                let runtime = crate::runtime::system::SystemRuntime::new(
+                    decl,
+                    &self.program,
+                    self.providers.clone(),
+                    self.tracer.clone(),
+                    system_config,
+                )?;
+                Ok(Some(runtime))
+            }
+            None => Ok(None),
         }
     }
 
@@ -268,13 +523,34 @@ impl TaskExecutor {
                 Stmt::Say(expr) => {
                     let val = self.eval_expr(expr, env).await?;
                     let text = format!("{}", val.value);
+                    if let Some(ref tracer) = self.tracer {
+                        tracer.say(&text);
+                    }
                     println!("{}", text);
                     self.output.lock().unwrap().push(text);
                 }
 
-                Stmt::Give(expr, _with) => {
+                Stmt::Give(expr, metas) => {
                     let val = self.eval_expr(expr, env).await?;
-                    return Err(RuntimeError::GiveSignal(val));
+                    let mut status: Option<u16> = None;
+                    let mut content_type: Option<String> = None;
+                    for meta in metas {
+                        let meta_val = self.eval_expr(&meta.node.value, env).await?;
+                        match meta.node.key.node.as_str() {
+                            "status" => {
+                                if let Value::Number(n) = &meta_val.value {
+                                    status = Some(*n as u16);
+                                }
+                            }
+                            "content_type" => {
+                                if let Value::Text(s) | Value::Html(s) = &meta_val.value {
+                                    content_type = Some(s.clone());
+                                }
+                            }
+                            _ => {} // ignore unknown keys
+                        }
+                    }
+                    return Err(RuntimeError::GiveSignal(val, status, content_type));
                 }
 
                 Stmt::ExprStmt(expr) => {
@@ -380,16 +656,18 @@ impl TaskExecutor {
 
                 // ── Agent features (issue #11) ─────────────────────────────
                 Stmt::Emit(name, args) => {
-                    if let Some(ref ctx_arc) = self.agent_context {
-                        let mut arg_vals = Vec::new();
-                        let mut fields = std::collections::HashMap::new();
-                        for arg in args {
-                            let val = self.eval_expr(&arg.node.value, env).await?;
-                            if let Some(ref label) = arg.node.label {
-                                fields.insert(label.node.clone(), val.clone());
-                            }
-                            arg_vals.push(val);
+                    let mut arg_vals = Vec::new();
+                    let mut fields = std::collections::HashMap::new();
+                    for arg in args {
+                        let val = self.eval_expr(&arg.node.value, env).await?;
+                        if let Some(ref label) = arg.node.label {
+                            fields.insert(label.node.clone(), val.clone());
                         }
+                        arg_vals.push(val);
+                    }
+
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        // Inside agent: collect in sink for batch publish
                         ctx_arc
                             .lock()
                             .unwrap()
@@ -400,6 +678,22 @@ impl TaskExecutor {
                                 args: arg_vals,
                                 fields,
                             });
+                    } else if let Some(ref bus) = self.event_bus {
+                        // Outside agent (e.g. endpoint/webhook): publish directly
+                        let source = self
+                            .agent_name
+                            .clone()
+                            .unwrap_or_else(|| "endpoint".to_string());
+                        let payload = crate::runtime::event_bus::EventPayload {
+                            event_name: name.node.clone(),
+                            args: arg_vals,
+                            source_agent: source.clone(),
+                            fields,
+                        };
+                        let delivered = bus.read().await.publish(&payload);
+                        if let Some(ref t) = self.tracer {
+                            t.event_emit(&source, &name.node, delivered);
+                        }
                     } else {
                         return Err(RuntimeError::Unsupported("emit outside agent".into()));
                     }
@@ -532,6 +826,17 @@ impl TaskExecutor {
                             "memory",
                             ConfidentValue::deterministic(ctx.memory.to_record()),
                         );
+                        // Write-through for persistent memory (issue #57)
+                        if self.memory_persistent {
+                            if let (Some(ref storage), Some(ref name)) =
+                                (&self.storage, &self.agent_name)
+                            {
+                                let key = format!("agent:{}:memory", name);
+                                if let Ok(json) = ctx.memory.to_json() {
+                                    let _ = storage.store(&key, &json);
+                                }
+                            }
+                        }
                     } else {
                         return Err(RuntimeError::Unsupported(
                             "memory update outside agent".into(),
@@ -549,6 +854,334 @@ impl TaskExecutor {
                     } else {
                         return Err(RuntimeError::Unsupported("escalate outside agent".into()));
                     }
+                }
+                Stmt::Learn(source, category_expr) => {
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        // Check knowledge store exists (quick lock/unlock)
+                        {
+                            let ctx = ctx_arc.lock().unwrap();
+                            if ctx.knowledge_store.is_none() {
+                                return Err(RuntimeError::Unsupported(
+                                    "learn requires agent with knowledge store".into(),
+                                ));
+                            }
+                        }
+
+                        // Evaluate optional category expression
+                        let category = if let Some(cat_expr) = category_expr {
+                            let val = self.eval_expr(cat_expr, env).await?;
+                            Some(format!("{}", val.value))
+                        } else {
+                            None
+                        };
+
+                        match &source.node {
+                            LearnSource::Direct(expr) => {
+                                let val = self.eval_expr(expr, env).await?;
+                                let text = format!("{}", val.value);
+                                let mut ctx = ctx_arc.lock().unwrap();
+                                if let Some(ref mut ks) = ctx.knowledge_store {
+                                    if let Some(ref cat) = category {
+                                        ks.learn_direct_categorized(&text, cat);
+                                    } else {
+                                        ks.learn_direct(&text);
+                                    }
+                                }
+                            }
+                            LearnSource::FromInteraction(args) => {
+                                let mut arg_vals = Vec::new();
+                                for arg in args {
+                                    let val = self.eval_expr(&arg.node.value, env).await?;
+                                    arg_vals.push(val);
+                                }
+                                let question = arg_vals
+                                    .first()
+                                    .map(|v| format!("{}", v.value))
+                                    .unwrap_or_default();
+                                let answer = arg_vals
+                                    .get(1)
+                                    .map(|v| format!("{}", v.value))
+                                    .unwrap_or_default();
+                                let confidence = arg_vals
+                                    .get(2)
+                                    .and_then(|v| match &v.value {
+                                        Value::Number(n) => Some(*n as f32),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0.5);
+                                let mut ctx = ctx_arc.lock().unwrap();
+                                if let Some(ref mut ks) = ctx.knowledge_store {
+                                    if let Some(ref cat) = category {
+                                        ks.learn_from_interaction_categorized(
+                                            &question, &answer, confidence, cat,
+                                        );
+                                    } else {
+                                        ks.learn_from_interaction(&question, &answer, confidence);
+                                    }
+                                }
+                            }
+                            LearnSource::FromDocument(expr) => {
+                                let val = self.eval_expr(expr, env).await?;
+                                let path = format!("{}", val.value);
+                                let mut ctx = ctx_arc.lock().unwrap();
+                                if let Some(ref mut ks) = ctx.knowledge_store {
+                                    if let Some(ref cat) = category {
+                                        ks.learn_from_document_categorized(&path, cat)
+                                            .map_err(RuntimeError::Unsupported)?;
+                                    } else {
+                                        ks.learn_from_document(&path)
+                                            .map_err(RuntimeError::Unsupported)?;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        return Err(RuntimeError::Unsupported("learn outside agent".into()));
+                    }
+                }
+
+                Stmt::Spawn(spawn) => {
+                    // 1. Find agent declaration by template name
+                    let template_name = &spawn.template.node;
+                    let mut agent_decl: Option<AgentDecl> = None;
+                    let mut states_decl: Option<StatesDecl> = None;
+
+                    for item in &self.program.items {
+                        match &item.node {
+                            TopLevel::Agent(a) if a.name.node == *template_name => {
+                                agent_decl = Some(a.as_ref().clone());
+                            }
+                            TopLevel::States(s) => {
+                                // Collect states decls for lifecycle lookup
+                                if states_decl.is_none() {
+                                    if let Some(ref ad) = agent_decl {
+                                        if ad.lifecycle.as_ref().map(|l| &l.node)
+                                            == Some(&s.name.node)
+                                        {
+                                            states_decl = Some(s.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let agent_decl = agent_decl.ok_or_else(|| {
+                        RuntimeError::Unsupported(format!(
+                            "spawn: no agent declaration found for '{}'",
+                            template_name
+                        ))
+                    })?;
+
+                    // Re-scan for states if we found the agent after states were processed
+                    if states_decl.is_none() {
+                        if let Some(ref lc) = agent_decl.lifecycle {
+                            for item in &self.program.items {
+                                if let TopLevel::States(s) = &item.node {
+                                    if s.name.node == lc.node {
+                                        states_decl = Some(s.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Evaluate alias (for registry name)
+                    let instance_name = if let Some(ref alias_expr) = spawn.alias {
+                        let val = self.eval_expr(alias_expr, env).await?;
+                        format!("{}", val.value)
+                    } else {
+                        template_name.clone()
+                    };
+
+                    // 3. Process spawn options
+                    let mut knowledge_category: Option<String> = None;
+                    let mut confidence_cap: Option<f32> = None;
+                    let mut memory_inits: Vec<(String, ConfidentValue)> = Vec::new();
+
+                    for opt in &spawn.options {
+                        match &opt.node {
+                            SpawnOption::KnowledgeFilter(cat) => {
+                                knowledge_category = Some(cat.node.clone());
+                            }
+                            SpawnOption::ConfidenceCap(expr) => {
+                                let val = self.eval_expr(expr, env).await?;
+                                match &val.value {
+                                    Value::Number(n) => {
+                                        confidence_cap = Some(*n as f32);
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::TypeError {
+                                            expected: "Number".to_string(),
+                                            got: format!("{:?}", val.value),
+                                        });
+                                    }
+                                }
+                            }
+                            SpawnOption::MemoryInit(field, expr) => {
+                                let val = self.eval_expr(expr, env).await?;
+                                memory_inits.push((field.node.clone(), val));
+                            }
+                        }
+                    }
+
+                    // 4. Create the child agent process
+                    let mut child_process = crate::runtime::agent::AgentProcess::new(
+                        agent_decl,
+                        states_decl.as_ref(),
+                        self.providers.clone(),
+                        self.tracer.clone(),
+                        self.program.clone(),
+                        self.storage.clone(),
+                        self.instance_registry.clone(),
+                    );
+
+                    // 5. Transfer knowledge from parent to child
+                    if let Some(ref cat) = knowledge_category {
+                        // Get filtered entries from parent's knowledge store
+                        let mut transferred_entries = Vec::new();
+                        if let Some(ref ctx_arc) = self.agent_context {
+                            let ctx = ctx_arc.lock().unwrap();
+                            if let Some(ref ks) = ctx.knowledge_store {
+                                transferred_entries = ks.export_by_category(cat);
+                            }
+                        }
+
+                        // Apply confidence cap (Principle I — Honesty)
+                        let cap = confidence_cap.unwrap_or(1.0);
+                        for entry in &mut transferred_entries {
+                            entry.confidence = entry.confidence.min(cap);
+                            entry.source =
+                                crate::runtime::knowledge_store::KnowledgeSource::AgentTransfer {
+                                    source_agent: self
+                                        .agent_name
+                                        .clone()
+                                        .unwrap_or_else(|| "unknown".to_string()),
+                                };
+                        }
+
+                        // Merge into child's knowledge store
+                        if !transferred_entries.is_empty() {
+                            let child_ctx = child_process.context();
+                            let mut ctx = child_ctx.lock().unwrap();
+                            if let Some(ref mut ks) = ctx.knowledge_store {
+                                ks.merge_imported(transferred_entries);
+                            }
+                        }
+                    }
+
+                    // 6. Set initial memory values
+                    for (field, val) in memory_inits {
+                        let child_ctx = child_process.context();
+                        let mut ctx = child_ctx.lock().unwrap();
+                        ctx.memory.set(&field, val);
+                    }
+
+                    // 7. Wire event bus
+                    if let Some(ref bus) = self.event_bus {
+                        child_process = child_process.with_event_bus(bus.clone()).await;
+                    }
+
+                    // 8. Register in instance registry
+                    let alias = if instance_name != *template_name {
+                        Some(instance_name.as_str())
+                    } else {
+                        None
+                    };
+                    let instance_id = if let Some(ref ir) = self.instance_registry {
+                        let id = ir.write().await.register(template_name, alias);
+                        Some(id)
+                    } else {
+                        None
+                    };
+
+                    // 9. Spawn as tokio task
+                    tokio::spawn(async move {
+                        let _ = child_process.run().await;
+                    });
+
+                    // 10. Bind instance UUID to variable if requested
+                    if let Some(ref binding) = spawn.binding {
+                        let uuid_str = instance_id
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "no-registry".to_string());
+                        env.bind(
+                            &binding.node,
+                            ConfidentValue::deterministic(Value::Text(uuid_str)),
+                        );
+                    }
+                }
+
+                Stmt::Retire(retire) => {
+                    // 1. Resolve target
+                    let target_alias = if let Some(ref target_expr) = retire.target {
+                        let val = self.eval_expr(target_expr, env).await?;
+                        Some(format!("{}", val.value))
+                    } else {
+                        None
+                    };
+
+                    // 2. Export knowledge if requested (Principle VIII — Accountability)
+                    if let Some(ref export_path_expr) = retire.knowledge_export {
+                        let path_val = self.eval_expr(export_path_expr, env).await?;
+                        let export_path = format!("{}", path_val.value);
+
+                        if let Some(ref ctx_arc) = self.agent_context {
+                            let ctx = ctx_arc.lock().unwrap();
+                            if let Some(ref ks) = ctx.knowledge_store {
+                                let entries = ks.export_entries();
+                                let agent_name = self
+                                    .agent_name
+                                    .clone()
+                                    .unwrap_or_else(|| "unknown".to_string());
+
+                                let schema = crate::portability::AgentSchema {
+                                    fields: Vec::new(),
+                                    knowledge_config: None,
+                                };
+
+                                let pkg = crate::portability::build_package(
+                                    &agent_name,
+                                    &agent_name,
+                                    None,
+                                    schema,
+                                    entries,
+                                );
+
+                                let json = serde_json::to_string_pretty(&pkg).map_err(|e| {
+                                    RuntimeError::FlowError(format!(
+                                        "retire: failed to serialize knowledge: {}",
+                                        e
+                                    ))
+                                })?;
+
+                                std::fs::write(&export_path, json).map_err(|e| {
+                                    RuntimeError::FlowError(format!(
+                                        "retire: failed to write {}: {}",
+                                        export_path, e
+                                    ))
+                                })?;
+                            }
+                        }
+                    }
+
+                    // 3. Unregister from instance registry
+                    if let Some(ref ir) = self.instance_registry {
+                        let mut registry = ir.write().await;
+                        if let Some(ref alias) = target_alias {
+                            // Retire a specific instance by alias
+                            if let Some(info) = registry.find_by_alias(alias) {
+                                registry.unregister(&info.instance_id);
+                            }
+                        }
+                        // If no target, self-retirement — unregister happens via
+                        // the RetireSignal propagation in the agent event loop.
+                    }
+
+                    // 4. Signal termination
+                    return Err(RuntimeError::RetireSignal);
                 }
             }
             Ok(())
@@ -582,6 +1215,7 @@ impl TaskExecutor {
                 }
 
                 Expr::Template(parts) => {
+                    let is_html = self.html_context.load(Ordering::Relaxed);
                     let mut result = String::new();
                     let mut min_conf: f32 = 1.0;
                     for part in parts {
@@ -590,14 +1224,39 @@ impl TaskExecutor {
                             TemplatePart::Interp(inner_expr) => {
                                 let val = self.eval_expr(inner_expr, env).await?;
                                 min_conf = min_conf.min(val.confidence);
+                                if is_html {
+                                    // In Html context: Html values pass through raw,
+                                    // everything else gets escaped for XSS prevention.
+                                    match &val.value {
+                                        Value::Html(s) => result.push_str(s),
+                                        other => {
+                                            let escaped = crate::runtime::html::html_escape(
+                                                &format!("{}", other),
+                                            );
+                                            result.push_str(&escaped);
+                                        }
+                                    }
+                                } else {
+                                    result.push_str(&format!("{}", val.value));
+                                }
+                            }
+                            TemplatePart::RawInterp(inner_expr) => {
+                                // {!expr} — always raw, no escaping even in Html context
+                                let val = self.eval_expr(inner_expr, env).await?;
+                                min_conf = min_conf.min(val.confidence);
                                 result.push_str(&format!("{}", val.value));
                             }
                         }
                     }
-                    if min_conf >= 1.0 {
-                        Ok(ConfidentValue::deterministic(Value::Text(result)))
+                    let value = if is_html {
+                        Value::Html(result)
                     } else {
-                        Ok(ConfidentValue::derived(Value::Text(result), min_conf))
+                        Value::Text(result)
+                    };
+                    if min_conf >= 1.0 {
+                        Ok(ConfidentValue::deterministic(value))
+                    } else {
+                        Ok(ConfidentValue::derived(value, min_conf))
                     }
                 }
 
@@ -668,16 +1327,27 @@ impl TaskExecutor {
                             };
                             Ok(ConfidentValue::deterministic(Value::Bool(same)))
                         }
-                        (Value::Array(v) | Value::List(v), "len" | "count") => {
+                        (Value::Array(v) | Value::List(v), "len" | "length" | "count") => {
                             Ok(ConfidentValue::deterministic(Value::Number(v.len() as f64)))
                         }
-                        // Record field access
+                        (Value::Text(s) | Value::Html(s), "len" | "length") => {
+                            Ok(ConfidentValue::deterministic(Value::Number(s.len() as f64)))
+                        }
+                        // Record field access — transparently unwrap _type/_value wrapper
                         (Value::Record(fields), _) => {
-                            fields.get(&field.node).cloned().ok_or_else(|| {
-                                RuntimeError::UndefinedVariable {
-                                    name: format!(".{}", field.node),
+                            // Direct field access
+                            if let Some(val) = fields.get(&field.node) {
+                                return Ok(val.clone());
+                            }
+                            // Check for wrapped custom type: { _type: "Name", _value: { fields... } }
+                            if let Some(inner) = fields.get("_value") {
+                                if let Value::Record(inner_fields) = &inner.value {
+                                    if let Some(val) = inner_fields.get(&field.node) {
+                                        return Ok(val.clone());
+                                    }
                                 }
-                            })
+                            }
+                            Ok(ConfidentValue::deterministic(Value::Unit))
                         }
                         _ => Err(RuntimeError::TypeError {
                             expected: "Record".to_string(),
@@ -697,14 +1367,429 @@ impl TaskExecutor {
                                 len: items.len(),
                             })
                         }
+                        (Value::Record(fields), Value::Text(key)) => {
+                            Ok(fields.get(key).cloned().unwrap_or_else(|| {
+                                ConfidentValue::deterministic(Value::Text(String::new()))
+                            }))
+                        }
                         _ => Err(RuntimeError::TypeError {
-                            expected: "Array[Number]".to_string(),
+                            expected: "Array[Number] or Record[Text]".to_string(),
                             got: format!("{}[{}]", obj.value, idx.value),
                         }),
                     }
                 }
 
                 Expr::MethodCall(obj_expr, method, args) => {
+                    // html.layout() / html.escape() — built-in HTML capabilities
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "html" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            match method.node.as_str() {
+                                "layout" => {
+                                    let title = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let body = arg_vals
+                                        .get(1)
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let html = crate::runtime::html::html_layout(&title, &body);
+                                    return Ok(ConfidentValue::deterministic(Value::Html(html)));
+                                }
+                                "escape" => {
+                                    let text = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let escaped = crate::runtime::html::html_escape(&text);
+                                    return Ok(ConfidentValue::deterministic(Value::Text(escaped)));
+                                }
+                                other => {
+                                    return Err(RuntimeError::Unsupported(format!(
+                                        "html.{}()",
+                                        other
+                                    )));
+                                }
+                            }
+                        }
+                    }
+
+                    // markdown.render() — built-in Markdown capability
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "markdown" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            match method.node.as_str() {
+                                "render" => {
+                                    let content = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let html = crate::runtime::markdown::render_markdown(&content);
+                                    return Ok(ConfidentValue::deterministic(Value::Html(html)));
+                                }
+                                other => {
+                                    return Err(RuntimeError::Unsupported(format!(
+                                        "markdown.{}()",
+                                        other
+                                    )));
+                                }
+                            }
+                        }
+                    }
+
+                    // web.fetch() / web.post() — built-in HTTP client capabilities
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "web" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let web_config = self.config.as_ref().and_then(|c| c.web.as_ref());
+                            let client =
+                                crate::runtime::http_client::ForgeHttpClient::new(web_config);
+                            match method.node.as_str() {
+                                "fetch" => {
+                                    let url = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    match client.fetch(&url).await {
+                                        Ok(body) => {
+                                            return Ok(ConfidentValue::deterministic(Value::Text(
+                                                body,
+                                            )));
+                                        }
+                                        Err(e) => {
+                                            return Err(RuntimeError::FlowError(e));
+                                        }
+                                    }
+                                }
+                                "post" => {
+                                    let url = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let body = arg_vals
+                                        .get(1)
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    match client.post(&url, &body).await {
+                                        Ok(resp) => {
+                                            return Ok(ConfidentValue::deterministic(Value::Text(
+                                                resp,
+                                            )));
+                                        }
+                                        Err(e) => {
+                                            return Err(RuntimeError::FlowError(e));
+                                        }
+                                    }
+                                }
+                                other => {
+                                    return Err(RuntimeError::Unsupported(format!(
+                                        "web.{}()",
+                                        other
+                                    )));
+                                }
+                            }
+                        }
+                    }
+
+                    // data.store() / data.get() / data.list() / data.delete() — KV persistence
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "data" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let storage = self.storage.as_ref().ok_or_else(|| {
+                                RuntimeError::Unsupported(
+                                    "data.* requires storage — configure [storage] in forge.config.toml or use forge serve".to_string(),
+                                )
+                            })?;
+                            match method.node.as_str() {
+                                "store" => {
+                                    let key = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let value = arg_vals
+                                        .get(1)
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    storage.store(&key, &value).map_err(|e| {
+                                        RuntimeError::FlowError(format!("data.store: {e}"))
+                                    })?;
+                                    return Ok(ConfidentValue::deterministic(Value::Unit));
+                                }
+                                "get" => {
+                                    let key = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    match storage.get(&key) {
+                                        Ok(Some(val)) => {
+                                            return Ok(ConfidentValue::deterministic(Value::Text(
+                                                val,
+                                            )));
+                                        }
+                                        Ok(None) => {
+                                            return Ok(ConfidentValue::deterministic(Value::Unit));
+                                        }
+                                        Err(e) => {
+                                            return Err(RuntimeError::FlowError(format!(
+                                                "data.get: {e}"
+                                            )));
+                                        }
+                                    }
+                                }
+                                "list" => {
+                                    let prefix = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    match storage.list(&prefix) {
+                                        Ok(keys) => {
+                                            let items = keys
+                                                .into_iter()
+                                                .map(|k| {
+                                                    ConfidentValue::deterministic(Value::Text(k))
+                                                })
+                                                .collect();
+                                            return Ok(ConfidentValue::deterministic(
+                                                Value::Array(items),
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            return Err(RuntimeError::FlowError(format!(
+                                                "data.list: {e}"
+                                            )));
+                                        }
+                                    }
+                                }
+                                "delete" => {
+                                    let key = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    storage.delete(&key).map_err(|e| {
+                                        RuntimeError::FlowError(format!("data.delete: {e}"))
+                                    })?;
+                                    return Ok(ConfidentValue::deterministic(Value::Unit));
+                                }
+                                "embed" => {
+                                    let content = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let provider = self.embedding_provider.as_ref().ok_or_else(|| {
+                                        RuntimeError::Unsupported(
+                                            "data.embed requires [embeddings] configuration in forge.config.toml".to_string(),
+                                        )
+                                    })?;
+                                    let vi = self.vector_index.as_ref().ok_or_else(|| {
+                                        RuntimeError::Unsupported(
+                                            "data.embed requires [embeddings] configuration"
+                                                .to_string(),
+                                        )
+                                    })?;
+
+                                    let req = crate::llm::EmbeddingRequest {
+                                        texts: vec![content.clone()],
+                                        model: None,
+                                    };
+                                    let resp = provider.embed(req).await.map_err(|e| {
+                                        RuntimeError::FlowError(format!("data.embed: {e}"))
+                                    })?;
+                                    let embedding =
+                                        resp.embeddings.into_iter().next().ok_or_else(|| {
+                                            RuntimeError::FlowError(
+                                                "data.embed: no embedding returned".to_string(),
+                                            )
+                                        })?;
+
+                                    // Generate a unique ID
+                                    let id = format!("emb_{:x}", {
+                                        use std::collections::hash_map::DefaultHasher;
+                                        use std::hash::{Hash, Hasher};
+                                        let mut h = DefaultHasher::new();
+                                        content.hash(&mut h);
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_nanos()
+                                            .hash(&mut h);
+                                        h.finish()
+                                    });
+
+                                    vi.lock()
+                                        .await
+                                        .insert(
+                                            &id,
+                                            &content,
+                                            embedding,
+                                            std::collections::HashMap::new(),
+                                        )
+                                        .map_err(|e| {
+                                            RuntimeError::FlowError(format!("data.embed: {e}"))
+                                        })?;
+
+                                    // Emit trace event for cost tracking
+                                    if let Some(ref tracer) = self.tracer {
+                                        tracer.llm_response(&LLMResponseInfo {
+                                            operation: "embed",
+                                            provider: provider.name(),
+                                            model: &resp.model_used,
+                                            tokens_in: resp.tokens_used,
+                                            tokens_out: 0,
+                                            cost_usd: resp.cost_usd,
+                                            confidence: 1.0,
+                                            agent_name: self.agent_name.as_deref(),
+                                        });
+                                    }
+
+                                    return Ok(ConfidentValue::deterministic(Value::Text(id)));
+                                }
+                                "search" => {
+                                    let query = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let top_k = arg_vals
+                                        .get(1)
+                                        .and_then(|v| match &v.value {
+                                            Value::Number(n) => Some(*n as usize),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(5);
+
+                                    let provider = self.embedding_provider.as_ref().ok_or_else(|| {
+                                        RuntimeError::Unsupported(
+                                            "data.search requires [embeddings] configuration in forge.config.toml".to_string(),
+                                        )
+                                    })?;
+                                    let vi = self.vector_index.as_ref().ok_or_else(|| {
+                                        RuntimeError::Unsupported(
+                                            "data.search requires [embeddings] configuration"
+                                                .to_string(),
+                                        )
+                                    })?;
+
+                                    // Embed the query
+                                    let req = crate::llm::EmbeddingRequest {
+                                        texts: vec![query.clone()],
+                                        model: None,
+                                    };
+                                    let resp = provider.embed(req).await.map_err(|e| {
+                                        RuntimeError::FlowError(format!("data.search: {e}"))
+                                    })?;
+                                    let query_embedding =
+                                        resp.embeddings.into_iter().next().ok_or_else(|| {
+                                            RuntimeError::FlowError(
+                                                "data.search: no embedding returned".to_string(),
+                                            )
+                                        })?;
+
+                                    let results = vi.lock().await.search(&query_embedding, top_k);
+                                    let best_score =
+                                        results.first().map(|r| r.score).unwrap_or(0.0);
+
+                                    let items: Vec<ConfidentValue> = results
+                                        .into_iter()
+                                        .map(|r| {
+                                            let mut fields = HashMap::new();
+                                            fields.insert(
+                                                "id".into(),
+                                                ConfidentValue::deterministic(Value::Text(r.id)),
+                                            );
+                                            fields.insert(
+                                                "content".into(),
+                                                ConfidentValue::deterministic(Value::Text(
+                                                    r.content,
+                                                )),
+                                            );
+                                            fields.insert(
+                                                "score".into(),
+                                                ConfidentValue::deterministic(Value::Number(
+                                                    r.score as f64,
+                                                )),
+                                            );
+                                            ConfidentValue::deterministic(Value::Record(fields))
+                                        })
+                                        .collect();
+
+                                    // Emit trace event for cost tracking
+                                    if let Some(ref tracer) = self.tracer {
+                                        tracer.llm_response(&LLMResponseInfo {
+                                            operation: "search",
+                                            provider: provider.name(),
+                                            model: &resp.model_used,
+                                            tokens_in: resp.tokens_used,
+                                            tokens_out: 0,
+                                            cost_usd: resp.cost_usd,
+                                            confidence: best_score,
+                                            agent_name: self.agent_name.as_deref(),
+                                        });
+                                    }
+
+                                    // Confidence derived from best cosine similarity score
+                                    return Ok(ConfidentValue::derived(
+                                        Value::List(items),
+                                        best_score,
+                                    ));
+                                }
+                                other => {
+                                    return Err(RuntimeError::Unsupported(format!(
+                                        "data.{}()",
+                                        other
+                                    )));
+                                }
+                            }
+                        }
+                    }
+
+                    // skill.namespace.method() dispatch — issue #40
+                    if let Expr::FieldAccess(inner, namespace) = &obj_expr.node {
+                        if let Expr::Ident(ref prefix) = inner.node {
+                            if prefix == "skill" {
+                                if let Some(ref skill_executor) = self.skill_executor {
+                                    let skill_name = namespace.node.clone();
+                                    let method_name = method.node.clone();
+                                    let mut arg_map = std::collections::HashMap::new();
+                                    for arg in args {
+                                        let val = self.eval_expr(&arg.node.value, env).await?;
+                                        let key = arg
+                                            .node
+                                            .label
+                                            .as_ref()
+                                            .map(|l| l.node.clone())
+                                            .unwrap_or_else(|| format!("_{}", arg_map.len()));
+                                        arg_map.insert(key, val);
+                                    }
+                                    return skill_executor
+                                        .execute(&skill_name, &method_name, &arg_map)
+                                        .await
+                                        .map_err(|e| {
+                                            RuntimeError::FlowError(format!(
+                                                "skill.{}.{}: {}",
+                                                skill_name, method_name, e
+                                            ))
+                                        });
+                                } else {
+                                    return Err(RuntimeError::Unsupported(
+                                        "skill calls require a skill executor — configure [skills] in forge.config.toml".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
                     // Pool .send() interception — pools are declarations, not runtime values
                     if method.node == "send" {
                         if let Expr::Ident(ref name) = obj_expr.node {
@@ -736,7 +1821,7 @@ impl TaskExecutor {
                         "len" | "count" => {
                             let len = match &obj.value {
                                 Value::Array(v) | Value::List(v) => v.len(),
-                                Value::Text(s) => s.len(),
+                                Value::Text(s) | Value::Html(s) => s.len(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Array, List, or Text".to_string(),
@@ -758,8 +1843,10 @@ impl TaskExecutor {
                                 Value::Array(v) | Value::List(v) => v
                                     .iter()
                                     .any(|item| values_equal(&item.value, &needle.value)),
-                                Value::Text(s) => {
-                                    if let Value::Text(needle_s) = &needle.value {
+                                Value::Text(s) | Value::Html(s) => {
+                                    if let Value::Text(needle_s) | Value::Html(needle_s) =
+                                        &needle.value
+                                    {
                                         s.contains(needle_s.as_str())
                                     } else {
                                         false
@@ -810,8 +1897,9 @@ impl TaskExecutor {
                             Ok(ConfidentValue::deterministic(Value::Bool(none)))
                         }
                         "lower" => {
-                            let text = match &obj.value {
-                                Value::Text(s) => s.to_lowercase(),
+                            let (text, wrap) = match &obj.value {
+                                Value::Text(s) => (s.to_lowercase(), false),
+                                Value::Html(s) => (s.to_lowercase(), true),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text".to_string(),
@@ -819,11 +1907,17 @@ impl TaskExecutor {
                                     })
                                 }
                             };
-                            Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
+                            let val = if wrap {
+                                Value::Html(text)
+                            } else {
+                                Value::Text(text)
+                            };
+                            Ok(ConfidentValue::derived(val, obj.confidence))
                         }
                         "upper" => {
-                            let text = match &obj.value {
-                                Value::Text(s) => s.to_uppercase(),
+                            let (text, wrap) = match &obj.value {
+                                Value::Text(s) => (s.to_uppercase(), false),
+                                Value::Html(s) => (s.to_uppercase(), true),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text".to_string(),
@@ -831,11 +1925,17 @@ impl TaskExecutor {
                                     })
                                 }
                             };
-                            Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
+                            let val = if wrap {
+                                Value::Html(text)
+                            } else {
+                                Value::Text(text)
+                            };
+                            Ok(ConfidentValue::derived(val, obj.confidence))
                         }
                         "trim" => {
-                            let text = match &obj.value {
-                                Value::Text(s) => s.trim().to_string(),
+                            let (text, wrap) = match &obj.value {
+                                Value::Text(s) => (s.trim().to_string(), false),
+                                Value::Html(s) => (s.trim().to_string(), true),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text".to_string(),
@@ -843,7 +1943,79 @@ impl TaskExecutor {
                                     })
                                 }
                             };
-                            Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
+                            let val = if wrap {
+                                Value::Html(text)
+                            } else {
+                                Value::Text(text)
+                            };
+                            Ok(ConfidentValue::derived(val, obj.confidence))
+                        }
+                        "split" => {
+                            if args.len() != 1 {
+                                return Err(RuntimeError::TypeError {
+                                    expected: "1 argument".to_string(),
+                                    got: format!("{} arguments", args.len()),
+                                });
+                            }
+                            let delim_val = self.eval_expr(&args[0].node.value, env).await?;
+                            let delimiter = match &delim_val.value {
+                                Value::Text(s) | Value::Html(s) => s.clone(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Text delimiter".to_string(),
+                                        got: format!("{:?}", delim_val.value),
+                                    })
+                                }
+                            };
+                            let text = match &obj.value {
+                                Value::Text(s) | Value::Html(s) => s.as_str(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Text".to_string(),
+                                        got: format!("{}", obj.value),
+                                    })
+                                }
+                            };
+                            let parts: Vec<ConfidentValue> = text
+                                .split(&delimiter)
+                                .map(|part| {
+                                    ConfidentValue::deterministic(Value::Text(part.to_string()))
+                                })
+                                .collect();
+                            Ok(ConfidentValue::deterministic(Value::Array(parts)))
+                        }
+                        "join" => {
+                            if args.len() != 1 {
+                                return Err(RuntimeError::TypeError {
+                                    expected: "1 argument".to_string(),
+                                    got: format!("{} arguments", args.len()),
+                                });
+                            }
+                            let delim_val = self.eval_expr(&args[0].node.value, env).await?;
+                            let delimiter = match &delim_val.value {
+                                Value::Text(s) | Value::Html(s) => s.clone(),
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Text delimiter".to_string(),
+                                        got: format!("{:?}", delim_val.value),
+                                    })
+                                }
+                            };
+                            let items = match &obj.value {
+                                Value::Array(v) | Value::List(v) => v,
+                                _ => {
+                                    return Err(RuntimeError::TypeError {
+                                        expected: "Array or List".to_string(),
+                                        got: format!("{}", obj.value),
+                                    })
+                                }
+                            };
+                            let joined: String = items
+                                .iter()
+                                .map(|item| format!("{}", item.value))
+                                .collect::<Vec<_>>()
+                                .join(&delimiter);
+                            Ok(ConfidentValue::deterministic(Value::Text(joined)))
                         }
                         other => Err(RuntimeError::Unsupported(format!("method .{}()", other))),
                     }
@@ -889,6 +2061,27 @@ impl TaskExecutor {
                             .unwrap_or_else(|| "default".to_string());
                         let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
                         pool.send(&event, payload).await
+                    } else if name == "asset" {
+                        let path = arg_vals
+                            .first()
+                            .map(|v| format!("{}", v.value))
+                            .unwrap_or_default();
+                        let prefix = self
+                            .config
+                            .as_ref()
+                            .and_then(|c| c.server.as_ref())
+                            .and_then(|s| s.static_files.as_ref())
+                            .map(|sc| sc.prefix_or_default().to_string())
+                            .unwrap_or_else(|| "/static".to_string());
+                        let prefix = prefix.trim_end_matches('/');
+                        let path = if path.starts_with('/') {
+                            path
+                        } else {
+                            format!("/{path}")
+                        };
+                        Ok(ConfidentValue::deterministic(Value::Text(format!(
+                            "{prefix}{path}"
+                        ))))
                     } else if name.starts_with(|c: char| c.is_uppercase()) {
                         // Uppercase names not in task/pure/flow/pool maps are type constructors
                         let mut fields = HashMap::new();
@@ -979,6 +2172,50 @@ impl TaskExecutor {
                     Ok(ConfidentValue::deterministic(Value::Record(fields)))
                 }
 
+                // ── CLI execution (issue #40) ────────────────────────────────
+                Expr::Exec(command_expr) => {
+                    let command = self.eval_expr(command_expr, env).await?;
+                    let cmd_str = format!("{}", command.value);
+
+                    if let Some(ref tracer) = self.tracer {
+                        tracer.exec_call(&cmd_str);
+                    }
+
+                    let start = std::time::Instant::now();
+
+                    let result = tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        tokio::process::Command::new("sh")
+                            .arg("-c")
+                            .arg(&cmd_str)
+                            .output(),
+                    )
+                    .await;
+
+                    let elapsed = start.elapsed();
+
+                    match result {
+                        Ok(Ok(output)) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                            let success = output.status.success();
+                            let confidence = if success { 0.9 } else { 0.3 };
+                            let text = if stdout.is_empty() { stderr } else { stdout };
+
+                            if let Some(ref tracer) = self.tracer {
+                                tracer.exec_return(&cmd_str, success, elapsed.as_millis() as u64);
+                            }
+
+                            Ok(ConfidentValue::from_exec(Value::Text(text), confidence))
+                        }
+                        Ok(Err(e)) => Err(RuntimeError::FlowError(format!("exec failed: {}", e))),
+                        Err(_) => Err(RuntimeError::FlowError(format!(
+                            "exec timed out after 30s: {}",
+                            cmd_str
+                        ))),
+                    }
+                }
+
                 // ── LLM expressions ───────────────────────────────────────────
                 Expr::Reason(prompt_expr) => {
                     let prompt = self.eval_expr(prompt_expr, env).await?;
@@ -1005,6 +2242,7 @@ impl TaskExecutor {
                             tokens_out: response.tokens_out,
                             cost_usd: response.cost_usd,
                             confidence,
+                            agent_name: self.agent_name.as_deref(),
                         });
                     }
 
@@ -1045,6 +2283,7 @@ impl TaskExecutor {
                             tokens_out: response.tokens_out,
                             cost_usd: response.cost_usd,
                             confidence,
+                            agent_name: self.agent_name.as_deref(),
                         });
                     }
 
@@ -1054,7 +2293,107 @@ impl TaskExecutor {
                     ))
                 }
 
-                Expr::Search(_) => Ok(ConfidentValue::deterministic(Value::List(vec![]))),
+                Expr::Search(query_expr) => {
+                    let query_val = self.eval_expr(query_expr, env).await?;
+                    let query_text = format!("{}", query_val.value);
+                    let web_config = self.config.as_ref().and_then(|c| c.web.as_ref());
+                    let client = crate::runtime::http_client::ForgeHttpClient::new(web_config);
+                    match crate::runtime::http_client::search(&client, &query_text, web_config)
+                        .await
+                    {
+                        Ok(results) => {
+                            let items: Vec<ConfidentValue> = results
+                                .into_iter()
+                                .map(|r| {
+                                    let mut fields = HashMap::new();
+                                    fields.insert(
+                                        "title".into(),
+                                        ConfidentValue::deterministic(Value::Text(r.title)),
+                                    );
+                                    fields.insert(
+                                        "url".into(),
+                                        ConfidentValue::deterministic(Value::Text(r.url)),
+                                    );
+                                    fields.insert(
+                                        "snippet".into(),
+                                        ConfidentValue::deterministic(Value::Text(r.snippet)),
+                                    );
+                                    ConfidentValue::deterministic(Value::Record(fields))
+                                })
+                                .collect();
+                            Ok(ConfidentValue::deterministic(Value::List(items)))
+                        }
+                        Err(e) => Err(RuntimeError::FlowError(e)),
+                    }
+                }
+
+                Expr::Recall(query_expr) => {
+                    let query_val = self.eval_expr(query_expr, env).await?;
+                    let query_text = format!("{}", query_val.value);
+
+                    if let Some(ref ctx_arc) = self.agent_context {
+                        let mut ctx = ctx_arc.lock().unwrap();
+                        if let Some(ref mut ks) = ctx.knowledge_store {
+                            // Default token budget for recall: 2000 tokens
+                            let result = ks.recall(&query_text, 2000);
+                            Ok(result)
+                        } else {
+                            Err(RuntimeError::Unsupported(
+                                "recall requires agent with knowledge store".into(),
+                            ))
+                        }
+                    } else if let Some(ref ks_arc) = self.knowledge_store {
+                        // Standalone knowledge store (endpoint/webhook context)
+                        let mut ks = ks_arc.lock().unwrap();
+                        let result = ks.recall(&query_text, 2000);
+                        Ok(result)
+                    } else {
+                        // No knowledge store — return empty with low confidence
+                        Ok(ConfidentValue {
+                            value: Value::Text(String::new()),
+                            confidence: 0.0,
+                            source: crate::types::ConfidenceSource::KnowledgeRecall(0.0),
+                        })
+                    }
+                }
+
+                // ── Find (instance discovery, issue #84) ─────────────────────
+                Expr::Find(find) => {
+                    let ir = self.instance_registry.as_ref().ok_or_else(|| {
+                        RuntimeError::Unsupported("find requires instance registry".into())
+                    })?;
+                    let registry = ir.read().await;
+                    match &find.kind {
+                        FindKind::ByAlias(alias_expr) => {
+                            let alias_val = self.eval_expr(alias_expr, env).await?;
+                            let alias_str = format!("{}", alias_val.value);
+                            match registry.find_by_alias(&alias_str) {
+                                Some(info) => Ok(instance_info_to_record(&info)),
+                                None => Err(RuntimeError::FlowError(format!(
+                                    "no agent instance found with alias \"{}\"",
+                                    alias_str
+                                ))),
+                            }
+                        }
+                        FindKind::AllByTemplate(template) => {
+                            let instances = registry.find_by_name(&template.node);
+                            let records: Vec<ConfidentValue> =
+                                instances.iter().map(instance_info_to_record).collect();
+                            Ok(ConfidentValue::deterministic(Value::Array(records)))
+                        }
+                        FindKind::AllByTemplateFiltered(template, state) => {
+                            let instances = registry.find_by_name(&template.node);
+                            let records: Vec<ConfidentValue> = instances
+                                .iter()
+                                .filter(|info| {
+                                    info.lifecycle_state.as_deref() == Some(state.node.as_str())
+                                })
+                                .map(instance_info_to_record)
+                                .collect();
+                            Ok(ConfidentValue::deterministic(Value::Array(records)))
+                        }
+                    }
+                }
 
                 // ── Composition ───────────────────────────────────────────────
                 Expr::TryOr(primary, fallback) => match self.eval_expr(primary, env).await {
@@ -1104,14 +2443,23 @@ impl TaskExecutor {
             env.bind(&param.node.name, val);
         }
 
-        match &decl.body.node {
+        // Set html_context if this task returns Html
+        let prev_html = self.html_context.load(Ordering::Relaxed);
+        if Self::returns_html_output(&decl.gives) {
+            self.html_context.store(true, Ordering::Relaxed);
+        }
+
+        let result = match &decl.body.node {
             TaskBody::Do(stmts) => match self.exec_stmts(stmts, &mut env).await {
                 Ok(val) => Ok(val),
-                Err(RuntimeError::GiveSignal(val)) => Ok(val),
+                Err(RuntimeError::GiveSignal(val, ..)) => Ok(val),
                 Err(e) => Err(e),
             },
             TaskBody::Is(expr) => self.eval_expr(expr, &mut env).await,
-        }
+        };
+
+        self.html_context.store(prev_html, Ordering::Relaxed);
+        result
     }
 
     async fn call_pure(
@@ -1127,11 +2475,20 @@ impl TaskExecutor {
                 .unwrap_or(ConfidentValue::deterministic(Value::Unit));
             env.bind(&param.node.name, val);
         }
+        // Set html_context if this pure function returns Html
+        let prev_html = self.html_context.load(Ordering::Relaxed);
+        if Self::returns_html_output(&decl.gives) {
+            self.html_context.store(true, Ordering::Relaxed);
+        }
         let result = match self.exec_stmts(&decl.body, &mut env).await {
             Ok(val) => val,
-            Err(RuntimeError::GiveSignal(val)) => val,
-            Err(e) => return Err(e),
+            Err(RuntimeError::GiveSignal(val, ..)) => val,
+            Err(e) => {
+                self.html_context.store(prev_html, Ordering::Relaxed);
+                return Err(e);
+            }
         };
+        self.html_context.store(prev_html, Ordering::Relaxed);
         // Pure functions always return deterministic confidence
         Ok(ConfidentValue::deterministic(result.value))
     }
@@ -1305,7 +2662,7 @@ impl TaskExecutor {
         // stage boundary so give values are captured correctly.
         let result = match self.exec_stmts(&stage_decl.body, &mut env).await {
             Ok(val) => val,
-            Err(RuntimeError::GiveSignal(val)) => val,
+            Err(RuntimeError::GiveSignal(val, ..)) => val,
             Err(e) => return Err(e),
         };
         let give_value = match &result.value {
@@ -1325,6 +2682,41 @@ impl TaskExecutor {
 
 // ── Helper functions ──────────────────────────────────────────────────────────
 
+/// Convert an `InstanceInfo` into a deterministic `Value::Record` for the `find` expression.
+fn instance_info_to_record(info: &InstanceInfo) -> ConfidentValue {
+    let mut fields = HashMap::new();
+    fields.insert(
+        "id".to_string(),
+        ConfidentValue::deterministic(Value::Text(info.instance_id.to_string())),
+    );
+    fields.insert(
+        "name".to_string(),
+        ConfidentValue::deterministic(Value::Text(info.agent_name.clone())),
+    );
+    fields.insert(
+        "alias".to_string(),
+        match &info.alias {
+            Some(a) => ConfidentValue::deterministic(Value::Text(a.clone())),
+            None => ConfidentValue::deterministic(Value::Unit),
+        },
+    );
+    fields.insert(
+        "status".to_string(),
+        ConfidentValue::deterministic(Value::Text(match info.status {
+            InstanceStatus::Running => "running".to_string(),
+            InstanceStatus::Stopping => "stopping".to_string(),
+        })),
+    );
+    fields.insert(
+        "lifecycle".to_string(),
+        match &info.lifecycle_state {
+            Some(s) => ConfidentValue::deterministic(Value::Text(s.clone())),
+            None => ConfidentValue::deterministic(Value::Unit),
+        },
+    );
+    ConfidentValue::deterministic(Value::Record(fields))
+}
+
 fn truthy(cv: &ConfidentValue) -> bool {
     truthy_val(&cv.value)
 }
@@ -1332,7 +2724,7 @@ fn truthy(cv: &ConfidentValue) -> bool {
 fn truthy_val(val: &Value) -> bool {
     match val {
         Value::Bool(b) => *b,
-        Value::Text(s) => !s.is_empty(),
+        Value::Text(s) | Value::Html(s) => !s.is_empty(),
         Value::Number(n) => *n != 0.0,
         Value::Unit => false,
         Value::List(v) | Value::Array(v) => !v.is_empty(),
@@ -1343,6 +2735,9 @@ fn truthy_val(val: &Value) -> bool {
 fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Text(a), Value::Text(b)) => a == b,
+        (Value::Html(a), Value::Html(b)) => a == b,
+        // Text/Html cross-comparison: same string content means equal
+        (Value::Text(a), Value::Html(b)) | (Value::Html(a), Value::Text(b)) => a == b,
         (Value::Number(a), Value::Number(b)) => (a - b).abs() < f64::EPSILON,
         (Value::Bool(a), Value::Bool(b)) => a == b,
         (Value::Unit, Value::Unit) => true,
@@ -1362,8 +2757,28 @@ fn eval_binop(left: &Value, op: &BinOp, right: &Value) -> Result<Value, RuntimeE
             }
             Ok(Value::Number(a / b))
         }
-        // String concatenation
+        // String concatenation (Text + Text → Text, Html + Html → Html, mixed → Text)
         (Value::Text(a), BinOp::Add, Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
+        (Value::Html(a), BinOp::Add, Value::Html(b)) => Ok(Value::Html(format!("{}{}", a, b))),
+        (Value::Text(a), BinOp::Add, Value::Html(b)) => Ok(Value::Text(format!("{}{}", a, b))),
+        (Value::Html(a), BinOp::Add, Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
+        // Array concatenation (Array + Array → Array, List variants too)
+        (Value::Array(a), BinOp::Add, Value::Array(b)) => {
+            let mut result = a.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::Array(result))
+        }
+        (Value::List(a), BinOp::Add, Value::List(b)) => {
+            let mut result = a.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::List(result))
+        }
+        (Value::Array(a), BinOp::Add, Value::List(b))
+        | (Value::List(a), BinOp::Add, Value::Array(b)) => {
+            let mut result = a.clone();
+            result.extend(b.iter().cloned());
+            Ok(Value::Array(result))
+        }
         // Numeric comparison
         (Value::Number(a), BinOp::Lt, Value::Number(b)) => Ok(Value::Bool(a < b)),
         (Value::Number(a), BinOp::Gt, Value::Number(b)) => Ok(Value::Bool(a > b)),
@@ -1877,5 +3292,88 @@ fn main
         )
         .await;
         assert!(matches!(result, Err(RuntimeError::FlowError(ref msg)) if msg.contains("cycle")));
+    }
+
+    // ── split / join tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_split_basic() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  text = "a,b,c"
+  parts = text.split(",")
+  say parts.length
+  for p in parts
+      say p
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "split failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["3", "a", "b", "c"]);
+    }
+
+    #[tokio::test]
+    async fn test_split_newline() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  text = "line one
+line two
+line three"
+  parts = text.split("\n")
+  say parts.length
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "split newline failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["3"]);
+    }
+
+    #[tokio::test]
+    async fn test_split_no_match() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  text = "no delimiter here"
+  parts = text.split(",")
+  say parts.length
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "split no match failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["1"]);
+    }
+
+    #[tokio::test]
+    async fn test_join_basic() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  text = "a,b,c"
+  parts = text.split(",")
+  joined = parts.join(" | ")
+  say joined
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "join failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["a | b | c"]);
+    }
+
+    #[tokio::test]
+    async fn test_split_join_roundtrip() {
+        let (result, outputs) = run_forge(
+            r#"
+fn main
+  original = "hello world foo"
+  parts = original.split(" ")
+  back = parts.join(" ")
+  say back
+"#,
+        )
+        .await;
+        assert!(result.is_ok(), "roundtrip failed: {:?}", result.err());
+        assert_eq!(outputs, vec!["hello world foo"]);
     }
 }

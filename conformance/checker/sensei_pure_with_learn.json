@@ -1,0 +1,11 @@
+{
+  "name": "sensei_pure_with_learn",
+  "category": "checker",
+  "subcategory": "pure",
+  "description": "Pure function cannot use learn (side effect forbidden)",
+  "input": "pure bad_pure\n  needs fact: Text\n  gives Text\n  do\n    learn \"{fact}\"\n    give fact\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["cannot use", "learn"]
+  }
+}

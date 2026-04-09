@@ -102,6 +102,7 @@ mod tests {
     fn mock_response(cost: f32, tokens_in: u32, tokens_out: u32) -> CompletionResponse {
         CompletionResponse {
             content: "test".to_string(),
+            tool_calls: vec![],
             tokens_in,
             tokens_out,
             latency_ms: 1,

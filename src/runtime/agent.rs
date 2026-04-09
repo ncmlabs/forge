@@ -12,6 +12,7 @@ use crate::llm::registry::ProviderRegistry;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::event_bus::{EventPayload, SharedEventBus};
 use crate::runtime::executor::{Env, RuntimeError, TaskExecutor};
+use crate::runtime::knowledge_store::KnowledgeStore;
 use crate::runtime::memory::AgentMemory;
 use crate::runtime::state_machine::StateMachine;
 use crate::runtime::timer_engine::{TimerEngine, TimerFired};
@@ -88,6 +89,11 @@ impl TimerManager {
         self.timers.get(name)
     }
 
+    /// Return all timer names and their current states (for introspection).
+    pub fn all_states(&self) -> &HashMap<String, TimerState> {
+        &self.timers
+    }
+
     /// Mark a timer as expired (for testing and future async integration).
     pub fn expire(&mut self, name: &str) {
         if let Some(state) = self.timers.get_mut(name) {
@@ -127,6 +133,10 @@ impl EventSink {
 #[derive(Debug, Clone)]
 pub enum AgentSignal {
     Stuck { agent_name: String },
+    Timeout { agent_name: String },
+    Hallucination { agent_name: String, detail: String },
+    BudgetExceeded { agent_name: String, detail: String },
+    Crash { agent_name: String },
 }
 
 // ── Stuck Detector ───────────────────────────────────────────────────────────
@@ -186,6 +196,16 @@ impl StuckDetector {
         all_similar || low_confidence || (memory_unchanged && self.history.len() >= self.threshold)
     }
 
+    /// Returns true if recent responses indicate hallucination.
+    /// Hallucination = last N turns ALL have very low confidence (< 0.3).
+    pub fn is_hallucinating(&self) -> bool {
+        if self.history.len() < self.threshold {
+            return false;
+        }
+        let recent = &self.history[self.history.len() - self.threshold..];
+        recent.iter().all(|t| t.confidence < 0.3)
+    }
+
     pub fn clear(&mut self) {
         self.history.clear();
     }
@@ -214,6 +234,7 @@ pub(crate) fn jaccard_similarity(a: &str, b: &str) -> f64 {
 #[derive(Debug, Clone)]
 pub struct AgentContext {
     pub memory: AgentMemory,
+    pub knowledge_store: Option<KnowledgeStore>,
     pub state_machine: Option<StateMachine>,
     pub timer_manager: TimerManager,
     pub event_sink: EventSink,
@@ -223,12 +244,14 @@ pub struct AgentContext {
 impl AgentContext {
     pub fn new(
         memory: AgentMemory,
+        knowledge_store: Option<KnowledgeStore>,
         state_machine: Option<StateMachine>,
         timer_manager: TimerManager,
         stuck_threshold: usize,
     ) -> Self {
         Self {
             memory,
+            knowledge_store,
             state_machine,
             timer_manager,
             event_sink: EventSink::new(),
@@ -249,6 +272,7 @@ pub struct AgentProcess {
     timer_engine: Arc<Mutex<TimerEngine>>,
     pub timer_rx: mpsc::Receiver<TimerFired>,
     warden_tx: Option<mpsc::Sender<AgentSignal>>,
+    storage: Option<crate::runtime::storage::SharedStorage>,
 }
 
 impl AgentProcess {
@@ -259,9 +283,31 @@ impl AgentProcess {
         registry: Arc<ProviderRegistry>,
         tracer: Option<Tracer>,
         program: Program,
+        storage: Option<crate::runtime::storage::SharedStorage>,
+        instance_registry: Option<crate::runtime::instance_registry::SharedInstanceRegistry>,
     ) -> Self {
-        let memory = AgentMemory::new(&decl.memory);
-        let state_machine = states.map(StateMachine::new);
+        let mut memory = AgentMemory::new(&decl.memory);
+
+        // Load memory from storage if available
+        // For persistent agents: always load (ACID guarantee, issue #57)
+        // For non-persistent agents: load if storage provided (CLI mode persistence)
+        if let Some(ref store) = storage {
+            let key = format!("agent:{}:memory", decl.name.node);
+            if let Ok(Some(json)) = store.get(&key) {
+                let _ = memory.restore_from_json(&json);
+            }
+        }
+        let state_machine = states.map(|s| {
+            let mut sm = StateMachine::new(s);
+            // Restore lifecycle state from persistent storage if available
+            if let Some(ref store) = storage {
+                let key = format!("agent:{}:lifecycle", decl.name.node);
+                if let Ok(Some(saved_state)) = store.get(&key) {
+                    sm.set_current(&saved_state);
+                }
+            }
+            sm
+        });
         let timer_manager = TimerManager::new(&decl.timers);
         let stuck_threshold = decl
             .stuck_policy
@@ -269,8 +315,37 @@ impl AgentProcess {
             .and_then(|sp| sp.node.turns)
             .unwrap_or(3) as usize;
 
+        // Initialize knowledge store if declared
+        let knowledge_store = decl.knowledge.as_ref().map(|kd| {
+            let store_path = match &kd.node.store_path.node {
+                Expr::Template(parts) => {
+                    // Extract plain text from template (no interpolation at init time)
+                    parts
+                        .iter()
+                        .filter_map(|p| match &p.node {
+                            TemplatePart::Text(t) => Some(t.as_str()),
+                            _ => None,
+                        })
+                        .collect::<String>()
+                }
+                _ => ".forge-knowledge/default".to_string(),
+            };
+            let max_entries = kd.node.max_entries.as_ref().map(|m| m.node as usize);
+            let retention_days = kd.node.retention.as_ref().map(|r| {
+                let dur = &r.node;
+                match dur.unit {
+                    DurationUnit::Days => dur.value,
+                    DurationUnit::Hours => dur.value / 24,
+                    DurationUnit::Minutes => dur.value / (24 * 60),
+                    DurationUnit::Seconds => dur.value / (24 * 60 * 60),
+                }
+            });
+            KnowledgeStore::new(&store_path, max_entries, retention_days)
+        });
+
         let context = Arc::new(Mutex::new(AgentContext::new(
             memory,
+            knowledge_store,
             state_machine,
             timer_manager,
             stuck_threshold,
@@ -285,9 +360,26 @@ impl AgentProcess {
             tracer.clone(),
         )));
 
-        let executor = TaskExecutor::new(program, registry, tracer)
+        let mut executor = TaskExecutor::new(program, registry, tracer)
             .with_agent_context(context.clone())
             .with_timer_engine(timer_engine.clone());
+
+        // Wire instance registry into executor (issue #82)
+        if let Some(ir) = instance_registry {
+            executor = executor.with_instance_registry(ir);
+        }
+
+        // Wire storage for data.store/data.get operations (#140)
+        if let Some(ref store) = storage {
+            executor = executor.with_storage(store.clone());
+        }
+
+        // Wire persistent memory storage into executor (issue #57)
+        if decl.memory_persistent {
+            if let Some(ref store) = storage {
+                executor = executor.with_persistent_memory(store.clone(), decl.name.node.clone());
+            }
+        }
 
         Self {
             decl,
@@ -298,6 +390,7 @@ impl AgentProcess {
             timer_engine,
             timer_rx,
             warden_tx: None,
+            storage,
         }
     }
 
@@ -373,11 +466,27 @@ impl AgentProcess {
             }
         }
 
-        // Execute handler body
-        let result = match self.executor.exec_stmts(&handler.node.body, &mut env).await {
-            Ok(_) => None,
-            Err(RuntimeError::GiveSignal(val)) => Some(val),
-            Err(e) => return Err(e),
+        // Execute handler body with timeout detection
+        let handler_timeout = std::time::Duration::from_secs(60);
+        let exec_future = self.executor.exec_stmts(&handler.node.body, &mut env);
+        let result = match tokio::time::timeout(handler_timeout, exec_future).await {
+            Ok(Ok(_)) => None,
+            Ok(Err(RuntimeError::GiveSignal(val, ..))) => Some(val),
+            Ok(Err(e)) => return Err(e),
+            Err(_elapsed) => {
+                // Handler timed out — signal warden
+                if let Some(ref tx) = self.warden_tx {
+                    let _ = tx.try_send(AgentSignal::Timeout {
+                        agent_name: self.decl.name.node.clone(),
+                    });
+                }
+                return Err(RuntimeError::Unsupported(format!(
+                    "agent '{}' handler '{}' timed out after {}s",
+                    self.decl.name.node,
+                    event,
+                    handler_timeout.as_secs()
+                )));
+            }
         };
 
         // Record turn for stuck detection
@@ -394,6 +503,23 @@ impl AgentProcess {
                 confidence,
                 memory_hash,
             });
+        }
+
+        // Persist memory and lifecycle state after handler execution
+        // Ensures both survive across CLI invocations (forge send / binary)
+        {
+            let ctx = self.context.lock().unwrap();
+            if let Some(ref store) = self.storage {
+                let key = format!("agent:{}:memory", self.decl.name.node);
+                if let Ok(json) = ctx.memory.to_json() {
+                    let _ = store.store(&key, &json);
+                }
+                // Persist lifecycle state
+                if let Some(ref sm) = ctx.state_machine {
+                    let lc_key = format!("agent:{}:lifecycle", self.decl.name.node);
+                    let _ = store.store(&lc_key, &sm.current);
+                }
+            }
         }
 
         // Check stuck detection and execute stuck policy if needed
@@ -416,9 +542,25 @@ impl AgentProcess {
                 }
                 match self.executor.exec_stmts(&policy.node.body, &mut env).await {
                     Ok(_) => {}
-                    Err(RuntimeError::GiveSignal(val)) => return Ok(Some(val)),
+                    Err(RuntimeError::GiveSignal(val, ..)) => return Ok(Some(val)),
                     Err(e) => return Err(e),
                 }
+            }
+        }
+
+        // Check hallucination detection — repeated very low confidence responses
+        let is_hallucinating = self
+            .context
+            .lock()
+            .unwrap()
+            .stuck_detector
+            .is_hallucinating();
+        if is_hallucinating {
+            if let Some(ref tx) = self.warden_tx {
+                let _ = tx.try_send(AgentSignal::Hallucination {
+                    agent_name: self.decl.name.node.clone(),
+                    detail: format!("repeated low confidence responses in handler '{}'", event),
+                });
             }
         }
 
@@ -441,7 +583,8 @@ impl AgentProcess {
                 receivers.push((sub.node.filter.clone(), rx));
             }
         }
-        self.event_bus = Some(bus);
+        self.event_bus = Some(bus.clone());
+        self.executor = self.executor.with_event_bus(bus);
         self.event_receivers = receivers;
         self
     }
@@ -486,7 +629,11 @@ impl AgentProcess {
                                         Value::Record(payload.fields.clone()),
                                     ));
 
-                                let _ = self.dispatch(&event_name, params).await?;
+                                match self.dispatch(&event_name, params).await {
+                                    Ok(_) => {}
+                                    Err(RuntimeError::RetireSignal) => break,
+                                    Err(e) => return Err(e),
+                                }
                                 self.drain_event_sink().await?;
                             }
                         }
@@ -495,7 +642,11 @@ impl AgentProcess {
                 }
                 fired = self.timer_rx.recv() => {
                     if let Some(timer_event) = fired {
-                        self.handle_timer_fired(timer_event).await?;
+                        match self.handle_timer_fired(timer_event).await {
+                            Ok(()) => {}
+                            Err(RuntimeError::RetireSignal) => break,
+                            Err(e) => return Err(e),
+                        }
                         self.drain_event_sink().await?;
                     }
                 }
@@ -666,7 +817,7 @@ impl AgentProcess {
 fn truthy(cv: &ConfidentValue) -> bool {
     match &cv.value {
         Value::Bool(b) => *b,
-        Value::Text(s) => !s.is_empty(),
+        Value::Text(s) | Value::Html(s) => !s.is_empty(),
         Value::Number(n) => *n != 0.0,
         Value::Unit => false,
         Value::List(v) | Value::Array(v) => !v.is_empty(),

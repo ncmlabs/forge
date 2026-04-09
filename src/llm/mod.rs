@@ -6,7 +6,7 @@ pub mod providers;
 pub mod registry;
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -72,6 +72,7 @@ pub struct CompletionRequest {
     pub temperature: f32,
     pub stop_sequences: Vec<String>,
     pub json_mode: bool,
+    pub tools: Vec<ToolDefinition>,
 }
 
 impl CompletionRequest {
@@ -83,7 +84,13 @@ impl CompletionRequest {
             temperature: 0.7,
             stop_sequences: vec![],
             json_mode: false,
+            tools: vec![],
         }
+    }
+
+    pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
+        self.tools = tools;
+        self
     }
 
     pub fn with_system(mut self, system: impl Into<String>) -> Self {
@@ -105,6 +112,7 @@ impl CompletionRequest {
 #[derive(Debug, Clone)]
 pub struct CompletionResponse {
     pub content: String,
+    pub tool_calls: Vec<ToolCallRequest>,
     pub tokens_in: u32,
     pub tokens_out: u32,
     pub latency_ms: u64,
@@ -171,6 +179,24 @@ pub enum ProviderError {
     Network(String),
 }
 
+// ── Tool-use types (issue #40 — skill bridge) ───────────────────────────────
+
+/// Definition of a tool the LLM can call during skill execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// A tool call requested by the LLM.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolCallRequest {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
 // ── The trait every provider implements ────────────────────────────────────────
 
 #[async_trait]
@@ -198,3 +224,30 @@ pub trait LLMProvider: Send + Sync {
 }
 
 pub type BoxedProvider = Arc<dyn LLMProvider>;
+
+// ── Embedding types ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct EmbeddingRequest {
+    pub texts: Vec<String>,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EmbeddingResponse {
+    pub embeddings: Vec<Vec<f32>>,
+    pub model_used: String,
+    pub tokens_used: u32,
+    pub cost_usd: f32,
+}
+
+/// Separate trait for embedding providers — not all LLM providers support embeddings
+/// (e.g., Anthropic does not). This avoids forcing unsupported stubs on every provider.
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    fn name(&self) -> &str;
+    fn embedding_dimensions(&self) -> usize;
+    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, ProviderError>;
+}
+
+pub type BoxedEmbeddingProvider = Arc<dyn EmbeddingProvider>;

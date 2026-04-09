@@ -1,0 +1,11 @@
+{
+  "name": "sensei_pure_compute_zero",
+  "category": "runtime",
+  "description": "Pure function compute_mastery_score returns 0 when total is 0",
+  "input": "pure compute_mastery_score\n  needs passed: Number, total: Number\n  gives Number\n  do\n    if total == 0\n      give 0\n    give (passed / total) * 100\n\nfn main\n  result = compute_mastery_score(0, 0)\n  say result\n",
+  "mock_responses": [],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": []
+  }
+}

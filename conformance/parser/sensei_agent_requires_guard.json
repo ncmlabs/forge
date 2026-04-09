@@ -1,0 +1,9 @@
+{
+  "name": "sensei_agent_requires_guard",
+  "category": "parser",
+  "description": "Agent handler with requires guard and on fail: give clause parses successfully",
+  "input": "states MasteryLevel\n  novice -> apprentice when conformance_score >= 40\n  apprentice -> journeyman when conformance_score >= 70\n  journeyman -> expert when conformance_score >= 90\n  expert -> expert\n\ntype AssessmentResult\n  passed: Bool\n  prediction: Text\n  expected: Text\n  gap_topic: Text\n\nexportable agent forge_sensei\n  lifecycle: MasteryLevel\n  memory\n    interaction_count: Number\n\n  on assess_detailed(test_input: Text, expected: Text)\n    requires lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: give AssessmentResult(passed: false, prediction: \"\", expected: expected, gap_topic: \"Must reach apprentice level first\")\n    memory.interaction_count = memory.interaction_count + 1\n    say \"assessing\"\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

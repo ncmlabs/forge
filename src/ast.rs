@@ -39,7 +39,7 @@ pub enum TopLevel {
     Task(TaskDecl),
     Pure(PureDecl),
     Flow(FlowDecl),
-    Agent(AgentDecl),
+    Agent(Box<AgentDecl>),
     Pool(PoolDecl),
     Warden(WardenDecl),
     Contract(ContractDecl),
@@ -49,6 +49,7 @@ pub enum TopLevel {
     Endpoint(EndpointDecl),
     TypeDef(TypeDefDecl),
     FnMain(FnMainDecl),
+    Import(ImportDecl),
 }
 
 // ── Boundary directive ────────────────────────────────────────
@@ -188,14 +189,54 @@ pub enum NeedsRefField {
 
 #[derive(Debug, Clone)]
 pub struct AgentDecl {
+    pub exportable: bool,
     pub name: Spanned<String>,
     pub lifecycle: Option<Spanned<String>>,
     pub memory: Vec<Spanned<FieldDef>>,
+    pub memory_persistent: bool,
+    pub knowledge: Option<Spanned<KnowledgeDecl>>,
     pub timers: Vec<Spanned<TimerField>>,
     pub subscriptions: Vec<Spanned<SubscribeDecl>>,
     pub warden_override: Vec<Spanned<WardPolicy>>,
     pub handlers: Vec<Spanned<OnHandler>>,
     pub stuck_policy: Option<Spanned<StuckPolicy>>,
+}
+
+// ── knowledge ────────────────────────────────────────────────
+
+/// Persistent searchable knowledge store declaration inside an agent.
+#[derive(Debug, Clone)]
+pub struct KnowledgeDecl {
+    pub store_path: Spanned<Expr>,
+    pub max_entries: Option<Spanned<f64>>,
+    pub retention: Option<Spanned<Duration>>,
+    pub imports: Vec<Spanned<String>>,
+}
+
+/// Import declaration: `import knowledge from "pkg.forgepkg.json" as name`
+#[derive(Debug, Clone)]
+pub struct ImportDecl {
+    pub layers: Vec<Spanned<ImportLayer>>,
+    pub source: Spanned<Expr>,
+    pub alias: Spanned<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ImportLayer {
+    Knowledge,
+    Memory,
+    Config,
+}
+
+/// Source for a `learn` statement.
+#[derive(Debug, Clone)]
+pub enum LearnSource {
+    /// `learn "fact"`
+    Direct(Spanned<Expr>),
+    /// `learn from interaction(question, answer, confidence)`
+    FromInteraction(Vec<Spanned<CallArg>>),
+    /// `learn from document("path")`
+    FromDocument(Spanned<Expr>),
 }
 
 /// Timer declaration inside an agent.
@@ -275,6 +316,7 @@ pub enum DurationUnit {
     Seconds,
     Minutes,
     Hours,
+    Days,
 }
 
 // ── warden ───────────────────────────────────────────────────
@@ -307,6 +349,7 @@ pub enum FailureType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WardResponse {
     Nudge,
+    Downgrade,
     Restart,
     Replace,
     Escalate,
@@ -396,6 +439,10 @@ pub enum TypeName {
     Conversation,
     Profile,
     SearchResults,
+    Request,
+    Response,
+    Headers,
+    Html,
     Custom(String),
     /// Array type: `Text[9]` = Array(Text, Some(9)), `Player[]` = Array(Custom("Player"), None)
     Array(Box<TypeName>, Option<usize>),
@@ -423,6 +470,12 @@ pub enum Expr {
     Classify(ClassifyExpr),
     /// `search "query"`
     Search(Box<Spanned<Expr>>),
+    /// `recall "query"` — retrieve from agent knowledge store
+    Recall(Box<Spanned<Expr>>),
+    /// `exec "command"` — direct CLI execution, returns uncertain<Text>
+    Exec(Box<Spanned<Expr>>),
+    /// `find "alias"` / `find all template [where lifecycle == state]`
+    Find(Box<FindExpr>),
     /// `try expr or expr`
     TryOr(Box<Spanned<Expr>>, Box<Spanned<Expr>>),
     /// `A >> B >> C` — composition chain
@@ -453,6 +506,8 @@ pub enum Expr {
 pub enum TemplatePart {
     Text(String),
     Interp(Box<Spanned<Expr>>),
+    /// `{!expr}` — raw interpolation, skips HTML escaping in Html context.
+    RawInterp(Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, Clone)]
@@ -507,8 +562,8 @@ pub enum UnaryOp {
 pub enum Stmt {
     /// `name = expr`
     Bind(Spanned<String>, Spanned<Expr>),
-    /// `give expr` with optional `with` clause
-    Give(Spanned<Expr>, Option<Spanned<Expr>>),
+    /// `give expr` with optional `with key: value` metadata
+    Give(Spanned<Expr>, Vec<Spanned<GiveMeta>>),
     /// `say expr`
     Say(Spanned<Expr>),
     /// `when`/`else` block (confidence-only branching)
@@ -537,12 +592,19 @@ pub enum Stmt {
     ResetTimer(Spanned<String>),
     /// `forward expr to expr`
     Forward(Spanned<Expr>, Spanned<Expr>),
+    /// `learn "fact"` / `learn from interaction(...)` / `learn from document(...)`
+    /// Optional second field: `category: "name"` expression.
+    Learn(Spanned<LearnSource>, Option<Spanned<Expr>>),
     /// `match expr` with pattern arms
     Match(Box<MatchBlock>),
     /// `if`/`else if`/`else` block
     IfElse(Box<IfElseBlock>),
     /// `for binding in iterable`
     For(Box<ForLoop>),
+    /// `[binding =] spawn template [as "alias"]` with optional knowledge/memory transfer
+    Spawn(Box<SpawnStmt>),
+    /// `retire ["alias"]` with optional knowledge export
+    Retire(Box<RetireStmt>),
 }
 
 #[derive(Debug, Clone)]
@@ -600,6 +662,71 @@ pub struct ForLoop {
     pub binding: Spanned<String>,
     pub iterable: Spanned<Expr>,
     pub body: Vec<Spanned<Stmt>>,
+}
+
+// ── Spawn (runtime agent creation, issue #83) ───────────────
+
+/// `spawn agent_name as "alias"` with optional knowledge/memory transfer options.
+#[derive(Debug, Clone)]
+pub struct SpawnStmt {
+    /// Optional variable binding for the spawned instance UUID.
+    pub binding: Option<Spanned<String>>,
+    /// Name of the agent declaration to use as template.
+    pub template: Spanned<String>,
+    /// Optional alias for the spawned instance (template string).
+    pub alias: Option<Spanned<Expr>>,
+    /// Spawn options: knowledge filter, confidence cap, memory init.
+    pub options: Vec<Spanned<SpawnOption>>,
+}
+
+/// Options for the spawn statement.
+#[derive(Debug, Clone)]
+pub enum SpawnOption {
+    /// `with knowledge where category == "X"`
+    KnowledgeFilter(Spanned<String>),
+    /// `with confidence_cap: 0.8`
+    ConfidenceCap(Spanned<Expr>),
+    /// `with memory field: value`
+    MemoryInit(Spanned<String>, Spanned<Expr>),
+}
+
+// ── Find expression (runtime instance discovery, issue #84) ─
+
+/// `find "alias"` or `find all template [where lifecycle == state]`
+#[derive(Debug, Clone)]
+pub struct FindExpr {
+    pub kind: FindKind,
+}
+
+/// The kind of find query.
+#[derive(Debug, Clone)]
+pub enum FindKind {
+    /// `find "alias"` — single lookup by alias
+    ByAlias(Spanned<Expr>),
+    /// `find all template` — all instances of a template
+    AllByTemplate(Spanned<String>),
+    /// `find all template where lifecycle == state`
+    AllByTemplateFiltered(Spanned<String>, Spanned<String>),
+}
+
+// ── Retire (graceful agent termination, issue #86) ──────────
+
+/// `retire ["alias"]` with optional knowledge export.
+#[derive(Debug, Clone)]
+pub struct RetireStmt {
+    /// Optional target alias — `None` means retire self.
+    pub target: Option<Spanned<Expr>>,
+    /// Optional knowledge export file path.
+    pub knowledge_export: Option<Spanned<Expr>>,
+}
+
+// ── Give metadata ────────────────────────────────────────────
+
+/// Key-value metadata in `give expr with key: value, ...`
+#[derive(Debug, Clone)]
+pub struct GiveMeta {
+    pub key: Spanned<String>,
+    pub value: Spanned<Expr>,
 }
 
 // ── Confidence predicates ─────────────────────────────────────

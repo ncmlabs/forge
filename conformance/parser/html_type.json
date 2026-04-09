@@ -1,0 +1,9 @@
+{
+  "name": "html_type_parses",
+  "category": "parser",
+  "description": "Html builtin type parses correctly in endpoint and pure declarations",
+  "input": "#! boundary: server\n\npure nav\n  gives Html\n  do\n    give \"<nav>Home</nav>\"\n\nendpoint page() -> Html\n  give \"<h1>Hello</h1>\"\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

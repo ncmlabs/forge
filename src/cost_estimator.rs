@@ -136,8 +136,14 @@ impl CostWalker {
 
     fn walk_stmt(&mut self, stmt: &Spanned<Stmt>, context: &str, multiplier: u32) {
         match &stmt.node {
-            Stmt::Bind(_, expr) | Stmt::Give(expr, _) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
+            Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
                 self.walk_expr(expr, context, multiplier);
+            }
+            Stmt::Give(expr, metas) => {
+                self.walk_expr(expr, context, multiplier);
+                for meta in metas {
+                    self.walk_expr(&meta.node.value, context, multiplier);
+                }
             }
             Stmt::When(when) => {
                 for clause in &when.clauses {
@@ -199,6 +205,9 @@ impl CostWalker {
                 let tokens_out = 200 * multiplier;
                 self.add_op("search", context.to_string(), tokens_in, tokens_out);
             }
+            Expr::Exec(_) => {
+                // exec has zero token cost (direct CLI, no LLM)
+            }
             Expr::TryOr(a, b) => {
                 self.walk_expr(a, context, multiplier);
                 self.walk_expr(b, context, multiplier);
@@ -253,8 +262,11 @@ impl CostWalker {
             }
             Expr::Template(parts) => {
                 for part in parts {
-                    if let TemplatePart::Interp(inner) = &part.node {
-                        self.walk_expr(inner, context, multiplier);
+                    match &part.node {
+                        TemplatePart::Interp(inner) | TemplatePart::RawInterp(inner) => {
+                            self.walk_expr(inner, context, multiplier);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -270,7 +282,7 @@ fn estimate_prompt_tokens(expr: &Spanned<Expr>) -> u32 {
                 .iter()
                 .map(|p| match &p.node {
                     TemplatePart::Text(s) => s.len(),
-                    TemplatePart::Interp(_) => 50, // assume ~50 chars for interpolated values
+                    TemplatePart::Interp(_) | TemplatePart::RawInterp(_) => 50, // assume ~50 chars for interpolated values
                 })
                 .sum();
             // ~4 chars per token

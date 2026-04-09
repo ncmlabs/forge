@@ -21,9 +21,12 @@ fn sp<T>(node: T) -> Spanned<T> {
 /// No subscriptions → agent exits immediately from run() (channels close).
 fn simple_agent(name: &str) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],
+        memory_persistent: false,
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         warden_override: vec![],
@@ -44,9 +47,12 @@ fn simple_agent(name: &str) -> AgentDecl {
 /// The handler body references an undefined variable → RuntimeError::UndefinedVariable.
 fn crashing_agent(name: &str) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: sp(name.to_string()),
         lifecycle: None,
         memory: vec![],
+        memory_persistent: false,
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![sp(SubscribeDecl {
             event_name: sp("trigger".to_string()),
@@ -118,8 +124,8 @@ async fn publish_trigger(bus: &forge::runtime::event_bus::SharedEventBus) {
 #[tokio::test]
 async fn constructs_blueprints_for_managed_agents() {
     let program = make_program(vec![
-        TopLevel::Agent(simple_agent("agent_a")),
-        TopLevel::Agent(simple_agent("agent_b")),
+        TopLevel::Agent(Box::new(simple_agent("agent_a"))),
+        TopLevel::Agent(Box::new(simple_agent("agent_b"))),
     ]);
 
     let runtime = WardedRuntime::new(
@@ -142,7 +148,7 @@ async fn constructs_blueprints_for_managed_agents() {
 
 #[tokio::test]
 async fn spawns_agents_as_tokio_tasks() {
-    let program = make_program(vec![TopLevel::Agent(simple_agent("worker"))]);
+    let program = make_program(vec![TopLevel::Agent(Box::new(simple_agent("worker")))]);
     let mut runtime = WardedRuntime::new(
         test_warden("boss", vec!["worker"], vec![crash_restart_policy()], None),
         &program,
@@ -157,7 +163,7 @@ async fn spawns_agents_as_tokio_tasks() {
 #[tokio::test]
 async fn agents_exit_cleanly_when_no_events() {
     // Agents with no subscriptions exit immediately (no events to receive)
-    let program = make_program(vec![TopLevel::Agent(simple_agent("worker"))]);
+    let program = make_program(vec![TopLevel::Agent(Box::new(simple_agent("worker")))]);
     let mut runtime = WardedRuntime::new(
         test_warden("boss", vec!["worker"], vec![crash_restart_policy()], None),
         &program,
@@ -198,7 +204,7 @@ async fn detects_agent_crash_and_restarts() {
     // Agent subscribes to "trigger", crashes when it receives it.
     // Warden policy: on crash → restart, self.
     // After restart, agent is alive again (subscribed to trigger again).
-    let program = make_program(vec![TopLevel::Agent(crashing_agent("crasher"))]);
+    let program = make_program(vec![TopLevel::Agent(Box::new(crashing_agent("crasher")))]);
 
     let warden_decl = test_warden(
         "boss",
@@ -233,18 +239,16 @@ async fn detects_agent_crash_and_restarts() {
     // Trigger crash #2 — warden should escalate (count=2, hits threshold)
     publish_trigger(&bus).await;
 
-    // Wait for warden to finish (escalation returns error)
+    // Wait for warden to finish — graceful degradation means Ok, not Err
     let result = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
 
     assert!(result.is_ok(), "warden timed out");
     let inner = result.unwrap().unwrap();
-    // Escalation returns an error
-    assert!(inner.is_err(), "expected escalation error");
-    let err_msg = format!("{:?}", inner.unwrap_err());
+    // Escalation is now graceful — agent is removed but runtime continues
     assert!(
-        err_msg.contains("escalated"),
-        "expected escalation, got: {}",
-        err_msg
+        inner.is_ok(),
+        "expected graceful degradation (Ok), got: {:?}",
+        inner
     );
 }
 
@@ -256,8 +260,8 @@ async fn scope_self_only_restarts_crashed_agent() {
     // Policy: on crash → restart, self.
     // Only crasher should be affected; stable exits normally.
     let program = make_program(vec![
-        TopLevel::Agent(crashing_agent("crasher")),
-        TopLevel::Agent(simple_agent("stable")),
+        TopLevel::Agent(Box::new(crashing_agent("crasher"))),
+        TopLevel::Agent(Box::new(simple_agent("stable"))),
     ]);
 
     let warden_decl = test_warden(
@@ -290,9 +294,13 @@ async fn scope_self_only_restarts_crashed_agent() {
     let result = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
 
     assert!(result.is_ok(), "warden timed out");
-    // Eventually escalates
+    // Graceful degradation: escalation removes the agent but runtime continues
     let inner = result.unwrap().unwrap();
-    assert!(inner.is_err());
+    assert!(
+        inner.is_ok(),
+        "expected graceful degradation (Ok), got: {:?}",
+        inner
+    );
 }
 
 // ── Scope: all (one_for_all equivalent) ─────────────────────────────────────
@@ -301,8 +309,8 @@ async fn scope_self_only_restarts_crashed_agent() {
 async fn scope_all_restarts_entire_group() {
     // Policy: on crash → restart, all. When crasher crashes, ALL agents restart.
     let program = make_program(vec![
-        TopLevel::Agent(crashing_agent("crasher")),
-        TopLevel::Agent(simple_agent("bystander")),
+        TopLevel::Agent(Box::new(crashing_agent("crasher"))),
+        TopLevel::Agent(Box::new(simple_agent("bystander"))),
     ]);
 
     let warden_decl = test_warden(
@@ -333,10 +341,13 @@ async fn scope_all_restarts_entire_group() {
     let result = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
 
     assert!(result.is_ok(), "warden timed out");
-    // Escalates after 1 crash
+    // Graceful degradation: escalation removes agents but runtime continues
     let inner = result.unwrap().unwrap();
-    assert!(inner.is_err());
-    assert!(format!("{:?}", inner.unwrap_err()).contains("escalated"));
+    assert!(
+        inner.is_ok(),
+        "expected graceful degradation (Ok), got: {:?}",
+        inner
+    );
 }
 
 // ── Escalation Ladder ───────────────────────────────────────────────────────
@@ -515,7 +526,7 @@ async fn agent_override_takes_precedence() {
         after_clauses: vec![],
     })];
 
-    let program = make_program(vec![TopLevel::Agent(agent.clone())]);
+    let program = make_program(vec![TopLevel::Agent(Box::new(agent.clone()))]);
 
     let mut runtime = WardedRuntime::new(
         test_warden("boss", vec!["special"], vec![crash_restart_policy()], None),

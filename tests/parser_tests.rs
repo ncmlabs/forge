@@ -236,6 +236,32 @@ fn parse_search_expression() {
 }
 
 #[test]
+fn parse_exec_expression() {
+    let prog = parse_task_with("x = exec \"git status\"");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Exec(inner) => match &inner.node {
+            Expr::Template(parts) => match &parts[0].node {
+                TemplatePart::Text(t) => assert_eq!(t, "git status"),
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected template"),
+        },
+        other => panic!("expected Exec, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_exec_with_variable() {
+    let prog = parse_task_with("x = exec cmd");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Exec(inner) => {
+            assert!(matches!(&inner.node, Expr::Ident(name) if name == "cmd"));
+        }
+        other => panic!("expected Exec, got {:?}", other),
+    }
+}
+
+#[test]
 fn parse_try_or_expression() {
     let prog = parse_task_with("x = try search \"query\" or \"default\"");
     match bind_expr(first_stmt(&prog)) {
@@ -453,10 +479,40 @@ fn parse_array_literal() {
 fn parse_give_statement() {
     let prog = parse_task_with("give result");
     match first_stmt(&prog) {
-        Stmt::Give(expr, None) => {
+        Stmt::Give(expr, metas) if metas.is_empty() => {
             assert!(matches!(&expr.node, Expr::Ident(n) if n == "result"));
         }
         other => panic!("expected Give, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_give_with_status() {
+    let prog = parse_task_with("give \"not found\" with status: 404");
+    match first_stmt(&prog) {
+        Stmt::Give(expr, metas) => {
+            assert!(matches!(&expr.node, Expr::Template(_)));
+            assert_eq!(metas.len(), 1);
+            assert_eq!(metas[0].node.key.node, "status");
+            assert!(
+                matches!(&metas[0].node.value.node, Expr::NumberLit(n) if (*n - 404.0).abs() < f64::EPSILON)
+            );
+        }
+        other => panic!("expected Give with meta, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_give_with_multiple_metas() {
+    let prog = parse_task_with("give \"ok\" with status: 201, content_type: \"application/json\"");
+    match first_stmt(&prog) {
+        Stmt::Give(expr, metas) => {
+            assert!(matches!(&expr.node, Expr::Template(_)));
+            assert_eq!(metas.len(), 2);
+            assert_eq!(metas[0].node.key.node, "status");
+            assert_eq!(metas[1].node.key.node, "content_type");
+        }
+        other => panic!("expected Give with 2 metas, got {:?}", other),
     }
 }
 
@@ -760,6 +816,33 @@ fn parse_agent_declaration() {
 }
 
 #[test]
+fn parse_agent_persistent_memory() {
+    let src = "agent keeper\n  memory persistent\n    count: Number\n    label: Text\n\n  on tick()\n    memory.count = memory.count + 1\n";
+    let prog = parse(src).unwrap();
+    match &prog.items[0].node {
+        TopLevel::Agent(a) => {
+            assert_eq!(a.name.node, "keeper");
+            assert!(a.memory_persistent, "memory_persistent should be true");
+            assert_eq!(a.memory.len(), 2);
+        }
+        other => panic!("expected Agent, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_agent_non_persistent_memory() {
+    let src = "agent volatile\n  memory\n    count: Number\n\n  on tick()\n    say \"tick\"\n";
+    let prog = parse(src).unwrap();
+    match &prog.items[0].node {
+        TopLevel::Agent(a) => {
+            assert_eq!(a.name.node, "volatile");
+            assert!(!a.memory_persistent, "memory_persistent should be false");
+        }
+        other => panic!("expected Agent, got {:?}", other),
+    }
+}
+
+#[test]
 fn parse_pool_declaration() {
     let src = "pool workers\n  workers: helper * 5\n  strategy: majority\n  timeout: 30s\n  fallback: default_handler\n";
     let prog = parse(src).unwrap();
@@ -927,6 +1010,235 @@ fn spans_are_preserved() {
         TopLevel::Task(t) => {
             assert_eq!(&src[t.name.span.start..t.name.span.end], "greet");
         }
+        _ => panic!("expected task"),
+    }
+}
+
+// ── Spawn statement tests (#83) ──────────────────────────────
+
+/// Wrap multi-line statements at i2 level, with explicit newlines.
+fn parse_task_multiline(lines: &[&str]) -> Program {
+    let body = lines.join("\n    ");
+    let src = format!("task test_task\n  do\n    {}\n", body);
+    parse(&src).unwrap_or_else(|e| panic!("parse failed:\n{}\nsource:\n{}", e, src))
+}
+
+#[test]
+fn parse_spawn_basic() {
+    let prog = parse_task_with("spawn worker");
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert!(s.binding.is_none());
+            assert_eq!(s.template.node, "worker");
+            assert!(s.alias.is_none());
+            assert!(s.options.is_empty());
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_with_binding() {
+    let prog = parse_task_with(r#"child = spawn worker"#);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.binding.as_ref().unwrap().node, "child");
+            assert_eq!(s.template.node, "worker");
+            assert!(s.alias.is_none());
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_with_alias() {
+    let prog = parse_task_with(r#"child = spawn worker as "room_42""#);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.binding.as_ref().unwrap().node, "child");
+            assert_eq!(s.template.node, "worker");
+            assert!(s.alias.is_some());
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_with_all_options() {
+    let prog = parse_task_multiline(&[
+        r#"child = spawn opponent as "room_1""#,
+        r#"  with knowledge where category == "moves""#,
+        r#"  with confidence_cap: 0.8"#,
+        r#"  with memory difficulty: "hard""#,
+    ]);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.binding.as_ref().unwrap().node, "child");
+            assert_eq!(s.template.node, "opponent");
+            assert!(s.alias.is_some());
+            assert_eq!(s.options.len(), 3);
+            // Check option types
+            assert!(
+                matches!(&s.options[0].node, SpawnOption::KnowledgeFilter(cat) if cat.node == "moves")
+            );
+            assert!(matches!(&s.options[1].node, SpawnOption::ConfidenceCap(_)));
+            assert!(
+                matches!(&s.options[2].node, SpawnOption::MemoryInit(field, _) if field.node == "difficulty")
+            );
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_knowledge_filter_only() {
+    let prog = parse_task_multiline(&[
+        r#"id = spawn specialist"#,
+        r#"  with knowledge where category == "syntax""#,
+    ]);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.template.node, "specialist");
+            assert_eq!(s.options.len(), 1);
+            match &s.options[0].node {
+                SpawnOption::KnowledgeFilter(cat) => assert_eq!(cat.node, "syntax"),
+                other => panic!("expected KnowledgeFilter, got {:?}", other),
+            }
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+// ── Find expression tests (#84) ─────────────────────────────
+
+#[test]
+fn parse_find_by_alias() {
+    let prog = parse_task_with(r#"bot = find "room_42_bot""#);
+    let expr = bind_expr(first_stmt(&prog));
+    match expr {
+        Expr::Find(f) => match &f.kind {
+            FindKind::ByAlias(alias) => match &alias.node {
+                Expr::Template(parts) => {
+                    assert_eq!(parts.len(), 1);
+                    match &parts[0].node {
+                        TemplatePart::Text(s) => assert_eq!(s, "room_42_bot"),
+                        other => panic!("expected Text, got {:?}", other),
+                    }
+                }
+                other => panic!("expected Template, got {:?}", other),
+            },
+            other => panic!("expected ByAlias, got {:?}", other),
+        },
+        other => panic!("expected Find, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_find_by_alias_ident() {
+    let prog = parse_task_with("bot = find name");
+    let expr = bind_expr(first_stmt(&prog));
+    match expr {
+        Expr::Find(f) => match &f.kind {
+            FindKind::ByAlias(alias) => match &alias.node {
+                Expr::Ident(s) => assert_eq!(s, "name"),
+                other => panic!("expected Ident, got {:?}", other),
+            },
+            other => panic!("expected ByAlias, got {:?}", other),
+        },
+        other => panic!("expected Find, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_find_all_by_template() {
+    let prog = parse_task_with("experts = find all forge_sensei");
+    let expr = bind_expr(first_stmt(&prog));
+    match expr {
+        Expr::Find(f) => match &f.kind {
+            FindKind::AllByTemplate(t) => assert_eq!(t.node, "forge_sensei"),
+            other => panic!("expected AllByTemplate, got {:?}", other),
+        },
+        other => panic!("expected Find, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_find_all_with_lifecycle_filter() {
+    let prog = parse_task_with("experts = find all forge_sensei where lifecycle == expert");
+    let expr = bind_expr(first_stmt(&prog));
+    match expr {
+        Expr::Find(f) => match &f.kind {
+            FindKind::AllByTemplateFiltered(t, s) => {
+                assert_eq!(t.node, "forge_sensei");
+                assert_eq!(s.node, "expert");
+            }
+            other => panic!("expected AllByTemplateFiltered, got {:?}", other),
+        },
+        other => panic!("expected Find, got {:?}", other),
+    }
+}
+
+// ── Retire statement (#86) ──────────────────────────────────
+
+#[test]
+fn parse_retire_self() {
+    let prog = parse_task_with("retire");
+    match first_stmt(&prog) {
+        Stmt::Retire(r) => {
+            assert!(r.target.is_none());
+            assert!(r.knowledge_export.is_none());
+        }
+        other => panic!("expected Retire, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_retire_with_target() {
+    let prog = parse_task_with(r#"retire "old_bot""#);
+    match first_stmt(&prog) {
+        Stmt::Retire(r) => {
+            assert!(r.target.is_some());
+            assert!(r.knowledge_export.is_none());
+        }
+        other => panic!("expected Retire, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_retire_with_knowledge_export() {
+    let src = "task cleanup\n  do\n    retire\n      with knowledge export: \"backup.json\"\n";
+    let prog = parse(src).unwrap();
+    match &prog.items[0].node {
+        TopLevel::Task(t) => match &t.body.node {
+            TaskBody::Do(stmts) => match &stmts[0].node {
+                Stmt::Retire(r) => {
+                    assert!(r.target.is_none());
+                    assert!(r.knowledge_export.is_some());
+                }
+                other => panic!("expected Retire, got {:?}", other),
+            },
+            _ => panic!("expected do block"),
+        },
+        _ => panic!("expected task"),
+    }
+}
+
+#[test]
+fn parse_retire_alias_with_export() {
+    let src =
+        "task cleanup\n  do\n    retire \"old_bot\"\n      with knowledge export: \"backup.json\"\n";
+    let prog = parse(src).unwrap();
+    match &prog.items[0].node {
+        TopLevel::Task(t) => match &t.body.node {
+            TaskBody::Do(stmts) => match &stmts[0].node {
+                Stmt::Retire(r) => {
+                    assert!(r.target.is_some());
+                    assert!(r.knowledge_export.is_some());
+                }
+                other => panic!("expected Retire, got {:?}", other),
+            },
+            _ => panic!("expected do block"),
+        },
         _ => panic!("expected task"),
     }
 }

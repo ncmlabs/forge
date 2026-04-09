@@ -769,3 +769,188 @@ do
 ";
     ForgeParser::parse(Rule::do_block, src).unwrap();
 }
+
+// ============================================================
+// learn_stmt with optional category clause (#85)
+// ============================================================
+
+#[test]
+fn learn_direct_without_category() {
+    ForgeParser::parse(Rule::learn_stmt, r#"learn "some fact""#).unwrap();
+}
+
+#[test]
+fn learn_direct_with_category() {
+    ForgeParser::parse(
+        Rule::learn_stmt,
+        r#"learn "endpoints need server boundary" category: "boundary""#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn learn_from_interaction_with_category() {
+    ForgeParser::parse(
+        Rule::learn_stmt,
+        r#"learn from interaction(q, a, 0.9) category: "troubleshooting""#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn learn_from_document_with_category() {
+    ForgeParser::parse(
+        Rule::learn_stmt,
+        r#"learn from document("api.md") category: "docs""#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn learn_category_is_optional() {
+    // All three variants without category should still parse
+    ForgeParser::parse(Rule::learn_stmt, r#"learn "fact""#).unwrap();
+    ForgeParser::parse(Rule::learn_stmt, r#"learn from interaction(q, a, 0.5)"#).unwrap();
+    ForgeParser::parse(Rule::learn_stmt, r#"learn from document("f.md")"#).unwrap();
+}
+
+// ============================================================
+// spawn_stmt (#83)
+// ============================================================
+
+#[test]
+fn spawn_basic() {
+    ForgeParser::parse(Rule::spawn_stmt, "spawn worker").unwrap();
+}
+
+#[test]
+fn spawn_with_binding() {
+    ForgeParser::parse(Rule::spawn_stmt, r#"child = spawn worker"#).unwrap();
+}
+
+#[test]
+fn spawn_with_alias() {
+    ForgeParser::parse(Rule::spawn_stmt, r#"child = spawn worker as "room_1""#).unwrap();
+}
+
+#[test]
+fn spawn_keyword_rejected_as_ident() {
+    assert!(ForgeParser::parse(Rule::ident, "spawn").is_err());
+}
+
+#[test]
+fn spawn_with_options_in_task() {
+    // spawn with options requires newline + deeper indent (i3 = 6 spaces inside do at i2)
+    let src = "task run_it\n  do\n    child = spawn opponent as \"room_1\"\n      with knowledge where category == \"moves\"\n      with confidence_cap: 0.8\n      with memory difficulty: \"hard\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn spawn_no_options_in_do_block() {
+    // Test within a full task to ensure proper newline handling
+    let src = "task run_it\n  do\n    spawn worker\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn spawn_with_knowledge_only() {
+    let src = "task run_it\n  do\n    id = spawn specialist\n      with knowledge where category == \"syntax\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn spawn_with_confidence_cap_only() {
+    let src = "task run_it\n  do\n    spawn helper\n      with confidence_cap: 0.5\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn spawn_with_memory_init_only() {
+    let src = "task run_it\n  do\n    spawn helper\n      with memory level: 3\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+// find_expr (#84)
+
+#[test]
+fn find_by_alias() {
+    ForgeParser::parse(Rule::find_expr, r#"find "room_42_bot""#).unwrap();
+}
+
+#[test]
+fn find_by_alias_ident() {
+    ForgeParser::parse(Rule::find_expr, "find name").unwrap();
+}
+
+#[test]
+fn find_all_by_template() {
+    ForgeParser::parse(Rule::find_expr, "find all forge_sensei").unwrap();
+}
+
+#[test]
+fn find_all_with_lifecycle_filter() {
+    ForgeParser::parse(
+        Rule::find_expr,
+        "find all forge_sensei where lifecycle == expert",
+    )
+    .unwrap();
+}
+
+#[test]
+fn find_keyword_rejected_as_ident() {
+    assert!(ForgeParser::parse(Rule::ident, "find").is_err());
+}
+
+#[test]
+fn find_in_task_binding() {
+    let src = "task lookup\n  do\n    bot = find \"room_42_bot\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn find_all_in_task_binding() {
+    let src = "task lookup\n  do\n    experts = find all sensei where lifecycle == expert\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+// retire_stmt (#86)
+
+#[test]
+fn retire_self() {
+    ForgeParser::parse(Rule::retire_stmt, "retire").unwrap();
+}
+
+#[test]
+fn retire_with_alias() {
+    ForgeParser::parse(Rule::retire_stmt, r#"retire "old_bot""#).unwrap();
+}
+
+#[test]
+fn retire_keyword_rejected_as_ident() {
+    assert!(ForgeParser::parse(Rule::ident, "retire").is_err());
+}
+
+#[test]
+fn retire_in_task() {
+    let src = "task cleanup\n  do\n    retire\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn retire_alias_in_task() {
+    let src = "task cleanup\n  do\n    retire \"old_bot\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn retire_with_knowledge_export() {
+    let src = "task cleanup\n  do\n    retire\n      with knowledge export: \"backup.json\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn retire_alias_with_knowledge_export() {
+    let src =
+        "task cleanup\n  do\n    retire \"old_bot\"\n      with knowledge export: \"backup.json\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}

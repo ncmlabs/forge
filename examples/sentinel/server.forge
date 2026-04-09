@@ -1,0 +1,525 @@
+#! boundary: server
+
+# ================================================================
+# FORGE Sentinel — AI-Powered Repo Health Dashboard
+# ================================================================
+# The killer app: FORGE monitors FORGE. Demonstrates all 17
+# language primitives including exec, skill bridge, and >>
+# composition.
+#
+# Start: forge serve examples/sentinel/server.forge \
+#          -s examples/sentinel/shared.forge --watch
+# ================================================================
+
+use
+  llm.reason
+  llm.classify
+  data.store
+  data.get
+  data.list
+
+# ── Pure HTML Helpers ────────────────────────────────────────────
+#
+# All rendering is deterministic — no LLM calls allowed.
+# Demonstrates: pure, boundary: server
+
+pure sentinel_head
+  needs title: Text
+  gives Html
+  do
+    give "<head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>{title}</title><link rel=\"icon\" href=\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>S</text></svg>\"><link href=\"https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css\" rel=\"stylesheet\" type=\"text/css\" /><script src=\"https://cdn.tailwindcss.com\"></script><link rel=\"stylesheet\" href=\"/static/css/style.css\"></head>"
+
+pure nav_bar
+  needs active: Text
+  gives Html
+  do
+    dash_cls = "btn btn-sm btn-ghost"
+    insights_cls = "btn btn-sm btn-ghost"
+    api_cls = "btn btn-sm btn-ghost"
+    obs_cls = "btn btn-sm btn-ghost"
+    topo_cls = "btn btn-sm btn-ghost"
+    costs_cls = "btn btn-sm btn-ghost"
+    if active == "dashboard"
+      dash_cls = "btn btn-sm btn-primary"
+    if active == "insights"
+      insights_cls = "btn btn-sm btn-primary"
+    if active == "api"
+      api_cls = "btn btn-sm btn-primary"
+    if active == "observer"
+      obs_cls = "btn btn-sm btn-primary"
+    if active == "topology"
+      topo_cls = "btn btn-sm btn-primary"
+    if active == "costs"
+      costs_cls = "btn btn-sm btn-primary"
+    give "<nav class=\"navbar bg-base-200 shadow-sm sticky top-0 z-50\"><div class=\"container mx-auto\"><a href=\"/dashboard\" class=\"btn btn-ghost text-xl font-bold\">SENTINEL</a><div class=\"flex gap-2\"><a href=\"/dashboard\" class=\"{!dash_cls}\">Dashboard</a><a href=\"/insights\" class=\"{!insights_cls}\">Insights</a><a href=\"/observer\" class=\"{!obs_cls}\">Observer</a><a href=\"/topology\" class=\"{!topo_cls}\">Topology</a><a href=\"/costs\" class=\"{!costs_cls}\">Costs</a><a href=\"/api_health\" class=\"{!api_cls}\">API</a></div><div class=\"flex-none\"><button onclick=\"toggleTheme()\" class=\"btn btn-sm btn-circle btn-ghost theme-toggle\"></button></div></div></nav>"
+
+pure page_layout
+  needs title: Text, nav: Html, body: Html
+  gives Html
+  do
+    head = sentinel_head(title)
+    give "<!DOCTYPE html><html data-theme=\"light\">{!head}<body class=\"min-h-screen bg-base-100\">{!nav}<main>{!body}</main><footer class=\"footer footer-center p-4 bg-base-200 text-base-content mt-12\"><p>Built with FORGE — the language for trustworthy AI agent systems</p></footer><script src=\"/static/js/app.js\"></script></body></html>"
+
+pure health_badge
+  needs score: Text, confidence: Text
+  gives Html
+  do
+    badge_cls = "badge badge-lg font-bold"
+    if score == "healthy"
+      badge_cls = "badge badge-lg font-bold health-healthy"
+    if score == "degraded"
+      badge_cls = "badge badge-lg font-bold health-degraded"
+    if score == "critical"
+      badge_cls = "badge badge-lg font-bold health-critical"
+    give "<span id=\"health-badge\" class=\"{badge_cls}\">{score}</span><span class=\"text-sm opacity-60 ml-2\">({confidence})</span>"
+
+pure metric_card
+  needs title: Text, value: Text, detail: Text
+  gives Html
+  do
+    give "<div class=\"card bg-base-100 shadow-md metric-card\"><div class=\"card-body p-4\"><h3 class=\"text-sm font-semibold opacity-60 uppercase tracking-wider\">{title}</h3><p class=\"text-2xl font-bold mt-1\">{value}</p><p class=\"text-sm opacity-70 mt-1\">{detail}</p></div></div>"
+
+pure commit_row
+  needs hash: Text, message: Text, author: Text, age: Text
+  gives Html
+  do
+    give "<tr class=\"commit-row\"><td class=\"commit-hash px-3 py-2\">{hash}</td><td class=\"px-3 py-2\">{message}</td><td class=\"px-3 py-2 opacity-70\">{author}</td><td class=\"px-3 py-2 opacity-50 text-sm\">{age}</td></tr>"
+
+pure insight_card
+  needs title: Text, body: Text, confidence: Text
+  gives Html
+  do
+    badge_cls = "badge badge-sm"
+    if confidence == "high"
+      badge_cls = "badge badge-sm badge-success"
+    if confidence == "medium"
+      badge_cls = "badge badge-sm badge-warning"
+    if confidence == "low"
+      badge_cls = "badge badge-sm badge-error"
+    give "<div class=\"card bg-base-100 shadow-sm insight-card mb-4\"><div class=\"card-body p-4\"><div class=\"flex justify-between items-center mb-2\"><h3 class=\"font-bold\">{title}</h3><span class=\"{badge_cls}\">{confidence}</span></div><p class=\"text-sm opacity-80\">{body}</p></div></div>"
+
+# ── Exec Data Gathering Tasks ────────────────────────────────────
+#
+# Every data point is gathered via exec — CLI shell execution.
+# Returns uncertain<Text> with confidence from exit code.
+# Demonstrates: exec, when/sure/unsure
+
+task get_recent_commits
+  gives Text
+  do
+    result = exec "git log --oneline -10"
+    when result.sure -> give result
+    when result.unsure -> give "Partial data:\n{result}"
+    else -> give "Could not retrieve commits"
+
+task get_commit_velocity
+  gives Text
+  do
+    result = exec "git log --since=7.days --oneline | wc -l | tr -d ' '"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "0"
+
+task get_code_churn
+  gives Text
+  do
+    result = exec "git diff --stat HEAD~10"
+    when result.sure -> give result
+    when result.unsure -> give "Partial diff:\n{result}"
+    else -> give "No diff data available"
+
+task get_branch_hygiene
+  gives Text
+  do
+    result = exec "git branch --no-merged development | wc -l | tr -d ' '"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "0"
+
+task get_codebase_size
+  gives Text
+  do
+    result = exec "find src -name *.rs | xargs wc -l | tail -1 | tr -dc 0-9"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "0"
+
+task get_build_status
+  gives Text
+  do
+    result = exec "cargo check"
+    when result.sure -> give "passing"
+    when result.unsure -> give "warnings"
+    else -> give "failing"
+
+# ── Composition Analysis Tasks ───────────────────────────────────
+#
+# exec >> reason — pipe CLI output directly into LLM reasoning.
+# The _pipe variable carries the previous stage's output.
+# Demonstrates: >>, reason, classify
+
+task analyze_velocity
+  gives Text
+  do
+    analysis = exec "git log --since=7.days --oneline" >> reason "Analyze this commit velocity data. How active is development? Rate as high/medium/low and explain briefly:\n{_pipe}"
+    when analysis.sure -> give analysis
+    when analysis.unsure -> give "Uncertain analysis: {analysis}"
+    else -> give "Could not analyze velocity"
+
+task analyze_churn
+  gives Text
+  do
+    analysis = exec "git diff --stat HEAD~10" >> reason "Analyze this code churn from git diff stat. Identify the hottest files and potential risk areas. Be concise:\n{_pipe}"
+    when analysis.sure -> give analysis
+    when analysis.unsure -> give "Uncertain analysis: {analysis}"
+    else -> give "Could not analyze churn"
+
+task analyze_branches
+  gives Text
+  do
+    analysis = exec "git branch -a" >> reason "Analyze branch hygiene. How many branches exist? Any stale ones? Rate as clean/moderate/messy:\n{_pipe}"
+    when analysis.sure -> give analysis
+    when analysis.unsure -> give "Uncertain analysis: {analysis}"
+    else -> give "Could not analyze branches"
+
+task classify_health
+  needs signals: Text
+  gives Text
+  do
+    health = classify signals into ["healthy", "degraded", "critical"]
+    when health.sure -> give health
+    when health.unsure -> give "degraded"
+    else -> give "degraded"
+
+# ── Skill-Based Deep Analysis ────────────────────────────────────
+#
+# Agentic multi-step analysis via the skill bridge.
+# The LLM reads SKILL.md instructions, calls bash_exec tools
+# in a loop, then synthesizes a structured report.
+# Demonstrates: skill
+
+task deep_analysis
+  gives Text
+  do
+    report = skill.git_analysis.weekly_report()
+    when report.sure -> give report
+    when report.unsure -> give "Partial analysis:\n{report}"
+    else -> give "Deep analysis unavailable — skill execution failed"
+
+# ── Health Scoring Pool ──────────────────────────────────────────
+#
+# Three independent assessors vote on repo health.
+# Majority consensus determines the final score.
+# Demonstrates: pool, majority strategy, fallback
+
+task health_assessor
+  needs signals: Text
+  gives Text
+  do
+    assessment = reason "You are a repository health assessor. Evaluate these signals and respond with EXACTLY one word: healthy, degraded, or critical. Do not add any explanation.\n\nSignals:\n{signals}"
+    label = classify assessment into ["healthy", "degraded", "critical"]
+    when label.sure -> give label
+    when label.unsure -> give "degraded"
+    else -> give "healthy"
+
+task health_fallback
+  needs signals: Text
+  gives Text
+  do
+    give "healthy"
+
+pool health_panel
+  workers: health_assessor * 3
+  strategy: majority
+  timeout: 30s
+  fallback: health_fallback
+
+# ── Agents ───────────────────────────────────────────────────────
+#
+# git_inspector: persistent scanner with memory across scans.
+# analyst: event-driven, subscribes to ScanComplete.
+# Demonstrates: agent, memory persistent, subscribe, emit, lifecycle
+
+agent git_inspector
+  lifecycle: RepoHealth
+  memory persistent
+    scan_count: Number
+    last_health: Text
+    last_scan_time: Text
+    commit_velocity: Text
+
+  on start
+    say "Sentinel git_inspector ready."
+    memory.scan_count = 0
+    memory.last_health = "healthy"
+    memory.last_scan_time = "never"
+
+  on scan
+    commits = get_recent_commits()
+    velocity = get_commit_velocity()
+    churn = get_code_churn()
+    branches = get_branch_hygiene()
+    size = get_codebase_size()
+    build = get_build_status()
+    signals = "Commits (last 20):\n{commits}\n\nVelocity (7d): {velocity} commits\n\nChurn:\n{churn}\n\nUnmerged branches: {branches}\n\nCodebase size: {size}\n\nBuild status:\n{build}"
+    health = health_panel("assess", signals)
+    memory.scan_count = memory.scan_count + 1
+    memory.last_health = health
+    memory.commit_velocity = velocity
+    data.store("scan:latest", signals)
+    data.store("health:label", health)
+    emit ScanComplete(score: health, summary: signals)
+    give health
+
+  on stats
+    give "Scans: {memory.scan_count}, Last health: {memory.last_health}, Velocity: {memory.commit_velocity}"
+
+agent analyst
+  memory persistent
+    insight_count: Number
+    last_insight: Text
+  subscribe ScanComplete
+
+  on start
+    say "Sentinel analyst ready."
+    memory.insight_count = 0
+    memory.last_insight = "No insights yet."
+
+  on ScanComplete(score: Text, summary: Text)
+    insight = reason "You are a repository analyst. Based on this scan data, provide one key insight or recommendation in 2-3 sentences.\n\nHealth score: {score}\n\nRaw signals:\n{summary}"
+    memory.insight_count = memory.insight_count + 1
+    memory.last_insight = insight
+    data.store("insight:latest", insight)
+    say "Analyst generated new insight"
+
+  on latest_insight
+    give memory.last_insight
+
+# ── Repo Scan Flow ───────────────────────────────────────────────
+#
+# Parallel pipeline: gather -> analyze -> score -> publish.
+# DAG determines wave execution order.
+# Demonstrates: flow, stage dependencies, parallel waves
+
+flow repo_scan
+  gives Text
+
+  stage gather_git
+    commits = get_recent_commits()
+    velocity = get_commit_velocity()
+    branches = get_branch_hygiene()
+    give "Commits:\n{commits}\n\nVelocity: {velocity}\n\nBranches: {branches}"
+
+  stage gather_metrics
+    churn = get_code_churn()
+    size = get_codebase_size()
+    build = get_build_status()
+    give "Churn:\n{churn}\n\nSize: {size}\n\nBuild:\n{build}"
+
+  stage analyze
+    needs gather_git.*, gather_metrics.*
+    v_analysis = analyze_velocity()
+    c_analysis = analyze_churn()
+    b_analysis = analyze_branches()
+    give "Velocity: {v_analysis}\n\nChurn: {c_analysis}\n\nBranches: {b_analysis}"
+
+  stage score
+    needs analyze.*
+    signals = "Analysis:\n{analyze}"
+    label = health_panel("assess", signals)
+    give label
+
+  stage publish
+    needs score.*, gather_git.*, gather_metrics.*, analyze.*
+    signals = "{gather_git}\n{gather_metrics}"
+    data.store("scan:latest", signals)
+    data.store("health:label", score)
+    data.store("analysis:latest", analyze)
+    emit ScanComplete(score: score, summary: analyze)
+    give "Scan complete — health: {score}"
+
+# ── Warden ───────────────────────────────────────────────────────
+#
+# Supervises both agents with crash/stuck/timeout policies.
+# Demonstrates: warden, failure types, escalation ladders
+
+warden sentinel_supervisor
+  manages [git_inspector, analyst]
+
+  on hallucination: restart, self
+    after 3: escalate
+
+  on stuck: nudge, self
+    after 5: restart
+
+  on crash: restart, self
+    after 3: escalate
+
+  on timeout: restart, self
+
+  on budget: downgrade, self
+    after 2: escalate
+
+  max_retries 10 per 1h then escalate
+
+# ── System Wiring ────────────────────────────────────────────────
+#
+# Composes agents: inspector events flow to analyst.
+# Demonstrates: system, use bindings, >> composition
+
+system repo_sentinel
+  use
+    inspector: git_inspector
+    analyst: analyst
+
+  inspector >> analyst
+
+# ── Observer Page ────────────────────────────────────────────────
+#
+# Live agent tree visualization with SSE event stream.
+# The HTML is a skeleton — JS populates it from inspect APIs.
+# Demonstrates: endpoint, pure, inspect API consumption
+
+pure observer_body
+  gives Html
+  do
+    give "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><div><h1 class=\"text-3xl font-bold\">Agent Observer</h1><p class=\"opacity-60 mt-1\">Live agent tree with real-time trace events</p></div><div class=\"flex items-center gap-3\"><span id=\"sse-status\" class=\"badge badge-sm badge-ghost\">Connecting...</span><button id=\"scan-trigger-obs\" class=\"btn btn-primary btn-sm\">Run Scan</button></div></div><div class=\"grid grid-cols-1 lg:grid-cols-3 gap-6\"><div class=\"lg:col-span-2\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">System Topology</h2><div id=\"tree-root\" class=\"agent-tree\"><div class=\"skeleton h-8 w-3/4 mb-2\"></div><div class=\"skeleton h-8 w-1/2 mb-2 ml-8\"></div><div class=\"skeleton h-8 w-2/3 mb-2 ml-16\"></div><div class=\"skeleton h-8 w-1/2 ml-16\"></div></div></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Live Events</h2><div id=\"event-log\" class=\"forge-activity\" style=\"max-height:400px;overflow-y:auto\"><div class=\"log-title\">FORGE Runtime</div><div class=\"text-sm opacity-40 py-4 text-center\" id=\"event-log-empty\">Waiting for events...</div></div></div></div></div><div><div id=\"agent-detail\" class=\"card bg-base-100 shadow-md agent-detail-panel\"><div class=\"card-body p-4\"><div class=\"flex justify-between items-center mb-3\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60\">Agent Detail</h2><button id=\"detail-close\" class=\"btn btn-xs btn-circle btn-ghost\">X</button></div><div id=\"detail-content\"><p class=\"text-sm opacity-40 py-8 text-center\">Click an agent node to inspect</p></div></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Wardens</h2><div id=\"warden-panel\"><div class=\"skeleton h-6 w-full mb-2\"></div><div class=\"skeleton h-6 w-3/4\"></div></div></div></div></div></div></div>"
+
+pure topology_body
+  gives Html
+  do
+    give "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><div><h1 class=\"text-3xl font-bold\">Agent Topology</h1><p class=\"opacity-60 mt-1\">Force-directed graph — live supervision &amp; event flow</p></div><div class=\"flex items-center gap-3\"><span id=\"topo-sse-status\" class=\"badge badge-sm badge-ghost\">Connecting...</span><button id=\"topo-scan-trigger\" class=\"btn btn-primary btn-sm\">Run Scan</button></div></div><div class=\"grid grid-cols-1 lg:grid-cols-3 gap-6\"><div class=\"lg:col-span-2\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><div class=\"flex items-center justify-between mb-3\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60\">Network Graph</h2><div class=\"flex gap-2 text-xs opacity-60\"><span class=\"flex items-center gap-1\"><span class=\"inline-block w-3 h-3 rounded-full\" style=\"background:oklch(0.7 0.15 145)\"></span> system</span><span class=\"flex items-center gap-1\"><span class=\"inline-block w-3 h-3 rounded-full\" style=\"background:oklch(0.75 0.15 55)\"></span> warden</span><span class=\"flex items-center gap-1\"><span class=\"inline-block w-3 h-3 rounded-full\" style=\"background:oklch(0.65 0.12 250)\"></span> agent</span></div></div><div id=\"topo-container\" class=\"topo-container\"><svg id=\"topo-svg\" width=\"100%\" height=\"100%\"></svg></div></div></div></div><div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><div class=\"flex justify-between items-center mb-3\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60\">Node Detail</h2><button id=\"topo-detail-close\" class=\"btn btn-xs btn-circle btn-ghost\">X</button></div><div id=\"topo-detail-content\"><p class=\"text-sm opacity-40 py-8 text-center\">Click a node to inspect</p></div></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Live Events</h2><div id=\"topo-event-log\" class=\"forge-activity\" style=\"max-height:300px;overflow-y:auto\"><div class=\"text-sm opacity-40 py-4 text-center\" id=\"topo-event-log-empty\">Waiting for events...</div></div></div></div></div></div></div><script src=\"https://d3js.org/d3.v7.min.js\"></script><script src=\"/static/js/topology.js\"></script>"
+
+# ── Endpoint Helpers ──────────────────────────────────────────────
+#
+# Tasks that handle data.get with default fallback — endpoints
+# cannot use if/else directly (they use i1-level statements).
+
+task dashboard_health
+  gives Text
+  do
+    raw = data.get("health:label")
+    if raw == ""
+      give "unknown"
+    give raw
+
+task dashboard_insight
+  gives Text
+  do
+    raw = data.get("insight:latest")
+    if raw == ""
+      give "Run a scan to generate insights."
+    give raw
+
+task scan_analysis
+  gives Text
+  do
+    raw = data.get("analysis:latest")
+    if raw == ""
+      give "No analysis available."
+    give raw
+
+task insights_latest
+  gives Text
+  do
+    raw = data.get("insight:latest")
+    if raw == ""
+      give "No insights yet. Run a scan first."
+    give raw
+
+task insights_analysis
+  gives Text
+  do
+    raw = data.get("analysis:latest")
+    if raw == ""
+      give "No analysis data."
+    give raw
+
+task health_or_unknown
+  gives Text
+  do
+    raw = data.get("health:label")
+    if raw == ""
+      give "unknown"
+    give raw
+
+# ── Endpoints ────────────────────────────────────────────────────
+#
+# HTTP routes for the dashboard, scan trigger, insights, and API.
+# Demonstrates: endpoint, Html/Text return types, data.get, task calls
+
+endpoint home() -> Html
+  nav = nav_bar("dashboard")
+  give page_layout("Sentinel", nav, "<script>window.location.replace('/dashboard')</script>")
+
+endpoint dashboard() -> Html
+  nav = nav_bar("dashboard")
+  health_raw = dashboard_health()
+  badge = health_badge(health_raw, "auto")
+  velocity = get_commit_velocity()
+  branches = get_branch_hygiene()
+  size = get_codebase_size()
+  vel_card = metric_card("Commit Velocity (7d)", velocity, "commits this week")
+  branch_card = metric_card("Unmerged Branches", branches, "branches pending merge")
+  size_card = metric_card("Codebase Size", size, "lines of Rust")
+  commits = get_recent_commits()
+  insight_raw = dashboard_insight()
+  insight = insight_card("Latest Insight", insight_raw, "medium")
+  header = "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-8\" style=\"max-height:120px;overflow:hidden\"><div><h1 class=\"text-4xl font-bold\">Repo Health</h1><p class=\"opacity-60 mt-1\">FORGE monitoring FORGE</p></div><div class=\"text-right flex-shrink-0\">{!badge}</div></div>"
+  cards = "<div class=\"grid grid-cols-1 md:grid-cols-3 gap-4 mb-8\">{!vel_card} {!branch_card} {!size_card}</div>"
+  content_section = "<div class=\"grid grid-cols-1 lg:grid-cols-2 gap-8\"><div><h2 class=\"text-2xl font-bold mb-4\">Recent Commits</h2><pre class=\"text-sm font-mono whitespace-pre-wrap dashboard-commits\">{commits}</pre></div><div><h2 class=\"text-2xl font-bold mb-4\">AI Insights</h2>{!insight}<a id=\"scan-trigger\" href=\"/observer?scan=1\" class=\"btn btn-primary btn-sm mt-4\">Run Scan</a></div></div>"
+  body = header + cards + content_section + "</div>"
+  give page_layout("Sentinel — FORGE Health Dashboard", nav, body)
+
+endpoint scan_now() -> Html
+  nav = nav_bar("scan")
+  result = repo_scan()
+  health = dashboard_health()
+  analysis = scan_analysis()
+  badge = health_badge(health, "fresh scan")
+  body = "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><h1 class=\"text-3xl font-bold\">Scan Results</h1>{!badge}</div><div id=\"scan-results\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body\"><h3 class=\"card-title\">Flow Result</h3><p class=\"text-sm opacity-70\">{result}</p></div></div><div class=\"card bg-base-100 shadow-md mt-4\"><div class=\"card-body\"><h3 class=\"card-title\">Analysis</h3><p class=\"text-sm whitespace-pre-wrap scan-analysis\">{analysis}</p></div></div></div><a href=\"/dashboard\" class=\"btn btn-ghost mt-6\">Back to Dashboard</a></div>"
+  give page_layout("Scan — Sentinel", nav, body)
+
+endpoint insights() -> Html
+  nav = nav_bar("insights")
+  latest = insights_latest()
+  analysis = insights_analysis()
+  latest_card = insight_card("Latest AI Insight", latest, "medium")
+  analysis_card = insight_card("Last Analysis Summary", analysis, "high")
+  body = "<div class=\"container mx-auto px-4 py-8\"><h1 class=\"text-3xl font-bold mb-6\">AI Insights</h1>{!latest_card} {!analysis_card}<p class=\"text-sm opacity-50 mt-4\">Deep analysis available via Observer &gt; Run Scan</p><a href=\"/dashboard\" class=\"btn btn-ghost mt-4\">Back to Dashboard</a></div>"
+  give page_layout("Insights — Sentinel", nav, body)
+
+endpoint observer() -> Html
+  nav = nav_bar("observer")
+  body = observer_body()
+  give page_layout("Observer — Sentinel", nav, body)
+
+endpoint topology() -> Html
+  nav = nav_bar("topology")
+  body = topology_body()
+  give page_layout("Topology — Sentinel", nav, body)
+
+pure costs_body
+  gives Html
+  do
+    give "<div class=\"container mx-auto px-4 py-8\"><div class=\"flex items-center justify-between mb-6\"><div><h1 class=\"text-3xl font-bold\">Token Economy</h1><p class=\"opacity-60 mt-1\">Live cost, throughput &amp; confidence — Principle III visibility</p></div><div class=\"flex items-center gap-3\"><span id=\"cost-sse-status\" class=\"badge badge-sm badge-ghost\">Connecting...</span></div></div><div class=\"grid grid-cols-1 md:grid-cols-4 gap-4 mb-6\" id=\"cost-totals\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h3 class=\"text-sm font-semibold opacity-60 uppercase tracking-wider\">Total Cost</h3><p class=\"text-2xl font-bold mt-1 cost-counter\" id=\"cost-usd\">$0.0000</p><p class=\"text-sm opacity-70 mt-1\" id=\"cost-calls\">0 calls</p></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h3 class=\"text-sm font-semibold opacity-60 uppercase tracking-wider\">Tokens In</h3><p class=\"text-2xl font-bold mt-1\" id=\"cost-tokens-in\">0</p><p class=\"text-sm opacity-70 mt-1\" id=\"cost-throughput-in\">0 tok/s</p></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h3 class=\"text-sm font-semibold opacity-60 uppercase tracking-wider\">Tokens Out</h3><p class=\"text-2xl font-bold mt-1\" id=\"cost-tokens-out\">0</p><p class=\"text-sm opacity-70 mt-1\" id=\"cost-throughput-out\">0 tok/s</p></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h3 class=\"text-sm font-semibold opacity-60 uppercase tracking-wider\">Uptime</h3><p class=\"text-2xl font-bold mt-1\" id=\"cost-uptime\">0s</p><p class=\"text-sm opacity-70 mt-1\" id=\"cost-tps\">0 tok/s out</p></div></div></div><div class=\"grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Cost by Operation</h2><div class=\"overflow-x-auto\"><table class=\"table table-sm\" id=\"cost-by-operation\"><thead><tr><th>Operation</th><th class=\"text-right\">Calls</th><th class=\"text-right\">Tokens In</th><th class=\"text-right\">Tokens Out</th><th class=\"text-right\">Cost</th><th class=\"text-right\">Avg Conf</th></tr></thead><tbody><tr><td colspan=\"6\" class=\"text-center opacity-40 py-4\">No data yet</td></tr></tbody></table></div></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Cost by Agent</h2><div class=\"overflow-x-auto\"><table class=\"table table-sm\" id=\"cost-by-agent\"><thead><tr><th>Agent</th><th class=\"text-right\">Calls</th><th class=\"text-right\">Tokens</th><th class=\"text-right\">Cost</th><th class=\"text-right\">Avg Conf</th></tr></thead><tbody><tr><td colspan=\"5\" class=\"text-center opacity-40 py-4\">No data yet</td></tr></tbody></table></div></div></div></div><div class=\"grid grid-cols-1 lg:grid-cols-2 gap-6\"><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Confidence Distribution</h2><div id=\"confidence-chart\" style=\"height:200px\"></div></div></div><div class=\"card bg-base-100 shadow-md\"><div class=\"card-body p-4\"><h2 class=\"card-title text-sm uppercase tracking-wider opacity-60 mb-3\">Cost by Provider / Model</h2><div class=\"overflow-x-auto\"><table class=\"table table-sm\" id=\"cost-by-provider\"><thead><tr><th>Provider / Model</th><th class=\"text-right\">Calls</th><th class=\"text-right\">Tokens</th><th class=\"text-right\">Cost</th></tr></thead><tbody><tr><td colspan=\"4\" class=\"text-center opacity-40 py-4\">No data yet</td></tr></tbody></table></div></div></div></div></div><script src=\"https://d3js.org/d3.v7.min.js\"></script><script src=\"/static/js/costs.js\"></script>"
+
+endpoint costs() -> Html
+  nav = nav_bar("costs")
+  body = costs_body()
+  give page_layout("Costs — Sentinel", nav, body)
+
+endpoint api_health() -> Text
+  health = health_or_unknown()
+  give health
+
+endpoint api_commits() -> Text
+  commits = get_recent_commits()
+  give commits
+
+# ── Entry Point ──────────────────────────────────────────────────
+
+fn main
+  say "=== FORGE Sentinel ==="
+  say "AI-powered repo health dashboard — FORGE monitoring FORGE."
+  say "Run: forge serve examples/sentinel/server.forge -s examples/sentinel/shared.forge --watch"

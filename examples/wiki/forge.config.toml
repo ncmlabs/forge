@@ -1,0 +1,38 @@
+# FORGE Wiki — configuration
+# Start: forge serve examples/wiki/server.forge -s examples/wiki/shared.forge --watch
+
+[llm]
+default = "wiki-provider"
+
+[providers.wiki-provider]
+type = "anthropic"
+model = "claude-sonnet-4-20250514"
+api_key = "${ANTHROPIC_API_KEY}"
+timeout_secs = 60
+
+[providers.mock]
+type = "mock"
+model = "mock-model"
+
+# Uncomment for real embeddings with Ollama:
+# [providers.ollama]
+# type = "ollama"
+# base_url = "http://localhost:11434/v1"
+# model = "gemma3:4b"
+#
+# [embeddings]
+# provider = "ollama"
+# model = "nomic-embed-text"
+# dimensions = 768
+
+[embeddings]
+provider = "mock"
+dimensions = 64
+
+[server]
+host = "127.0.0.1"
+port = 3000
+
+[server.static]
+root = "examples/wiki/static"
+prefix = "/static"

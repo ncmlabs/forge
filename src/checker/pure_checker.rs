@@ -137,8 +137,14 @@ fn check_pure_stmt(
     errors: &mut Vec<CheckError>,
 ) {
     match &stmt.node {
-        Stmt::Bind(_, expr) | Stmt::Give(expr, _) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
+        Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
             check_pure_expr(fn_name, expr, task_names, errors);
+        }
+        Stmt::Give(expr, metas) => {
+            check_pure_expr(fn_name, expr, task_names, errors);
+            for meta in metas {
+                check_pure_expr(fn_name, &meta.node.value, task_names, errors);
+            }
         }
         Stmt::Escalate(_) => {
             errors.push(CheckError::PureEscalates {
@@ -193,6 +199,22 @@ fn check_pure_stmt(
                 check_pure_expr(fn_name, &arg.node.value, task_names, errors);
             }
         }
+        Stmt::Learn(..) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "learn",
+                span_start: stmt.span.start,
+                span_end: stmt.span.end,
+            });
+        }
+        Stmt::Spawn(..) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "spawn",
+                span_start: stmt.span.start,
+                span_end: stmt.span.end,
+            });
+        }
         _ => {}
     }
 }
@@ -224,6 +246,14 @@ fn check_pure_expr(
             errors.push(CheckError::PureUsesLlm {
                 name: fn_name.to_string(),
                 op: "search",
+                span_start: expr.span.start,
+                span_end: expr.span.end,
+            });
+        }
+        Expr::Recall(_) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "recall",
                 span_start: expr.span.start,
                 span_end: expr.span.end,
             });
@@ -280,10 +310,29 @@ fn check_pure_expr(
         }
         Expr::Template(parts) => {
             for part in parts {
-                if let TemplatePart::Interp(inner) = &part.node {
-                    check_pure_expr(fn_name, inner, task_names, errors);
+                match &part.node {
+                    TemplatePart::Interp(inner) | TemplatePart::RawInterp(inner) => {
+                        check_pure_expr(fn_name, inner, task_names, errors);
+                    }
+                    _ => {}
                 }
             }
+        }
+        Expr::Find(_) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "find",
+                span_start: expr.span.start,
+                span_end: expr.span.end,
+            });
+        }
+        Expr::Exec(_) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "exec",
+                span_start: expr.span.start,
+                span_end: expr.span.end,
+            });
         }
         // Leaves: literals, idents, type access — always pure
         Expr::NumberLit(_) | Expr::BoolLit(_) | Expr::Ident(_) | Expr::TypeAccess(_, _) => {}

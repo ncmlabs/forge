@@ -645,3 +645,293 @@ fn warden_managed_names() {
     let names = warden.managed_names();
     assert_eq!(names, vec!["agent_a", "agent_b"]);
 }
+
+// ── Dynamic adopt/release (#86) ────────────────────────────────────────────
+
+#[test]
+fn warden_adopt_adds_agent() {
+    let decl = basic_warden();
+    let mut warden = Warden::new(decl, None);
+    assert_eq!(warden.managed_names().len(), 2);
+
+    warden.adopt("agent_c");
+    let names = warden.managed_names();
+    assert_eq!(names.len(), 3);
+    assert!(names.contains(&"agent_c"));
+}
+
+#[test]
+fn warden_adopt_no_duplicates() {
+    let decl = basic_warden();
+    let mut warden = Warden::new(decl, None);
+
+    warden.adopt("agent_a"); // already managed
+    assert_eq!(warden.managed_names().len(), 2);
+}
+
+#[test]
+fn warden_release_removes_agent() {
+    let decl = basic_warden();
+    let mut warden = Warden::new(decl, None);
+
+    warden.release("agent_b");
+    let names = warden.managed_names();
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0], "agent_a");
+}
+
+#[test]
+fn warden_release_clears_retry_tracker() {
+    let decl = basic_warden();
+    let mut warden = Warden::new(decl, None);
+
+    // Record some failures for agent_b
+    let signal = FailureSignal {
+        agent_name: "agent_b".to_string(),
+        failure_type: FailureType::Stuck,
+        detail: "test".to_string(),
+    };
+    warden.handle_failure(&signal, &[], 1000);
+    warden.handle_failure(&signal, &[], 2000);
+    assert_eq!(warden.retry_tracker.count("agent_b", FailureType::Stuck), 2);
+
+    // Release clears retry state
+    warden.release("agent_b");
+    assert_eq!(warden.retry_tracker.count("agent_b", FailureType::Stuck), 0);
+}
+
+// ── Issue #64: Downgrade response ──────────────────────────────────────────
+
+#[test]
+fn parse_downgrade_response() {
+    let src = r#"warden budget_watcher
+  manages [worker]
+
+  on budget: downgrade, self
+    after 2: escalate
+
+agent worker
+  on start
+    say "working"
+"#;
+    let program = forge::parser::parse(src).expect("parse failed");
+    let w = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Warden(w) => Some(w),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_eq!(w.policies.len(), 1);
+    let budget_policy = &w.policies[0].node;
+    assert_eq!(budget_policy.failure_type.node, FailureType::Budget);
+    assert_eq!(budget_policy.response.node, WardResponse::Downgrade);
+    assert_eq!(budget_policy.scope.node, WardScope::This);
+    assert_eq!(budget_policy.after_clauses.len(), 1);
+    assert_eq!(
+        budget_policy.after_clauses[0].node.response.node,
+        WardResponse::Escalate
+    );
+}
+
+#[test]
+fn ward_response_ordering_with_downgrade() {
+    assert!(WardResponse::Nudge < WardResponse::Downgrade);
+    assert!(WardResponse::Downgrade < WardResponse::Restart);
+    assert!(WardResponse::Restart < WardResponse::Replace);
+    assert!(WardResponse::Replace < WardResponse::Escalate);
+}
+
+#[test]
+fn checker_escalation_ladder_with_downgrade_valid() {
+    let src = r#"warden budget_guard
+  manages [worker]
+
+  on budget: downgrade, self
+    after 2: restart
+    after 4: escalate
+
+agent worker
+  on start
+    say "working"
+"#;
+    let program = forge::parser::parse(src).expect("parse failed");
+    let diagnostics = warden_checker::check(&program, "test.forge");
+
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| matches!(d.kind, forge::diagnostic::DiagnosticKind::Error))
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "downgrade → restart → escalate should be valid"
+    );
+}
+
+#[test]
+fn checker_escalation_ladder_downgrade_after_restart_invalid() {
+    // Build AST directly: restart → downgrade is de-escalation
+    let warden = WardenDecl {
+        name: sp("bad_warden".to_string()),
+        manages: vec![],
+        policies: vec![sp(WardPolicy {
+            failure_type: sp(FailureType::Budget),
+            response: sp(WardResponse::Restart),
+            scope: sp(WardScope::This),
+            after_clauses: vec![sp(AfterClause {
+                count: 3,
+                response: sp(WardResponse::Downgrade),
+            })],
+        })],
+        max_retries: None,
+    };
+
+    let program = Program {
+        boundary: None,
+        items: vec![sp(TopLevel::Warden(warden))],
+    };
+
+    let diagnostics = warden_checker::check(&program, "test.forge");
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| matches!(d.kind, forge::diagnostic::DiagnosticKind::Error))
+        .collect();
+    assert!(
+        !errors.is_empty(),
+        "restart → downgrade should be rejected as de-escalation"
+    );
+}
+
+#[test]
+fn effective_response_downgrade_then_escalate() {
+    let policy = WardPolicy {
+        failure_type: sp(FailureType::Budget),
+        response: sp(WardResponse::Downgrade),
+        scope: sp(WardScope::This),
+        after_clauses: vec![sp(AfterClause {
+            count: 2,
+            response: sp(WardResponse::Escalate),
+        })],
+    };
+
+    // Below threshold → downgrade
+    assert_eq!(effective_response(&policy, 0), WardResponse::Downgrade);
+    assert_eq!(effective_response(&policy, 1), WardResponse::Downgrade);
+
+    // At threshold → escalate
+    assert_eq!(effective_response(&policy, 2), WardResponse::Escalate);
+    assert_eq!(effective_response(&policy, 5), WardResponse::Escalate);
+}
+
+#[test]
+fn parse_wiki_supervisor_three_agents() {
+    let src = r#"warden wiki_supervisor
+  manages [search_agent, content_manager, qa_agent]
+
+  on hallucination: restart, self
+    after 3: escalate
+
+  on stuck: nudge, self
+    after 5: restart
+
+  on crash: restart, self
+    after 3: escalate
+
+  on timeout: restart, self
+
+  on budget: downgrade, self
+    after 2: escalate
+
+  max_retries 10 per 1h then escalate
+
+agent search_agent
+  on start
+    say "search ready"
+
+agent content_manager
+  on start
+    say "content ready"
+
+agent qa_agent
+  on start
+    say "qa ready"
+"#;
+    let program = forge::parser::parse(src).expect("parse failed");
+    let w = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Warden(w) => Some(w),
+            _ => None,
+        })
+        .unwrap();
+
+    assert_eq!(w.name.node, "wiki_supervisor");
+    assert_eq!(w.manages.len(), 3);
+    assert_eq!(w.manages[0].node, "search_agent");
+    assert_eq!(w.manages[1].node, "content_manager");
+    assert_eq!(w.manages[2].node, "qa_agent");
+    assert_eq!(w.policies.len(), 5);
+    assert!(w.max_retries.is_some());
+}
+
+// ── Issue #64: Hallucination detection ─────────────────────────────────────
+
+#[test]
+fn stuck_detector_hallucination_detection() {
+    use forge::runtime::agent::{StuckDetector, TurnRecord};
+
+    let mut sd = StuckDetector::new(3);
+
+    // Not enough turns yet
+    assert!(!sd.is_hallucinating());
+
+    // Add turns with very low confidence
+    sd.record_turn(TurnRecord {
+        response_text: "I don't know".to_string(),
+        confidence: 0.1,
+        memory_hash: 1,
+    });
+    sd.record_turn(TurnRecord {
+        response_text: "Maybe something".to_string(),
+        confidence: 0.2,
+        memory_hash: 2,
+    });
+    sd.record_turn(TurnRecord {
+        response_text: "Not sure at all".to_string(),
+        confidence: 0.15,
+        memory_hash: 3,
+    });
+
+    // All 3 recent turns have confidence < 0.3
+    assert!(sd.is_hallucinating());
+}
+
+#[test]
+fn stuck_detector_not_hallucinating_with_mixed_confidence() {
+    use forge::runtime::agent::{StuckDetector, TurnRecord};
+
+    let mut sd = StuckDetector::new(3);
+
+    sd.record_turn(TurnRecord {
+        response_text: "Good answer".to_string(),
+        confidence: 0.9,
+        memory_hash: 1,
+    });
+    sd.record_turn(TurnRecord {
+        response_text: "Unsure".to_string(),
+        confidence: 0.2,
+        memory_hash: 2,
+    });
+    sd.record_turn(TurnRecord {
+        response_text: "Another good one".to_string(),
+        confidence: 0.8,
+        memory_hash: 3,
+    });
+
+    // Mixed confidence — not hallucinating
+    assert!(!sd.is_hallucinating());
+}

@@ -1,0 +1,11 @@
+{
+  "name": "spawn_no_failure_policy_warning",
+  "category": "checker",
+  "description": "Spawning an agent with no failure policy emits a warning (Principle VII)",
+  "input": "agent worker\n  on start(msg: Text)\n    say msg\n\ntask run_it\n  do\n    spawn worker\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["failure policy"],
+    "error_kind": "warning"
+  }
+}

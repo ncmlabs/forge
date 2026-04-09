@@ -1,0 +1,10 @@
+{
+  "name": "sensei_spawn_undeclared",
+  "category": "checker",
+  "subcategory": "spawn",
+  "description": "Spawning an agent that is not declared emits a warning",
+  "input": "task run_it\n  do\n    spawn ghost_agent\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

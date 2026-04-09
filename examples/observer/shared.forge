@@ -1,0 +1,3 @@
+#! boundary: shared
+
+# Observer has no shared types — it is a pure UI app.

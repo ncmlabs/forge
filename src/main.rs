@@ -2,11 +2,16 @@ use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use forge::ast::TopLevel;
+use forge::ast::{Expr, TemplatePart, TopLevel};
+use forge::portability::{
+    build_package, inspect_package, load_package, prepare_imported_entries, verify_integrity,
+    AgentSchema, SchemaField, SchemaKnowledgeConfig,
+};
 use forge::runtime::agent::AgentProcess;
 use forge::runtime::confidence::{ConfidentValue, Value};
+use forge::runtime::knowledge_store::KnowledgeStore;
 
 #[derive(Parser)]
 #[command(
@@ -47,11 +52,17 @@ enum Command {
         /// Paths to .forge source files
         #[arg(required = true)]
         files: Vec<PathBuf>,
+        /// Merge files before checking (for multi-file projects with cross-file references)
+        #[arg(long)]
+        merge: bool,
     },
     /// Execute a .forge program
     Run {
         /// Path to the .forge source file
-        file: PathBuf,
+        file: Option<PathBuf>,
+        /// Path to a forge.project.toml manifest for multi-file execution
+        #[arg(long, conflicts_with = "file")]
+        manifest: Option<PathBuf>,
     },
     /// Execute with full JSON trace output to stderr
     Trace {
@@ -78,6 +89,73 @@ enum Command {
         /// Port to bind to (overrides config)
         #[arg(long)]
         port: Option<u16>,
+        /// Watch for file changes and hot-reload (dev mode)
+        #[arg(long)]
+        watch: bool,
+        /// Additional source files to merge (for multi-file projects)
+        #[arg(long = "source", short = 's')]
+        sources: Vec<PathBuf>,
+    },
+    /// Export an agent's knowledge and config as a .forgepkg.json package
+    Export {
+        /// Path to the .forge source file
+        file: PathBuf,
+        /// Name of the agent to export (if file has multiple agents)
+        #[arg(long)]
+        agent: Option<String>,
+        /// Layers to export (comma-separated: config,knowledge,memory)
+        #[arg(long, default_value = "config,knowledge")]
+        layers: String,
+        /// Output file path
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Import knowledge from a .forgepkg.json package into a local store
+    Import {
+        /// Path to the .forgepkg.json package
+        package: PathBuf,
+        /// Target knowledge store path
+        #[arg(long)]
+        into: String,
+        /// Confidence cap for imported entries (0.0-1.0)
+        #[arg(long, default_value = "0.7")]
+        confidence_cap: f32,
+    },
+    /// Inspect a .forgepkg.json package
+    Inspect {
+        /// Path to the .forgepkg.json package
+        package: PathBuf,
+    },
+    /// Send a single event to an agent non-interactively and print the result
+    Send {
+        /// Path to a .forge file containing an agent declaration
+        file: PathBuf,
+        /// Event name to dispatch (e.g., "query", "ingest", "status")
+        event: String,
+        /// Arguments for the event handler (positional, matching handler params)
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+    /// Build a standalone binary from a .forge project
+    Build {
+        /// Path to a .forge file or directory containing forge.project.toml
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Output binary name
+        #[arg(long, short)]
+        output: Option<String>,
+        /// Path to forge.project.toml (overrides auto-detection)
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Build with optimizations
+        #[arg(long)]
+        release: bool,
+        /// Embed a forge.config.toml as default config
+        #[arg(long)]
+        embed_config: Option<PathBuf>,
+        /// Validate without compiling
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Generate skeleton FORGE code from a plain-text system description
     Fleet {
@@ -105,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Command::Check { files } => {
+        Command::Check { files, merge } => {
             let mut all_diagnostics = Vec::new();
             let mut parsed_programs = Vec::new();
 
@@ -114,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
                 let program = parse_or_exit(&source, file);
                 let fname = file.display().to_string();
 
-                // Per-file: resolver
+                // Per-file: resolver (always runs per-file)
                 let ctx = forge::resolver::CheckContext::new(&fname);
                 if let Err(errors) = ctx.check(&program) {
                     let registry = forge::resolver::CapabilityRegistry::builtin();
@@ -122,15 +200,52 @@ async fn main() -> anyhow::Result<()> {
                         .extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
                 }
 
-                // Per-file: checker (pure, states, requires)
-                all_diagnostics.extend(forge::checker::check_all(&program, &fname));
-
                 parsed_programs.push((program, fname, source));
             }
 
-            // Cross-file: boundary checker
+            if merge && parsed_programs.len() > 1 {
+                // Merge mode: combine all files, then run checkers on merged program.
+                // This resolves cross-file references (states, types, functions).
+                let source_files: Vec<_> = parsed_programs
+                    .iter()
+                    .map(|(p, f, s)| forge::compose::SourceFile {
+                        path: f.clone(),
+                        source: s.clone(),
+                        program: p.clone(),
+                    })
+                    .collect();
+
+                match forge::compose::merge_programs(&source_files) {
+                    Ok(composed) => {
+                        let merged_source = parsed_programs
+                            .iter()
+                            .map(|(_, _, s)| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let merged_fname = "<merged>".to_string();
+                        all_diagnostics
+                            .extend(forge::checker::check_all(&composed.program, &merged_fname));
+                        // Store merged program for diagnostic rendering
+                        parsed_programs.push((composed.program, merged_fname, merged_source));
+                    }
+                    Err(errs) => {
+                        for e in &errs {
+                            eprintln!("Merge error: {e}");
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // Per-file checkers (pure, states, requires)
+                for (program, fname, _) in &parsed_programs {
+                    all_diagnostics.extend(forge::checker::check_all(program, fname));
+                }
+            }
+
+            // Cross-file: boundary checker (always per-file)
             let boundary_refs: Vec<_> = parsed_programs
                 .iter()
+                .filter(|(_, f, _)| f != "<merged>")
                 .map(|(p, f, _)| (p, f.as_str()))
                 .collect();
             all_diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
@@ -149,8 +264,14 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
-        Command::Run { file } => {
-            run_program(&file, false).await?;
+        Command::Run { file, manifest } => {
+            if let Some(manifest_path) = manifest {
+                run_manifest(&manifest_path, false).await?;
+            } else if let Some(file) = file {
+                run_program(&file, false).await?;
+            } else {
+                anyhow::bail!("either a .forge file or --manifest is required");
+            }
         }
         Command::Trace { file } => {
             run_program(&file, true).await?;
@@ -165,8 +286,181 @@ async fn main() -> anyhow::Result<()> {
             let estimate = forge::cost_estimator::estimate(&program, &config);
             print!("{}", estimate);
         }
-        Command::Serve { file, host, port } => {
-            serve_program(&file, host, port).await?;
+        Command::Serve {
+            file,
+            host,
+            port,
+            watch,
+            sources,
+        } => {
+            serve_program(&file, &sources, host, port, watch).await?;
+        }
+        Command::Export {
+            file,
+            agent,
+            layers,
+            output,
+        } => {
+            let source = read_source(&file)?;
+            let program = parse_or_exit(&source, &file);
+
+            // Find the agent declaration
+            let agent_decl = if let Some(ref name) = agent {
+                program
+                    .items
+                    .iter()
+                    .find_map(|item| match &item.node {
+                        TopLevel::Agent(a) if a.name.node == *name => Some(a.as_ref().clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("no agent named '{}' found in {}", name, file.display())
+                    })?
+            } else {
+                program
+                    .items
+                    .iter()
+                    .find_map(|item| match &item.node {
+                        TopLevel::Agent(a) => Some(a.as_ref().clone()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("no agent declaration found in {}", file.display())
+                    })?
+            };
+
+            let layer_set: Vec<&str> = layers.split(',').map(|s| s.trim()).collect();
+
+            // Build schema from AST if "config" layer requested
+            let schema = if layer_set.contains(&"config") {
+                let fields: Vec<SchemaField> = agent_decl
+                    .memory
+                    .iter()
+                    .map(|f| SchemaField {
+                        name: f.node.name.clone(),
+                        field_type: format!("{:?}", f.node.type_name.node),
+                        default: None,
+                    })
+                    .collect();
+
+                let knowledge_config =
+                    agent_decl
+                        .knowledge
+                        .as_ref()
+                        .map(|k| SchemaKnowledgeConfig {
+                            max_entries: k.node.max_entries.as_ref().map(|m| m.node as usize),
+                            retention_days: k.node.retention.as_ref().map(|r| {
+                                use forge::ast::DurationUnit;
+                                let dur = &r.node;
+                                match dur.unit {
+                                    DurationUnit::Days => dur.value,
+                                    DurationUnit::Hours => dur.value / 24,
+                                    DurationUnit::Minutes => dur.value / 1440,
+                                    DurationUnit::Seconds => dur.value / 86400,
+                                }
+                            }),
+                        });
+
+                AgentSchema {
+                    fields,
+                    knowledge_config,
+                }
+            } else {
+                AgentSchema {
+                    fields: vec![],
+                    knowledge_config: None,
+                }
+            };
+
+            // Load knowledge entries if "knowledge" layer requested
+            let knowledge = if layer_set.contains(&"knowledge") {
+                if let Some(ref k) = agent_decl.knowledge {
+                    let store_path = match &k.node.store_path.node {
+                        Expr::Template(parts) => {
+                            let mut s = String::new();
+                            for p in parts {
+                                if let TemplatePart::Text(t) = &p.node {
+                                    s.push_str(t);
+                                }
+                            }
+                            s
+                        }
+                        _ => String::new(),
+                    };
+                    if !store_path.is_empty() {
+                        let store = KnowledgeStore::new(&store_path, None, None);
+                        store.export_entries()
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            };
+
+            let agent_name = agent_decl.name.node.clone();
+            let pkg = build_package(&agent_name, &agent_name, None, schema, knowledge);
+            let json = serde_json::to_string_pretty(&pkg)?;
+
+            match output {
+                Some(path) => {
+                    std::fs::write(&path, &json)?;
+                    println!("exported to {}", path.display());
+                }
+                None => {
+                    let default_path = format!("{}.forgepkg.json", agent_name);
+                    std::fs::write(&default_path, &json)?;
+                    println!("exported to {}", default_path);
+                }
+            }
+        }
+        Command::Import {
+            package,
+            into,
+            confidence_cap,
+        } => {
+            let json = std::fs::read_to_string(&package)
+                .map_err(|e| anyhow::anyhow!("could not read {}: {}", package.display(), e))?;
+            let pkg =
+                load_package(&json).map_err(|e| anyhow::anyhow!("invalid package: {:?}", e))?;
+            verify_integrity(&pkg)
+                .map_err(|e| anyhow::anyhow!("integrity check failed: {:?}", e))?;
+
+            let entries = prepare_imported_entries(&pkg, confidence_cap);
+            let mut store = KnowledgeStore::new(&into, None, None);
+            let count = store.merge_imported(entries);
+
+            println!("imported {} entries into {}", count, into);
+        }
+        Command::Inspect { package } => {
+            let json = std::fs::read_to_string(&package)
+                .map_err(|e| anyhow::anyhow!("could not read {}: {}", package.display(), e))?;
+            let pkg =
+                load_package(&json).map_err(|e| anyhow::anyhow!("invalid package: {:?}", e))?;
+            print!("{}", inspect_package(&pkg));
+        }
+        Command::Send { file, event, args } => {
+            send_to_agent(&file, &event, args).await?;
+        }
+        Command::Build {
+            path,
+            output,
+            manifest,
+            release,
+            embed_config,
+            dry_run,
+        } => {
+            build_program(
+                &path,
+                output.as_deref(),
+                manifest.as_deref(),
+                release,
+                embed_config,
+                dry_run,
+            )
+            .await?;
         }
         Command::Fleet { spec, output } => {
             let result = forge::fleet::generate(&spec)?;
@@ -184,7 +478,16 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn read_source(file: &PathBuf) -> anyhow::Result<String> {
+/// Open the FORGE persistent storage database (issue #48/#57).
+fn open_forge_storage() -> anyhow::Result<forge::runtime::storage::SharedStorage> {
+    let db_path = std::path::Path::new(".forge-data").join("store.redb");
+    std::fs::create_dir_all(".forge-data")?;
+    let storage = forge::runtime::storage::ForgeStorage::open(&db_path)
+        .map_err(|e| anyhow::anyhow!("failed to open storage: {}", e))?;
+    Ok(Arc::new(storage))
+}
+
+fn read_source(file: &Path) -> anyhow::Result<String> {
     std::fs::read_to_string(file)
         .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))
 }
@@ -199,7 +502,31 @@ fn parse_or_exit(source: &str, file: &Path) -> forge::ast::Program {
     }
 }
 
-async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
+/// Build a [`SkillExecutor`] from config when the `[skills]` section is present.
+fn build_skill_executor(
+    config: &forge::config::ForgeConfig,
+    providers: &Arc<forge::llm::registry::ProviderRegistry>,
+    tracer: Option<&forge::tracer::Tracer>,
+) -> Option<Arc<forge::runtime::skill_executor::SkillExecutor>> {
+    let skills_cfg = config.skills.as_ref()?;
+    let dirs = skills_cfg.skill_dirs_or_default();
+    let loaded = forge::runtime::skill_loader::SkillLoader::load_from_dirs(&dirs);
+    let mut registry = forge::runtime::skill_registry::SkillRegistry::new();
+    for skill in loaded {
+        registry.register(skill);
+    }
+    let shared = Arc::new(Mutex::new(registry));
+    let mut executor =
+        forge::runtime::skill_executor::SkillExecutor::new(Arc::clone(providers), shared);
+    executor.max_turns = skills_cfg.max_turns_or_default();
+    executor.default_timeout = std::time::Duration::from_secs(skills_cfg.timeout_or_default());
+    if let Some(t) = tracer {
+        executor = executor.with_tracer(Arc::new(t.clone()));
+    }
+    Some(Arc::new(executor))
+}
+
+async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     let source = read_source(file)?;
     let program = parse_or_exit(&source, file);
     let fname = file.display().to_string();
@@ -226,8 +553,10 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
     }
 
     let config = forge::config::ForgeConfig::load_or_default();
+    let config_clone = config.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
 
     let tracer = if trace
         || std::env::var("FORGE_TRACE")
@@ -239,7 +568,13 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
         None
     };
 
-    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer);
+    let skill_exec = build_skill_executor(&config_clone, &providers, tracer.as_ref());
+    let mut executor =
+        forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
+            .with_config(config_clone);
+    if let Some(se) = skill_exec {
+        executor = executor.with_skill_executor(se);
+    }
 
     match executor.run().await {
         Ok(_) => {}
@@ -252,16 +587,310 @@ async fn run_program(file: &PathBuf, trace: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn serve_program(
-    file: &PathBuf,
-    cli_host: Option<String>,
-    cli_port: Option<u16>,
+async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
+    let manifest = forge::manifest::ProjectManifest::load(manifest_path)?;
+    let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let source_paths = manifest.resolve_sources(base_dir)?;
+
+    // Parse all source files
+    let mut source_files = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for path in &source_paths {
+        let source = read_source(&path.to_path_buf())?;
+        let fname = path.display().to_string();
+        let program = parse_or_exit(&source, path);
+
+        // Per-file validation
+        let ctx = forge::resolver::CheckContext::new(&fname);
+        if let Err(errors) = ctx.check(&program) {
+            let registry = forge::resolver::CapabilityRegistry::builtin();
+            diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+        }
+        diagnostics.extend(forge::checker::check_all(&program, &fname));
+
+        source_files.push(forge::compose::SourceFile {
+            path: fname,
+            source,
+            program,
+        });
+    }
+
+    // Cross-file boundary check
+    let boundary_refs: Vec<_> = source_files
+        .iter()
+        .map(|sf| (&sf.program, sf.path.as_str()))
+        .collect();
+    diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
+
+    if !diagnostics.is_empty() {
+        for diag in &diagnostics {
+            if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
+                diag.render(&sf.source);
+            }
+        }
+        std::process::exit(1);
+    }
+
+    // Merge and execute
+    let composed = forge::compose::merge_programs(&source_files).map_err(|errs| {
+        anyhow::anyhow!(
+            "{}",
+            errs.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    })?;
+
+    let config = forge::config::ForgeConfig::load_or_default();
+    let config_clone = config.clone();
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
+
+    let tracer = if trace
+        || std::env::var("FORGE_TRACE")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    {
+        Some(forge::tracer::Tracer::new())
+    } else {
+        None
+    };
+
+    let skill_exec = build_skill_executor(&config_clone, &providers, tracer.as_ref());
+    let mut executor = forge::runtime::executor::TaskExecutor::new(
+        composed.program,
+        Arc::clone(&providers),
+        tracer,
+    )
+    .with_config(config_clone);
+    if let Some(se) = skill_exec {
+        executor = executor.with_skill_executor(se);
+    }
+
+    match executor.run().await {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("runtime error: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn build_program(
+    path: &Path,
+    output: Option<&str>,
+    manifest_path: Option<&Path>,
+    release: bool,
+    embed_config: Option<PathBuf>,
+    dry_run: bool,
 ) -> anyhow::Result<()> {
+    // Resolve manifest: explicit path, directory with forge.project.toml, or single file
+    let (mut manifest, base_dir) = if let Some(mp) = manifest_path {
+        let manifest = forge::manifest::ProjectManifest::load(mp)?;
+        let base = mp.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+        (manifest, base)
+    } else if path.is_file() && path.extension().map(|e| e == "forge").unwrap_or(false) {
+        // Single-file shortcut — use file stem for crate name, not the output path
+        let manifest = forge::manifest::ProjectManifest::from_single_file(path, None);
+        let base = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        (manifest, base)
+    } else if path.is_dir() {
+        let manifest_file = path.join("forge.project.toml");
+        if !manifest_file.exists() {
+            anyhow::bail!("no forge.project.toml found in {}", path.display());
+        }
+        let manifest = forge::manifest::ProjectManifest::load(&manifest_file)?;
+        (manifest, path.to_path_buf())
+    } else {
+        anyhow::bail!(
+            "expected a .forge file, directory with forge.project.toml, or --manifest flag"
+        );
+    };
+
+    // Resolve output: if -o is a path with dir, split into dir + name
+    let (output_dir, output_name_override) = if let Some(out) = output {
+        let out_path = Path::new(out);
+        if let Some(parent) = out_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                (
+                    Some(parent.to_path_buf()),
+                    out_path
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string()),
+                )
+            } else {
+                (None, Some(out.to_string()))
+            }
+        } else {
+            (None, Some(out.to_string()))
+        }
+    } else {
+        (None, None)
+    };
+
+    // Override the manifest output name if -o was given
+    if let Some(name) = &output_name_override {
+        if let Some(ref mut build) = manifest.build {
+            build.output = Some(name.clone());
+        } else {
+            manifest.build = Some(forge::manifest::BuildConfig {
+                entry: None,
+                output: Some(name.clone()),
+                sources: None,
+            });
+        }
+    }
+
+    let output_display = manifest.output_name();
+    eprintln!("building {} ...", output_display);
+
+    let pipeline = forge::build::BuildPipeline::new(manifest, base_dir)
+        .dry_run(dry_run)
+        .release(release)
+        .embed_config(embed_config)
+        .output_dir(output_dir);
+
+    let result = pipeline.build()?;
+
+    if dry_run {
+        eprintln!(
+            "dry run complete — validation passed ({:?})",
+            result.program_kind
+        );
+    } else {
+        eprintln!("done: {}", result.binary_path.display());
+    }
+
+    Ok(())
+}
+
+/// Try to build executor from entry file + optional additional sources.
+/// When sources are provided, merges them before building (multi-file project support).
+fn try_build_executor_multi(
+    file: &Path,
+    sources: &[PathBuf],
+    events_tx: Option<tokio::sync::broadcast::Sender<String>>,
+) -> Result<
+    (
+        forge::runtime::executor::TaskExecutor,
+        forge::config::ForgeConfig,
+    ),
+    anyhow::Error,
+> {
+    if sources.is_empty() {
+        return try_build_executor(file, events_tx);
+    }
+
+    // Multi-file: parse all, merge, then build
+    let mut all_paths = vec![file.to_path_buf()];
+    all_paths.extend(sources.iter().cloned());
+
+    let mut source_files = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for path in &all_paths {
+        let source = read_source(path)?;
+        let fname = path.display().to_string();
+        let program = match forge::parser::parse(&source) {
+            Ok(p) => p,
+            Err(e) => {
+                e.to_diagnostic(&fname).render(&source);
+                return Err(anyhow::anyhow!("parse error in {}", fname));
+            }
+        };
+        source_files.push(forge::compose::SourceFile {
+            path: fname,
+            source,
+            program,
+        });
+    }
+
+    // Cross-file boundary check
+    let boundary_refs: Vec<_> = source_files
+        .iter()
+        .map(|sf| (&sf.program, sf.path.as_str()))
+        .collect();
+    diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
+
+    if !diagnostics.is_empty() {
+        for diag in &diagnostics {
+            if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
+                diag.render(&sf.source);
+            }
+        }
+        return Err(anyhow::anyhow!("{} diagnostic error(s)", diagnostics.len()));
+    }
+
+    // Merge programs
+    let composed = forge::compose::merge_programs(&source_files).map_err(|errs| {
+        anyhow::anyhow!(
+            "{}",
+            errs.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    })?;
+
+    let config = forge::config::ForgeConfig::load_or_default();
+    let trace_env = std::env::var("FORGE_TRACE")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let tracer = match (&events_tx, trace_env) {
+        (Some(tx), _) => Some(forge::tracer::Tracer::with_live(tx.clone())),
+        (None, true) => Some(forge::tracer::Tracer::new()),
+        (None, false) => None,
+    };
+
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
+
+    let skill_exec = build_skill_executor(&config, &providers, tracer.as_ref());
+    let mut executor = forge::runtime::executor::TaskExecutor::new(
+        composed.program,
+        Arc::clone(&providers),
+        tracer,
+    )
+    .with_config(config.clone());
+    if let Some(se) = skill_exec {
+        executor = executor.with_skill_executor(se);
+    }
+
+    Ok((executor, config))
+}
+
+/// Try to parse, validate, and build an executor from a single .forge file.
+/// Returns the executor and config on success, or renders diagnostics and returns an error.
+fn try_build_executor(
+    file: &Path,
+    events_tx: Option<tokio::sync::broadcast::Sender<String>>,
+) -> Result<
+    (
+        forge::runtime::executor::TaskExecutor,
+        forge::config::ForgeConfig,
+    ),
+    anyhow::Error,
+> {
     let source = read_source(file)?;
-    let program = parse_or_exit(&source, file);
     let fname = file.display().to_string();
 
-    // Validate before serving
+    let program = match forge::parser::parse(&source) {
+        Ok(p) => p,
+        Err(e) => {
+            e.to_diagnostic(&fname).render(&source);
+            return Err(anyhow::anyhow!("parse error in {}", fname));
+        }
+    };
+
     let mut diagnostics = Vec::new();
 
     let ctx = forge::resolver::CheckContext::new(&fname);
@@ -277,39 +906,471 @@ async fn serve_program(
 
     if !diagnostics.is_empty() {
         forge::diagnostic::render_diagnostics(&source, &diagnostics);
-        std::process::exit(1);
+        return Err(anyhow::anyhow!("{} diagnostic error(s)", diagnostics.len()));
     }
 
     let config = forge::config::ForgeConfig::load_or_default();
 
-    let tracer = if std::env::var("FORGE_TRACE")
+    let trace_env = std::env::var("FORGE_TRACE")
         .map(|v| v == "1")
-        .unwrap_or(false)
-    {
-        Some(forge::tracer::Tracer::new())
-    } else {
-        None
+        .unwrap_or(false);
+    let tracer = match (&events_tx, trace_env) {
+        (Some(tx), _) => Some(forge::tracer::Tracer::with_live(tx.clone())),
+        (None, true) => Some(forge::tracer::Tracer::new()),
+        (None, false) => None,
     };
 
     let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
 
-    let executor = forge::runtime::executor::TaskExecutor::new(program, Arc::new(registry), tracer);
-
-    let mut server =
-        forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref());
-
-    if let Some(host) = cli_host {
-        server = server.with_host(host);
-    }
-    if let Some(port) = cli_port {
-        server = server.with_port(port);
+    let skill_exec = build_skill_executor(&config, &providers, tracer.as_ref());
+    let mut executor =
+        forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
+            .with_config(config.clone());
+    if let Some(se) = skill_exec {
+        executor = executor.with_skill_executor(se);
     }
 
-    server.run().await
+    Ok((executor, config))
 }
 
-async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
+async fn serve_program(
+    file: &Path,
+    sources: &[PathBuf],
+    cli_host: Option<String>,
+    cli_port: Option<u16>,
+    watch: bool,
+) -> anyhow::Result<()> {
+    // Auto-discover forge.config.toml next to the served file when FORGE_CONFIG is not set.
+    if std::env::var("FORGE_CONFIG").is_err() {
+        if let Some(parent) = file.parent() {
+            let local_config = parent.join("forge.config.toml");
+            if local_config.exists() {
+                std::env::set_var("FORGE_CONFIG", &local_config);
+            }
+        }
+    }
+
+    if watch {
+        serve_with_watch(file, sources, cli_host, cli_port).await
+    } else {
+        // Non-watch mode: build once and serve. Exits on errors.
+        let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+        let (executor, config) =
+            match try_build_executor_multi(file, sources, Some(events_tx.clone())) {
+                Ok(r) => r,
+                Err(_) => std::process::exit(1),
+            };
+
+        // Create shared infrastructure for both HTTP server and system runtime (#140)
+        let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+        );
+        let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
+            Arc::new(tokio::sync::RwLock::new(Vec::new()));
+
+        // Create storage for data.store/data.get/data.list/data.delete (#59)
+        let storage_path = file
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join(".forge-data/server.redb");
+        if let Some(parent) = storage_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let mut inspect_storage: Option<forge::runtime::storage::SharedStorage> = None;
+        let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
+            Ok(storage) => {
+                // Seed content/ directory into storage (#59)
+                seed_content_dir(file, &storage);
+                let shared = std::sync::Arc::new(storage);
+                inspect_storage = Some(shared.clone());
+                executor.with_storage(shared)
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not open storage at {}: {e}",
+                    storage_path.display()
+                );
+                executor
+            }
+        };
+
+        // Build embedding provider if [embeddings] is configured (#50)
+        let executor = if let Some(ref embed_config) = config.embeddings {
+            match config.providers.get(&embed_config.provider) {
+                Some(provider_config) => {
+                    match forge::llm::providers::build_embedding_provider(
+                        provider_config,
+                        embed_config,
+                    ) {
+                        Ok(embed_provider) => {
+                            let dimensions = embed_provider.embedding_dimensions();
+                            let vectors_path = file
+                                .parent()
+                                .unwrap_or(std::path::Path::new("."))
+                                .join(".forge-data/vectors.json");
+                            let vector_index = std::sync::Arc::new(tokio::sync::Mutex::new(
+                                forge::runtime::vector_index::VectorIndex::new(
+                                    dimensions,
+                                    Some(&vectors_path),
+                                ),
+                            ));
+                            executor.with_embeddings(embed_provider, vector_index)
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: could not build embedding provider: {e}");
+                            executor
+                        }
+                    }
+                }
+                None => {
+                    eprintln!(
+                        "Warning: [embeddings] references unknown provider '{}'",
+                        embed_config.provider
+                    );
+                    executor
+                }
+            }
+        } else {
+            executor
+        };
+
+        // Build system runtime (if declared) and inject shared infrastructure (#140)
+        let topology = executor.extract_topology();
+        let system_runtime = match executor.build_system_runtime() {
+            Ok(Some(sr)) => {
+                let mut sr = sr
+                    .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
+                    .with_shared_warden_snapshots(warden_snapshots.clone());
+                if let Some(ref storage) = inspect_storage {
+                    sr = sr.with_shared_storage(storage.clone());
+                }
+                Some(sr)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                eprintln!("Warning: failed to build system runtime: {e}");
+                None
+            }
+        };
+
+        // Collect signal senders before system runtime is consumed (issue #143)
+        let signal_senders = system_runtime
+            .as_ref()
+            .map(|sr| sr.collect_signal_senders());
+
+        // Cost aggregator (issue #142) — subscribe before server consumes events_tx
+        let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
+            forge::runtime::cost_aggregator::CostAggregator::new(),
+        ));
+        forge::runtime::cost_aggregator::spawn_cost_listener(
+            events_tx.subscribe(),
+            cost_aggregator.clone(),
+        );
+
+        let mut server =
+            forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
+                .with_event_bus(event_bus)
+                .with_events_tx(events_tx)
+                .with_instance_registry(instance_registry)
+                .with_warden_snapshots(warden_snapshots)
+                .with_cost_aggregator(cost_aggregator);
+
+        if let Some(senders) = signal_senders {
+            server = server.with_signal_senders(senders);
+        }
+        if let Some(storage) = inspect_storage {
+            server = server.with_inspect_storage(storage);
+        }
+        if let Some(topo) = topology {
+            server = server.with_topology(topo);
+        }
+
+        // Wire webhook secrets from config
+        if let Some(ref srv_config) = config.server {
+            if let Some(ref secrets) = srv_config.webhook_secrets {
+                server = server.with_webhook_secrets(secrets.clone());
+            }
+        }
+
+        if let Some(host) = cli_host {
+            server = server.with_host(host);
+        }
+        if let Some(port) = cli_port {
+            server = server.with_port(port);
+        }
+
+        // Spawn system runtime as background task (#140)
+        if let Some(sr) = system_runtime {
+            tokio::spawn(async move {
+                if let Err(e) = sr.start().await {
+                    eprintln!("System runtime error: {e}");
+                }
+            });
+        }
+
+        server.run().await
+    }
+}
+
+/// Seed markdown files from `content/` directory into storage.
+/// Files are stored as `page:<slug>` keys (e.g., `content/getting-started.md` → `page:getting-started`).
+/// Subdirectories use the filename only (e.g., `content/reference/task.md` → `page:task`).
+fn seed_content_dir(file: &Path, storage: &forge::runtime::storage::ForgeStorage) {
+    let content_dir = file
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("content");
+    if !content_dir.is_dir() {
+        return;
+    }
+    let mut count = 0;
+    seed_content_recursive(&content_dir, storage, &mut count);
+    if count > 0 {
+        eprintln!(
+            "  Seeded {count} content pages from {}",
+            content_dir.display()
+        );
+    }
+}
+
+fn seed_content_recursive(
+    dir: &Path,
+    storage: &forge::runtime::storage::ForgeStorage,
+    count: &mut usize,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            seed_content_recursive(&path, storage, count);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            let slug = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if slug.is_empty() {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let key = format!("page:{slug}");
+                if storage.store(&key, &content).is_ok() {
+                    *count += 1;
+                }
+            }
+        }
+    }
+}
+
+async fn serve_with_watch(
+    file: &Path,
+    sources: &[PathBuf],
+    cli_host: Option<String>,
+    cli_port: Option<u16>,
+) -> anyhow::Result<()> {
+    use forge::runtime::watcher::WatchAction;
+
+    // Create events channel outside the loop so SSE connections survive config restarts.
+    let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+
+    loop {
+        let (executor, config) =
+            match try_build_executor_multi(file, sources, Some(events_tx.clone())) {
+                Ok(r) => r,
+                Err(_) => std::process::exit(1),
+            };
+
+        // Create shared infrastructure for both HTTP server and system runtime (#140)
+        let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+        );
+        let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
+            Arc::new(tokio::sync::RwLock::new(Vec::new()));
+
+        // Create storage for data.store/data.get/data.list/data.delete (#59)
+        let storage_path = file
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join(".forge-data/server.redb");
+        if let Some(parent) = storage_path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let mut inspect_storage: Option<forge::runtime::storage::SharedStorage> = None;
+        let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
+            Ok(storage) => {
+                seed_content_dir(file, &storage);
+                let shared = std::sync::Arc::new(storage);
+                inspect_storage = Some(shared.clone());
+                executor.with_storage(shared)
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not open storage at {}: {e}",
+                    storage_path.display()
+                );
+                executor
+            }
+        };
+
+        // Build embedding provider if [embeddings] is configured (#50)
+        let executor = if let Some(ref embed_config) = config.embeddings {
+            match config.providers.get(&embed_config.provider) {
+                Some(provider_config) => {
+                    match forge::llm::providers::build_embedding_provider(
+                        provider_config,
+                        embed_config,
+                    ) {
+                        Ok(embed_provider) => {
+                            let dimensions = embed_provider.embedding_dimensions();
+                            let vectors_path = file
+                                .parent()
+                                .unwrap_or(std::path::Path::new("."))
+                                .join(".forge-data/vectors.json");
+                            let vector_index = std::sync::Arc::new(tokio::sync::Mutex::new(
+                                forge::runtime::vector_index::VectorIndex::new(
+                                    dimensions,
+                                    Some(&vectors_path),
+                                ),
+                            ));
+                            executor.with_embeddings(embed_provider, vector_index)
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: could not build embedding provider: {e}");
+                            executor
+                        }
+                    }
+                }
+                None => {
+                    eprintln!(
+                        "Warning: [embeddings] references unknown provider '{}'",
+                        embed_config.provider
+                    );
+                    executor
+                }
+            }
+        } else {
+            executor
+        };
+
+        // Build system runtime (if declared) and inject shared infrastructure (#140)
+        let topology = executor.extract_topology();
+        let system_runtime = match executor.build_system_runtime() {
+            Ok(Some(sr)) => {
+                let mut sr = sr
+                    .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
+                    .with_shared_warden_snapshots(warden_snapshots.clone());
+                if let Some(ref storage) = inspect_storage {
+                    sr = sr.with_shared_storage(storage.clone());
+                }
+                Some(sr)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                eprintln!("Warning: failed to build system runtime: {e}");
+                None
+            }
+        };
+
+        // Collect signal senders before system runtime is consumed (issue #143)
+        let signal_senders = system_runtime
+            .as_ref()
+            .map(|sr| sr.collect_signal_senders());
+
+        // Cost aggregator (issue #142)
+        let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
+            forge::runtime::cost_aggregator::CostAggregator::new(),
+        ));
+        forge::runtime::cost_aggregator::spawn_cost_listener(
+            events_tx.subscribe(),
+            cost_aggregator.clone(),
+        );
+
+        let mut server =
+            forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
+                .with_watch_mode(true)
+                .with_event_bus(event_bus)
+                .with_events_tx(events_tx.clone())
+                .with_instance_registry(instance_registry)
+                .with_warden_snapshots(warden_snapshots)
+                .with_cost_aggregator(cost_aggregator);
+
+        if let Some(senders) = signal_senders {
+            server = server.with_signal_senders(senders);
+        }
+        if let Some(storage) = inspect_storage {
+            server = server.with_inspect_storage(storage);
+        }
+        if let Some(topo) = topology {
+            server = server.with_topology(topo);
+        }
+
+        // Wire webhook secrets from config
+        if let Some(ref srv_config) = config.server {
+            if let Some(ref secrets) = srv_config.webhook_secrets {
+                server = server.with_webhook_secrets(secrets.clone());
+            }
+        }
+
+        if let Some(ref host) = cli_host {
+            server = server.with_host(host.clone());
+        }
+        if let Some(port) = cli_port {
+            server = server.with_port(port);
+        }
+
+        // Spawn system runtime as background task (#140)
+        if let Some(sr) = system_runtime {
+            tokio::spawn(async move {
+                if let Err(e) = sr.start().await {
+                    eprintln!("System runtime error: {e}");
+                }
+            });
+        }
+
+        let swappable = server.swappable_executor();
+        let reload_tx = server.reload_sender();
+        let watcher_events_tx = Some(events_tx.clone());
+
+        let watch_file = file.to_path_buf();
+        let watcher_handle = tokio::spawn(async move {
+            forge::runtime::watcher::watch_and_reload(
+                watch_file,
+                swappable,
+                reload_tx,
+                watcher_events_tx,
+            )
+            .await
+        });
+
+        tokio::select! {
+            result = server.run() => {
+                // Server stopped (SIGINT) — watcher task is dropped and cancelled
+                return result;
+            }
+            watch_result = watcher_handle => {
+                match watch_result {
+                    Ok(Ok(WatchAction::RestartServer)) => {
+                        eprintln!("Config changed -- restarting server...");
+                        continue;
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("Watcher error: {e}");
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        eprintln!("Watcher task failed: {e}");
+                        return Err(anyhow::anyhow!("watcher task failed: {e}"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn run_agent(file: &Path) -> anyhow::Result<()> {
     let source = read_source(file)?;
     let program = parse_or_exit(&source, file);
 
@@ -318,7 +1379,7 @@ async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
         .items
         .iter()
         .find_map(|item| match &item.node {
-            TopLevel::Agent(a) => Some(a.clone()),
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
             _ => None,
         })
         .ok_or_else(|| anyhow::anyhow!("no agent declaration found in {}", file.display()))?;
@@ -332,12 +1393,21 @@ async fn run_agent(file: &PathBuf) -> anyhow::Result<()> {
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
+    // Open persistent storage if any agent declares memory persistent
+    let storage = if agent_decl.memory_persistent {
+        Some(open_forge_storage()?)
+    } else {
+        None
+    };
+
     let agent = AgentProcess::new(
         agent_decl.clone(),
         states_decl.as_ref(),
         Arc::new(registry),
         None,
         program,
+        storage,
+        None,
     );
 
     // Print banner
@@ -454,4 +1524,88 @@ fn parse_args(input: &str) -> Vec<String> {
     }
 
     args
+}
+
+/// Send a single event to an agent non-interactively, print the result, and exit.
+async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::Result<()> {
+    let source = read_source(file)?;
+    let program = parse_or_exit(&source, file);
+
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("no agent declaration found in {}", file.display()))?;
+
+    let states_decl = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::States(s) => Some(s.clone()),
+        _ => None,
+    });
+
+    let config = forge::config::ForgeConfig::load_or_default();
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+
+    // Always open storage in CLI mode — even non-persistent agents need
+    // memory to survive across forge-send invocations
+    let storage = Some(open_forge_storage()?);
+
+    // Create instance registry for find/spawn support
+    let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+        tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+    );
+
+    let agent = AgentProcess::new(
+        agent_decl.clone(),
+        states_decl.as_ref(),
+        Arc::new(registry),
+        None,
+        program,
+        storage,
+        Some(instance_registry),
+    );
+
+    // Build params from positional args matching handler param names
+    let handler = agent_decl
+        .handlers
+        .iter()
+        .find(|h| h.node.event.node == event);
+    let mut params = HashMap::new();
+    if let Some(h) = handler {
+        for (i, param) in h.node.params.iter().enumerate() {
+            if let Some(arg) = args.get(i) {
+                // Coerce CLI string args to declared parameter types
+                use forge::ast::TypeName;
+                let value = match &param.node.type_name.node {
+                    TypeName::Number => {
+                        if let Ok(n) = arg.parse::<f64>() {
+                            Value::Number(n)
+                        } else {
+                            Value::Text(arg.clone())
+                        }
+                    }
+                    TypeName::Bool => Value::Bool(arg == "true" || arg == "1"),
+                    _ => Value::Text(arg.clone()),
+                };
+                params.insert(
+                    param.node.name.clone(),
+                    ConfidentValue::deterministic(value),
+                );
+            }
+        }
+    }
+
+    match agent.dispatch(event, params).await {
+        Ok(Some(val)) => println!("{}", val.value),
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
 }

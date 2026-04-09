@@ -1,0 +1,9 @@
+{
+  "name": "valid_find_expression",
+  "category": "parser",
+  "description": "Find expressions: by alias, all by template, and filtered by lifecycle",
+  "input": "task discover\n  do\n    bot = find \"room_42_bot\"\n    all_bots = find all forge_sensei\n    experts = find all forge_sensei where lifecycle == expert\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

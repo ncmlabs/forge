@@ -1,0 +1,11 @@
+{
+  "name": "recall_returns_uncertain",
+  "category": "checker",
+  "subcategory": "uncertain",
+  "description": "Tainted value from recall passed to give without when/match is rejected",
+  "input": "use\n  llm.reason\n\nagent learner\n  knowledge store: \".forge-knowledge/test\"\n\n  on query(q: Text)\n    prior = recall \"{q}\"\n    give prior\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["unhandled uncertain"]
+  }
+}

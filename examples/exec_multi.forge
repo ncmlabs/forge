@@ -1,0 +1,10 @@
+# exec acceptance test: multiple exec calls, pwd and date
+task system_info
+  gives Text
+  do
+    dir = exec "pwd"
+    when dir.sure -> give dir
+    else -> give "unknown"
+
+fn main
+  say system_info()

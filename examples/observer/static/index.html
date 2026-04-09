@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FORGE Observer</title>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <link rel="stylesheet" href="css/observer.css">
+</head>
+<body class="min-h-screen bg-base-100 text-base-content">
+
+  <!-- Connection Bar -->
+  <div class="connection-bar navbar bg-base-200/80 backdrop-blur-md border-b border-base-300 sticky top-0 z-50 px-4 gap-2">
+    <div class="flex-none">
+      <span class="font-bold text-lg tracking-tight">FORGE Observer</span>
+    </div>
+    <div class="flex-1 flex items-center gap-2 ml-4">
+      <input
+        id="server-url"
+        type="text"
+        placeholder="http://localhost:3001"
+        class="input input-bordered input-sm w-72"
+        value="http://localhost:3001"
+      />
+      <button id="connect-btn" class="btn btn-primary btn-sm">Connect</button>
+      <button id="disconnect-btn" class="btn btn-ghost btn-sm hidden">Disconnect</button>
+      <span id="connection-status" class="badge badge-sm sse-status disconnected">Disconnected</span>
+    </div>
+    <div class="flex-none">
+      <button id="theme-toggle" class="btn btn-ghost btn-circle btn-sm theme-toggle" title="Toggle theme"></button>
+    </div>
+  </div>
+
+  <!-- Tab Navigation -->
+  <div class="tab-nav border-b border-base-300 bg-base-200/50 px-4">
+    <div role="tablist" class="tabs tabs-bordered">
+      <button id="tab-tree" role="tab" class="tab tab-active" data-view="tree">Tree</button>
+      <button id="tab-topology" role="tab" class="tab" data-view="topology">Topology</button>
+      <button id="tab-costs" role="tab" class="tab" data-view="costs">Costs</button>
+      <button id="tab-timeline" role="tab" class="tab" data-view="timeline">Timeline</button>
+    </div>
+  </div>
+
+  <!-- View Panels -->
+  <main class="p-4">
+
+    <!-- Tree View -->
+    <div id="view-tree" class="view-panel active">
+      <div class="grid gap-4" style="grid-template-columns: 280px 1fr 320px;">
+        <!-- Tree Panel -->
+        <div class="overflow-y-auto" style="max-height: calc(100vh - 160px);">
+          <div class="text-xs uppercase font-semibold opacity-50 tracking-wider mb-2">Agent Tree</div>
+          <div id="tree-root" class="agent-tree"></div>
+        </div>
+
+        <!-- Event Stream -->
+        <div class="flex flex-col" style="max-height: calc(100vh - 160px);">
+          <div class="text-xs uppercase font-semibold opacity-50 tracking-wider mb-2">Event Stream</div>
+          <div id="event-log" class="forge-activity flex-1 overflow-y-auto">
+            <div id="event-log-empty" class="text-center opacity-40 py-8 text-sm">
+              No events yet. Connect to a FORGE server to begin.
+            </div>
+          </div>
+        </div>
+
+        <!-- Detail Panel -->
+        <div class="overflow-y-auto border-l border-base-300 pl-4" style="max-height: calc(100vh - 160px);">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-xs uppercase font-semibold opacity-50 tracking-wider">Agent Detail</div>
+            <button id="detail-close" class="btn btn-ghost btn-xs">X</button>
+          </div>
+          <div id="detail-content" class="agent-detail-panel">
+            <div class="text-sm opacity-40 py-4">Select an agent to view details.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Topology View -->
+    <div id="view-topology" class="view-panel">
+      <div class="relative">
+        <div id="topo-container" class="topo-container">
+          <svg id="topo-svg" width="100%" height="100%"></svg>
+        </div>
+        <!-- Topology Detail Slide-in -->
+        <div id="topo-detail-panel" class="absolute top-0 right-0 w-80 h-full bg-base-200 border-l border-base-300 overflow-y-auto p-4 translate-x-full transition-transform duration-200" style="display: none;">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-xs uppercase font-semibold opacity-50 tracking-wider">Node Detail</div>
+            <button id="topo-detail-close" class="btn btn-ghost btn-xs">X</button>
+          </div>
+          <div id="topo-detail-content" class="agent-detail-panel"></div>
+        </div>
+        <!-- Topology Event Log -->
+        <div class="mt-4">
+          <div class="text-xs uppercase font-semibold opacity-50 tracking-wider mb-2">Topology Events</div>
+          <div id="topo-event-log" class="forge-activity" style="max-height: 200px; overflow-y: auto;">
+            <div id="topo-event-log-empty" class="text-center opacity-40 py-4 text-sm">
+              No topology events yet.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Costs View -->
+    <div id="view-costs" class="view-panel">
+      <!-- Total Cost Banner -->
+      <div id="cost-totals" class="flex flex-wrap gap-4 mb-6">
+        <div class="card bg-base-200 shadow-sm flex-1 min-w-[180px]">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider">Total Cost</div>
+            <div id="cost-usd" class="cost-counter text-2xl font-bold">$0.0000</div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm flex-1 min-w-[140px]">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider">LLM Calls</div>
+            <div id="cost-calls" class="cost-counter text-2xl font-bold">0</div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm flex-1 min-w-[140px]">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider">Tokens In</div>
+            <div id="cost-tokens-in" class="cost-counter text-2xl font-bold">0</div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm flex-1 min-w-[140px]">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider">Tokens Out</div>
+            <div id="cost-tokens-out" class="cost-counter text-2xl font-bold">0</div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm flex-1 min-w-[140px]">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider">Throughput In</div>
+            <div id="cost-throughput-in" class="cost-counter text-lg font-bold">0 tok/s</div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm flex-1 min-w-[140px]">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider">Throughput Out</div>
+            <div id="cost-throughput-out" class="cost-counter text-lg font-bold">0 tok/s</div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm flex-1 min-w-[120px]">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider">Uptime</div>
+            <div id="cost-uptime" class="cost-counter text-lg font-bold">0s</div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm flex-1 min-w-[120px]">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider">TPS</div>
+            <div id="cost-tps" class="cost-counter text-lg font-bold">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cost Breakdowns -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <div class="card bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">By Operation</div>
+            <div class="overflow-x-auto">
+              <table class="table table-xs">
+                <thead>
+                  <tr><th>Operation</th><th>Calls</th><th>Cost</th></tr>
+                </thead>
+                <tbody id="cost-by-operation"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">By Agent</div>
+            <div class="overflow-x-auto">
+              <table class="table table-xs">
+                <thead>
+                  <tr><th>Agent</th><th>Calls</th><th>Cost</th></tr>
+                </thead>
+                <tbody id="cost-by-agent"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">By Provider</div>
+            <div class="overflow-x-auto">
+              <table class="table table-xs">
+                <thead>
+                  <tr><th>Provider</th><th>Calls</th><th>Cost</th></tr>
+                </thead>
+                <tbody id="cost-by-provider"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Confidence Chart -->
+      <div class="card bg-base-200 shadow-sm mb-4">
+        <div class="card-body p-4">
+          <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">Confidence Over Time</div>
+          <div id="confidence-chart" style="height: 200px;"></div>
+        </div>
+      </div>
+
+      <!-- SSE Status for Costs -->
+      <div id="cost-sse-status" class="text-xs opacity-40 text-center">Not streaming cost data.</div>
+    </div>
+
+    <!-- Timeline View -->
+    <div id="view-timeline" class="view-panel">
+      <div id="timeline-filters" class="flex gap-2 mb-4 flex-wrap">
+        <span class="text-xs uppercase font-semibold opacity-50 tracking-wider self-center mr-2">Filters:</span>
+      </div>
+      <div id="timeline-container" class="timeline-container card bg-base-200 shadow-sm">
+        <div class="text-center opacity-40 py-12 text-sm">Connect to a FORGE server to see the timeline.</div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Scripts -->
+  <script src="js/api.js"></script>
+  <script src="js/observer.js"></script>
+  <script src="js/detail.js"></script>
+  <script src="js/events.js"></script>
+  <script src="js/tree.js"></script>
+  <script src="js/topology.js"></script>
+  <script src="js/costs.js"></script>
+  <script src="js/timeline.js"></script>
+</body>
+</html>

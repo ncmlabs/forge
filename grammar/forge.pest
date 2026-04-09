@@ -10,7 +10,8 @@
 // --- Program structure ---
 program   = { SOI ~ (boundary_directive ~ nl)? ~ (blank_line | top_level)* ~ EOI }
 top_level = {
-    use_decl
+    import_decl
+  | use_decl
   | pure_decl
   | event_decl
   | states_decl
@@ -48,12 +49,13 @@ keyword = @{
     ( "use" | "task" | "flow" | "agent" | "pool" | "warden" | "contract" | "system"
     | "fn" | "needs" | "gives" | "do" | "is" | "stage"
     | "if" | "else" | "when" | "give" | "say" | "reason" | "classify"
-    | "into" | "true" | "false" | "or" | "with" | "escalate"
+    | "into" | "true" | "false" | "or" | "with" | "escalate" | "downgrade"
     | "to" | "try" | "above"
     | "pure" | "event" | "states" | "timer" | "endpoint" | "type"
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
-    | "match" )
+    | "match" | "recall" | "learn" | "spawn" | "find" | "retire"
+    | "exec" | "exportable" | "import" | "from" | "as" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -65,8 +67,9 @@ bool_lit   = @{ ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // Template string: allows {expr} interpolation
 template_string = ${ "\"" ~ template_part* ~ "\"" }
-template_part   =  { template_interp | template_escape | template_text }
-template_interp =  { "{" ~ _s_opt ~ expr ~ _s_opt ~ "}" }
+template_part       =  { template_interp_raw | template_interp | template_escape | template_text }
+template_interp     =  { "{" ~ _s_opt ~ expr ~ _s_opt ~ "}" }
+template_interp_raw =  { "{!" ~ _s_opt ~ expr ~ _s_opt ~ "}" }
 template_escape = @{ "\\" ~ ("n" | "r" | "t" | "\"" | "\\") }
 template_text   = @{ (!("\"" | "{" | "\\") ~ ANY)+ }
 
@@ -74,7 +77,7 @@ template_text   = @{ (!("\"" | "{" | "\\") ~ ANY)+ }
 builtin_type = @{
     ( "Text" | "Number" | "Bool" | "Results" | "Report" | "Intent"
     | "Summary" | "Failure" | "Classification" | "Conversation"
-    | "Profile" | "SearchResults" )
+    | "Profile" | "SearchResults" | "Request" | "Response" | "Headers" | "Html" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 type_name    = { (builtin_type | ident) ~ array_suffix? }
@@ -90,6 +93,12 @@ use_decl = {
     (i1 ~ cap_path ~ nl)+
 }
 cap_path = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~ ("." ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*)+ }
+
+// --- import declaration ---
+import_decl = {
+    "import" ~ _s ~ import_layer_list ~ _s ~ "from" ~ _s ~ template_string ~ _s ~ "as" ~ _s ~ ident ~ nl
+}
+import_layer_list = { ident ~ (_s_opt ~ "," ~ _s_opt ~ ident)* }
 
 // --- task declaration ---
 task_decl = {
@@ -172,9 +181,10 @@ needs_ref      = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~ "." ~ ("
 
 // --- agent declaration ---
 agent_decl = {
-    "agent" ~ _s ~ ident ~ nl ~
+    ("exportable" ~ _s)? ~ "agent" ~ _s ~ ident ~ nl ~
     (i1 ~ lifecycle_clause ~ nl)? ~
     (i1 ~ memory_block)? ~
+    (i1 ~ knowledge_block)? ~
     (i1 ~ timer_field ~ nl)* ~
     (i1 ~ subscribe_line ~ nl)* ~
     (i1 ~ warden_override_block)? ~
@@ -185,8 +195,18 @@ agent_decl = {
 lifecycle_clause = { "lifecycle" ~ _s_opt ~ ":" ~ _s_opt ~ ident }
 
 memory_block = {
-    "memory" ~ nl ~
+    "memory" ~ (_s ~ "persistent")? ~ nl ~
     (i2 ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ type_name ~ nl)+
+}
+
+knowledge_block = {
+    "knowledge" ~ _s ~ "store" ~ _s_opt ~ ":" ~ _s_opt ~ template_string ~ nl ~
+    (i2 ~ knowledge_option ~ nl)*
+}
+knowledge_option = {
+    "max_entries" ~ _s_opt ~ ":" ~ _s_opt ~ number_lit
+  | "retention" ~ _s_opt ~ ":" ~ _s_opt ~ duration
+  | "import" ~ _s_opt ~ ":" ~ _s_opt ~ ident_list
 }
 
 timer_field = { "timer" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ duration }
@@ -236,7 +256,7 @@ pool_strategy = {
   | "quorum(" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
   | "first(" ~ _s_opt ~ number_lit ~ _s_opt ~ ")"
 }
-duration = @{ ASCII_DIGIT+ ~ ("min" | "s" | "m" | "h") }
+duration = @{ ASCII_DIGIT+ ~ ("min" | "s" | "m" | "h" | "d") }
 
 // --- warden declaration ---
 warden_decl = {
@@ -256,7 +276,7 @@ ward_policy = {
 
 failure_type = @{ ("stuck" | "crash" | "hallucination" | "budget" | "timeout") ~ !(ASCII_ALPHANUMERIC | "_") }
 
-ward_response = @{ ("nudge" | "restart" | "replace" | "escalate") ~ !(ASCII_ALPHANUMERIC | "_") }
+ward_response = @{ ("nudge" | "downgrade" | "restart" | "replace" | "escalate") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 ward_scope = @{ ("self" | "downstream" | "all") ~ !(ASCII_ALPHANUMERIC | "_") }
 
@@ -305,6 +325,7 @@ statement = {
   | give_stmt
   | say_stmt
   | emit_stmt
+  | learn_stmt
   | transition_stmt
   | start_timer_stmt
   | cancel_timer_stmt
@@ -312,12 +333,16 @@ statement = {
   | forward_stmt
   | escalate_stmt
   | memory_update_stmt
+  | spawn_stmt
+  | retire_stmt
   | bind_stmt
   | expr_stmt
 }
 
 bind_stmt          = { ident ~ _s_opt ~ "=" ~ _s_opt ~ expr }
-give_stmt          = { "give" ~ _s ~ expr ~ (_s ~ "with" ~ _s ~ call_expr)? }
+give_stmt          = { "give" ~ _s ~ expr ~ (_s ~ "with" ~ _s ~ give_meta_list)? }
+give_meta_list     = { give_meta ~ (_s_opt ~ "," ~ _s_opt ~ give_meta)* }
+give_meta          = { ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 say_stmt           = { "say" ~ _s ~ expr }
 escalate_stmt      = { "escalate" ~ _s ~ "to" ~ _s ~ ident }
 memory_update_stmt = { "memory" ~ "." ~ ident ~ (_s_opt ~ "[" ~ _s_opt ~ expr ~ _s_opt ~ "]")? ~ _s_opt ~ "=" ~ _s_opt ~ expr }
@@ -329,6 +354,43 @@ start_timer_stmt   = { "start" ~ _s ~ ident ~ (_s ~ "for" ~ _s ~ expr)? }
 cancel_timer_stmt  = { "cancel" ~ _s ~ ident ~ (_s ~ "for" ~ _s ~ expr)? }
 reset_timer_stmt   = { "reset" ~ _s ~ ident }
 forward_stmt       = { "forward" ~ _s ~ expr ~ _s ~ "to" ~ _s ~ expr }
+
+learn_stmt         = { "learn" ~ _s ~ (learn_from_interaction | learn_from_document | learn_direct) ~ category_clause? }
+learn_from_interaction = { "from" ~ _s ~ "interaction" ~ _s_opt ~ "(" ~ _s_opt ~ arg_list ~ _s_opt ~ ")" }
+learn_from_document    = { "from" ~ _s ~ "document" ~ _s_opt ~ "(" ~ _s_opt ~ string_arg ~ _s_opt ~ ")" }
+learn_direct           = { string_arg }
+category_clause        = { _s ~ "category" ~ _s_opt ~ ":" ~ _s_opt ~ string_arg }
+
+// --- spawn statement (create agent instances at runtime, issue #83) ---
+spawn_stmt = {
+    (ident ~ _s_opt ~ "=" ~ _s_opt)? ~
+    "spawn" ~ _s ~ ident ~ (_s ~ "as" ~ _s ~ string_arg)? ~
+    (nl ~ i3 ~ spawn_option)*
+}
+spawn_stmt_i3 = {
+    (ident ~ _s_opt ~ "=" ~ _s_opt)? ~
+    "spawn" ~ _s ~ ident ~ (_s ~ "as" ~ _s ~ string_arg)? ~
+    (nl ~ i4 ~ spawn_option)*
+}
+spawn_option = {
+    spawn_knowledge_option | spawn_confidence_cap_option | spawn_memory_option
+}
+spawn_knowledge_option      = { "with" ~ _s ~ "knowledge" ~ _s ~ "where" ~ _s ~ spawn_knowledge_pred }
+spawn_knowledge_pred        = { "category" ~ _s_opt ~ "==" ~ _s_opt ~ string_arg }
+spawn_confidence_cap_option = { "with" ~ _s ~ "confidence_cap" ~ _s_opt ~ ":" ~ _s_opt ~ expr }
+spawn_memory_option         = { "with" ~ _s ~ "memory" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
+
+// --- retire statement (graceful agent termination, issue #86) ---
+retire_stmt = {
+    "retire" ~ (_s ~ string_arg)? ~ (nl ~ i3 ~ retire_option)*
+}
+retire_stmt_i3 = {
+    "retire" ~ (_s ~ string_arg)? ~ (nl ~ i4 ~ retire_option)*
+}
+retire_option = {
+    retire_knowledge_export
+}
+retire_knowledge_export = { "with" ~ _s ~ "knowledge" ~ _s ~ "export" ~ _s_opt ~ ":" ~ _s_opt ~ string_arg }
 
 // --- when block (confidence-only branching) ---
 when_block = {
@@ -347,9 +409,9 @@ else_clause = { "else" ~ _s_opt ~ "->" ~ _s_opt ~ statement_inline }
 
 statement_inline = {
     give_stmt | say_stmt | escalate_stmt
-  | emit_stmt | transition_stmt
+  | emit_stmt | learn_stmt | transition_stmt
   | start_timer_stmt | cancel_timer_stmt | reset_timer_stmt
-  | forward_stmt | expr_stmt
+  | forward_stmt | retire_stmt | expr_stmt
 }
 
 // --- match statement (structural pattern matching) ---
@@ -398,6 +460,7 @@ statement_i3 = {
   | give_stmt
   | say_stmt
   | emit_stmt
+  | learn_stmt
   | transition_stmt
   | start_timer_stmt
   | cancel_timer_stmt
@@ -405,6 +468,8 @@ statement_i3 = {
   | forward_stmt
   | escalate_stmt
   | memory_update_stmt
+  | spawn_stmt_i3
+  | retire_stmt_i3
   | bind_stmt
   | expr_stmt
 }
@@ -440,6 +505,7 @@ statement_i4 = {
     give_stmt
   | say_stmt
   | emit_stmt
+  | learn_stmt
   | transition_stmt
   | start_timer_stmt
   | cancel_timer_stmt
@@ -493,18 +559,29 @@ postfix_op   = {
 }
 
 pipe_term = {
-    reason_expr
+    exec_expr
+  | find_expr
+  | reason_expr
   | classify_expr
   | search_expr
+  | recall_expr
   | try_or_expr
   | constructor_expr
   | call_expr
   | atom
 }
 
+// --- find expression (discover agent instances at runtime, issue #84) ---
+find_expr = {
+    "find" ~ _s ~ "all" ~ _s ~ ident ~ (_s ~ "where" ~ _s ~ "lifecycle" ~ _s_opt ~ "==" ~ _s_opt ~ ident)?
+  | "find" ~ _s ~ string_arg
+}
+
+exec_expr     = { "exec" ~ _s ~ string_arg }
 reason_expr   = { "reason" ~ _s ~ string_arg }
 classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list }
 search_expr   = { "search" ~ _s ~ string_arg }
+recall_expr   = { "recall" ~ _s ~ string_arg }
 try_or_expr   = { "try" ~ _s ~ and_expr ~ _s ~ "or" ~ _s ~ expr }
 
 string_arg = { template_string | ident }

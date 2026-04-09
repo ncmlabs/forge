@@ -1,0 +1,9 @@
+{
+  "name": "sensei_specialist_lifecycle",
+  "category": "parser",
+  "description": "Specialist agent with lifecycle, subscribe, and event handler parses successfully",
+  "input": "states SpecialistPhase\n  learning -> ready when absorbed_count >= 5\n  ready -> ready\n\nevent LearnedInsight\n  category: Text\n  content: Text\n  source: Text\n  confidence: Number\n\nagent specialist\n  lifecycle: SpecialistPhase\n  memory\n    topic: Text\n    query_count: Number\n    absorbed_count: Number\n  knowledge store: \".forge-knowledge/specialist\"\n    max_entries: 10000\n    retention: 180d\n  subscribe LearnedInsight where category == memory.topic\n\n  on start\n    say \"Specialist initialized for topic: {memory.topic}\"\n\n  on LearnedInsight(category: Text, content: Text, source: Text, confidence: Number)\n    learn \"{content}\" category: category\n    memory.absorbed_count = memory.absorbed_count + 1\n    say \"Specialist absorbed insight from {source}\"\n\n  on query(question: Text)\n    requires lifecycle == ready on fail: give \"Specialist still learning.\"\n    memory.query_count = memory.query_count + 1\n    prior = recall \"{memory.topic} {question}\"\n    when prior.sure -> give \"answered\"\n    else -> give \"no knowledge\"\n\n  if stuck for 3 turns\n    say \"Specialist stuck. Escalating.\"\n    escalate to human\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

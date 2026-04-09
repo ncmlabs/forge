@@ -11,6 +11,7 @@ event MoveMade
 states GamePhase
   waiting -> playing when player_count == 2
   playing -> finished
+  finished -> waiting
 
 type GameResult
   winner: Text

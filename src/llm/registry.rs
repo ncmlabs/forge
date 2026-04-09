@@ -292,6 +292,7 @@ mod tests {
             ) -> Result<CompletionResponse, ProviderError> {
                 Ok(CompletionResponse {
                     content: "cloud".to_string(),
+                    tool_calls: vec![],
                     tokens_in: 1,
                     tokens_out: 1,
                     latency_ms: 1,

@@ -1,0 +1,9 @@
+[project]
+name = "forge-sensei"
+version = "0.2.0"
+description = "FORGE language learning agent — CLI + web interface"
+
+[build]
+entry = "agent.forge"
+output = "forge-sensei"
+sources = ["core.forge"]

@@ -86,6 +86,23 @@ impl AgentMemory {
     pub fn field_names(&self) -> Vec<&str> {
         self.fields.keys().map(|s| s.as_str()).collect()
     }
+
+    /// Serialize all memory fields to JSON for persistent storage.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(&self.fields)
+    }
+
+    /// Restore memory from a JSON string. Fields present in JSON override
+    /// defaults; fields declared but missing from JSON keep their defaults.
+    pub fn restore_from_json(&mut self, json: &str) -> Result<(), serde_json::Error> {
+        let stored: HashMap<String, ConfidentValue> = serde_json::from_str(json)?;
+        for (key, val) in stored {
+            if self.fields.contains_key(&key) {
+                self.fields.insert(key, val);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Produce a type-appropriate default `ConfidentValue`.
@@ -99,7 +116,12 @@ fn default_for_type(ty: &TypeName) -> ConfidentValue {
         TypeName::Number => Value::Number(0.0),
         TypeName::Bool => Value::Bool(false),
         TypeName::Conversation => Value::List(vec![]),
-        TypeName::Profile | TypeName::Custom(_) => Value::Record(HashMap::new()),
+        TypeName::Html => Value::Text(String::new()),
+        TypeName::Profile
+        | TypeName::Request
+        | TypeName::Response
+        | TypeName::Headers
+        | TypeName::Custom(_) => Value::Record(HashMap::new()),
         TypeName::Results | TypeName::SearchResults => Value::List(vec![]),
         TypeName::Failure => Value::Text(String::new()),
         TypeName::Array(inner, size) => {
@@ -204,5 +226,49 @@ mod tests {
         let fields = vec![number_field("count")];
         let mem = AgentMemory::new(&fields);
         assert_eq!(mem.snapshot_hash(), mem.snapshot_hash());
+    }
+
+    #[test]
+    fn memory_json_roundtrip() {
+        let fields = vec![text_field("name"), number_field("count")];
+        let mut mem = AgentMemory::new(&fields);
+        mem.set(
+            "name",
+            ConfidentValue::deterministic(Value::Text("Alice".into())),
+        );
+        mem.set("count", ConfidentValue::deterministic(Value::Number(42.0)));
+
+        let json = mem.to_json().unwrap();
+
+        // Restore into a fresh memory with the same schema
+        let mut mem2 = AgentMemory::new(&fields);
+        mem2.restore_from_json(&json).unwrap();
+
+        assert!(matches!(mem2.get("name").unwrap().value, Value::Text(ref s) if s == "Alice"));
+        assert!(matches!(mem2.get("count").unwrap().value, Value::Number(n) if n == 42.0));
+    }
+
+    #[test]
+    fn memory_restore_ignores_unknown_fields() {
+        let fields = vec![text_field("name")];
+        let mut mem = AgentMemory::new(&fields);
+        // JSON has an extra field "age" not in the schema
+        mem.restore_from_json(r#"{"name":{"value":{"Text":"Bob"},"confidence":1.0,"source":"Deterministic"},"age":{"value":{"Number":30.0},"confidence":1.0,"source":"Deterministic"}}"#).unwrap();
+        assert!(matches!(mem.get("name").unwrap().value, Value::Text(ref s) if s == "Bob"));
+        assert!(mem.get("age").is_none()); // unknown field not added
+    }
+
+    #[test]
+    fn memory_restore_keeps_defaults_for_missing_fields() {
+        let fields = vec![text_field("name"), number_field("count")];
+        let mut mem = AgentMemory::new(&fields);
+        // JSON only has "name", not "count"
+        mem.restore_from_json(
+            r#"{"name":{"value":{"Text":"Eve"},"confidence":1.0,"source":"Deterministic"}}"#,
+        )
+        .unwrap();
+        assert!(matches!(mem.get("name").unwrap().value, Value::Text(ref s) if s == "Eve"));
+        // count should keep its default (0.0)
+        assert!(matches!(mem.get("count").unwrap().value, Value::Number(n) if n == 0.0));
     }
 }

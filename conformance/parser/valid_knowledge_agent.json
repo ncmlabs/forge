@@ -1,0 +1,9 @@
+{
+  "name": "valid_knowledge_agent",
+  "category": "parser",
+  "description": "Agent with knowledge store, recall expression, and learn statements parses successfully",
+  "input": "use\n  llm.reason\n\nagent learner\n  memory\n    count: Number\n  knowledge store: \".forge-knowledge/learner\"\n    max_entries: 5000\n    retention: 90d\n\n  on query(question: Text)\n    prior = recall \"{question}\"\n    when prior.sure -> give prior\n    else -> escalate to human\n\n  on train(fact: Text)\n    learn \"{fact}\"\n    say \"Learned: {fact}\"\n\n  on ingest(path: Text)\n    learn from document(path)\n    say \"Ingested\"\n\n  on record(q: Text, a: Text)\n    learn from interaction(q, a, 0.9)\n    say \"Recorded\"\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

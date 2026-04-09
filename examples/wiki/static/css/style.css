@@ -1,0 +1,197 @@
+/* FORGE Wiki — custom overrides */
+
+/* Code blocks */
+pre[class*="language-"] {
+  border-radius: 0.5rem;
+  margin: 1rem 0;
+}
+
+code {
+  font-size: 0.9em;
+}
+
+/* Hero typing animation */
+.hero-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre;
+  line-height: 1.6;
+}
+
+/* Sidebar active state */
+.menu a.active {
+  font-weight: 700;
+}
+
+/* Smooth transitions for theme toggle */
+html {
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Prose overrides for DaisyUI */
+.prose code::before,
+.prose code::after {
+  content: none;
+}
+
+.prose pre {
+  background-color: oklch(var(--b2));
+}
+
+/* ── Link styles in prose (LLM responses, docs) ────────────── */
+
+.prose a {
+  color: oklch(var(--p));
+  text-decoration: underline;
+  text-decoration-color: oklch(var(--p) / 0.3);
+  text-underline-offset: 2px;
+  transition: text-decoration-color 0.15s ease;
+}
+
+.prose a:hover {
+  text-decoration-color: oklch(var(--p));
+}
+
+/* Doc links — distinct dotted underline + highlight on hover */
+.prose a[href^="/docs"] {
+  text-decoration: none;
+  border-bottom: 1.5px dotted oklch(var(--p) / 0.4);
+  padding-bottom: 1px;
+  transition: all 0.15s ease;
+}
+
+.prose a[href^="/docs"]:hover {
+  border-bottom-style: solid;
+  border-bottom-color: oklch(var(--p));
+  background: oklch(var(--p) / 0.08);
+  border-radius: 2px;
+  padding: 1px 3px;
+  margin: 0 -3px;
+}
+
+/* ── Search results ─────────────────────────────────────────── */
+
+#search-results ul {
+  list-style: none;
+  padding: 0;
+}
+
+#search-results ul li {
+  padding: 0.75rem 1rem;
+  border: 1px solid oklch(var(--b2));
+  border-radius: 0.5rem;
+  margin-bottom: 0.5rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#search-results ul li:hover {
+  border-color: oklch(var(--p) / 0.3);
+  box-shadow: 0 1px 4px oklch(var(--p) / 0.08);
+}
+
+/* ── Q&A answer polish ──────────────────────────────────────── */
+
+#qa-result {
+  line-height: 1.75;
+}
+
+#qa-result .prose > p:first-child {
+  font-size: 1.05em;
+}
+
+/* ── Theme toggle icon ──────────────────────────────────────── */
+
+.theme-toggle { font-size: 1.1rem; }
+[data-theme="light"] .theme-toggle::after { content: "\263E"; }
+[data-theme="dark"] .theme-toggle::after { content: "\2600"; }
+
+/* Search modal */
+.search-modal {
+  backdrop-filter: blur(4px);
+}
+
+/* FORGE Activity Log — surfaces runtime mechanics */
+.forge-activity {
+  background: oklch(var(--n));
+  color: oklch(var(--nc));
+  border: 1px solid oklch(var(--nc) / 0.1);
+  border-radius: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.8;
+  overflow: hidden;
+}
+
+.forge-activity .log-title {
+  font-weight: 700;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+  margin-bottom: 0.75rem;
+}
+
+.forge-activity .log-entry {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: log-appear 0.3s ease forwards;
+}
+
+.forge-activity .log-entry .step-icon {
+  display: inline-block;
+  width: 1.2em;
+  text-align: center;
+}
+
+.forge-activity .log-entry .step-label {
+  color: oklch(var(--p));
+  font-weight: 600;
+}
+
+.forge-activity .log-entry .step-detail {
+  opacity: 0.7;
+}
+
+.forge-activity .log-entry .step-time {
+  float: right;
+  opacity: 0.5;
+  font-size: 0.8em;
+}
+
+.forge-activity .log-entry.done .step-icon {
+  color: oklch(var(--su));
+}
+
+.forge-activity .log-entry.active .step-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes log-appear {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Mobile sidebar */
+@media (max-width: 1023px) {
+  .mobile-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 280px;
+    height: 100vh;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    background: oklch(var(--b1));
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  }
+  .mobile-sidebar.open {
+    transform: translateX(0);
+  }
+}

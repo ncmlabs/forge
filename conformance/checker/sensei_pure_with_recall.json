@@ -1,0 +1,11 @@
+{
+  "name": "sensei_pure_with_recall",
+  "category": "checker",
+  "subcategory": "pure",
+  "description": "Pure function cannot use recall (non-deterministic retrieval forbidden)",
+  "input": "pure bad_pure\n  needs q: Text\n  gives Text\n  do\n    give recall \"{q}\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_contains": ["cannot use", "recall"]
+  }
+}

@@ -58,9 +58,12 @@ fn payload_with_fields(name: &str, source: &str, fields: Vec<(&str, &str)>) -> E
 /// Build a minimal agent with a handler that gives back event field values.
 fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: spanned(name.into()),
         lifecycle: None,
         memory: vec![],
+        memory_persistent: false,
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
             event_name: spanned(event_name.into()),
@@ -75,7 +78,7 @@ fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>
                 spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                     "handled".into(),
                 ))])),
-                None,
+                vec![],
             ))],
         })],
         warden_override: Vec::new(),
@@ -86,9 +89,12 @@ fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>
 /// Build an agent that emits an event from its handler.
 fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: spanned(name.into()),
         lifecycle: None,
         memory: vec![],
+        memory_persistent: false,
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         handlers: vec![spanned(OnHandler {
@@ -102,7 +108,7 @@ fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDec
                     spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                         "emitted".into(),
                     ))])),
-                    None,
+                    vec![],
                 )),
             ],
         })],
@@ -203,9 +209,17 @@ async fn agent_registers_subscriptions_with_bus() {
     let decl = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let _agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
-        .with_event_bus(bus.clone())
-        .await;
+    let _agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     let bus_guard = bus.read().await;
     assert_eq!(bus_guard.subscriber_count("MoveEvent"), 1);
@@ -216,9 +230,17 @@ async fn agent_run_receives_and_dispatches_event() {
     let decl = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
-        .with_event_bus(bus.clone())
-        .await;
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Publish an event, then close the bus so channels close and run() terminates
     {
@@ -238,13 +260,29 @@ async fn agent_emit_drains_through_bus() {
     let decl_b = subscribing_agent("listener", "MoveEvent", None);
     let bus = EventBus::new_shared(None);
 
-    let agent_a = AgentProcess::new(decl_a, None, mock_registry(), None, empty_program())
-        .with_event_bus(bus.clone())
-        .await;
+    let agent_a = AgentProcess::new(
+        decl_a,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
-    let _agent_b = AgentProcess::new(decl_b, None, mock_registry(), None, empty_program())
-        .with_event_bus(bus.clone())
-        .await;
+    let _agent_b = AgentProcess::new(
+        decl_b,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Trigger agent_a, which should emit MoveEvent
     let result = agent_a.dispatch("trigger", HashMap::new()).await.unwrap();
@@ -273,9 +311,17 @@ async fn agent_filter_subscribe_with_matching_event() {
     let decl = subscribing_agent("listener", "MoveEvent", Some(filter));
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
-        .with_event_bus(bus.clone())
-        .await;
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Publish matching event
     {
@@ -310,9 +356,17 @@ async fn agent_filter_subscribe_rejects_non_matching() {
     let decl = subscribing_agent("listener", "MoveEvent", Some(filter));
     let bus = EventBus::new_shared(None);
 
-    let mut agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program())
-        .with_event_bus(bus.clone())
-        .await;
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Publish NON-matching event (room-999)
     {
@@ -342,12 +396,15 @@ async fn agent_filter_subscribe_rejects_non_matching() {
 async fn multi_agent_event_flow() {
     // ── room_agent: handles "join", emits PlayerJoined ──────────────────
     let room_decl = AgentDecl {
+        exportable: false,
         name: spanned("room_agent".into()),
         lifecycle: None,
         memory: vec![spanned(FieldDef {
             name: "player_count".into(),
             type_name: spanned(TypeName::Number),
         })],
+        memory_persistent: false,
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         handlers: vec![spanned(OnHandler {
@@ -384,7 +441,7 @@ async fn multi_agent_event_flow() {
                     spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                         "joined".into(),
                     ))])),
-                    None,
+                    vec![],
                 )),
             ],
         })],
@@ -398,14 +455,29 @@ async fn multi_agent_event_flow() {
     // ── Wire both agents to shared bus ──────────────────────────────────
     let bus = EventBus::new_shared(None);
 
-    let room_agent = AgentProcess::new(room_decl, None, mock_registry(), None, empty_program())
-        .with_event_bus(bus.clone())
-        .await;
+    let room_agent = AgentProcess::new(
+        room_decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
-    let mut observer =
-        AgentProcess::new(observer_decl, None, mock_registry(), None, empty_program())
-            .with_event_bus(bus.clone())
-            .await;
+    let mut observer = AgentProcess::new(
+        observer_decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
 
     // Verify observer registered its subscription
     assert_eq!(bus.read().await.subscriber_count("PlayerJoined"), 1);

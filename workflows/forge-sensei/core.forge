@@ -1,0 +1,177 @@
+use
+  llm.reason
+  llm.classify
+
+# ── Types ─────────────────────────────────────────────────────
+
+type QueryResult
+  answer: Text
+  confidence_tier: Text
+  sources_used: Number
+
+type AssessmentResult
+  passed: Bool
+  prediction: Text
+  expected: Text
+  gap_topic: Text
+
+# ── Events ────────────────────────────────────────────────────
+
+event LearnedInsight
+  category: Text
+  content: Text
+  source: Text
+  confidence: Number
+
+event AssessmentCompleted
+  level: Text
+  score: Number
+  passed: Number
+  total: Number
+  failures: Text
+
+event KnowledgeGapFound
+  category: Text
+  question: Text
+
+# ── Lifecycle ─────────────────────────────────────────────────
+
+states MasteryLevel
+  novice -> apprentice when conformance_score >= 40
+  apprentice -> journeyman when conformance_score >= 70
+  journeyman -> expert when conformance_score >= 90
+  expert -> expert
+
+states SpecialistPhase
+  learning -> ready when absorbed_count >= 5
+  ready -> ready
+
+# ── Pure Functions ────────────────────────────────────────────
+
+pure compute_mastery_score
+  needs passed: Number, total: Number
+  gives Number
+  do
+    if total == 0
+      give 0
+    give (passed / total) * 100
+
+pure determine_level
+  needs score: Number
+  gives Text
+  do
+    if score >= 90
+      give "expert"
+    if score >= 70
+      give "journeyman"
+    if score >= 40
+      give "apprentice"
+    give "novice"
+
+pure format_status
+  needs level: Text, score: Number, interactions: Number
+  gives Text
+  do
+    give "forge-sensei | Level: {level} | Mastery: {score}% | Interactions: {interactions}"
+
+pure check_prediction
+  needs predicted: Text, expected: Text
+  gives Bool
+  do
+    if predicted.contains(expected)
+      give true
+    give false
+
+# ── Tasks ─────────────────────────────────────────────────────
+
+task answer_forge_question
+  needs question: Text, context: Text
+  gives Text
+  do
+    result = reason "You are forge-sensei, an expert on the FORGE programming language for oracle-augmented computation. Using this prior knowledge:\n{context}\n\nAnswer this FORGE question accurately and concisely: {question}\n\nIf the prior knowledge does not cover this topic, say so honestly."
+    when result.sure -> give result
+    when result.unsure -> give "Uncertain: {result}"
+    else -> give "I could not answer this question confidently. Consider checking the forge-reference."
+
+task review_forge_code
+  needs code: Text, context: Text
+  gives Text
+  do
+    result = reason "You are forge-sensei, reviewing FORGE code for correctness. Using this knowledge of FORGE:\n{context}\n\nReview this FORGE code for errors, style issues, and principle violations:\n{code}\n\nList each issue with: line reference, issue description, fix suggestion."
+    when result.sure -> give result
+    when result.unsure -> give "Uncertain review: {result}"
+    else -> give "Could not review this code confidently."
+
+task extract_lesson
+  needs question: Text, resolution: Text
+  gives Text
+  do
+    result = reason "A FORGE developer asked: {question}\nThe resolution was: {resolution}\n\nExtract a concise, reusable lesson about FORGE from this interaction. Format: [CATEGORY] lesson text. Categories: SYNTAX, TASKS, FLOWS, CONTROL, AGENTS, KNOWLEDGE, SUPERVISION, PRINCIPLES, PATTERNS, ERRORS."
+    when result.sure -> give result
+    when result.unsure -> give "Tentative lesson: {result}"
+    else -> give "Could not extract lesson."
+
+task predict_outcome
+  needs test_input: Text, knowledge_context: Text
+  gives Text
+  do
+    result = reason "Given this FORGE program:\n{test_input}\n\nUsing your knowledge:\n{knowledge_context}\n\nPredict the EXACT compiler outcome: parse_ok, parse_error, compile_ok, compile_error, run_ok, or run_error. State your prediction and explain briefly."
+    when result.sure -> give result
+    when result.unsure -> give "UNCERTAIN: {result}"
+    else -> give "CANNOT_PREDICT"
+
+task categorize_for_recall
+  needs context: Text
+  gives Text
+  do
+    result = classify context into ["SYNTAX", "TASKS", "FLOWS", "CONTROL", "AGENTS", "KNOWLEDGE", "SUPERVISION", "PRINCIPLES", "PATTERNS", "ERRORS", "CONFORMANCE", "BOUNDARY"]
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "GENERAL"
+
+# ── Flows ─────────────────────────────────────────────────────
+
+flow answer_query
+  needs question: Text
+  gives QueryResult
+
+  stage categorize
+    categories = question >> categorize_for_recall(_pipe)
+
+  stage retrieve
+    needs categorize.categories
+    prior = recall "{categorize.categories} {question}"
+
+  stage respond
+    needs retrieve.prior, categorize.categories
+    prior = retrieve.prior
+    response = answer_forge_question(question, prior)
+    when prior.sure -> give QueryResult(answer: response, confidence_tier: "sure", sources_used: 1)
+    when prior.unsure -> give QueryResult(answer: response, confidence_tier: "unsure", sources_used: 1)
+    else -> give QueryResult(answer: response, confidence_tier: "none", sources_used: 0)
+
+flow review_code
+  needs code: Text
+  gives Text
+
+  stage categorize
+    categories = code >> categorize_for_recall(_pipe)
+
+  stage retrieve
+    needs categorize.categories
+    prior = recall "{categorize.categories} FORGE syntax patterns errors"
+
+  stage review
+    needs retrieve.prior
+    prior = retrieve.prior
+    when prior.sure -> give review_forge_code(code, prior)
+    when prior.unsure -> give review_forge_code(code, prior)
+    else -> give review_forge_code(code, "No prior knowledge. Review from first principles.")
+
+# ── Contract ──────────────────────────────────────────────────
+
+contract ForgeTutor
+  can query(question: Text) -> QueryResult
+  can review(code: Text) -> Text
+  can status() -> Text
+  can assess_detailed(test_input: Text, expected: Text) -> AssessmentResult

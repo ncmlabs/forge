@@ -162,7 +162,9 @@ async fn accept_hello_run() {
 }
 
 #[tokio::test]
-async fn accept_research_run() {
+async fn accept_research_run_without_search_provider() {
+    // Without a configured search provider, search produces a FlowError
+    // (it tries to connect to localhost:8080 SearXNG by default).
     let program = parse_file("examples/research.forge");
     let mock = MockProvider::new("mock")
         .with_response("search", "Search results about artificial intelligence")
@@ -172,12 +174,9 @@ async fn accept_research_run() {
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
     assert!(
-        result.is_ok(),
-        "research.forge should run without error: {:?}",
-        result.err()
+        result.is_err(),
+        "research.forge should fail without a search provider"
     );
-    let outputs = executor.outputs();
-    assert!(!outputs.is_empty(), "research.forge should produce output");
 }
 
 #[tokio::test]
@@ -196,7 +195,7 @@ async fn accept_tictactoe_game() {
         .items
         .iter()
         .find_map(|item| match &item.node {
-            TopLevel::Agent(a) => Some(a.clone()),
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
             _ => None,
         })
         .expect("no agent in room_agent.forge");
@@ -229,6 +228,8 @@ async fn accept_tictactoe_game() {
         mock_registry(mock),
         None,
         combined_program,
+        None,
+        None,
     );
 
     // Initialize board with "_" markers (memory default is empty strings)
@@ -363,6 +364,41 @@ async fn accept_tictactoe_game() {
     }
 
     println!("=== Tic-tac-toe full game complete — X wins! ===");
+}
+
+// ── Fact-check pool acceptance test (issue #63) ─────────────────
+
+#[test]
+fn accept_fact_check_pool_parse() {
+    let diags = check_file("examples/fact_check_pool.forge");
+    let errs = errors(&diags);
+    assert!(
+        errs.is_empty(),
+        "fact_check_pool.forge should have no checker errors, got: {:?}",
+        errs.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn accept_fact_check_pool_run() {
+    let program = parse_file("examples/fact_check_pool.forge");
+    // Mock provider returns 3 identical responses for the 3 pool workers
+    let mock = MockProvider::new("mock").with_default("YES this claim is factually accurate");
+    let executor = TaskExecutor::new(program, mock_registry(mock), None);
+    let result = executor.run().await;
+    assert!(
+        result.is_ok(),
+        "fact_check_pool.forge should run without error: {:?}",
+        result.err()
+    );
+    let outputs = executor.outputs();
+    assert!(
+        outputs
+            .iter()
+            .any(|o| o.contains("YES") || o.contains("Verdict")),
+        "should output a verdict, got: {:?}",
+        outputs
+    );
 }
 
 // ── CLI smoke tests ──────────────────────────────────────────────

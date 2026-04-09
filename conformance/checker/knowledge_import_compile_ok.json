@@ -1,0 +1,9 @@
+{
+  "name": "knowledge_import_compile_ok",
+  "category": "checker",
+  "description": "Agent with knowledge import compiles cleanly",
+  "input": "import knowledge from \"expert.forgepkg.json\" as expert_k\n\nagent assistant\n  knowledge store: \".forge-knowledge/mine\"\n    import: expert_k\n\n  on query(q: Text)\n    prior = recall \"{q}\"\n    when prior.sure -> give prior\n    else -> escalate to human\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "sensei_warden_full_policy",
+  "category": "parser",
+  "description": "Warden with 5 policies including after clauses and max_retries parses successfully",
+  "input": "agent forge_sensei\n  on start\n    say \"ready\"\n\nagent specialist\n  on start\n    say \"ready\"\n\nwarden sensei_warden\n  manages [forge_sensei, specialist]\n  on stuck: nudge, self\n    after 3: escalate\n  on hallucination: restart, self\n  on crash: restart, self\n  on timeout: restart, self\n  on budget: nudge, self\n    after 1: escalate\n  max_retries 3 per 1h then escalate\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

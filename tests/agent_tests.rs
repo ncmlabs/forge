@@ -37,9 +37,12 @@ fn simple_agent(
     stuck_policy: Option<Spanned<StuckPolicy>>,
 ) -> AgentDecl {
     AgentDecl {
+        exportable: false,
         name: spanned("test_agent".into()),
         lifecycle: None,
         memory: memory_fields,
+        memory_persistent: false,
+        knowledge: None,
         timers: vec![],
         subscriptions: vec![],
         warden_override: Vec::new(),
@@ -105,12 +108,20 @@ async fn dispatch_selects_correct_handler() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "hello".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let result = agent.dispatch("greet", HashMap::new()).await.unwrap();
     assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "hello")));
 }
@@ -118,7 +129,15 @@ async fn dispatch_selects_correct_handler() {
 #[tokio::test]
 async fn dispatch_unknown_event_errors() {
     let decl = simple_agent(vec![], vec![], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let result = agent.dispatch("nonexistent", HashMap::new()).await;
     assert!(result.is_err());
 }
@@ -136,12 +155,20 @@ async fn dispatch_binds_params() {
         requires: vec![],
         body: vec![spanned(Stmt::Give(
             spanned(Expr::Ident("name".into())),
-            None,
+            vec![],
         ))],
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let mut params = HashMap::new();
     params.insert(
         "name".into(),
@@ -181,12 +208,20 @@ async fn memory_update_persists_across_dispatches() {
                 Box::new(spanned(Expr::Ident("memory".into()))),
                 spanned("topic".into()),
             )),
-            None,
+            vec![],
         ))],
     });
 
     let decl = simple_agent(vec![text_field("topic")], vec![handler, read_handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
 
     // Set topic
     let mut params = HashMap::new();
@@ -217,12 +252,20 @@ async fn requires_pass_executes_handler() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "ok".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let result = agent.dispatch("action", HashMap::new()).await.unwrap();
     assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "ok")));
 }
@@ -241,12 +284,20 @@ async fn requires_fail_silent_skips() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "should not reach".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let result = agent.dispatch("action", HashMap::new()).await.unwrap();
     assert!(result.is_none());
 }
@@ -267,12 +318,20 @@ async fn requires_fail_give_returns_value() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "ok".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let result = agent.dispatch("action", HashMap::new()).await.unwrap();
     assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "denied")));
 }
@@ -291,7 +350,15 @@ async fn requires_fail_crash_returns_error() {
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let result = agent.dispatch("action", HashMap::new()).await;
     assert!(result.is_err());
 }
@@ -310,12 +377,20 @@ async fn requires_fail_log_rejects() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "should not reach".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let result = agent.dispatch("action", HashMap::new()).await.unwrap();
     // on fail: log rejects the handler (returns None) and logs to stderr
     assert!(result.is_none());
@@ -348,12 +423,20 @@ async fn requires_short_circuits_on_first_failure() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "body_reached".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let result = agent.dispatch("action", HashMap::new()).await.unwrap();
     // Should get "first_failed" — proves first guard ran and short-circuited
     assert!(
@@ -383,7 +466,15 @@ async fn state_machine_transition_via_handler() {
     };
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, Some(&states), mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        Some(&states),
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
 
     agent.dispatch("activate", HashMap::new()).await.unwrap();
     let ctx = agent.context().lock().unwrap();
@@ -410,7 +501,15 @@ async fn state_machine_invalid_transition_errors() {
     };
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, Some(&states), mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        Some(&states),
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     let result = agent.dispatch("jump", HashMap::new()).await;
     assert!(result.is_err());
 }
@@ -439,7 +538,15 @@ async fn timer_start_via_handler() {
         }),
     })];
 
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     agent.dispatch("begin", HashMap::new()).await.unwrap();
 
     let ctx = agent.context().lock().unwrap();
@@ -482,7 +589,15 @@ async fn timer_cancel_via_handler() {
         }),
     })];
 
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     agent.dispatch("begin", HashMap::new()).await.unwrap();
     agent.dispatch("stop", HashMap::new()).await.unwrap();
 
@@ -511,7 +626,15 @@ async fn emit_collected_in_event_sink() {
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     agent.dispatch("resolve", HashMap::new()).await.unwrap();
 
     let ctx = agent.context().lock().unwrap();
@@ -532,7 +655,15 @@ async fn escalate_collected_in_event_sink() {
     });
 
     let decl = simple_agent(vec![], vec![handler], None);
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
     agent.dispatch("help", HashMap::new()).await.unwrap();
 
     let ctx = agent.context().lock().unwrap();
@@ -553,7 +684,7 @@ async fn stuck_detection_triggers_policy() {
             spanned(Expr::Template(vec![spanned(TemplatePart::Text(
                 "I cannot help with that".into(),
             ))])),
-            None,
+            vec![],
         ))],
     });
 
@@ -564,7 +695,15 @@ async fn stuck_detection_triggers_policy() {
     });
 
     let decl = simple_agent(vec![], vec![handler], Some(stuck_policy));
-    let agent = AgentProcess::new(decl, None, mock_registry(), None, empty_program());
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
 
     // First two turns — not stuck yet
     agent.dispatch("message", HashMap::new()).await.unwrap();
@@ -603,12 +742,12 @@ agent test_bot
         .items
         .iter()
         .find_map(|item| match &item.node {
-            TopLevel::Agent(a) => Some(a.clone()),
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
             _ => None,
         })
         .expect("no agent in program");
 
-    let agent = AgentProcess::new(agent_decl, None, mock_registry(), None, program);
+    let agent = AgentProcess::new(agent_decl, None, mock_registry(), None, program, None, None);
 
     // Dispatch three pings — count should increment
     let r1 = agent.dispatch("ping", HashMap::new()).await.unwrap();

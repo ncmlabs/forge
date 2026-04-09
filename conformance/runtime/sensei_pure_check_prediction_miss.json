@@ -1,0 +1,11 @@
+{
+  "name": "sensei_pure_check_prediction_miss",
+  "category": "runtime",
+  "description": "Pure function check_prediction returns false when predicted does not contain expected",
+  "input": "pure check_prediction\n  needs predicted: Text, expected: Text\n  gives Bool\n  do\n    if predicted.contains(expected)\n      give true\n    give false\n\nfn main\n  result = check_prediction(\"compile_error due to type mismatch\", \"parse_ok\")\n  say result\n",
+  "mock_responses": [],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": []
+  }
+}

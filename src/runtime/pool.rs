@@ -18,7 +18,7 @@ use crate::tracer::Tracer;
 
 enum WorkerKind {
     Task(TaskDecl),
-    Agent(AgentDecl),
+    Agent(Box<AgentDecl>),
 }
 
 // ── Pool executor ────────────────────────────────────────────────────────────
@@ -162,14 +162,15 @@ impl PoolExecutor {
                     join_set.spawn(async move { executor.call_task(&decl, args).await });
                 }
                 WorkerKind::Agent(agent_decl) => {
-                    let decl = agent_decl.clone();
+                    let decl = agent_decl.as_ref().clone();
                     let providers = self.providers.clone();
                     let tracer = self.tracer.clone();
                     let program = self.program.clone();
                     let event = event.to_string();
                     let args = args.to_vec();
                     join_set.spawn(async move {
-                        let process = AgentProcess::new(decl, None, providers, tracer, program);
+                        let process =
+                            AgentProcess::new(decl, None, providers, tracer, program, None, None);
                         let mut params = HashMap::new();
                         for (i, arg) in args.into_iter().enumerate() {
                             params.insert(format!("arg_{}", i), arg);
@@ -424,6 +425,7 @@ fn ast_duration_to_tokio(d: &Duration) -> tokio::time::Duration {
         DurationUnit::Seconds => d.value,
         DurationUnit::Minutes => d.value * 60,
         DurationUnit::Hours => d.value * 3600,
+        DurationUnit::Days => d.value * 86400,
     };
     tokio::time::Duration::from_secs(secs)
 }
@@ -433,6 +435,7 @@ fn format_duration(d: &Duration) -> String {
         DurationUnit::Seconds => format!("{}s", d.value),
         DurationUnit::Minutes => format!("{}m", d.value),
         DurationUnit::Hours => format!("{}h", d.value),
+        DurationUnit::Days => format!("{}d", d.value),
     }
 }
 
