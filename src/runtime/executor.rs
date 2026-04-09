@@ -2217,12 +2217,9 @@ impl TaskExecutor {
                 }
 
                 // ── command expression (issue #160, runtime in #161) ─────────
-                Expr::Command(_) => {
-                    Err(RuntimeError::FlowError(
-                        "command expression not yet implemented at runtime (issue #161)"
-                            .to_string(),
-                    ))
-                }
+                Expr::Command(_) => Err(RuntimeError::FlowError(
+                    "command expression not yet implemented at runtime (issue #161)".to_string(),
+                )),
 
                 // ── LLM expressions ───────────────────────────────────────────
                 Expr::Reason(prompt_expr) => {
