@@ -312,7 +312,7 @@ fn parse_command_all_modifiers() {
             let dur = cmd.timeout.as_ref().unwrap();
             assert_eq!(dur.node.value, 30);
             assert!(matches!(dur.node.unit, DurationUnit::Minutes));
-            assert_eq!(cmd.background.as_ref().unwrap().node, true);
+            assert!(cmd.background.as_ref().unwrap().node);
         }
         other => panic!("expected Command, got {:?}", other),
     }
@@ -327,7 +327,7 @@ fn parse_command_reordered_modifiers() {
             let dur = cmd.timeout.as_ref().unwrap();
             assert_eq!(dur.node.value, 5);
             assert!(matches!(dur.node.unit, DurationUnit::Minutes));
-            assert_eq!(cmd.background.as_ref().unwrap().node, true);
+            assert!(cmd.background.as_ref().unwrap().node);
         }
         other => panic!("expected Command, got {:?}", other),
     }
@@ -430,7 +430,7 @@ fn parse_command_all_modifiers_with_env() {
             assert!(matches!(&cmd.cmd.node, Expr::ArrayLit(_)));
             assert!(cmd.working_dir.is_some());
             assert!(cmd.timeout.is_some());
-            assert_eq!(cmd.background.as_ref().unwrap().node, true);
+            assert!(cmd.background.as_ref().unwrap().node);
             let entries = cmd.env.as_ref().unwrap();
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].node.key.node, "KEY");
