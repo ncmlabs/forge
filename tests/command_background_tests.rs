@@ -242,7 +242,7 @@ async fn background_shutdown_all() {
     let handle = mgr
         .lock()
         .unwrap()
-        .spawn_background(child, "sleep 60".to_string(), None)
+        .spawn_background(child, "sleep 60".to_string(), None, None)
         .unwrap();
 
     // Verify it's running

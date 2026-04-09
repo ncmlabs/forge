@@ -2312,7 +2312,12 @@ impl TaskExecutor {
                         let handle_id = mgr
                             .lock()
                             .unwrap()
-                            .spawn_background(child, cmd_display.clone(), Some(timeout_dur))
+                            .spawn_background(
+                                child,
+                                cmd_display.clone(),
+                                Some(timeout_dur),
+                                self.tracer.clone(),
+                            )
                             .map_err(RuntimeError::FlowError)?;
 
                         if let Some(ref tracer) = self.tracer {

@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::runtime::confidence::{ConfidentValue, Value};
+use crate::tracer::Tracer;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ impl CommandManager {
         mut child: Child,
         cmd_display: String,
         timeout: Option<Duration>,
+        tracer: Option<Tracer>,
     ) -> Result<HandleId, String> {
         let handle_id = Uuid::new_v4().to_string();
 
@@ -131,7 +133,10 @@ impl CommandManager {
         // Spawn watcher task — handles: natural exit, cancel, and timeout
         let state_for_wait = Arc::clone(&state);
         let timeout_dur = timeout;
+        let handle_for_trace = handle_id.clone();
         tokio::spawn(async move {
+            let start = std::time::Instant::now();
+
             // Create a future that sleeps for the timeout duration, or never
             // completes if no timeout is set.
             let timeout_fut = async {
@@ -141,24 +146,29 @@ impl CommandManager {
                 }
             };
 
-            tokio::select! {
+            let success = tokio::select! {
                 exit = child.wait() => {
                     let mut s = state_for_wait.lock().unwrap();
                     if s.status == ProcessStatus::Running {
                         match exit {
                             Ok(status) => {
+                                let ok = status.success();
                                 s.status = ProcessStatus::Completed {
                                     exit_code: status.code().unwrap_or(-1),
-                                    success: status.success(),
+                                    success: ok,
                                 };
+                                ok
                             }
                             Err(_) => {
                                 s.status = ProcessStatus::Completed {
                                     exit_code: -1,
                                     success: false,
                                 };
+                                false
                             }
                         }
+                    } else {
+                        false
                     }
                 }
                 _ = kill_rx => {
@@ -171,6 +181,7 @@ impl CommandManager {
                         s.status = ProcessStatus::Cancelled;
                     }
                     let _ = child.kill().await;
+                    false
                 }
                 _ = timeout_fut => {
                     // Timeout expired
@@ -182,7 +193,17 @@ impl CommandManager {
                         s.status = ProcessStatus::TimedOut;
                     }
                     let _ = child.kill().await;
+                    false
                 }
+            };
+
+            // Trace completion (Principle VIII — Accountability)
+            if let Some(ref t) = tracer {
+                t.command_bg_complete(
+                    &handle_for_trace,
+                    success,
+                    start.elapsed().as_millis() as u64,
+                );
             }
         });
 
