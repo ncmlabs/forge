@@ -1,9 +1,11 @@
 use crate::llm::{
-    CompletionRequest, CompletionResponse, LLMProvider, ProviderCapabilities, ProviderError,
-    QualityTier, ToolCallRequest,
+    CompletionRequest, CompletionResponse, EmbeddingProvider, EmbeddingRequest, EmbeddingResponse,
+    LLMProvider, ProviderCapabilities, ProviderError, QualityTier, ToolCallRequest,
 };
 use async_trait::async_trait;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -117,5 +119,70 @@ impl LLMProvider for MockProvider {
 
     async fn health_check(&self) -> Result<(), ProviderError> {
         Ok(())
+    }
+}
+
+// ── Mock Embedding Provider ──────────────────────────────────────────────────
+
+pub struct MockEmbeddingProvider {
+    name: String,
+    dimensions: usize,
+}
+
+impl MockEmbeddingProvider {
+    pub fn new(name: &str, dimensions: usize) -> Self {
+        Self {
+            name: name.to_string(),
+            dimensions,
+        }
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for MockEmbeddingProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn embedding_dimensions(&self) -> usize {
+        self.dimensions
+    }
+
+    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, ProviderError> {
+        // Deterministic fake vectors: hash each text to produce a fixed-length f32 vector.
+        // Similar texts won't produce similar vectors, but this is sufficient for testing
+        // the pipeline (embed → store → search) without a real provider.
+        let embeddings = request
+            .texts
+            .iter()
+            .map(|text| {
+                let mut vec = Vec::with_capacity(self.dimensions);
+                for i in 0..self.dimensions {
+                    let mut hasher = DefaultHasher::new();
+                    text.hash(&mut hasher);
+                    i.hash(&mut hasher);
+                    let h = hasher.finish();
+                    // Normalize to [-1.0, 1.0] range
+                    vec.push(((h as f64 / u64::MAX as f64) * 2.0 - 1.0) as f32);
+                }
+                // Normalize to unit vector for cosine similarity
+                let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if norm > 0.0 {
+                    for x in &mut vec {
+                        *x /= norm;
+                    }
+                }
+                vec
+            })
+            .collect();
+
+        let tokens_used = request.texts.iter().map(|t| t.len() as u32 / 4).sum();
+
+        Ok(EmbeddingResponse {
+            embeddings,
+            model_used: "mock-embed".to_string(),
+            tokens_used,
+            cost_usd: 0.0,
+        })
     }
 }

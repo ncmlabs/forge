@@ -224,3 +224,30 @@ pub trait LLMProvider: Send + Sync {
 }
 
 pub type BoxedProvider = Arc<dyn LLMProvider>;
+
+// ── Embedding types ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct EmbeddingRequest {
+    pub texts: Vec<String>,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EmbeddingResponse {
+    pub embeddings: Vec<Vec<f32>>,
+    pub model_used: String,
+    pub tokens_used: u32,
+    pub cost_usd: f32,
+}
+
+/// Separate trait for embedding providers — not all LLM providers support embeddings
+/// (e.g., Anthropic does not). This avoids forcing unsupported stubs on every provider.
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    fn name(&self) -> &str;
+    fn embedding_dimensions(&self) -> usize;
+    async fn embed(&self, request: EmbeddingRequest) -> Result<EmbeddingResponse, ProviderError>;
+}
+
+pub type BoxedEmbeddingProvider = Arc<dyn EmbeddingProvider>;

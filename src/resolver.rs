@@ -167,6 +167,13 @@ impl CapabilityRegistry {
                 output: ForgeType::Embedding,
             },
         );
+        caps.insert(
+            "data.search".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Results,
+            },
+        );
 
         caps.insert(
             "html.layout".into(),
@@ -486,6 +493,7 @@ mod tests {
         assert!(registry.resolve("data.list").is_some());
         assert!(registry.resolve("data.delete").is_some());
         assert!(registry.resolve("data.embed").is_some());
+        assert!(registry.resolve("data.search").is_some());
         assert!(registry.resolve("magic.wand").is_none());
     }
 }

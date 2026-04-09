@@ -144,6 +144,10 @@ pub struct TaskExecutor {
     knowledge_store: Option<Arc<Mutex<crate::runtime::knowledge_store::KnowledgeStore>>>,
     /// Skill executor for LLM-mediated skill bridge (issue #40).
     skill_executor: Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
+    /// Embedding provider for data.embed/data.search (issue #50).
+    embedding_provider: Option<crate::llm::BoxedEmbeddingProvider>,
+    /// Vector index for semantic search (issue #50).
+    vector_index: Option<crate::runtime::vector_index::SharedVectorIndex>,
 }
 
 impl Clone for TaskExecutor {
@@ -169,6 +173,8 @@ impl Clone for TaskExecutor {
             html_context: AtomicBool::new(self.html_context.load(Ordering::Relaxed)),
             knowledge_store: self.knowledge_store.clone(),
             skill_executor: self.skill_executor.clone(),
+            embedding_provider: self.embedding_provider.clone(),
+            vector_index: self.vector_index.clone(),
         }
     }
 }
@@ -223,6 +229,8 @@ impl TaskExecutor {
             html_context: AtomicBool::new(false),
             knowledge_store: None,
             skill_executor: None,
+            embedding_provider: None,
+            vector_index: None,
         }
     }
 
@@ -238,6 +246,17 @@ impl TaskExecutor {
         executor: Arc<crate::runtime::skill_executor::SkillExecutor>,
     ) -> Self {
         self.skill_executor = Some(executor);
+        self
+    }
+
+    /// Attach embedding provider and vector index for data.embed/data.search (issue #50).
+    pub fn with_embeddings(
+        mut self,
+        provider: crate::llm::BoxedEmbeddingProvider,
+        index: crate::runtime::vector_index::SharedVectorIndex,
+    ) -> Self {
+        self.embedding_provider = Some(provider);
+        self.vector_index = Some(index);
         self
     }
 
@@ -1563,6 +1582,167 @@ impl TaskExecutor {
                                         RuntimeError::FlowError(format!("data.delete: {e}"))
                                     })?;
                                     return Ok(ConfidentValue::deterministic(Value::Unit));
+                                }
+                                "embed" => {
+                                    let content = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let provider = self.embedding_provider.as_ref().ok_or_else(|| {
+                                        RuntimeError::Unsupported(
+                                            "data.embed requires [embeddings] configuration in forge.config.toml".to_string(),
+                                        )
+                                    })?;
+                                    let vi = self.vector_index.as_ref().ok_or_else(|| {
+                                        RuntimeError::Unsupported(
+                                            "data.embed requires [embeddings] configuration"
+                                                .to_string(),
+                                        )
+                                    })?;
+
+                                    let req = crate::llm::EmbeddingRequest {
+                                        texts: vec![content.clone()],
+                                        model: None,
+                                    };
+                                    let resp = provider.embed(req).await.map_err(|e| {
+                                        RuntimeError::FlowError(format!("data.embed: {e}"))
+                                    })?;
+                                    let embedding =
+                                        resp.embeddings.into_iter().next().ok_or_else(|| {
+                                            RuntimeError::FlowError(
+                                                "data.embed: no embedding returned".to_string(),
+                                            )
+                                        })?;
+
+                                    // Generate a unique ID
+                                    let id = format!("emb_{:x}", {
+                                        use std::collections::hash_map::DefaultHasher;
+                                        use std::hash::{Hash, Hasher};
+                                        let mut h = DefaultHasher::new();
+                                        content.hash(&mut h);
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap_or_default()
+                                            .as_nanos()
+                                            .hash(&mut h);
+                                        h.finish()
+                                    });
+
+                                    vi.lock()
+                                        .await
+                                        .insert(
+                                            &id,
+                                            &content,
+                                            embedding,
+                                            std::collections::HashMap::new(),
+                                        )
+                                        .map_err(|e| {
+                                            RuntimeError::FlowError(format!("data.embed: {e}"))
+                                        })?;
+
+                                    // Emit trace event for cost tracking
+                                    if let Some(ref tracer) = self.tracer {
+                                        tracer.llm_response(&LLMResponseInfo {
+                                            operation: "embed",
+                                            provider: provider.name(),
+                                            model: &resp.model_used,
+                                            tokens_in: resp.tokens_used,
+                                            tokens_out: 0,
+                                            cost_usd: resp.cost_usd,
+                                            confidence: 1.0,
+                                            agent_name: self.agent_name.as_deref(),
+                                        });
+                                    }
+
+                                    return Ok(ConfidentValue::deterministic(Value::Text(id)));
+                                }
+                                "search" => {
+                                    let query = arg_vals
+                                        .first()
+                                        .map(|v| format!("{}", v.value))
+                                        .unwrap_or_default();
+                                    let top_k = arg_vals
+                                        .get(1)
+                                        .and_then(|v| match &v.value {
+                                            Value::Number(n) => Some(*n as usize),
+                                            _ => None,
+                                        })
+                                        .unwrap_or(5);
+
+                                    let provider = self.embedding_provider.as_ref().ok_or_else(|| {
+                                        RuntimeError::Unsupported(
+                                            "data.search requires [embeddings] configuration in forge.config.toml".to_string(),
+                                        )
+                                    })?;
+                                    let vi = self.vector_index.as_ref().ok_or_else(|| {
+                                        RuntimeError::Unsupported(
+                                            "data.search requires [embeddings] configuration"
+                                                .to_string(),
+                                        )
+                                    })?;
+
+                                    // Embed the query
+                                    let req = crate::llm::EmbeddingRequest {
+                                        texts: vec![query.clone()],
+                                        model: None,
+                                    };
+                                    let resp = provider.embed(req).await.map_err(|e| {
+                                        RuntimeError::FlowError(format!("data.search: {e}"))
+                                    })?;
+                                    let query_embedding =
+                                        resp.embeddings.into_iter().next().ok_or_else(|| {
+                                            RuntimeError::FlowError(
+                                                "data.search: no embedding returned".to_string(),
+                                            )
+                                        })?;
+
+                                    let results = vi.lock().await.search(&query_embedding, top_k);
+                                    let best_score =
+                                        results.first().map(|r| r.score).unwrap_or(0.0);
+
+                                    let items: Vec<ConfidentValue> = results
+                                        .into_iter()
+                                        .map(|r| {
+                                            let mut fields = HashMap::new();
+                                            fields.insert(
+                                                "id".into(),
+                                                ConfidentValue::deterministic(Value::Text(r.id)),
+                                            );
+                                            fields.insert(
+                                                "content".into(),
+                                                ConfidentValue::deterministic(Value::Text(
+                                                    r.content,
+                                                )),
+                                            );
+                                            fields.insert(
+                                                "score".into(),
+                                                ConfidentValue::deterministic(Value::Number(
+                                                    r.score as f64,
+                                                )),
+                                            );
+                                            ConfidentValue::deterministic(Value::Record(fields))
+                                        })
+                                        .collect();
+
+                                    // Emit trace event for cost tracking
+                                    if let Some(ref tracer) = self.tracer {
+                                        tracer.llm_response(&LLMResponseInfo {
+                                            operation: "search",
+                                            provider: provider.name(),
+                                            model: &resp.model_used,
+                                            tokens_in: resp.tokens_used,
+                                            tokens_out: 0,
+                                            cost_usd: resp.cost_usd,
+                                            confidence: best_score,
+                                            agent_name: self.agent_name.as_deref(),
+                                        });
+                                    }
+
+                                    // Confidence derived from best cosine similarity score
+                                    return Ok(ConfidentValue::derived(
+                                        Value::List(items),
+                                        best_score,
+                                    ));
                                 }
                                 other => {
                                     return Err(RuntimeError::Unsupported(format!(

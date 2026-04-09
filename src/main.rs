@@ -997,6 +997,46 @@ async fn serve_program(
             }
         };
 
+        // Build embedding provider if [embeddings] is configured (#50)
+        let executor = if let Some(ref embed_config) = config.embeddings {
+            match config.providers.get(&embed_config.provider) {
+                Some(provider_config) => {
+                    match forge::llm::providers::build_embedding_provider(
+                        provider_config,
+                        embed_config,
+                    ) {
+                        Ok(embed_provider) => {
+                            let dimensions = embed_provider.embedding_dimensions();
+                            let vectors_path = file
+                                .parent()
+                                .unwrap_or(std::path::Path::new("."))
+                                .join(".forge-data/vectors.json");
+                            let vector_index = std::sync::Arc::new(tokio::sync::Mutex::new(
+                                forge::runtime::vector_index::VectorIndex::new(
+                                    dimensions,
+                                    Some(&vectors_path),
+                                ),
+                            ));
+                            executor.with_embeddings(embed_provider, vector_index)
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: could not build embedding provider: {e}");
+                            executor
+                        }
+                    }
+                }
+                None => {
+                    eprintln!(
+                        "Warning: [embeddings] references unknown provider '{}'",
+                        embed_config.provider
+                    );
+                    executor
+                }
+            }
+        } else {
+            executor
+        };
+
         // Build system runtime (if declared) and inject shared infrastructure (#140)
         let topology = executor.extract_topology();
         let system_runtime = match executor.build_system_runtime() {
@@ -1173,6 +1213,46 @@ async fn serve_with_watch(
                 );
                 executor
             }
+        };
+
+        // Build embedding provider if [embeddings] is configured (#50)
+        let executor = if let Some(ref embed_config) = config.embeddings {
+            match config.providers.get(&embed_config.provider) {
+                Some(provider_config) => {
+                    match forge::llm::providers::build_embedding_provider(
+                        provider_config,
+                        embed_config,
+                    ) {
+                        Ok(embed_provider) => {
+                            let dimensions = embed_provider.embedding_dimensions();
+                            let vectors_path = file
+                                .parent()
+                                .unwrap_or(std::path::Path::new("."))
+                                .join(".forge-data/vectors.json");
+                            let vector_index = std::sync::Arc::new(tokio::sync::Mutex::new(
+                                forge::runtime::vector_index::VectorIndex::new(
+                                    dimensions,
+                                    Some(&vectors_path),
+                                ),
+                            ));
+                            executor.with_embeddings(embed_provider, vector_index)
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: could not build embedding provider: {e}");
+                            executor
+                        }
+                    }
+                }
+                None => {
+                    eprintln!(
+                        "Warning: [embeddings] references unknown provider '{}'",
+                        embed_config.provider
+                    );
+                    executor
+                }
+            }
+        } else {
+            executor
         };
 
         // Build system runtime (if declared) and inject shared infrastructure (#140)
