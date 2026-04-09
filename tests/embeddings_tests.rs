@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use forge::compose;
-use forge::config::{EmbeddingsConfig, ForgeConfig, ProviderConfig};
+use forge::config::{EmbeddingsConfig, ForgeConfig};
 use forge::llm::providers::mock::{MockEmbeddingProvider, MockProvider};
 use forge::llm::registry::ProviderRegistry;
 use forge::runtime::executor::TaskExecutor;
