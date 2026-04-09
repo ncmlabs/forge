@@ -476,6 +476,12 @@ fn check_refs_in_expr(
         Expr::Reason(inner) | Expr::Recall(inner) | Expr::Exec(inner) => {
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
         }
+        Expr::Command(cmd_expr) => {
+            check_refs_in_expr(&cmd_expr.cmd, boundary, registry, file, diagnostics);
+            if let Some(ref dir) = cmd_expr.working_dir {
+                check_refs_in_expr(dir, boundary, registry, file, diagnostics);
+            }
+        }
         Expr::Search(inner) => {
             if boundary != BoundaryKind::Server {
                 let boundary_name = match boundary {

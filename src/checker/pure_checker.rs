@@ -334,6 +334,14 @@ fn check_pure_expr(
                 span_end: expr.span.end,
             });
         }
+        Expr::Command(_) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "command",
+                span_start: expr.span.start,
+                span_end: expr.span.end,
+            });
+        }
         // Leaves: literals, idents, type access — always pure
         Expr::NumberLit(_) | Expr::BoolLit(_) | Expr::Ident(_) | Expr::TypeAccess(_, _) => {}
     }

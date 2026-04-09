@@ -489,6 +489,33 @@ fn build_exec_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     Ok(Spanned::new(Expr::Exec(Box::new(arg)), span))
 }
 
+fn build_command_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let cmd = build_string_arg(inner.next().unwrap())?;
+    let mut working_dir = None;
+    let mut timeout = None;
+    let mut background = None;
+    for modifier in inner {
+        let child = modifier.into_inner().next().unwrap();
+        match child.as_rule() {
+            Rule::string_arg => working_dir = Some(Box::new(build_string_arg(child)?)),
+            Rule::duration => timeout = Some(build_duration(child)?),
+            Rule::bool_lit => background = Some(spanned(build_bool_lit(child.clone()), &child)),
+            _ => {}
+        }
+    }
+    Ok(Spanned::new(
+        Expr::Command(CommandExpr {
+            cmd: Box::new(cmd),
+            working_dir,
+            timeout,
+            background,
+        }),
+        span,
+    ))
+}
+
 fn build_reason_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let span = to_span(&pair);
     let inner = pair.into_inner().next().unwrap();
@@ -546,6 +573,7 @@ fn build_try_or_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
 fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
+        Rule::command_expr => build_command_expr(inner),
         Rule::exec_expr => build_exec_expr(inner),
         Rule::find_expr => build_find_expr(inner),
         Rule::reason_expr => build_reason_expr(inner),

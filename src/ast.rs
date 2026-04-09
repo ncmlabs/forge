@@ -474,6 +474,8 @@ pub enum Expr {
     Recall(Box<Spanned<Expr>>),
     /// `exec "command"` — direct CLI execution, returns uncertain<Text>
     Exec(Box<Spanned<Expr>>),
+    /// `command "cmd" [in "dir"] [timeout 60s] [background true]`
+    Command(CommandExpr),
     /// `find "alias"` / `find all template [where lifecycle == state]`
     Find(Box<FindExpr>),
     /// `try expr or expr`
@@ -500,6 +502,14 @@ pub enum Expr {
     BinOp(Box<Spanned<Expr>>, Spanned<BinOp>, Box<Spanned<Expr>>),
     /// Unary operation: `not x`, `-x`
     UnaryOp(Spanned<UnaryOp>, Box<Spanned<Expr>>),
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandExpr {
+    pub cmd: Box<Spanned<Expr>>,
+    pub working_dir: Option<Box<Spanned<Expr>>>,
+    pub timeout: Option<Spanned<Duration>>,
+    pub background: Option<Spanned<bool>>,
 }
 
 #[derive(Debug, Clone)]
