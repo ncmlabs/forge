@@ -1,0 +1,11 @@
+# command acceptance test: failing command produces low confidence
+task run_bad
+  gives Text
+  do
+    result = command "exit 1"
+    when result.sure -> give "SHOULD_NOT_REACH"
+    when result.unsure -> give "UNSURE"
+    else -> give "UNRELIABLE"
+
+fn main
+  say run_bad()

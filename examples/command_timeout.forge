@@ -1,0 +1,10 @@
+# command acceptance test: timeout expiry
+task run_slow
+  gives Text
+  do
+    result = command "sleep 10" timeout 1s
+    when result.sure -> give "SHOULD_NOT_REACH"
+    else -> give "TIMED_OUT"
+
+fn main
+  say run_slow()

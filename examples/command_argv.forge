@@ -1,0 +1,10 @@
+# command acceptance test: argv mode (no shell injection)
+task run_argv
+  gives Text
+  do
+    result = command ["echo", "hello from argv"]
+    when result.sure -> give result.stdout
+    else -> give "FAILED"
+
+fn main
+  say run_argv()

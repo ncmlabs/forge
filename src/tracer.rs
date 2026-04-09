@@ -359,6 +359,28 @@ impl Tracer {
         );
     }
 
+    // ── Command tracing (issue #161) ────────────────────────────────────────
+
+    pub fn command_call(&self, command: &str) {
+        self.emit(
+            "command_call",
+            serde_json::json!({
+                "command": command,
+            }),
+        );
+    }
+
+    pub fn command_return(&self, command: &str, success: bool, duration_ms: u64) {
+        self.emit(
+            "command_return",
+            serde_json::json!({
+                "command": command,
+                "success": success,
+                "duration_ms": duration_ms,
+            }),
+        );
+    }
+
     // ── Skill tracing (issue #40) ──────────────────────────────────────────
 
     pub fn skill_call(&self, skill_name: &str) {

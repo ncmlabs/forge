@@ -1,0 +1,10 @@
+# command acceptance test: environment variables via env modifier
+task run_env
+  gives Text
+  do
+    result = command "printenv FORGE_TEST_VAR" env { FORGE_TEST_VAR: "bar" }
+    when result.sure -> give result.stdout
+    else -> give "FAILED"
+
+fn main
+  say run_env()

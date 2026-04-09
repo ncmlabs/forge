@@ -1,0 +1,10 @@
+# command acceptance test: string mode returns structured record
+task run_echo
+  gives Text
+  do
+    result = command "echo hello_from_command"
+    when result.sure -> give result.stdout
+    else -> give "FAILED"
+
+fn main
+  say run_echo()
