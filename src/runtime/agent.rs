@@ -273,6 +273,8 @@ pub struct AgentProcess {
     pub timer_rx: mpsc::Receiver<TimerFired>,
     warden_tx: Option<mpsc::Sender<AgentSignal>>,
     storage: Option<crate::runtime::storage::SharedStorage>,
+    /// Worktree branch name for sandbox cleanup on agent exit (issue #194).
+    worktree_branch: Option<String>,
 }
 
 impl AgentProcess {
@@ -398,7 +400,20 @@ impl AgentProcess {
             timer_rx,
             warden_tx: None,
             storage,
+            worktree_branch: None,
         }
+    }
+
+    /// Set working directory for sandbox isolation (issue #194).
+    pub fn with_working_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.executor = self.executor.with_working_dir(dir);
+        self
+    }
+
+    /// Set worktree branch name for cleanup on agent exit (issue #194).
+    pub fn with_worktree_branch(mut self, branch: String) -> Self {
+        self.worktree_branch = Some(branch);
+        self
     }
 
     /// Get a reference to the shared context.
@@ -672,6 +687,12 @@ impl AgentProcess {
         for h in handles {
             let _ = h.await;
         }
+
+        // Cleanup worktree on agent exit (issue #194)
+        if let Some(ref branch) = self.worktree_branch {
+            let _ = crate::runtime::sandbox::remove_worktree(branch);
+        }
+
         Ok(())
     }
 

@@ -1393,6 +1393,77 @@ fn parse_spawn_knowledge_filter_only() {
     }
 }
 
+// ── Isolate worktree tests (#194) ───────────────────────────
+
+#[test]
+fn parse_spawn_with_isolate_worktree() {
+    let prog = parse_task_multiline(&["spawn worker", r#"  isolate worktree "feature/fix-123""#]);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.template.node, "worker");
+            assert_eq!(s.options.len(), 1);
+            match &s.options[0].node {
+                SpawnOption::Isolate(iso) => {
+                    assert!(matches!(&iso.strategy.node, IsolateStrategy::Worktree));
+                }
+                other => panic!("expected Isolate, got {:?}", other),
+            }
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_isolate_with_other_options() {
+    let prog = parse_task_multiline(&[
+        r#"id = spawn implementer as "impl_1""#,
+        r#"  isolate worktree "feature/new""#,
+        r#"  with knowledge where category == "CODE""#,
+        r#"  with confidence_cap: 0.9"#,
+    ]);
+    match first_stmt(&prog) {
+        Stmt::Spawn(s) => {
+            assert_eq!(s.template.node, "implementer");
+            assert_eq!(s.options.len(), 3);
+            assert!(matches!(&s.options[0].node, SpawnOption::Isolate(_)));
+            assert!(matches!(
+                &s.options[1].node,
+                SpawnOption::KnowledgeFilter(_)
+            ));
+            assert!(matches!(&s.options[2].node, SpawnOption::ConfidenceCap(_)));
+        }
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_session_with_isolate_worktree() {
+    let prog = parse_task_with(
+        r#"x = session "implement" agent "claude" prompt "do it" isolate worktree "feature/fix-123" timeout 30m"#,
+    );
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Session(session) => {
+            assert!(session.agent.is_some());
+            assert!(session.prompt.is_some());
+            assert!(session.timeout.is_some());
+            let iso = session.isolate.as_ref().expect("isolate should be Some");
+            assert!(matches!(&iso.strategy.node, IsolateStrategy::Worktree));
+        }
+        other => panic!("expected Session, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_session_without_isolate() {
+    let prog = parse_task_with(r#"x = session "code-review" agent "claude""#);
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Session(session) => {
+            assert!(session.isolate.is_none());
+        }
+        other => panic!("expected Session, got {:?}", other),
+    }
+}
+
 // ── Find expression tests (#84) ─────────────────────────────
 
 #[test]

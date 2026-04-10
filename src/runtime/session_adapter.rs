@@ -30,6 +30,8 @@ pub struct CliCommand {
     pub program: String,
     pub args: Vec<String>,
     pub stdin_payload: Option<String>,
+    /// Working directory for sandbox isolation (issue #194).
+    pub working_dir: Option<String>,
 }
 
 /// Build the CLI command for starting a new session.
@@ -87,6 +89,7 @@ pub fn build_command(adapter: &AdapterConfig, config: &SessionConfig) -> CliComm
         program: adapter.command.clone(),
         args,
         stdin_payload,
+        working_dir: config.working_dir.clone(),
     }
 }
 
@@ -138,6 +141,7 @@ pub fn build_resume_command(adapter: &AdapterConfig, state: &SessionState) -> Op
         program: adapter.command.clone(),
         args,
         stdin_payload,
+        working_dir: state.config.working_dir.clone(),
     })
 }
 
@@ -455,6 +459,11 @@ impl ConfigDrivenDriver {
             } else {
                 Stdio::null()
             });
+
+        // Apply sandbox working directory (issue #194)
+        if let Some(ref wd) = cmd.working_dir {
+            command.current_dir(wd);
+        }
 
         let mut child = command
             .spawn()

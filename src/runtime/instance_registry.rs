@@ -35,6 +35,8 @@ pub struct InstanceInfo {
     pub status: InstanceStatus,
     /// Optional handle to the agent's runtime context (for deep introspection).
     pub context: Option<Arc<Mutex<AgentContext>>>,
+    /// Worktree branch name for sandbox cleanup on unregister (issue #194).
+    pub worktree_branch: Option<String>,
 }
 
 impl InstanceInfo {
@@ -142,11 +144,31 @@ impl InstanceRegistry {
         self.register_inner(agent_name, alias, Some(context))
     }
 
+    /// Register a new agent instance with worktree branch for sandbox isolation (issue #194).
+    pub fn register_with_worktree(
+        &mut self,
+        agent_name: &str,
+        alias: Option<&str>,
+        worktree_branch: Option<String>,
+    ) -> Uuid {
+        self.register_full(agent_name, alias, None, worktree_branch)
+    }
+
     fn register_inner(
         &mut self,
         agent_name: &str,
         alias: Option<&str>,
         context: Option<Arc<Mutex<AgentContext>>>,
+    ) -> Uuid {
+        self.register_full(agent_name, alias, context, None)
+    }
+
+    fn register_full(
+        &mut self,
+        agent_name: &str,
+        alias: Option<&str>,
+        context: Option<Arc<Mutex<AgentContext>>>,
+        worktree_branch: Option<String>,
     ) -> Uuid {
         let id = Uuid::new_v4();
         let info = InstanceInfo {
@@ -157,6 +179,7 @@ impl InstanceRegistry {
             spawned_at: Instant::now(),
             status: InstanceStatus::Running,
             context,
+            worktree_branch,
         };
         self.by_id.insert(id, info);
         self.by_name

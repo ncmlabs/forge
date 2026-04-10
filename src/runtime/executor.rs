@@ -157,6 +157,8 @@ pub struct TaskExecutor {
     command_manager: Option<SharedCommandManager>,
     /// Session manager for long-running external agent sessions (issue #190).
     session_manager: Option<SharedSessionManager>,
+    /// Working directory override for sandbox isolation (issue #194).
+    working_dir: Option<std::path::PathBuf>,
 }
 
 impl Clone for TaskExecutor {
@@ -186,6 +188,7 @@ impl Clone for TaskExecutor {
             vector_index: self.vector_index.clone(),
             command_manager: self.command_manager.clone(),
             session_manager: self.session_manager.clone(),
+            working_dir: self.working_dir.clone(),
         }
     }
 }
@@ -246,7 +249,14 @@ impl TaskExecutor {
             session_manager: Some(
                 crate::runtime::session_manager::new_shared_default_session_manager(tracer.clone()),
             ),
+            working_dir: None,
         }
+    }
+
+    /// Set working directory for sandbox isolation (issue #194).
+    pub fn with_working_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.working_dir = Some(dir);
+        self
     }
 
     /// Attach a ForgeConfig for system runtime configuration.
@@ -548,6 +558,17 @@ impl TaskExecutor {
             .as_ref()
             .map(|gives| Self::type_name_to_string(&gives.node));
 
+        // Evaluate isolate modifier — create worktree for session (issue #194)
+        let mut worktree_branch: Option<String> = None;
+        if let Some(ref iso) = session.isolate {
+            let branch_val = self.eval_expr(&iso.branch, env).await?;
+            let branch = format!("{}", branch_val.value);
+            let dir = crate::runtime::sandbox::create_worktree(&branch)
+                .map_err(|e| RuntimeError::FlowError(format!("session isolate: {}", e)))?;
+            config.working_dir = Some(dir.to_string_lossy().to_string());
+            worktree_branch = Some(branch);
+        }
+
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
         let listener: SessionListener = Arc::new(move |event| {
             let _ = tx.send(event);
@@ -556,7 +577,7 @@ impl TaskExecutor {
         let run_fut = manager.run_to_completion(config, vec![listener]);
         tokio::pin!(run_fut);
 
-        loop {
+        let result = loop {
             tokio::select! {
                 state = &mut run_fut => {
                     let state = state.map_err(RuntimeError::FlowError)?;
@@ -571,10 +592,10 @@ impl TaskExecutor {
                     if let Some(ref hook) = session.on_complete {
                         self.emit_session_hook(&hook.node, output.clone(), env).await?;
                     }
-                    return if matches!(session.gives.as_ref().map(|g| &g.node), Some(TypeName::AgentResult)) {
-                        Ok(self.coerce_session_result_to_agent_result(output, state.cost_usd))
+                    break if matches!(session.gives.as_ref().map(|g| &g.node), Some(TypeName::AgentResult)) {
+                        self.coerce_session_result_to_agent_result(output, state.cost_usd)
                     } else {
-                        Ok(self.coerce_session_result_to_text(output))
+                        self.coerce_session_result_to_text(output)
                     };
                 }
                 event = rx.recv() => {
@@ -588,7 +609,14 @@ impl TaskExecutor {
                     }
                 }
             }
+        };
+
+        // Cleanup worktree after session completes (issue #194)
+        if let Some(branch) = worktree_branch {
+            let _ = crate::runtime::sandbox::remove_worktree(&branch);
         }
+
+        Ok(result)
     }
 
     fn coerce_session_result_to_text(&self, result: ConfidentValue) -> ConfidentValue {
@@ -1283,6 +1311,8 @@ impl TaskExecutor {
                     let mut knowledge_category: Option<String> = None;
                     let mut confidence_cap: Option<f32> = None;
                     let mut memory_inits: Vec<(String, ConfidentValue)> = Vec::new();
+                    let mut isolate_branch: Option<String> = None;
+                    let mut isolate_dir: Option<std::path::PathBuf> = None;
 
                     for opt in &spawn.options {
                         match &opt.node {
@@ -1306,6 +1336,16 @@ impl TaskExecutor {
                             SpawnOption::MemoryInit(field, expr) => {
                                 let val = self.eval_expr(expr, env).await?;
                                 memory_inits.push((field.node.clone(), val));
+                            }
+                            SpawnOption::Isolate(iso) => {
+                                let branch_val = self.eval_expr(&iso.branch, env).await?;
+                                let branch = format!("{}", branch_val.value);
+                                let dir = crate::runtime::sandbox::create_worktree(&branch)
+                                    .map_err(|e| {
+                                        RuntimeError::FlowError(format!("isolate: {}", e))
+                                    })?;
+                                isolate_branch = Some(branch);
+                                isolate_dir = Some(dir);
                             }
                         }
                     }
@@ -1362,19 +1402,31 @@ impl TaskExecutor {
                         ctx.memory.set(&field, val);
                     }
 
-                    // 7. Wire event bus
+                    // 7. Apply sandbox isolation (issue #194)
+                    if let Some(dir) = isolate_dir {
+                        child_process = child_process.with_working_dir(dir);
+                    }
+                    if let Some(ref branch) = isolate_branch {
+                        child_process = child_process.with_worktree_branch(branch.clone());
+                    }
+
+                    // 8. Wire event bus
                     if let Some(ref bus) = self.event_bus {
                         child_process = child_process.with_event_bus(bus.clone()).await;
                     }
 
-                    // 8. Register in instance registry
+                    // 9. Register in instance registry
                     let alias = if instance_name != *template_name {
                         Some(instance_name.as_str())
                     } else {
                         None
                     };
                     let instance_id = if let Some(ref ir) = self.instance_registry {
-                        let id = ir.write().await.register(template_name, alias);
+                        let id = ir.write().await.register_with_worktree(
+                            template_name,
+                            alias,
+                            isolate_branch.clone(),
+                        );
                         Some(id)
                     } else {
                         None
@@ -1450,17 +1502,22 @@ impl TaskExecutor {
                         }
                     }
 
-                    // 3. Unregister from instance registry
+                    // 3. Cleanup worktree + unregister from instance registry
                     if let Some(ref ir) = self.instance_registry {
                         let mut registry = ir.write().await;
                         if let Some(ref alias) = target_alias {
                             // Retire a specific instance by alias
                             if let Some(info) = registry.find_by_alias(alias) {
+                                // Clean up worktree before unregister (issue #194)
+                                if let Some(ref branch) = info.worktree_branch {
+                                    let _ = crate::runtime::sandbox::remove_worktree(branch);
+                                }
                                 registry.unregister(&info.instance_id);
                             }
                         }
                         // If no target, self-retirement — unregister happens via
                         // the RetireSignal propagation in the agent event loop.
+                        // Worktree cleanup for self-retire happens in AgentProcess::run() exit.
                     }
 
                     // 4. Signal termination
@@ -2559,10 +2616,12 @@ impl TaskExecutor {
                         }
                     };
 
-                    // 3. Apply working directory
+                    // 3. Apply working directory (explicit `in` overrides agent-level sandbox dir)
                     if let Some(ref wd_expr) = cmd_expr.working_dir {
                         let wd = self.eval_expr(wd_expr, env).await?;
                         process.current_dir(format!("{}", wd.value));
+                    } else if let Some(ref default_wd) = self.working_dir {
+                        process.current_dir(default_wd);
                     }
 
                     // 4. Apply environment variables
