@@ -1,7 +1,7 @@
 use crate::config::ProviderConfig;
 use crate::llm::{
     CompletionRequest, CompletionResponse, EmbeddingProvider, EmbeddingRequest, EmbeddingResponse,
-    LLMProvider, ProviderCapabilities, ProviderError, QualityTier,
+    LLMProvider, ProviderCapabilities, ProviderError, QualityTier, ToolCallRequest,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -106,6 +106,20 @@ impl OpenAICompatProvider {
 // ── OpenAI wire types ─────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
+struct OAITool<'a> {
+    #[serde(rename = "type")]
+    type_: &'static str,
+    function: OAIToolFunction<'a>,
+}
+
+#[derive(Serialize)]
+struct OAIToolFunction<'a> {
+    name: &'a str,
+    description: &'a str,
+    parameters: &'a serde_json::Value,
+}
+
+#[derive(Serialize)]
 struct OAIRequest<'a> {
     model: &'a str,
     messages: Vec<OAIMessage<'a>>,
@@ -114,6 +128,10 @@ struct OAIRequest<'a> {
     #[serde(skip_serializing_if = "<[String]>::is_empty")]
     stop: &'a [String],
     stream: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<OAITool<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -137,6 +155,20 @@ struct OAIChoice {
 #[derive(Deserialize)]
 struct OAIResponseMessage {
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<OAIToolCall>,
+}
+
+#[derive(Deserialize)]
+struct OAIToolCall {
+    id: String,
+    function: OAIToolCallFunction,
+}
+
+#[derive(Deserialize)]
+struct OAIToolCallFunction {
+    name: String,
+    arguments: String, // OpenAI returns arguments as a JSON string
 }
 
 #[derive(Deserialize)]
@@ -180,6 +212,21 @@ impl LLMProvider for OpenAICompatProvider {
             content: &req.prompt,
         });
 
+        let tools: Vec<OAITool> = req
+            .tools
+            .iter()
+            .map(|t| OAITool {
+                type_: "function",
+                function: OAIToolFunction {
+                    name: &t.name,
+                    description: &t.description,
+                    parameters: &t.input_schema,
+                },
+            })
+            .collect();
+
+        let tool_choice = if tools.is_empty() { None } else { Some("auto") };
+
         let body = OAIRequest {
             model: &self.model,
             messages,
@@ -187,6 +234,8 @@ impl LLMProvider for OpenAICompatProvider {
             temperature: req.temperature,
             stop: &req.stop_sequences,
             stream: false,
+            tools,
+            tool_choice,
         };
 
         let url = format!("{}/chat/completions", self.base_url);
@@ -262,11 +311,29 @@ impl LLMProvider for OpenAICompatProvider {
                     reason: e.to_string(),
                 })?;
 
-        let content = resp
-            .choices
-            .into_iter()
-            .next()
-            .and_then(|c| c.message.content)
+        let first_choice = resp.choices.into_iter().next();
+
+        let content = first_choice
+            .as_ref()
+            .and_then(|c| c.message.content.clone())
+            .unwrap_or_default();
+
+        let tool_calls: Vec<ToolCallRequest> = first_choice
+            .map(|c| {
+                c.message
+                    .tool_calls
+                    .into_iter()
+                    .filter_map(|tc| {
+                        let arguments: serde_json::Value =
+                            serde_json::from_str(&tc.function.arguments).ok()?;
+                        Some(ToolCallRequest {
+                            id: tc.id,
+                            name: tc.function.name,
+                            arguments,
+                        })
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
         let tokens_in = resp.usage.prompt_tokens;
@@ -276,7 +343,7 @@ impl LLMProvider for OpenAICompatProvider {
 
         Ok(CompletionResponse {
             content,
-            tool_calls: vec![],
+            tool_calls,
             tokens_in,
             tokens_out,
             latency_ms,

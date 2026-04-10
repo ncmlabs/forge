@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Anthropic provider now sends tool definitions and parses `tool_use` response blocks, enabling skill executor agentic loop (#198)
+- OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
 - `command` expression primitive with optional `in`, `timeout`, and `background` modifiers (#160)
