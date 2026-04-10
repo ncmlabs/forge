@@ -313,11 +313,21 @@ impl SessionManager {
         let state = SessionState::new(session_id.clone(), config.clone());
         let driver = {
             let mut inner = self.inner.lock().unwrap();
-            let driver = inner
-                .drivers
-                .get(&config.agent)
-                .cloned()
-                .ok_or_else(|| format!("unknown session driver: {}", config.agent))?;
+            let driver = match inner.drivers.get(&config.agent).cloned() {
+                Some(d) => d,
+                None => {
+                    // Fallback: create a generic adapter for the agent name
+                    let fallback_config =
+                        crate::runtime::adapter_loader::generic_fallback_adapter(&config.agent);
+                    let fallback_driver: Arc<dyn SessionDriver> = Arc::new(
+                        crate::runtime::session_adapter::ConfigDrivenDriver::new(fallback_config),
+                    );
+                    inner
+                        .drivers
+                        .insert(config.agent.clone(), fallback_driver.clone());
+                    fallback_driver
+                }
+            };
             inner.sessions.insert(
                 session_id.clone(),
                 SessionEntry {
@@ -1038,7 +1048,45 @@ pub fn default_session_dir(root: impl AsRef<Path>) -> PathBuf {
 
 pub fn new_shared_default_session_manager(tracer: Option<Tracer>) -> SharedSessionManager {
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    Arc::new(SessionManager::new(default_session_dir(root)).with_tracer(tracer))
+    let manager = SessionManager::new(default_session_dir(&root)).with_tracer(tracer);
+
+    // Auto-register adapters from the resolution chain:
+    //   1. Project local: ./adapters/{name}/ADAPTER.toml
+    //   2. Built-in: {exe_dir}/adapters/{name}/ADAPTER.toml
+    let mut adapter_dirs = vec![root.join("adapters")];
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            adapter_dirs.push(exe_dir.join("adapters"));
+        }
+    }
+
+    for dir in &adapter_dirs {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let toml_path = entry.path().join("ADAPTER.toml");
+                if toml_path.exists() {
+                    match crate::runtime::adapter_loader::parse_adapter_toml(&toml_path) {
+                        Ok(config) => {
+                            let name = config.name.clone();
+                            let driver = Arc::new(
+                                crate::runtime::session_adapter::ConfigDrivenDriver::new(config),
+                            );
+                            manager.register_driver(name, driver);
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "warning: failed to load adapter {}: {}",
+                                toml_path.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Arc::new(manager)
 }
 
 #[cfg(test)]
