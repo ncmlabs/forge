@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- Agent-to-CLI delegation research doc for Claude Code and Codex, including session adapter and AgentResult mapping tables plus live-tested invocation patterns (#165)
+- Reference typed SKILL.md wrappers for Claude Code and Codex under `skills/` (#165)
 - Rich SKILL.md capability signatures with multi-capability registration and compile-time validation of `skill.namespace.method(...)` calls (#164)
 - `forge.project.toml` gains `[skills]` section for project-level skill declarations with `path` and `source` options (#163)
 - Skill resolution chain: project local (`./skills/`) → installed (`.agents/skills/`) → global (`~/.forge/skills/`) with clear error on missing (#163)

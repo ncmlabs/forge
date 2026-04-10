@@ -692,7 +692,7 @@ Worktree isolation for safe agent execution:
 |-------|-------|--------|
 | #163 | Pluggable skill architecture — project-level declarations | Done |
 | #164 | Skill capability type system — rich signatures | Done |
-| #165 | Explore agent-to-CLI delegation patterns (Claude Code, Codex) | Open |
+| #165 | Explore agent-to-CLI delegation patterns (Claude Code, Codex) | Done |
 
 ### P2.M8: CLI Skills (SKILL.md)
 
@@ -1317,14 +1317,14 @@ Phase 1 (Layer 1): Build FORGE — **SHIPPED v0.1.0 on 2026-04-09**
   ⬜ WASM compilation (Cranelift backend) — deferred, not blocking Phase 2
   Goal: tic-tac-toe system runs end-to-end ✅
 
-Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (5/37 issues done)**
+Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (6/37 issues done)**
   ✅ P2.M1: `command` primitive — grammar, sync, background (#160-#162)
   ⬜ P2.M2: `session` core — grammar and lifecycle manager (#189-#190)
   ⬜ P2.M3: `AgentResult` + reliability contract — claims, evidence, verification (#193, #203)
   ⬜ P2.M4: session adapters + events — Claude/Codex/generic and event hooks (#191-#192)
   ⬜ P2.M5: verification + contradictions — trusted gating before repo mutations (#204-#205)
   ⬜ P2.M6: `sandbox` — worktree isolation for safe execution (#194)
-  ◐ P2.M7: Skills foundation — pluggable architecture, rich types (#163 ✅, #164 ✅, #165 open)
+  ✅ P2.M7: Skills foundation — pluggable architecture, rich types (#163 ✅, #164 ✅, #165 ✅)
   ⬜ P2.M8: CLI skills — GitHub, Slack, Claude Code, Codex/Ollama (#176-#179)
   ⬜ P2.M9: Orchestration — Slack Monitor, Triager, Approval gate (#180-#182)
   ⬜ P2.M10: Dev system — ProjectAgent, Executor, two-project proof (#183-#185)
