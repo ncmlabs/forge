@@ -633,7 +633,7 @@ fn build_session_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     }
 
     Ok(Spanned::new(
-        Expr::Session(SessionExpr {
+        Expr::Session(Box::new(SessionExpr {
             name: Box::new(name),
             agent,
             prompt,
@@ -644,7 +644,7 @@ fn build_session_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
             on_progress,
             on_complete,
             isolate,
-        }),
+        })),
         span,
     ))
 }
