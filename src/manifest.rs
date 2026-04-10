@@ -471,9 +471,14 @@ name = "hello"
 
         let resolved = manifest.resolve_skills(tmp.path(), &[global_dir]).unwrap();
         assert_eq!(resolved.len(), 1);
-        // Should find local, not global
-        assert!(resolved[0].1.to_string_lossy().contains("skills/myskill"));
-        assert!(!resolved[0].1.to_string_lossy().contains("global"));
+        // Should find local, not global (use OS-agnostic path check)
+        let path_str = resolved[0].1.to_string_lossy();
+        assert!(
+            path_str.contains("skills/myskill") || path_str.contains("skills\\myskill"),
+            "should resolve from local skills dir, got: {}",
+            path_str
+        );
+        assert!(!path_str.contains("global"));
     }
 
     #[test]
