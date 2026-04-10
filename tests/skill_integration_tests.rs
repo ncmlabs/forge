@@ -314,6 +314,268 @@ fn main
     );
 }
 
+// ── Project-level skill declarations (issue #163) ──────────────
+
+#[test]
+fn manifest_skills_resolved_from_project_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Create skills/myskill/SKILL.md
+    let skill_dir = tmp.path().join("skills/myskill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: myskill\ndescription: Test\n---\nInstructions.",
+    )
+    .unwrap();
+
+    let manifest = forge::manifest::ProjectManifest {
+        project: forge::manifest::ProjectMeta {
+            name: "test".into(),
+            version: None,
+            description: None,
+        },
+        build: None,
+        config: None,
+        skills: Some(std::collections::HashMap::from([(
+            "myskill".into(),
+            forge::manifest::SkillDeclaration {
+                path: None,
+                source: None,
+            },
+        )])),
+    };
+
+    let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
+    assert_eq!(resolved.len(), 1);
+    assert_eq!(resolved[0].0, "myskill");
+
+    // Load the resolved skill through SkillLoader
+    let skill = SkillLoader::parse_skill_md(&resolved[0].1).unwrap();
+    assert_eq!(skill.manifest.name, "myskill");
+}
+
+#[test]
+fn manifest_skills_resolved_from_agents_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skill_dir = tmp.path().join(".agents/skills/agent-skill");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: agent-skill\ndescription: Installed\n---\nDo stuff.",
+    )
+    .unwrap();
+
+    let manifest = forge::manifest::ProjectManifest {
+        project: forge::manifest::ProjectMeta {
+            name: "test".into(),
+            version: None,
+            description: None,
+        },
+        build: None,
+        config: None,
+        skills: Some(std::collections::HashMap::from([(
+            "agent-skill".into(),
+            forge::manifest::SkillDeclaration {
+                path: None,
+                source: Some("org/agent-skill".into()),
+            },
+        )])),
+    };
+
+    let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
+    assert_eq!(resolved.len(), 1);
+    assert!(resolved[0].1.to_string_lossy().contains(".agents/skills"));
+}
+
+#[test]
+fn manifest_skills_missing_gives_clear_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = forge::manifest::ProjectManifest {
+        project: forge::manifest::ProjectMeta {
+            name: "test".into(),
+            version: None,
+            description: None,
+        },
+        build: None,
+        config: None,
+        skills: Some(std::collections::HashMap::from([(
+            "nonexistent".into(),
+            forge::manifest::SkillDeclaration {
+                path: None,
+                source: None,
+            },
+        )])),
+    };
+
+    let err = manifest.resolve_skills(tmp.path(), &[]).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("nonexistent"), "error should name the skill");
+    assert!(
+        msg.contains("declared in forge.project.toml but not found"),
+        "error should mention manifest: {}",
+        msg
+    );
+    assert!(
+        msg.contains("searched:"),
+        "error should list paths: {}",
+        msg
+    );
+}
+
+#[test]
+fn manifest_skills_explicit_path_wins() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Create skill at custom path AND at default location
+    let custom = tmp.path().join("custom/myskill");
+    std::fs::create_dir_all(&custom).unwrap();
+    std::fs::write(
+        custom.join("SKILL.md"),
+        "---\nname: myskill\ndescription: Custom\n---\nCustom instructions.",
+    )
+    .unwrap();
+
+    let default = tmp.path().join("skills/myskill");
+    std::fs::create_dir_all(&default).unwrap();
+    std::fs::write(
+        default.join("SKILL.md"),
+        "---\nname: myskill\ndescription: Default\n---\nDefault instructions.",
+    )
+    .unwrap();
+
+    let manifest = forge::manifest::ProjectManifest {
+        project: forge::manifest::ProjectMeta {
+            name: "test".into(),
+            version: None,
+            description: None,
+        },
+        build: None,
+        config: None,
+        skills: Some(std::collections::HashMap::from([(
+            "myskill".into(),
+            forge::manifest::SkillDeclaration {
+                path: Some("custom/myskill".into()),
+                source: None,
+            },
+        )])),
+    };
+
+    let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
+    assert_eq!(resolved.len(), 1);
+    assert!(
+        resolved[0].1.to_string_lossy().contains("custom/myskill"),
+        "should use custom path, got: {}",
+        resolved[0].1.display()
+    );
+}
+
+#[test]
+fn lock_file_verification_detects_mismatch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skill_path = tmp.path().join("SKILL.md");
+    std::fs::write(&skill_path, "---\nname: test\n---\nOriginal content").unwrap();
+
+    // Get the hash of the original content
+    let original_hash = forge::skill_lock::SkillLockFile::hash_file(&skill_path).unwrap();
+
+    // Modify the file
+    std::fs::write(&skill_path, "---\nname: test\n---\nModified content").unwrap();
+
+    let lock = forge::skill_lock::SkillLockFile {
+        version: 1,
+        skills: std::collections::HashMap::from([(
+            "test".into(),
+            forge::skill_lock::LockedSkill {
+                source: None,
+                source_type: None,
+                computed_hash: original_hash,
+            },
+        )]),
+    };
+
+    let mismatched = lock.verify(&[("test".into(), skill_path)]);
+    assert_eq!(mismatched, vec!["test"]);
+}
+
+#[test]
+fn manifest_skills_loaded_into_registry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skill_dir = tmp.path().join("skills/echo-test");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: echo-test\ndescription: Echo\nallowed-tools: Bash\n---\nEcho things.",
+    )
+    .unwrap();
+
+    let manifest = forge::manifest::ProjectManifest {
+        project: forge::manifest::ProjectMeta {
+            name: "test".into(),
+            version: None,
+            description: None,
+        },
+        build: None,
+        config: None,
+        skills: Some(std::collections::HashMap::from([(
+            "echo-test".into(),
+            forge::manifest::SkillDeclaration {
+                path: None,
+                source: None,
+            },
+        )])),
+    };
+
+    let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
+
+    // Load into registry
+    let mut registry = SkillRegistry::new();
+    for (_, path) in &resolved {
+        let skill = SkillLoader::parse_skill_md(path).unwrap();
+        registry.register(skill);
+    }
+
+    assert_eq!(registry.skill_count(), 1);
+    assert!(registry.get("echo-test").is_some());
+
+    // Capability signatures should be generated
+    let sigs = registry.capability_signatures();
+    assert!(
+        sigs.contains_key("skill.echo-test"),
+        "should expose skill.echo-test capability"
+    );
+}
+
+#[test]
+fn use_skill_validated_at_compile_time() {
+    // A program with `use skill.myskill` should pass validation when skill is registered
+    let source = "use\n  skill.myskill\n\ntask greet\n  gives Text\n  do\n    give \"hello\"\n\nfn main\n  say greet()\n";
+    let program = forge::parser::parse(source).unwrap();
+
+    // Without skills: should fail
+    let ctx_no_skills = forge::resolver::CheckContext::new("test.forge");
+    let result_no_skills = ctx_no_skills.check(&program);
+    assert!(
+        result_no_skills.is_err(),
+        "use skill.myskill should fail without skill registered"
+    );
+
+    // With skills: should pass
+    let mut sigs = std::collections::HashMap::new();
+    sigs.insert(
+        "skill.myskill".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![forge::types::ForgeType::Text],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    let ctx_with_skills = forge::resolver::CheckContext::with_skills("test.forge", sigs);
+    let result_with_skills = ctx_with_skills.check(&program);
+    assert!(
+        result_with_skills.is_ok(),
+        "use skill.myskill should pass with skill registered: {:?}",
+        result_with_skills.err()
+    );
+}
+
 // ── Full pipeline: skill_finder.forge example ───────────────────
 
 #[tokio::test]

@@ -13,5 +13,6 @@ pub mod planner;
 pub mod portability;
 pub mod resolver;
 pub mod runtime;
+pub mod skill_lock;
 pub mod tracer;
 pub mod types;

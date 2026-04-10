@@ -289,6 +289,15 @@ fn check_pure_expr(
             check_pure_expr(fn_name, a, task_names, errors);
             check_pure_expr(fn_name, b, task_names, errors);
         }
+        // Skill calls (skill.X.method()) are LLM-mediated oracle operations — reject in pure.
+        Expr::FieldAccess(inner, _) if matches!(&inner.node, Expr::Ident(s) if s == "skill") => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "skill",
+                span_start: expr.span.start,
+                span_end: expr.span.end,
+            });
+        }
         Expr::UnaryOp(_, a) | Expr::Paren(a) | Expr::FieldAccess(a, _) | Expr::GlobAccess(a) => {
             check_pure_expr(fn_name, a, task_names, errors);
         }

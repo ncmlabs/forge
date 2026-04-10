@@ -155,3 +155,15 @@ pure bad1\n  needs x: Text\n  gives Text\n  do\n    give reason x\n\
     assert!(names.contains(&"bad1"));
     assert!(names.contains(&"bad2"));
 }
+
+#[test]
+fn pure_rejects_skill_call() {
+    // skill.X is an LLM-mediated oracle operation — must be rejected in pure functions.
+    let source = "pure bad\n  needs x: Text\n  gives Text\n  do\n    result = skill.analyzer\n    give result\n";
+    let program = parse(source).unwrap();
+    let errors = check(&program);
+    assert_eq!(errors.len(), 1);
+    assert!(
+        matches!(&errors[0], CheckError::PureUsesLlm { name, op, .. } if name == "bad" && *op == "skill")
+    );
+}

@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- `forge.project.toml` gains `[skills]` section for project-level skill declarations with `path` and `source` options (#163)
+- Skill resolution chain: project local (`./skills/`) → installed (`.agents/skills/`) → global (`~/.forge/skills/`) with clear error on missing (#163)
+- `skills-lock.json` integrity verification — warns when installed skill content diverges from lock hash (#163)
+- Compile-time validation of `use skill.X` against project-declared skills via `CheckContext::with_skills()` (#163)
+- Pure checker rejects `skill.*` calls inside `pure` functions (Principle II — determinism boundary) (#163)
 - `command` expression primitive with optional `in`, `timeout`, and `background` modifiers (#160)
 - Structured argv form for `command`: `command ["git", "commit", "-m", msg]` — safe, no injection (#160)
 - `env` modifier for `command`: `command "build" env { RUST_LOG: "debug" }` (#160)
