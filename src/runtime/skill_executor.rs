@@ -59,6 +59,19 @@ impl SkillExecutor {
                 })?
         };
 
+        if skill.manifest.legacy_signature.is_none()
+            && !skill
+                .manifest
+                .capabilities
+                .iter()
+                .any(|cap| cap.name == method)
+        {
+            return Err(SkillError::UnknownMethod {
+                skill: skill_name.to_string(),
+                method: method.to_string(),
+            });
+        }
+
         if let Some(ref tracer) = self.tracer {
             tracer.skill_call(&format!("{}.{}", skill_name, method));
         }

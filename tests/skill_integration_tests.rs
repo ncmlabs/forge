@@ -42,6 +42,19 @@ fn create_temp_skill(name: &str, description: &str, body: &str) -> tempfile::Tem
     dir
 }
 
+fn create_typed_temp_skill(name: &str, body: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let skill_dir = dir.path().join(name);
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let mut file = std::fs::File::create(skill_dir.join("SKILL.md")).unwrap();
+    write!(
+        file,
+        "---\nname: {name}\ncapabilities:\n  - name: create_issue\n    inputs: [Text, Text, Text]\n    output: Text\n  - name: list_issues\n    inputs: [Text]\n    output: Text\nallowed-tools:\n  - Bash\n---\n\n{body}"
+    )
+    .unwrap();
+    dir
+}
+
 // ── SKILL.md Loading Tests ──────────────────────────────────────
 
 #[test]
@@ -154,6 +167,22 @@ fn skill_registry_generates_capability_signatures() {
         "should have skill.echo-skill capability, got: {:?}",
         sigs.keys().collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn skill_registry_generates_multi_capability_signatures() {
+    let dir = create_typed_temp_skill("github", "Manage GitHub issues.");
+
+    let skills = SkillLoader::load_from_dirs(&[dir.path().to_path_buf()]);
+    let mut registry = SkillRegistry::new();
+    for skill in skills {
+        registry.register(skill);
+    }
+
+    let sigs = registry.capability_signatures();
+    assert!(sigs.contains_key("skill.github.create_issue"));
+    assert!(sigs.contains_key("skill.github.list_issues"));
+    assert!(!sigs.contains_key("skill.github"));
 }
 
 // ── Confidence Model Tests ──────────────────────────────────────
@@ -574,6 +603,94 @@ fn use_skill_validated_at_compile_time() {
         "use skill.myskill should pass with skill registered: {:?}",
         result_with_skills.err()
     );
+}
+
+#[test]
+fn use_typed_skill_capability_validated_at_compile_time() {
+    let source = "use\n  skill.github.create_issue\n\ntask run\n  gives Text\n  do\n    give skill.github.create_issue(\"repo\", \"title\", \"body\")\n";
+    let program = forge::parser::parse(source).unwrap();
+
+    let mut sigs = std::collections::HashMap::new();
+    sigs.insert(
+        "skill.github.create_issue".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+            ],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    let ctx = forge::resolver::CheckContext::with_skills("test.forge", sigs);
+    assert!(ctx.check(&program).is_ok());
+}
+
+#[test]
+fn typed_skill_call_rejects_argument_count_mismatch() {
+    let source = "use\n  skill.github.create_issue\n\ntask run\n  gives Text\n  do\n    give skill.github.create_issue(\"repo\", \"title\")\n";
+    let program = forge::parser::parse(source).unwrap();
+
+    let mut sigs = std::collections::HashMap::new();
+    sigs.insert(
+        "skill.github.create_issue".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+            ],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    let ctx = forge::resolver::CheckContext::with_skills("test.forge", sigs);
+    let errs = ctx.check(&program).unwrap_err();
+    assert!(errs.iter().any(|err| {
+        matches!(
+            err,
+            forge::resolver::ResolveError::ArgumentCountMismatch { name, expected, actual, .. }
+            if name == "skill.github.create_issue" && *expected == 3 && *actual == 2
+        )
+    }));
+}
+
+#[test]
+fn typed_skill_call_rejects_argument_type_mismatch() {
+    let source = "use\n  skill.github.create_issue\n\ntask run\n  needs title: Number\n  gives Text\n  do\n    give skill.github.create_issue(\"repo\", title, \"body\")\n";
+    let program = forge::parser::parse(source).unwrap();
+
+    let mut sigs = std::collections::HashMap::new();
+    sigs.insert(
+        "skill.github.create_issue".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+            ],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    let ctx = forge::resolver::CheckContext::with_skills("test.forge", sigs);
+    let errs = ctx.check(&program).unwrap_err();
+    assert!(errs.iter().any(|err| {
+        matches!(
+            err,
+            forge::resolver::ResolveError::ArgumentTypeMismatch { name, expected, actual, .. }
+            if name == "skill.github.create_issue" && expected == "Text" && actual == "Number"
+        )
+    }));
+}
+
+#[test]
+fn typed_skill_loader_parses_capabilities() {
+    let dir = create_typed_temp_skill("github", "Manage GitHub issues.");
+    let skills = SkillLoader::load_from_dirs(&[dir.path().to_path_buf()]);
+    assert_eq!(skills.len(), 1);
+    let skill = &skills[0];
+    assert_eq!(skill.manifest.capabilities.len(), 2);
+    assert!(skill.manifest.legacy_signature.is_none());
+    assert_eq!(skill.manifest.capabilities[0].name, "create_issue");
 }
 
 // ── Full pipeline: skill_finder.forge example ───────────────────

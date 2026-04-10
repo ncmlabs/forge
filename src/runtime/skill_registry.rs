@@ -29,10 +29,19 @@ impl SkillRegistry {
 
     /// Return capability signatures for resolver integration (compile-time validation).
     pub fn capability_signatures(&self) -> HashMap<String, CapabilitySignature> {
-        self.skills
-            .iter()
-            .map(|(k, v)| (format!("skill.{}", k), v.manifest.signature.clone()))
-            .collect()
+        let mut signatures = HashMap::new();
+        for (name, skill) in &self.skills {
+            if let Some(sig) = &skill.manifest.legacy_signature {
+                signatures.insert(format!("skill.{}", name), sig.clone());
+            }
+            for capability in &skill.manifest.capabilities {
+                signatures.insert(
+                    format!("skill.{}.{}", name, capability.name),
+                    capability.signature.clone(),
+                );
+            }
+        }
+        signatures
     }
 
     pub fn skill_count(&self) -> usize {
