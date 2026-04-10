@@ -1,0 +1,20 @@
+# Verification contract E2E test — issue #203
+
+task run_session
+  gives AgentResult
+  do
+    result = session "verify-test" agent "echo-test" prompt "fix the login bug" gives AgentResult
+    when result.sure -> give result
+    else -> give result
+
+fn main
+  result = run_session()
+  say "plan: {result.plan}"
+  say "cost: {result.cost_usd}"
+  say "confidence: {result.confidence}"
+  say "files: {result.files_changed}"
+  say "tokens_in: {result.metadata.tokens_in}"
+  say "verification status: {result.metadata.verification.status}"
+  say "verification risk_class: {result.metadata.verification.risk_class}"
+  say "verification claims: {result.metadata.verification.claims}"
+  say "done"
