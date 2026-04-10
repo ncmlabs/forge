@@ -1,0 +1,37 @@
+# GitHub operations via the github skill.
+# Demonstrates creating, listing, and closing issues.
+#
+# Usage: forge run examples/skills/github_ops.forge
+# Requires: gh auth login
+
+use
+  skill.github
+
+task create_test_issue
+  needs repo: Text
+  gives Text
+  do
+    url = skill.github.create_issue(repo, "[test] Forge skill demo", "Automated issue from github_ops.forge — safe to close.")
+    when url.sure -> give url
+    else -> give "ERROR: could not create issue"
+
+task list_open_issues
+  needs repo: Text
+  gives Text
+  do
+    issues = skill.github.list_issues(repo, "--state open --limit 5")
+    when issues.sure -> give issues
+    else -> give "ERROR: could not list issues"
+
+task close_test_issue
+  needs repo: Text, issue_number: Text
+  gives Text
+  do
+    result = skill.github.close_issue(repo, issue_number)
+    when result.sure -> give result
+    else -> give "ERROR: could not close issue"
+
+fn main
+  say "=== GitHub Skill Demo ==="
+  say list_open_issues("ncmlabs/forge")
+  say "=== Done ==="
