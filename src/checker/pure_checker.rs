@@ -351,6 +351,14 @@ fn check_pure_expr(
                 span_end: expr.span.end,
             });
         }
+        Expr::SessionMethod(_, _) => {
+            errors.push(CheckError::PureUsesLlm {
+                name: fn_name.to_string(),
+                op: "session",
+                span_start: expr.span.start,
+                span_end: expr.span.end,
+            });
+        }
         Expr::Session(_) => {
             errors.push(CheckError::PureUsesLlm {
                 name: fn_name.to_string(),

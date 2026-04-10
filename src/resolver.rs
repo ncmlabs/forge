@@ -578,7 +578,9 @@ fn infer_type(
         Expr::Template(_) => Some(ForgeType::Text),
         Expr::Reason(_) => Some(ForgeType::Text),
         Expr::Exec(_) => Some(ForgeType::Text),
-        Expr::Command(_) | Expr::CommandMethod(_, _) => Some(ForgeType::Text),
+        Expr::Command(_) | Expr::CommandMethod(_, _) | Expr::SessionMethod(_, _) => {
+            Some(ForgeType::Text)
+        }
         Expr::Session(session) => {
             if session.gives.is_some() {
                 Some(ForgeType::AgentResult)
@@ -632,7 +634,9 @@ fn infer_input_type(
         Expr::Call(_) => Some(ForgeType::Text),
         Expr::Reason(_) => Some(ForgeType::Text),
         Expr::Exec(_) => Some(ForgeType::Text),
-        Expr::Command(_) | Expr::CommandMethod(_, _) => Some(ForgeType::Text),
+        Expr::Command(_) | Expr::CommandMethod(_, _) | Expr::SessionMethod(_, _) => {
+            Some(ForgeType::Text)
+        }
         Expr::Session(_) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Text),
         Expr::Search(_) => Some(ForgeType::Text),

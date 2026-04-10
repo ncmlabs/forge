@@ -298,6 +298,9 @@ impl TaskExecutor {
 
     /// Attach the event bus for inter-agent communication (issue #83).
     pub fn with_event_bus(mut self, bus: crate::runtime::event_bus::SharedEventBus) -> Self {
+        if let Some(ref mgr) = self.session_manager {
+            mgr.set_event_bus(bus.clone());
+        }
         self.event_bus = Some(bus);
         self
     }
@@ -326,6 +329,9 @@ impl TaskExecutor {
 
     /// Attach a session manager for long-running external agent sessions (issue #190).
     pub fn with_session_manager(mut self, mgr: SharedSessionManager) -> Self {
+        if let Some(ref bus) = self.event_bus {
+            mgr.set_event_bus(bus.clone());
+        }
         self.session_manager = Some(mgr);
         self
     }
@@ -2711,6 +2717,53 @@ impl TaskExecutor {
                             Ok(ConfidentValue::deterministic(Value::Unit))
                         }
                         other => Err(RuntimeError::Unsupported(format!("command.{}()", other))),
+                    }
+                }
+
+                // ── session.method() expressions (issue #192) ────────────────
+                Expr::SessionMethod(method, args) => {
+                    let mut arg_vals = Vec::new();
+                    for arg in args {
+                        arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                    }
+                    let manager = self.session_manager.as_ref().ok_or_else(|| {
+                        RuntimeError::Unsupported(
+                            "session.* requires a session manager".to_string(),
+                        )
+                    })?;
+                    let id = arg_vals
+                        .first()
+                        .map(|v| format!("{}", v.value))
+                        .unwrap_or_default();
+                    match method.node.as_str() {
+                        "status" => match manager.session_state(&id) {
+                            Some(state) => {
+                                let text = |s: &str| {
+                                    ConfidentValue::deterministic(Value::Text(s.to_string()))
+                                };
+                                let num = |n: f64| ConfidentValue::deterministic(Value::Number(n));
+                                let mut fields = std::collections::HashMap::new();
+                                fields.insert("status".to_string(), text(state.status.as_str()));
+                                fields.insert("cost_usd".to_string(), num(state.cost_usd as f64));
+                                fields.insert(
+                                    "started_at".to_string(),
+                                    text(&state.started_at.to_rfc3339()),
+                                );
+                                fields.insert(
+                                    "updated_at".to_string(),
+                                    text(&state.updated_at.to_rfc3339()),
+                                );
+                                if let Some(err) = &state.error {
+                                    fields.insert("error".to_string(), text(err));
+                                }
+                                Ok(ConfidentValue::deterministic(Value::Record(fields)))
+                            }
+                            None => Ok(ConfidentValue::deterministic(Value::Text(format!(
+                                "unknown session: {}",
+                                id
+                            )))),
+                        },
+                        other => Err(RuntimeError::Unsupported(format!("session.{}()", other))),
                     }
                 }
 

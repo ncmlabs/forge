@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- Session polling + event integration: `SessionManager` publishes typed events (`session.progress`, `session.complete`, `session.failed`, `session.cancelled`) directly to `EventBus`, enriched with timestamp, message, duration, and final status fields (#192)
+- Timer-based session polling with configurable interval (default 5s) — publishes `session.poll` events for active sessions to EventBus (#192)
+- `session.status(id)` imperative expression — query session state from FORGE code, returns Record with `status`, `cost_usd`, `started_at`, `updated_at`, `error` fields (#192)
 - Declarative adapter system: `ADAPTER.toml` format for CLI agent integration with field mapping, permission modes, and progress detection (#191)
 - Built-in adapters for Claude Code (`adapters/claude/`) and Codex (`adapters/codex/`) with verified CLI patterns (#191)
 - `ConfigDrivenDriver` — generic `SessionDriver` that reads any ADAPTER.toml and handles process spawn, stdin piping, stdout parsing, and AgentResult extraction (#191)

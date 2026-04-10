@@ -491,6 +491,8 @@ pub enum Expr {
     Command(CommandExpr),
     /// `command.status(handle)` / `command.output(handle)` / `command.cancel(handle)`
     CommandMethod(Spanned<String>, Vec<Spanned<CallArg>>),
+    /// `session.status(id)` — imperative session method call (issue #192)
+    SessionMethod(Spanned<String>, Vec<Spanned<CallArg>>),
     /// `session "label" prompt prompt_text agent "claude" ...`
     Session(SessionExpr),
     /// `find "alias"` / `find all template [where lifecycle == state]`
