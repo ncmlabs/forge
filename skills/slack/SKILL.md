@@ -190,7 +190,7 @@ Return confirmation on success.
 List channels the bot has access to. The `filter` parameter sets the channel types to include.
 
 ```bash
-curl -s "https://slack.com/api/conversations.list" \
+curl -s -G "https://slack.com/api/conversations.list" \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   --data-urlencode "types=public_channel,private_channel" \
   --data-urlencode "exclude_archived=true" \
@@ -204,7 +204,7 @@ The response includes a `channels` array with `id`, `name`, `purpose`, `topic`, 
 For pagination, if `response_metadata.next_cursor` is non-empty, pass it as `cursor` in the next request:
 
 ```bash
-curl -s "https://slack.com/api/conversations.list" \
+curl -s -G "https://slack.com/api/conversations.list" \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   --data-urlencode "types=public_channel" \
   --data-urlencode "cursor=dXNlcjpVMDYxTkZUVDI=" \
@@ -218,7 +218,7 @@ Return the JSON array of channels.
 Read messages from a channel. Use `oldest` (Unix timestamp) for incremental polling — only messages after that timestamp are returned.
 
 ```bash
-curl -s "https://slack.com/api/conversations.history" \
+curl -s -G "https://slack.com/api/conversations.history" \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   --data-urlencode "channel=C0123456789" \
   --data-urlencode "oldest=1712023032.000000" \
@@ -236,7 +236,7 @@ Return the JSON messages array.
 Read all replies in a thread. The `thread_ts` is the parent message timestamp.
 
 ```bash
-curl -s "https://slack.com/api/conversations.replies" \
+curl -s -G "https://slack.com/api/conversations.replies" \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   --data-urlencode "channel=C0123456789" \
   --data-urlencode "ts=1712023032.123400"
@@ -260,7 +260,7 @@ curl -s "https://slack.com/api/auth.test" \
 Step 2 — Read history and filter for mentions:
 
 ```bash
-curl -s "https://slack.com/api/conversations.history" \
+curl -s -G "https://slack.com/api/conversations.history" \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   --data-urlencode "channel=C0123456789" \
   --data-urlencode "oldest=1712023032.000000" \
@@ -372,7 +372,7 @@ Return confirmation on success.
 Get profile information for a Slack user.
 
 ```bash
-curl -s "https://slack.com/api/users.info" \
+curl -s -G "https://slack.com/api/users.info" \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   --data-urlencode "user=U0123456789"
 ```
@@ -395,7 +395,7 @@ When rate-limited, the API returns HTTP 429 with a `Retry-After` header (seconds
 
 ```bash
 # Check for rate limiting in response headers
-curl -s -D - "https://slack.com/api/conversations.history" \
+curl -s -D - -G "https://slack.com/api/conversations.history" \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   --data-urlencode "channel=C0123456789" \
   --data-urlencode "limit=50" \
