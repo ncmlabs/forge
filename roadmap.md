@@ -508,12 +508,12 @@ All tests run with the mock provider. `cargo test` should never make an API call
 The Layer 1 is complete when all of these pass:
 
 ```bash
-forge check examples/uncertain_error.forge   # should error: unhandled uncertain
-forge check examples/pure_error.forge        # should error: think inside pure
-forge check examples/states_error.forge      # should error: illegal transition
-forge check examples/boundary_error.forge    # should error: cross-boundary ref
-forge run   examples/hello.forge             # should print response from LLM
-forge run   examples/research.forge          # should show parallel stage timing
+forge check examples/errors/uncertain_error.forge   # should error: unhandled uncertain
+forge check examples/errors/pure_error.forge        # should error: think inside pure
+forge check examples/errors/states_error.forge      # should error: illegal transition
+forge check examples/errors/boundary_error.forge    # should error: cross-boundary ref
+forge run   examples/basics/hello.forge             # should print response from LLM
+forge run   examples/llm/research.forge          # should show parallel stage timing
 forge run   examples/tictactoe/platform.forge # should run full game system
 ```
 

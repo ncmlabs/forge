@@ -78,7 +78,7 @@ fn main
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
 async fn background_status_completed() {
-    let program = parse_file("examples/command_background.forge");
+    let program = parse_file("examples/command/command_background.forge");
     let executor = executor_with_bg(program);
     let result = executor.run().await;
     assert!(
@@ -104,7 +104,7 @@ async fn background_status_completed() {
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
 async fn background_cancel() {
-    let program = parse_file("examples/command_background_cancel.forge");
+    let program = parse_file("examples/command/command_background_cancel.forge");
     let executor = executor_with_bg(program);
     let result = executor.run().await;
     assert!(

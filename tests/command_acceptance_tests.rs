@@ -27,7 +27,7 @@ fn mock_registry(mock: MockProvider) -> Arc<ProviderRegistry> {
 
 #[tokio::test]
 async fn command_success_returns_stdout() {
-    let program = parse_file("examples/command_success.forge");
+    let program = parse_file("examples/command/command_success.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -48,7 +48,7 @@ async fn command_success_returns_stdout() {
 
 #[tokio::test]
 async fn command_argv_mode() {
-    let program = parse_file("examples/command_argv.forge");
+    let program = parse_file("examples/command/command_argv.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -69,7 +69,7 @@ async fn command_argv_mode() {
 
 #[tokio::test]
 async fn command_fail_routes_to_else() {
-    let program = parse_file("examples/command_fail.forge");
+    let program = parse_file("examples/command/command_fail.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -96,7 +96,7 @@ async fn command_fail_routes_to_else() {
 #[tokio::test]
 #[cfg(not(target_os = "windows"))]
 async fn command_workdir() {
-    let program = parse_file("examples/command_workdir.forge");
+    let program = parse_file("examples/command/command_workdir.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -118,7 +118,7 @@ async fn command_workdir() {
 
 #[tokio::test]
 async fn command_env_vars() {
-    let program = parse_file("examples/command_env.forge");
+    let program = parse_file("examples/command/command_env.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -139,7 +139,7 @@ async fn command_env_vars() {
 
 #[tokio::test]
 async fn command_timeout_errors() {
-    let program = parse_file("examples/command_timeout.forge");
+    let program = parse_file("examples/command/command_timeout.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -159,7 +159,7 @@ async fn command_timeout_errors() {
 
 #[tokio::test]
 async fn command_stderr_captured() {
-    let program = parse_file("examples/command_stderr.forge");
+    let program = parse_file("examples/command/command_stderr.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -180,7 +180,7 @@ async fn command_stderr_captured() {
 
 #[tokio::test]
 async fn command_produces_trace_events() {
-    let program = parse_file("examples/command_success.forge");
+    let program = parse_file("examples/command/command_success.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let tracer = Tracer::with_capture();
     let executor = TaskExecutor::new(program, mock_registry(mock), Some(tracer.clone()));

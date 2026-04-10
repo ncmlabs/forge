@@ -142,6 +142,7 @@ fn expr_is_oracle(expr: &Spanned<Expr>) -> bool {
             | Expr::Command(_)
             | Expr::Session(_)
             | Expr::CommandMethod(_, _)
+            | Expr::SessionMethod(_, _)
     )
 }
 

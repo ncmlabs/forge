@@ -156,7 +156,7 @@ fn parse_and_merge_sources_rejects_invalid() {
 #[test]
 fn manifest_from_single_file() {
     let manifest = forge::manifest::ProjectManifest::from_single_file(
-        std::path::Path::new("examples/hello.forge"),
+        std::path::Path::new("examples/basics/hello.forge"),
         None,
     );
     assert_eq!(manifest.project.name, "hello");

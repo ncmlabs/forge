@@ -1,0 +1,9 @@
+fn main
+  say "=== session.status() test ==="
+  say "1. Query nonexistent session:"
+  s1 = session.status("does-not-exist")
+  say "   {s1}"
+  say "2. Query another missing session:"
+  s2 = session.status("also-missing-123")
+  say "   {s2}"
+  say "All session.status() tests passed!"

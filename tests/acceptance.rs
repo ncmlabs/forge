@@ -92,7 +92,7 @@ fn number_param(key: &str, val: f64) -> (String, ConfidentValue) {
 
 #[test]
 fn accept_uncertain_error() {
-    let diags = check_file("examples/uncertain_error.forge");
+    let diags = check_file("examples/errors/uncertain_error.forge");
     let errs = errors(&diags);
     assert!(!errs.is_empty(), "should detect unhandled uncertain");
     assert!(
@@ -123,7 +123,7 @@ fn accept_session_uncertain_error() {
 
 #[test]
 fn accept_pure_error() {
-    let diags = check_file("examples/pure_error.forge");
+    let diags = check_file("examples/errors/pure_error.forge");
     let errs = errors(&diags);
     assert!(!errs.is_empty(), "should detect LLM op in pure function");
     assert!(
@@ -135,7 +135,7 @@ fn accept_pure_error() {
 
 #[test]
 fn accept_states_error() {
-    let diags = check_file("examples/states_error.forge");
+    let diags = check_file("examples/errors/states_error.forge");
     let errs = errors(&diags);
     assert!(!errs.is_empty(), "should detect illegal transition");
     assert!(
@@ -149,8 +149,8 @@ fn accept_states_error() {
 #[test]
 fn accept_boundary_error() {
     let diags = check_files(&[
-        "examples/boundary_error_server.forge",
-        "examples/boundary_error_client.forge",
+        "examples/errors/boundary_error_server.forge",
+        "examples/errors/boundary_error_client.forge",
     ]);
     let errs = errors(&diags);
     assert!(!errs.is_empty(), "should detect cross-boundary reference");
@@ -166,7 +166,7 @@ fn accept_boundary_error() {
 
 #[tokio::test]
 async fn accept_hello_run() {
-    let program = parse_file("examples/hello.forge");
+    let program = parse_file("examples/basics/hello.forge");
     let mock = MockProvider::new("mock").with_default("mock response");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -183,7 +183,7 @@ async fn accept_hello_run() {
 async fn accept_research_run_without_search_provider() {
     // Without a configured search provider, search produces a FlowError
     // (it tries to connect to localhost:8080 SearXNG by default).
-    let program = parse_file("examples/research.forge");
+    let program = parse_file("examples/llm/research.forge");
     let mock = MockProvider::new("mock")
         .with_response("search", "Search results about artificial intelligence")
         .with_response("synthesize", "A synthesized report on AI advances")
@@ -388,7 +388,7 @@ async fn accept_tictactoe_game() {
 
 #[test]
 fn accept_fact_check_pool_parse() {
-    let diags = check_file("examples/fact_check_pool.forge");
+    let diags = check_file("examples/agents/fact_check_pool.forge");
     let errs = errors(&diags);
     assert!(
         errs.is_empty(),
@@ -399,7 +399,7 @@ fn accept_fact_check_pool_parse() {
 
 #[tokio::test]
 async fn accept_fact_check_pool_run() {
-    let program = parse_file("examples/fact_check_pool.forge");
+    let program = parse_file("examples/agents/fact_check_pool.forge");
     // Mock provider returns 3 identical responses for the 3 pool workers
     let mock = MockProvider::new("mock").with_default("YES this claim is factually accurate");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
@@ -424,7 +424,7 @@ async fn accept_fact_check_pool_run() {
 #[test]
 fn cli_check_valid_exits_zero() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_forge"))
-        .args(["check", "examples/hello.forge"])
+        .args(["check", "examples/basics/hello.forge"])
         .output()
         .expect("failed to execute forge binary");
     assert!(
@@ -437,7 +437,7 @@ fn cli_check_valid_exits_zero() {
 #[test]
 fn cli_check_error_exits_nonzero() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_forge"))
-        .args(["check", "examples/states_error.forge"])
+        .args(["check", "examples/errors/states_error.forge"])
         .output()
         .expect("failed to execute forge binary");
     assert!(

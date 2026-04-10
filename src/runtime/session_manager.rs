@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -17,6 +18,7 @@ use tokio::sync::{mpsc, Notify};
 use uuid::Uuid;
 
 use crate::runtime::confidence::{ConfidentValue, Value};
+use crate::runtime::event_bus::{EventPayload, SharedEventBus};
 use crate::tracer::Tracer;
 
 pub type SessionId = String;
@@ -144,6 +146,8 @@ pub enum SessionEvent {
     Progress {
         session_id: SessionId,
         payload: ConfidentValue,
+        timestamp: DateTime<Utc>,
+        message: Option<String>,
     },
     BudgetUpdated {
         session_id: SessionId,
@@ -152,6 +156,8 @@ pub enum SessionEvent {
     Completed {
         session_id: SessionId,
         result: ConfidentValue,
+        duration_secs: f64,
+        final_status: SessionStatus,
     },
     Failed {
         session_id: SessionId,
@@ -246,6 +252,8 @@ struct SessionManagerInner {
 pub struct SessionManager {
     base_dir: PathBuf,
     tracer: Option<Tracer>,
+    event_bus: Arc<Mutex<Option<SharedEventBus>>>,
+    polling_cancel: Arc<AtomicBool>,
     inner: Arc<Mutex<SessionManagerInner>>,
 }
 
@@ -256,6 +264,8 @@ impl SessionManager {
         Self {
             base_dir,
             tracer: None,
+            event_bus: Arc::new(Mutex::new(None)),
+            polling_cancel: Arc::new(AtomicBool::new(false)),
             inner: Arc::new(Mutex::new(SessionManagerInner {
                 sessions: HashMap::new(),
                 listeners: HashMap::new(),
@@ -267,6 +277,87 @@ impl SessionManager {
     pub fn with_tracer(mut self, tracer: Option<Tracer>) -> Self {
         self.tracer = tracer;
         self
+    }
+
+    pub fn with_event_bus(self, bus: SharedEventBus) -> Self {
+        *self.event_bus.lock().unwrap() = Some(bus);
+        self
+    }
+
+    /// Set the event bus on an already-constructed (possibly Arc'd) manager.
+    pub fn set_event_bus(&self, bus: SharedEventBus) {
+        *self.event_bus.lock().unwrap() = Some(bus);
+    }
+
+    /// Start polling active sessions at the given interval, publishing
+    /// `session.poll` events to the EventBus for each non-terminal session.
+    /// Default interval: 5 seconds.
+    pub fn start_polling(&self, interval: Duration) -> tokio::task::JoinHandle<()> {
+        self.polling_cancel.store(false, Ordering::SeqCst);
+        let cancel = self.polling_cancel.clone();
+        let inner = self.inner.clone();
+        let event_bus = self.event_bus.clone();
+        let tracer = self.tracer.clone();
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.tick().await; // skip immediate first tick
+            loop {
+                ticker.tick().await;
+                if cancel.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                let bus = event_bus.lock().unwrap().clone();
+                let Some(bus) = bus else {
+                    continue;
+                };
+
+                let active_sessions: Vec<SessionState> = {
+                    let guard = inner.lock().unwrap();
+                    guard
+                        .sessions
+                        .values()
+                        .filter(|e| !e.state.status.is_terminal())
+                        .map(|e| e.state.clone())
+                        .collect()
+                };
+
+                if let Some(ref t) = tracer {
+                    t.event_emit("session_manager", "session.poll", active_sessions.len());
+                }
+
+                let text = |s: &str| ConfidentValue::deterministic(Value::Text(s.to_string()));
+                let num = |n: f64| ConfidentValue::deterministic(Value::Number(n));
+
+                for state in &active_sessions {
+                    let mut fields = HashMap::new();
+                    fields.insert("session_id".to_string(), text(&state.id));
+                    fields.insert("status".to_string(), text(state.status.as_str()));
+                    fields.insert("cost_usd".to_string(), num(state.cost_usd as f64));
+                    fields.insert(
+                        "updated_at".to_string(),
+                        text(&state.updated_at.to_rfc3339()),
+                    );
+
+                    let payload = EventPayload {
+                        event_name: "session.poll".to_string(),
+                        args: vec![text(&state.id)],
+                        source_agent: "session_manager".to_string(),
+                        fields,
+                    };
+
+                    if let Ok(bus_guard) = bus.try_read() {
+                        bus_guard.publish(&payload);
+                    }
+                }
+            }
+        })
+    }
+
+    /// Stop the polling task.
+    pub fn stop_polling(&self) {
+        self.polling_cancel.store(true, Ordering::SeqCst);
     }
 
     pub fn register_driver(&self, name: impl Into<String>, driver: Arc<dyn SessionDriver>) {
@@ -739,9 +830,15 @@ impl SessionManager {
 
         let _ = self.persist_state(&snapshot);
         self.trace_progress(session_id, snapshot.cost_usd);
+        let message = match &payload.value {
+            Value::Text(t) => Some(t.clone()),
+            _ => None,
+        };
         self.dispatch_event(SessionEvent::Progress {
             session_id: session_id.to_string(),
             payload,
+            timestamp: Utc::now(),
+            message,
         });
         self.dispatch_event(SessionEvent::BudgetUpdated {
             session_id: session_id.to_string(),
@@ -843,9 +940,13 @@ impl SessionManager {
 
         let _ = self.persist_state(&snapshot);
         self.trace_completed(session_id, snapshot.cost_usd);
+        let duration_secs =
+            (Utc::now() - snapshot.started_at).num_milliseconds().max(0) as f64 / 1000.0;
         self.dispatch_event(SessionEvent::Completed {
             session_id: session_id.to_string(),
             result,
+            duration_secs,
+            final_status: SessionStatus::Done,
         });
         self.dispatch_event(SessionEvent::StateChanged {
             session_id: session_id.to_string(),
@@ -971,6 +1072,31 @@ impl SessionManager {
         for listener in listeners {
             listener(event.clone());
         }
+
+        // Publish to EventBus if available (Principle VIII: traced)
+        let bus = self.event_bus.lock().unwrap().clone();
+        if let Some(ref bus) = bus {
+            if let Some(payload) = session_event_to_payload(&event) {
+                match bus.try_read() {
+                    Ok(bus) => {
+                        let delivered = bus.publish(&payload);
+                        if let Some(ref t) = self.tracer {
+                            t.event_emit("session_manager", &payload.event_name, delivered);
+                        }
+                    }
+                    Err(_) => {
+                        // Principle V: bounded, drop-on-contention with trace
+                        if let Some(ref t) = self.tracer {
+                            t.event_delivery_failed(
+                                &payload.event_name,
+                                "event_bus",
+                                "lock_contention",
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn trace_spawned(&self, session_id: &str) {
@@ -1039,6 +1165,75 @@ fn session_id_of(event: &SessionEvent) -> Option<&str> {
         | SessionEvent::Cancelled { session_id }
         | SessionEvent::ResumeAttempted { session_id }
         | SessionEvent::ResumeFailed { session_id, .. } => Some(session_id.as_str()),
+    }
+}
+
+fn session_event_to_payload(event: &SessionEvent) -> Option<EventPayload> {
+    let text = |s: &str| ConfidentValue::deterministic(Value::Text(s.to_string()));
+    let num = |n: f64| ConfidentValue::deterministic(Value::Number(n));
+
+    match event {
+        SessionEvent::Progress {
+            session_id,
+            payload,
+            timestamp,
+            message,
+        } => {
+            let mut fields = HashMap::new();
+            fields.insert("session_id".to_string(), text(session_id));
+            fields.insert("timestamp".to_string(), text(&timestamp.to_rfc3339()));
+            fields.insert("output".to_string(), payload.clone());
+            if let Some(msg) = message {
+                fields.insert("message".to_string(), text(msg));
+            }
+            Some(EventPayload {
+                event_name: "session.progress".to_string(),
+                args: vec![payload.clone()],
+                source_agent: "session_manager".to_string(),
+                fields,
+            })
+        }
+        SessionEvent::Completed {
+            session_id,
+            result,
+            duration_secs,
+            final_status,
+        } => {
+            let mut fields = HashMap::new();
+            fields.insert("session_id".to_string(), text(session_id));
+            fields.insert("result".to_string(), result.clone());
+            fields.insert("duration_secs".to_string(), num(*duration_secs));
+            fields.insert("final_status".to_string(), text(final_status.as_str()));
+            Some(EventPayload {
+                event_name: "session.complete".to_string(),
+                args: vec![result.clone()],
+                source_agent: "session_manager".to_string(),
+                fields,
+            })
+        }
+        SessionEvent::Failed { session_id, error } => {
+            let mut fields = HashMap::new();
+            fields.insert("session_id".to_string(), text(session_id));
+            fields.insert("error".to_string(), text(error));
+            Some(EventPayload {
+                event_name: "session.failed".to_string(),
+                args: vec![text(error)],
+                source_agent: "session_manager".to_string(),
+                fields,
+            })
+        }
+        SessionEvent::Cancelled { session_id } => {
+            let mut fields = HashMap::new();
+            fields.insert("session_id".to_string(), text(session_id));
+            Some(EventPayload {
+                event_name: "session.cancelled".to_string(),
+                args: vec![text(session_id)],
+                source_agent: "session_manager".to_string(),
+                fields,
+            })
+        }
+        // Other events (Spawned, StateChanged, BudgetUpdated, Resume*) are internal
+        _ => None,
     }
 }
 

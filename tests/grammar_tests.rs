@@ -313,13 +313,13 @@ fn main
 
 #[test]
 fn parse_hello_forge() {
-    let source = std::fs::read_to_string("examples/hello.forge").unwrap();
+    let source = std::fs::read_to_string("examples/basics/hello.forge").unwrap();
     ForgeParser::parse(Rule::program, &source).unwrap();
 }
 
 #[test]
 fn parse_classify_forge() {
-    let source = std::fs::read_to_string("examples/classify.forge").unwrap();
+    let source = std::fs::read_to_string("examples/llm/classify.forge").unwrap();
     ForgeParser::parse(Rule::program, &source).unwrap();
 }
 

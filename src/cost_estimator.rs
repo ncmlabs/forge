@@ -219,8 +219,8 @@ impl CostWalker {
             Expr::Exec(_) => {
                 // exec has zero token cost (direct CLI, no LLM)
             }
-            Expr::Command(_) | Expr::CommandMethod(_, _) => {
-                // command has zero token cost (direct CLI, no LLM)
+            Expr::Command(_) | Expr::CommandMethod(_, _) | Expr::SessionMethod(_, _) => {
+                // command/session method has zero token cost (direct CLI, no LLM)
             }
             Expr::Session(session) => {
                 self.walk_expr(&session.name, context, multiplier);

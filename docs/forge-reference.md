@@ -1,5 +1,5 @@
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.26s
-     Running `target/debug/forge run examples/docgen.forge`
+     Running `target/debug/forge run examples/llm/docgen.forge`
 # FORGE Language Reference
 
 This document is a complete reference for the FORGE programming language, designed for teaching LLM agents how to write correct FORGE code.
@@ -1648,7 +1648,7 @@ agent room_agent
 The `forge agent <file>` command launches an interactive REPL for manual handler testing. Type an event name with optional arguments to dispatch it:
 
 ```
-$ forge agent examples/support_bot.forge
+$ forge agent examples/agents/support_bot.forge
 FORGE Agent: support_bot
   memory: topic, message_count, escalation_count
   handlers: message, resolve, session_timeout.expired

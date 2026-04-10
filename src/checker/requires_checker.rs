@@ -183,11 +183,11 @@ fn check_requires_expr(
                 .with_help("use a `pure` function instead"),
             );
         }
-        Expr::Command(_) | Expr::CommandMethod(_, _) => {
+        Expr::Command(_) | Expr::CommandMethod(_, _) | Expr::SessionMethod(_, _) => {
             diagnostics.push(
                 Diagnostic::warning(
                     file,
-                    "requires clause uses `command` which runs an external process",
+                    "requires clause uses `command`/`session` which runs an external process",
                     expr.span.start..expr.span.end,
                     "external processes are non-deterministic — preconditions should be deterministic",
                 )

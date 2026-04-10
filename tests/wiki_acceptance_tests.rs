@@ -1112,7 +1112,7 @@ async fn wiki_fact_check_majority_vote() {
         "YES this is accurate".to_string(),
     ]);
 
-    let program = parse_file("examples/fact_check_pool.forge");
+    let program = parse_file("examples/agents/fact_check_pool.forge");
     let executor = TaskExecutor::new(program, mock_registry_from(mock), None);
     let result = executor.run().await;
     assert!(

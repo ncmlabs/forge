@@ -563,6 +563,7 @@ postfix_op   = {
 pipe_term = {
     command_method_expr
   | command_expr
+  | session_method_expr
   | session_expr
   | exec_expr
   | find_expr
@@ -595,6 +596,8 @@ command_modifier = {
 command_expr = { "command" ~ _s ~ command_arg ~ (_s ~ command_modifier)* }
 command_method_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 command_method_expr = { "command" ~ "." ~ command_method_name ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
+session_method_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+session_method_expr = { "session" ~ "." ~ session_method_name ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
 session_expr = { "session" ~ _s ~ string_arg ~ (_s ~ session_modifier)* }
 session_modifier = _{
     session_agent_modifier

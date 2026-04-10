@@ -487,7 +487,7 @@ fn check_refs_in_expr(
                 }
             }
         }
-        Expr::CommandMethod(_, args) => {
+        Expr::CommandMethod(_, args) | Expr::SessionMethod(_, args) => {
             for arg in args {
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
             }
