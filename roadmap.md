@@ -678,7 +678,7 @@ Worktree isolation for safe agent execution:
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| #204 | Phase 2 reliability: verification engine for coding sessions | Open |
+| #204 | Phase 2 reliability: verification engine for coding sessions | Done ✅ |
 | #205 | Phase 2 reliability: contradiction events and warden integration | Open |
 
 ### P2.M6: Sandbox Isolation
@@ -936,7 +936,7 @@ P2.M1  Command         ███████████████████
 P2.M2  Session Core    ████████████████████  2/2  (100%)  DONE
 P2.M3  Result+Contract ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 P2.M4  Adapters+Events ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
-P2.M5  Verify+Contra   ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M5  Verify+Contra   ██████████░░░░░░░░░░  1/2  ( 50%)
 P2.M6  Sandbox         ████████████████████  1/1  (100%)
 P2.M7  Skills          █████████████░░░░░░░  2/3  ( 67%)
 P2.M8  CLI Skills      ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
