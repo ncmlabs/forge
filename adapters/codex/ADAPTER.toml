@@ -1,0 +1,35 @@
+# Codex CLI adapter for FORGE session delegation
+# See docs/phase-2/agent-cli-delegation.md for verified CLI patterns
+
+[adapter]
+name = "codex"
+description = "Codex CLI agent — bounded coding and review"
+command = "codex"
+args = ["exec", "--json"]
+prompt_delivery = "positional"
+output_format = "jsonl"
+
+[adapter.flags]
+# Codex has no --allowedTools flag; tool control via sandbox/approval policy
+
+[adapter.resume]
+args = ["exec", "resume"]
+
+[adapter.permissions]
+readonly_args = ["--sandbox", "read-only"]
+readwrite_args = ["--full-auto"]
+readwrite_tools = ["Edit", "Bash", "Write"]
+
+[adapter.result_mapping]
+plan = "content.text"
+session_id = "thread_id"
+confidence_default = 0.80
+
+[adapter.result_mapping.metadata]
+tokens_in = "usage.input_tokens"
+tokens_out = "usage.output_tokens"
+
+[adapter.progress]
+event_field = "type"
+progress_types = ["item.started", "item.completed", "turn.completed"]
+result_type = "item.completed"

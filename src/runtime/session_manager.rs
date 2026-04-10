@@ -124,6 +124,12 @@ impl SessionState {
             error: None,
         }
     }
+
+    /// Test-only constructor for building SessionState in adapter tests.
+    #[cfg(test)]
+    pub fn new_for_test(id: SessionId, config: SessionConfig) -> Self {
+        Self::new(id, config)
+    }
 }
 
 #[derive(Debug, Clone)]

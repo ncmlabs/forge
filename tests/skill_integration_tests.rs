@@ -400,6 +400,7 @@ fn manifest_skills_resolved_from_project_dir() {
                 source: None,
             },
         )])),
+        adapters: None,
     };
 
     let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
@@ -437,6 +438,7 @@ fn manifest_skills_resolved_from_agents_dir() {
                 source: Some("org/agent-skill".into()),
             },
         )])),
+        adapters: None,
     };
 
     let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
@@ -462,6 +464,7 @@ fn manifest_skills_missing_gives_clear_error() {
                 source: None,
             },
         )])),
+        adapters: None,
     };
 
     let err = manifest.resolve_skills(tmp.path(), &[]).unwrap_err();
@@ -514,6 +517,7 @@ fn manifest_skills_explicit_path_wins() {
                 source: None,
             },
         )])),
+        adapters: None,
     };
 
     let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
@@ -579,6 +583,7 @@ fn manifest_skills_loaded_into_registry() {
                 source: None,
             },
         )])),
+        adapters: None,
     };
 
     let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
