@@ -276,7 +276,7 @@ ward_policy = {
     (nl ~ i2 ~ after_clause)*
 }
 
-failure_type = @{ ("stuck" | "crash" | "hallucination" | "budget" | "timeout") ~ !(ASCII_ALPHANUMERIC | "_") }
+failure_type = @{ ("stuck" | "crash" | "hallucination" | "contradiction" | "budget" | "timeout") ~ !(ASCII_ALPHANUMERIC | "_") }
 
 ward_response = @{ ("nudge" | "downgrade" | "restart" | "replace" | "escalate") ~ !(ASCII_ALPHANUMERIC | "_") }
 

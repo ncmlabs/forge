@@ -354,6 +354,7 @@ pub enum FailureType {
     Stuck,
     Crash,
     Hallucination,
+    Contradiction,
     Budget,
     Timeout,
 }

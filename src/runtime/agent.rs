@@ -132,11 +132,28 @@ impl EventSink {
 /// Signal from a managed agent to its warden.
 #[derive(Debug, Clone)]
 pub enum AgentSignal {
-    Stuck { agent_name: String },
-    Timeout { agent_name: String },
-    Hallucination { agent_name: String, detail: String },
-    BudgetExceeded { agent_name: String, detail: String },
-    Crash { agent_name: String },
+    Stuck {
+        agent_name: String,
+    },
+    Timeout {
+        agent_name: String,
+    },
+    Hallucination {
+        agent_name: String,
+        detail: String,
+    },
+    Contradiction {
+        agent_name: String,
+        detail: String,
+        severity: String,
+    },
+    BudgetExceeded {
+        agent_name: String,
+        detail: String,
+    },
+    Crash {
+        agent_name: String,
+    },
 }
 
 // ── Stuck Detector ───────────────────────────────────────────────────────────
@@ -422,7 +439,14 @@ impl AgentProcess {
     }
 
     /// Attach a warden signal channel for reporting stuck status.
+    /// Also wires the signal into the session manager for contradiction
+    /// reporting (issue #205).
     pub fn with_warden_signal(mut self, tx: mpsc::Sender<AgentSignal>) -> Self {
+        // Wire warden signal into the session manager so contradictions
+        // detected during verification can reach the warden.
+        if let Some(mgr) = self.executor.session_manager() {
+            mgr.set_warden_signal(tx.clone());
+        }
         self.warden_tx = Some(tx);
         self
     }

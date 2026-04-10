@@ -2220,6 +2220,7 @@ fn build_failure_type(pair: &Pair) -> anyhow::Result<Spanned<FailureType>> {
         "stuck" => FailureType::Stuck,
         "crash" => FailureType::Crash,
         "hallucination" => FailureType::Hallucination,
+        "contradiction" => FailureType::Contradiction,
         "budget" => FailureType::Budget,
         "timeout" => FailureType::Timeout,
         other => {
