@@ -39,7 +39,7 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 redb = "2"
 notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 urlencoding = "2.1.3"
 
 [target.'cfg(unix)'.dependencies]
