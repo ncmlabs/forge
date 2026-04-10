@@ -49,6 +49,8 @@ Everything in this document exists to reach that moment.
 
 ## Milestones
 
+### Layer 1 — Substrate (v0.1.0 shipped 2026-04-09)
+
 | Milestone | Description | Status | Date |
 |-----------|-------------|--------|------|
 | M1 — Bootstrap | Grammar, parser, AST, CLI scaffold | Done | 2026-03-31 |
@@ -60,12 +62,32 @@ Everything in this document exists to reach that moment.
 | M7 — Skill Bridge | exec primitive, host skill bridge, tool-use providers, skill E2E test | Done | 2026-04-07 |
 | M8 — Wiki Showcase | First real FORGE app: wiki with search agent, fact-checking pool, warden supervision, 52 tests | Done | 2026-04-07 |
 | M9 — Sentinel | Killer app: AI-powered repo health dashboard showcasing all 17 primitives | Done | 2026-04-08 |
-| M10 — Observer | Elixir-style real-time agent traceability: SSE stream, inspect API, topology viz, cost tracking | In Progress | — |
-| M11 — WASM Compilation | Cranelift backend for pure functions, browser WASM target | Open | — |
-| M12 — Layer 1 Complete | All tracks done, conformance suite finalized, documentation complete | Open | — |
-| M10 — Layer 2: Toolkit | Agents that generate FORGE code from descriptions | Future | — |
-| M11 — Layer 3: Factory | Spec in → running system out, no human writes code | Future | — |
-| M12 — Layer 4: Self-Improvement | Factory watches itself and optimizes deployed systems | Future | — |
+| M10 — Observer | Elixir-style real-time agent traceability: SSE stream, inspect API, topology viz, cost tracking | Done | 2026-04-09 |
+| M11 — WASM Compilation | Cranelift backend for pure functions, browser WASM target | Deferred | — |
+| M12 — Release | All core tracks done, conformance suite, documentation, v0.1.0 | Done | 2026-04-09 |
+
+### Layer 2 — Toolkit (Phase 2, in progress)
+
+| Milestone | Description | Issues | Status |
+|-----------|-------------|--------|--------|
+| P2.M1 — Command | `command` primitive: grammar, sync execution, background mode | #160 ✅ #161 ✅ #162 ✅ | Done |
+| P2.M2 — Session | `session` primitive: grammar, lifecycle, agent adapters, polling | #189, #190, #191, #192 | Open |
+| P2.M3 — AgentResult | Built-in typed result contract for sessions | #193 | Open |
+| P2.M4 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 | Open |
+| P2.M5 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research | #163, #164, #165 | Open |
+| P2.M6 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer | #166, #167 | Open |
+| P2.M7 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168-#175 | Open |
+| P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176-#179 | Open |
+| P2.M9 — Orchestration | Slack Monitor, Inbound Triager, Approval gate pattern | #180-#182 | Open |
+| P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Open |
+| P2.M11 — Polish | CostEstimator, DocumentationAgent | #186-#187 | Open |
+
+### Future Layers
+
+| Milestone | Description | Status |
+|-----------|-------------|--------|
+| Layer 3 — Automation Factory | Spec in → running system out. No human writes code. | Future |
+| Layer 4 — Self-Improvement | Factory watches itself and optimizes deployed systems | Future |
 
 ## Implementation tracks
 
@@ -117,19 +139,19 @@ The first real FORGE application — a wiki powered by agents, pools, and warden
 | #64 | Warden supervision for wiki agents | Done |
 | #65 | End-to-end wiki acceptance tests (52 tests) | Done |
 
-### Track E — Observer: 0/7 CRITICAL
+### Track E — Observer: 7/7 COMPLETE
 
 Elixir-style real-time agent traceability — tap into any running agent, see memory, trace decisions, inspect supervision tree.
 
 | Issue | Feature | Status |
 |-------|---------|--------|
-| #138 | Live trace stream: `/__forge/events` SSE endpoint | Open |
-| #139 | Runtime introspection API: `/__forge/inspect/*` | Open |
-| #140 | Sentinel live scan UX: SSE-driven progress | Open |
-| #141 | Agent topology visualization: live graph with tap-to-inspect | Open |
-| #142 | Cost and confidence dashboard: token economy visibility | Open |
-| #143 | Failure injection: test warden policies | Open |
-| #144 | Standalone Observer app | Open |
+| #138 | Live trace stream: `/__forge/events` SSE endpoint | Done |
+| #139 | Runtime introspection API: `/__forge/inspect/*` | Done |
+| #140 | Sentinel live scan UX: SSE-driven progress | Done |
+| #141 | Agent topology visualization: live graph with tap-to-inspect | Done |
+| #142 | Cost and confidence dashboard: token economy visibility | Done |
+| #143 | Failure injection: test warden policies | Done |
+| #144 | Standalone Observer app | Done |
 
 ### Track D — WASM Compilation: 0/4
 
@@ -148,10 +170,10 @@ Cranelift backend for compiling FORGE to WebAssembly.
 Track A ████████████████████ 9/9  (100%)  — Ecosystem Core
 Track B ████████████████████ 9/9  (100%)  — Web & Capabilities
 Track C ████████████████████ 7/7  (100%)  — Wiki Showcase
-Track D ░░░░░░░░░░░░░░░░░░░░ 0/4  (  0%)  — WASM Compilation
-Track E ░░░░░░░░░░░░░░░░░░░░ 0/7  (  0%)  — Observer [CRITICAL]
+Track D ░░░░░░░░░░░░░░░░░░░░ 0/4  (  0%)  — WASM Compilation (deferred)
+Track E ████████████████████ 7/7  (100%)  — Observer
 ─────────────────────────────────────────
-Overall ████████████████░░░░ 25/36 ( 69%)
+Overall ██████████████████░░ 32/36 ( 89%)
 ```
 
 ---
@@ -546,9 +568,9 @@ thiserror       = "1"
 | 9 | Boundary enforcement | Cross-boundary ref = compile error | Done 2026-04-01 |
 | 10 | Build system | `forge build` produces standalone binary | Done 2026-04-03 |
 | 11 | Agent ecosystem | spawn/find/retire/system runtime works | Done 2026-04-04 |
-| 12 | Cleanup + documentation | All tests pass, README complete | In progress |
+| 12 | Cleanup + documentation | All tests pass, README complete | Done 2026-04-09 |
 
-**Estimated 12 weeks of work delivered in 5 days.**
+**Estimated 12 weeks of work delivered in 10 days. Layer 1 shipped as v0.1.0 on 2026-04-09.**
 
 ---
 
@@ -562,17 +584,231 @@ FORGE applications — and they prove the language works for its intended purpos
 Layer 2 is written in FORGE (once Layer 1 exists). It is the first moment
 the recursive property appears: FORGE agents writing FORGE code.
 
+Phase 2 also builds a complete dev orchestration system — proving FORGE
+can manage real multi-project workflows with Slack integration, GitHub
+automation, approval gates, and agent delegation to Claude Code and Codex.
+
 ---
 
-## L2.1 — Core toolkit agents
+## L2.0 — Architectural foundation: three-tier primitive stack
 
-These are written by hand in FORGE, once. After this, they generate their own
-improvements.
+Phase 2 introduces three new language primitives that form a progression
+from simple shell commands to fully isolated agent delegation:
 
-### TaskGenerator
+```
+command                  session                    sandbox
+├─ sync shell exec       ├─ long-running process     ├─ worktree isolation
+├─ background mode       ├─ Claude/Codex adapters    ├─ spawn modifier
+├─ structured result     ├─ polling + events         └─ filesystem safety
+└─ timeout/env/dir       ├─ AgentResult return
+                         └─ budget/permission control
+```
 
-Takes a description of what a task should do. Returns valid FORGE task code.
-Verifies its own output using the compiler before returning.
+### command (done — #160, #161, #162)
+
+First-class `command` expression with dual invocation modes:
+- **String mode**: `command "git status"` → shell-interpreted via `sh -c`
+- **Argv mode**: `command ["git", "commit", "-m", msg]` → no shell, no injection
+- Modifiers: `in` (working dir), `timeout`, `background`, `env`
+- Structured return: `result.stdout`, `result.stderr`, `result.exit_code`, `result.success`
+- Confidence: 0.9 on exit 0, 0.3 otherwise
+
+### session (new — #189, #190, #191, #192)
+
+Long-running agent delegation to Claude Code, Codex, or generic processes:
+```forge
+result = session "implement the login page" via claude in "/repo" timeout 30m
+```
+- Lifecycle: spawn → running → completed | failed | timed_out
+- Agent-specific adapters (Claude flags, Codex flags, generic process)
+- Polling integration with FORGE event bus
+- Returns typed `AgentResult`
+
+### AgentResult (new — #193)
+
+Built-in typed result contract for session returns:
+- Fields: `success`, `output`, `artifacts`, `cost`, `confidence`, `approval_needed`
+- Replaces ad-hoc text parsing of agent output
+- Enables confident branching: `when result.sure -> ...`
+
+### sandbox (new — #194)
+
+Worktree isolation for safe agent execution:
+- Spawn modifier: `spawn worker in sandbox`
+- Creates a git worktree so agents cannot step on each other's filesystem
+- Automatic cleanup on agent retire
+
+---
+
+## L2.1 — Phase 2 milestones
+
+### P2.M1: Command (Foundation) — DONE
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #160 | `command` primitive — grammar, AST, and parser | Done |
+| #161 | `command` runtime — synchronous execution | Done |
+| #162 | `command` background mode — process manager | Done |
+
+### P2.M2: Session Primitive
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #189 | session primitive — grammar, AST, and parser | Open |
+| #190 | session runtime — lifecycle manager | Open |
+| #191 | session agent adapters — Claude, Codex, generic | Open |
+| #192 | session polling + event integration | Open |
+
+### P2.M3: AgentResult Built-in Type
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #193 | AgentResult built-in type | Open |
+
+### P2.M4: Sandbox Isolation
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #194 | sandbox isolation — spawn modifier + worktree | Open |
+
+### P2.M5: Skills Foundation
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #163 | Pluggable skill architecture — project-level declarations | Open |
+| #164 | Skill capability type system — rich signatures | Open |
+| #165 | Explore agent-to-CLI delegation patterns (Claude Code, Codex) | Open |
+
+### P2.M6: Knowledge School
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #166 | forge-sensei code-generation curriculum | Open |
+| #167 | Toolkit agent knowledge transfer infrastructure | Open |
+
+### P2.M7: Toolkit Agents
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #168 | Generator contract and shared validation infrastructure | Open |
+| #169 | TaskGenerator agent | Open |
+| #170 | FlowGenerator agent | Open |
+| #171 | AgentGenerator agent | Open |
+| #172 | SystemAssembler agent | Open |
+| #173 | RepairAgent | Open |
+| #174 | TestGenerator agent | Open |
+| #175 | SpecAnalyzer — capstone agent | Open |
+
+### P2.M8: CLI Skills (SKILL.md)
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #176 | GitHub skill — gh CLI wrapper | Open |
+| #177 | Slack skill — bidirectional Web API via curl | Open |
+| #178 | Claude Code skill — claude CLI wrapper | Open |
+| #179 | Codex + Ollama skills | Open |
+
+### P2.M9: Orchestration Infrastructure
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #180 | Slack Monitor agent — poll channels, detect mentions | Open |
+| #181 | Inbound Triager agent — classify, route, or escalate | Open |
+| #182 | Approval gate pattern — events + Slack + webhook | Open |
+
+### P2.M10: Dev Orchestration System
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #183 | ProjectAgent template — per-project config and routing | Open |
+| #184 | Executor agent — full issue lifecycle (explore→merge) | Open |
+| #185 | Dev orchestration system assembly — FORGE + forge-wiki proof | Open |
+
+### P2.M11: Polish
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #186 | CostEstimator agent | Open |
+| #187 | DocumentationAgent | Open |
+
+---
+
+## L2.2 — The full orchestration picture
+
+```
+INBOUND MONITORS                          OUTBOUND
+┌─────────────────────┐                   ┌──────────────────────┐
+│ Slack Monitor       │──→ SlackMention   │ Slack Notifier       │
+│ (polls channels,    │                   │ (chat.postMessage,   │
+│  detects @mentions) │                   │  approval requests,  │
+│                     │                   │  status updates)     │
+├─────────────────────┤                   ├──────────────────────┤
+│ GitHub Monitor      │──→ IssueCreated   │ GitHub Actor         │
+│ (watches repos for  │   PRReviewNeeded  │ (gh issue create,    │
+│  new issues, PRs)   │                   │  gh pr create, etc.) │
+└─────────┬───────────┘                   └──────────────────────┘
+          │                                        ▲
+          ▼                                        │
+┌─────────────────────────────────────────────────────────────────┐
+│                        TRIAGER AGENT                            │
+│  Classifies inbound → routes to project agents or escalates    │
+│  "Can I handle this?" → yes: route / no: notify human          │
+└──────────┬──────────────────────────────────┬───────────────────┘
+           │                                  │
+           ▼                                  ▼
+┌──────────────────────┐           ┌──────────────────────┐
+│ ProjectAgent(forge)  │           │ ProjectAgent(wiki)   │
+│ tool: claude         │           │ tool: codex/ollama   │
+│ repo: ncmlabs/forge  │           │ repo: ncmlabs/wiki   │
+└──────────┬───────────┘           └──────────┬───────────┘
+           │                                  │
+           ▼                                  ▼
+┌──────────────────────┐           ┌──────────────────────┐
+│ Executor (per issue) │           │ Executor (per issue) │
+│ branch→implement→    │           │ branch→implement→    │
+│ test→PR→CI→merge     │           │ test→PR→CI→merge     │
+└──────────┬───────────┘           └──────────┬───────────┘
+           │                                  │
+           ▼                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    APPROVAL GATE                                │
+│  emit ApprovalRequest → Slack notification with approve/reject │
+│  webhook callback → ApprovalResponse event → agent resumes     │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  Warden: DevLead — supervises all agents, escalation ladder    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## L2.3 — Design decisions
+
+1. **Command first** — `command` is the foundation; skills and sessions depend on it
+2. **Three-tier primitive stack** — `command` (shell) → `session` (agent delegation) → `sandbox` (isolation)
+3. **Skills are pluggable, not built-in** — declared in `forge.project.toml`, resolved at load time, swappable without changing agent code
+4. **Knowledge via school** — forge-sensei (teacher) + forge-wiki (textbook) → toolkit agents (students)
+5. **Two-project proof** — FORGE (claude) + forge-wiki (codex/ollama) with different tool preferences
+6. **Slack via Web API** — curl + bot token for `chat.postMessage`, `conversations.history`, not the Slack Platform CLI
+
+---
+
+## L2.4 — Core toolkit agents
+
+All toolkit agents implement the same Generator contract:
+
+```forge
+contract Generator
+  on generate(spec: Text) -> ForgeCode or GenerationError
+  on validate(code: ForgeCode) -> ValidationResult
+  on repair(code: ForgeCode, errors: CompilerError[]) -> ForgeCode or GenerationError
+```
+
+Any agent that implements `Generator` can be swapped into the factory.
+When a better TaskGenerator is written, it replaces the old one transparently.
+
+### Reference pattern: TaskGenerator
 
 ```forge
 agent TaskGenerator
@@ -591,7 +827,6 @@ agent TaskGenerator
       - Use `pure` for any deterministic computation
       - All LLM calls return uncertain<T> — handle with when/match
       - Add requires guards with explicit on fail policies
-      - Declare capability hints (quality:, local_only:) when relevant
       - No provider-specific code — use capability hints only
 
       Examples of well-written FORGE tasks:
@@ -619,86 +854,48 @@ agent TaskGenerator
       # Return fixed code for retry
 ```
 
-### FlowGenerator
+### Support agents
 
-Takes a pipeline description and a list of stage names. Returns a FORGE flow
-with correct `needs` dependencies declared and parallel stages identified.
-
-### AgentGenerator
-
-Takes a description of an agent's purpose, its lifecycle states, and its
-message handlers. Returns a complete FORGE agent declaration with memory,
-timers, requires guards, and failure policies.
-
-### SystemAssembler
-
-Takes generated component code from the above agents. Wires them into a
-`system` declaration with typed channels, supervision strategy, and node
-distribution. Returns a complete runnable FORGE system file.
-
-### RepairAgent
-
-Takes FORGE code and a list of compiler errors. Returns fixed FORGE code.
-Learns from each repair attempt — stores successful fixes in memory and
-applies them pattern-mechanically before calling the LLM.
+- **FlowGenerator** — pipeline description → FORGE flow with correct `needs` dependencies and parallel stages
+- **AgentGenerator** — agent purpose + lifecycle → complete agent with memory, timers, requires, failure policies
+- **SystemAssembler** — generated components → runnable `system` declaration with typed channels and supervision
+- **RepairAgent** — FORGE code + compiler errors → fixed code, learns from every failure across the toolkit
+- **TestGenerator** — FORGE system → test cases covering every `when` branch, `requires` guard, state transition
+- **SpecAnalyzer** — natural language → structured decomposition → orchestrates all generators → runnable system
+- **CostEstimator** — FORGE system → per-step cost estimate, flags expensive operations
+- **DocumentationAgent** — FORGE system → human-readable markdown docs, auto-updated on changes
 
 ---
 
-## L2.2 — Toolkit support agents
+## L2.5 — Dependency chain and schedule
 
-### TestGenerator
-
-Takes a FORGE system. Generates test cases that exercise every `when` branch,
-every `requires` guard failure path, and every state transition. Writes the
-tests in FORGE using the mock provider.
-
-### SpecAnalyzer
-
-Takes a business requirement in plain language. Returns a structured
-decomposition: what tasks are needed, what flows, what agents, what pools,
-what events, what shared types. This decomposition feeds into the generators.
-
-### CostEstimator
-
-Takes a FORGE system. Uses the compiler's static analysis to produce a
-per-step cost estimate before the system is deployed. Flags steps that will
-be expensive and suggests cheaper alternatives.
-
-### DocumentationAgent
-
-Takes a FORGE system. Generates human-readable documentation: what each
-agent does, what its states mean, what events it emits, what its failure
-policies are. Updates documentation automatically when the system changes.
-
----
-
-## L2.3 — The toolkit interface
-
-All toolkit agents expose the same interface so SystemAssembler can call any of them:
-
-```forge
-contract Generator
-  on generate(spec: Text) -> ForgeCode or GenerationError
-  on validate(code: ForgeCode) -> ValidationResult
-  on repair(code: ForgeCode, errors: CompilerError[]) -> ForgeCode or GenerationError
+```
+command (#160-162) ✅
+  ├─→ session (#189-192) → AgentResult (#193) → sandbox (#194)
+  └─→ pluggable skills (#163-164)
+        ├─→ CLI delegation research (#165) → CLI skills (#176-179)
+        └─→ knowledge school (#166-167) → toolkit agents (#168-175)
+                                                └─→ orchestration (#180-182) → dev system (#183-185)
+                                                                                    └─→ polish (#186-187)
 ```
 
-Any agent that implements `Generator` can be swapped into the factory.
-When a better TaskGenerator is written, it replaces the old one transparently.
+### Phase 2 progress
 
----
-
-## L2.4 — Toolkit build schedule
-
-| Week | Deliverable | Acceptance criterion |
-|---|---|---|
-| 13-14 | TaskGenerator + FlowGenerator | Generates valid FORGE tasks from descriptions |
-| 15-16 | AgentGenerator | Generates valid FORGE agents with states/timers |
-| 17-18 | SystemAssembler | Wires components into a runnable system |
-| 19-20 | RepairAgent + TestGenerator | Catches and fixes compiler errors automatically |
-| 21 | End-to-end Layer 2 test | Give spec → get runnable FORGE system |
-
-**Total: 2 additional months.**
+```
+P2.M1  Command         ████████████████████  3/3  (100%)  DONE
+P2.M2  Session         ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
+P2.M3  AgentResult     ░░░░░░░░░░░░░░░░░░░░  0/1  (  0%)
+P2.M4  Sandbox         ░░░░░░░░░░░░░░░░░░░░  0/1  (  0%)
+P2.M5  Skills          ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
+P2.M6  Knowledge       ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M7  Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
+P2.M8  CLI Skills      ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
+P2.M9  Orchestration   ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
+P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
+P2.M11 Polish          ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+─────────────────────────────────────────────────────────
+Phase 2 Overall         ███░░░░░░░░░░░░░░░░░  3/34 (  9%)
+```
 
 ---
 
@@ -1049,7 +1246,7 @@ Any FORGE implementation can verify itself against it. This is the adoption leve
 
 # Summary — what needs to exist in order
 
-Phase 1 (months 1-3): Layer 1 — Build FORGE
+Phase 1 (Layer 1): Build FORGE — **SHIPPED v0.1.0 on 2026-04-09**
   ✅ Grammar + parser + AST
   ✅ Type checker (7 checker modules)
   ✅ Provider abstraction + Anthropic + OpenAI-compat + Ollama + Groq + Mock
@@ -1060,26 +1257,30 @@ Phase 1 (months 1-3): Layer 1 — Build FORGE
   ✅ Build system: standalone binaries with CLI + REPL
   ✅ forge-sensei: self-referential learning agent
   ✅ CLI: parse / check / run / cost / build / trace
-  ✅ Test suite — no real API calls (30 unit + 36 conformance)
+  ✅ Test suite — 919 tests, no real API calls
   ✅ Web runtime (HTML, HTTP client, static serving, webhooks)
   ✅ Host skill bridge (exec, SKILL.md, tool-use providers)
   ✅ Wiki showcase (7 issues, 52 tests, full documentation)
   ✅ Sentinel killer app (17 primitives, AI-powered repo health)
-  ⬜ Observer (real-time agent tracing, topology viz, cost tracking) [CRITICAL]
-  ⬜ WASM compilation (Cranelift backend)
+  ✅ Observer (real-time agent tracing, topology viz, cost tracking)
+  ⬜ WASM compilation (Cranelift backend) — deferred, not blocking Phase 2
   Goal: tic-tac-toe system runs end-to-end ✅
 
-Phase 2 (months 4-5): Layer 2 — Build the toolkit
-  ⬜ TaskGenerator.forge
-  ⬜ FlowGenerator.forge
-  ⬜ AgentGenerator.forge
-  ⬜ SystemAssembler.forge
-  ⬜ RepairAgent.forge
-  ⬜ TestGenerator.forge
-  ⬜ SpecAnalyzer.forge
-  Goal: describe a system, get runnable FORGE code
+Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (3/34 issues done)**
+  ✅ P2.M1: `command` primitive — grammar, sync, background (#160-#162)
+  ⬜ P2.M2: `session` primitive — long-running agent delegation (#189-#192)
+  ⬜ P2.M3: `AgentResult` — typed result contract for sessions (#193)
+  ⬜ P2.M4: `sandbox` — worktree isolation for safe execution (#194)
+  ⬜ P2.M5: Skills foundation — pluggable architecture, rich types (#163-#165)
+  ⬜ P2.M6: Knowledge school — sensei curriculum, knowledge transfer (#166-#167)
+  ⬜ P2.M7: Toolkit agents — Generator contract, 7 generators (#168-#175)
+  ⬜ P2.M8: CLI skills — GitHub, Slack, Claude Code, Codex/Ollama (#176-#179)
+  ⬜ P2.M9: Orchestration — Slack Monitor, Triager, Approval gate (#180-#182)
+  ⬜ P2.M10: Dev system — ProjectAgent, Executor, two-project proof (#183-#185)
+  ⬜ P2.M11: Polish — CostEstimator, DocumentationAgent (#186-#187)
+  Goal: describe a system → get runnable FORGE code; dev orchestration for FORGE + forge-wiki
 
-Phase 3 (months 6-7): Layer 3 — Build the factory
+Phase 3 (Layer 3): Build the factory
   ⬜ Compiler service (HTTP wrapper)
   ⬜ Runner service (HTTP wrapper)
   ⬜ Binary registry (S3)
@@ -1089,7 +1290,7 @@ Phase 3 (months 6-7): Layer 3 — Build the factory
   ⬜ Factory API (POST /build)
   Goal: describe a system, get a deployed URL
 
-Phase 4 (month 8+): Layer 4 — Self-improvement
+Phase 4 (Layer 4): Self-improvement
   ⬜ SystemOptimizer.forge
   ⬜ Shadow deploy infrastructure
   ⬜ Performance anomaly detection
@@ -1114,7 +1315,7 @@ Everything in this document exists to reach that moment.
 
 ---
 
-*FORGE — Making It Real · Master Roadmap v2.0*
+*FORGE — Making It Real · Master Roadmap v3.0*
 *Layers: Substrate → Toolkit → Factory → Self-improvement*
-*Layer 1 progress: 69% complete (25/36 tracks) · Tracks A+B+C: 100% · Observer: CRITICAL*
-*Last updated: 2026-04-08*
+*Layer 1: v0.1.0 shipped (32/36 tracks, 89%) · Phase 2: 3/34 issues (9%) · Next: session primitive*
+*Last updated: 2026-04-09*
