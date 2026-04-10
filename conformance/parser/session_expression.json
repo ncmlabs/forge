@@ -1,0 +1,9 @@
+{
+  "name": "session_expression",
+  "category": "parser",
+  "description": "Session expression with prompt, agent, tools, timeout, budget, gives, and progress/complete hooks",
+  "input": "task test_session\n  gives Text\n  do\n    result = session \"code-review\" prompt review_prompt\n    result = session \"code-review\" prompt review_prompt agent \"claude\" tools [\"Read\", \"Glob\"] timeout 30m budget 2.0\n    result = session session_name prompt review_prompt gives AgentResult on progress -> emit ReviewUpdate(it) on complete -> emit ReviewDone(it)\n",
+  "expected": {
+    "outcome": "parse_ok"
+  }
+}

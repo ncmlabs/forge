@@ -104,6 +104,24 @@ fn accept_uncertain_error() {
 }
 
 #[test]
+fn accept_session_uncertain_error() {
+    let source = "task review\n  gives Text\n  do\n    result = session \"code-review\" prompt \"check\"\n    give result\n";
+    let program = forge::parser::parse(source).unwrap();
+    let mut diags = checker::check_all(&program, "session_uncertain.forge");
+    diags.extend(boundary_checker::check(&[(
+        &program,
+        "session_uncertain.forge",
+    )]));
+    let errs = errors(&diags);
+    assert!(
+        errs.iter()
+            .any(|d| d.message.contains("unhandled uncertain")),
+        "session should be treated as uncertain/oracle output: {:?}",
+        errs.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn accept_pure_error() {
     let diags = check_file("examples/pure_error.forge");
     let errs = errors(&diags);

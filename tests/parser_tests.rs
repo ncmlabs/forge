@@ -440,6 +440,112 @@ fn parse_command_all_modifiers_with_env() {
 }
 
 #[test]
+fn parse_session_basic() {
+    let prog = parse_task_with("x = session \"code-review\"");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Session(session) => {
+            assert!(matches!(&session.name.node, Expr::Template(_)));
+            assert!(session.agent.is_none());
+            assert!(session.prompt.is_none());
+            assert!(session.tools.is_none());
+            assert!(session.timeout.is_none());
+            assert!(session.budget.is_none());
+            assert!(session.gives.is_none());
+            assert!(session.on_progress.is_none());
+            assert!(session.on_complete.is_none());
+        }
+        other => panic!("expected Session, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_session_all_modifiers() {
+    let prog = parse_task_with(
+        "x = session \"code-review\" prompt review_prompt agent \"claude\" tools [\"Read\", tool_name] timeout 30m budget 2.0 gives AgentResult on progress -> emit ReviewUpdate(it) on complete -> emit ReviewDone(it)",
+    );
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Session(session) => {
+            assert!(matches!(&session.name.node, Expr::Template(_)));
+            assert!(
+                matches!(&session.prompt.as_ref().unwrap().node, Expr::Ident(name) if name == "review_prompt")
+            );
+            assert!(matches!(
+                &session.agent.as_ref().unwrap().node,
+                Expr::Template(_)
+            ));
+            match &session.tools.as_ref().unwrap().node {
+                Expr::ArrayLit(elems) => {
+                    assert_eq!(elems.len(), 2);
+                    assert!(matches!(&elems[1].node, Expr::Ident(name) if name == "tool_name"));
+                }
+                other => panic!("expected ArrayLit, got {:?}", other),
+            }
+            let dur = session.timeout.as_ref().unwrap();
+            assert_eq!(dur.node.value, 30);
+            assert!(matches!(dur.node.unit, DurationUnit::Minutes));
+            assert!(
+                matches!(&session.budget.as_ref().unwrap().node, Expr::NumberLit(n) if (*n - 2.0).abs() < f64::EPSILON)
+            );
+            assert!(matches!(
+                &session.gives.as_ref().unwrap().node,
+                TypeName::AgentResult
+            ));
+            assert_eq!(
+                session.on_progress.as_ref().unwrap().node.event.node,
+                "ReviewUpdate"
+            );
+            assert_eq!(
+                session.on_complete.as_ref().unwrap().node.event.node,
+                "ReviewDone"
+            );
+            assert!(matches!(
+                &session.on_progress.as_ref().unwrap().node.args[0].node.value.node,
+                Expr::Ident(name) if name == "it"
+            ));
+        }
+        other => panic!("expected Session, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_session_reordered_modifiers() {
+    let prog = parse_task_with(
+        "x = session label on complete -> emit Done(it) budget 1.5 timeout 5m prompt prompt_text agent agent_name tools [\"Read\"]",
+    );
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Session(session) => {
+            assert!(matches!(&session.name.node, Expr::Ident(name) if name == "label"));
+            assert!(
+                matches!(&session.prompt.as_ref().unwrap().node, Expr::Ident(name) if name == "prompt_text")
+            );
+            assert!(
+                matches!(&session.agent.as_ref().unwrap().node, Expr::Ident(name) if name == "agent_name")
+            );
+            assert!(session.tools.is_some());
+            assert!(session.timeout.is_some());
+            assert!(session.budget.is_some());
+            assert!(session.on_complete.is_some());
+        }
+        other => panic!("expected Session, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_session_progress_hook_only() {
+    let prog =
+        parse_task_with("x = session work on progress -> emit ProgressUpdate(it, state: status)");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Session(session) => {
+            let hook = session.on_progress.as_ref().unwrap();
+            assert_eq!(hook.node.event.node, "ProgressUpdate");
+            assert_eq!(hook.node.args.len(), 2);
+            assert_eq!(hook.node.args[1].node.label.as_ref().unwrap().node, "state");
+        }
+        other => panic!("expected Session, got {:?}", other),
+    }
+}
+
+#[test]
 fn parse_try_or_expression() {
     let prog = parse_task_with("x = try search \"query\" or \"default\"");
     match bind_expr(first_stmt(&prog)) {

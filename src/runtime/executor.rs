@@ -2414,6 +2414,10 @@ impl TaskExecutor {
                     }
                 }
 
+                Expr::Session(_) => Err(RuntimeError::Unsupported(
+                    "session runtime is not implemented yet; see issue #190".to_string(),
+                )),
+
                 // ── command.method() expressions (issue #162) ────────────────
                 Expr::CommandMethod(method, args) => {
                     let mut arg_vals = Vec::new();

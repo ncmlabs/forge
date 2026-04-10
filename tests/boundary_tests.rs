@@ -211,6 +211,40 @@ agent MyAgent
 }
 
 #[test]
+fn session_expression_recurses_into_nested_references() {
+    let server = "\
+#! boundary: server
+
+pure server_only
+  needs input: Text
+  gives Text
+  do
+    give input
+";
+    let client = "\
+#! boundary: client
+
+event ReviewUpdate
+  payload: Text
+
+task review
+  needs input: Text
+  gives Text
+  do
+    prompt_text = \"review {input}\"
+    result = session \"code-review\" prompt prompt_text tools [server_only(input)] budget 2.0 on progress -> emit ReviewUpdate(server_only(input))
+    give result
+";
+    let diags = check_boundary(&[(server, "server.forge"), (client, "client.forge")]);
+    let errs = errors(&diags);
+    assert!(
+        errs.iter().any(|d| d.message.contains("server_only")),
+        "expected boundary checker to recurse into session subexpressions: {:?}",
+        errs.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn shared_type_with_pool_field_is_error() {
     let shared = "\
 #! boundary: shared

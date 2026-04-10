@@ -269,6 +269,7 @@ pub struct RequiresClause {
     pub on_fail: Option<Spanned<FailPolicy>>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum FailPolicy {
     Silent,
@@ -490,6 +491,8 @@ pub enum Expr {
     Command(CommandExpr),
     /// `command.status(handle)` / `command.output(handle)` / `command.cancel(handle)`
     CommandMethod(Spanned<String>, Vec<Spanned<CallArg>>),
+    /// `session "label" prompt prompt_text agent "claude" ...`
+    Session(SessionExpr),
     /// `find "alias"` / `find all template [where lifecycle == state]`
     Find(Box<FindExpr>),
     /// `try expr or expr`
@@ -525,6 +528,25 @@ pub struct CommandExpr {
     pub timeout: Option<Spanned<Duration>>,
     pub background: Option<Spanned<bool>>,
     pub env: Option<Vec<Spanned<EnvEntry>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionExpr {
+    pub name: Box<Spanned<Expr>>,
+    pub agent: Option<Box<Spanned<Expr>>>,
+    pub prompt: Option<Box<Spanned<Expr>>>,
+    pub tools: Option<Box<Spanned<Expr>>>,
+    pub timeout: Option<Spanned<Duration>>,
+    pub budget: Option<Box<Spanned<Expr>>>,
+    pub gives: Option<Spanned<TypeName>>,
+    pub on_progress: Option<Spanned<SessionHook>>,
+    pub on_complete: Option<Spanned<SessionHook>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionHook {
+    pub event: Spanned<String>,
+    pub args: Vec<Spanned<CallArg>>,
 }
 
 #[derive(Debug, Clone)]
@@ -730,6 +752,7 @@ pub struct FindExpr {
 }
 
 /// The kind of find query.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum FindKind {
     /// `find "alias"` — single lookup by alias

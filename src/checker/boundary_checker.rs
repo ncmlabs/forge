@@ -492,6 +492,31 @@ fn check_refs_in_expr(
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
             }
         }
+        Expr::Session(session_expr) => {
+            check_refs_in_expr(&session_expr.name, boundary, registry, file, diagnostics);
+            if let Some(ref agent) = session_expr.agent {
+                check_refs_in_expr(agent, boundary, registry, file, diagnostics);
+            }
+            if let Some(ref prompt) = session_expr.prompt {
+                check_refs_in_expr(prompt, boundary, registry, file, diagnostics);
+            }
+            if let Some(ref tools) = session_expr.tools {
+                check_refs_in_expr(tools, boundary, registry, file, diagnostics);
+            }
+            if let Some(ref budget) = session_expr.budget {
+                check_refs_in_expr(budget, boundary, registry, file, diagnostics);
+            }
+            if let Some(ref hook) = session_expr.on_progress {
+                for arg in &hook.node.args {
+                    check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
+                }
+            }
+            if let Some(ref hook) = session_expr.on_complete {
+                for arg in &hook.node.args {
+                    check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
+                }
+            }
+        }
         Expr::Search(inner) => {
             if boundary != BoundaryKind::Server {
                 let boundary_name = match boundary {

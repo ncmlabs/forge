@@ -555,6 +555,89 @@ fn build_command_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     ))
 }
 
+fn build_session_hook(pair: Pair) -> anyhow::Result<Spanned<SessionHook>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let event_pair = inner.next().unwrap();
+    let event = spanned(event_pair.as_str().to_string(), &event_pair);
+    let args = if let Some(arg_list) = inner.next() {
+        build_arg_list(arg_list)?
+    } else {
+        Vec::new()
+    };
+    Ok(Spanned::new(SessionHook { event, args }, span))
+}
+
+fn build_session_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
+    let span = to_span(&pair);
+    let mut inner = pair.into_inner();
+    let name = build_string_arg(inner.next().unwrap())?;
+    let mut agent = None;
+    let mut prompt = None;
+    let mut tools = None;
+    let mut timeout = None;
+    let mut budget = None;
+    let mut gives = None;
+    let mut on_progress = None;
+    let mut on_complete = None;
+
+    for modifier in inner {
+        match modifier.as_rule() {
+            Rule::session_agent_modifier => {
+                let value_pair = modifier.into_inner().next().unwrap();
+                agent = Some(Box::new(build_string_arg(value_pair)?));
+            }
+            Rule::session_prompt_modifier => {
+                let value_pair = modifier.into_inner().next().unwrap();
+                prompt = Some(Box::new(build_string_arg(value_pair)?));
+            }
+            Rule::session_tools_modifier => {
+                let value_pair = modifier.into_inner().next().unwrap();
+                tools = Some(Box::new(build_expr(value_pair)?));
+            }
+            Rule::session_timeout_modifier => {
+                let value_pair = modifier.into_inner().next().unwrap();
+                timeout = Some(build_duration(value_pair)?);
+            }
+            Rule::session_budget_modifier => {
+                let value_pair = modifier.into_inner().next().unwrap();
+                budget = Some(Box::new(build_expr(value_pair)?));
+            }
+            Rule::session_gives_modifier => {
+                gives = Some(Spanned::new(TypeName::AgentResult, to_span(&modifier)));
+            }
+            Rule::session_hook_modifier => {
+                let modifier_span = to_span(&modifier);
+                let mut parts = modifier.into_inner();
+                let kind_pair = parts.next().unwrap();
+                let hook_pair = parts.next().unwrap();
+                let hook = build_session_hook(hook_pair)?;
+                match kind_pair.as_str() {
+                    "progress" => on_progress = Some(Spanned::new(hook.node, modifier_span)),
+                    "complete" => on_complete = Some(Spanned::new(hook.node, modifier_span)),
+                    _ => return Err(parse_error(&kind_pair, "unknown session hook kind")),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Spanned::new(
+        Expr::Session(SessionExpr {
+            name: Box::new(name),
+            agent,
+            prompt,
+            tools,
+            timeout,
+            budget,
+            gives,
+            on_progress,
+            on_complete,
+        }),
+        span,
+    ))
+}
+
 fn build_command_method_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let span = to_span(&pair);
     let mut inner = pair.into_inner();
@@ -627,6 +710,7 @@ fn build_pipe_term(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     match inner.as_rule() {
         Rule::command_method_expr => build_command_method_expr(inner),
         Rule::command_expr => build_command_expr(inner),
+        Rule::session_expr => build_session_expr(inner),
         Rule::exec_expr => build_exec_expr(inner),
         Rule::find_expr => build_find_expr(inner),
         Rule::reason_expr => build_reason_expr(inner),

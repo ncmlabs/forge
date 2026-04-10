@@ -1,0 +1,16 @@
+# session front-end acceptance example for issue #189
+event ReviewUpdate
+  payload: Text
+
+event ReviewDone
+  payload: Text
+
+task run_review
+  gives Text
+  do
+    result = session "code-review" prompt "Review src/parser.rs" agent "claude" tools ["Read", "Grep"] timeout 5m budget 1.5 on progress -> emit ReviewUpdate(it) on complete -> emit ReviewDone(it)
+    when result.sure -> give result
+    else -> give "session failed"
+
+fn main
+  say run_review()
