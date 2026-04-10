@@ -1,11 +1,13 @@
 # GitHub operations via the github skill.
 # Demonstrates creating, listing, and closing issues.
 #
-# Usage: forge run examples/skills/github_ops.forge
+# Usage: forge run --manifest examples/skills/forge.project.toml
 # Requires: gh auth login
 
 use
-  skill.github
+  skill.github.create_issue
+  skill.github.list_issues
+  skill.github.close_issue
 
 task create_test_issue
   needs repo: Text

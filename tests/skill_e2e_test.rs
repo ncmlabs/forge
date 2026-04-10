@@ -159,27 +159,30 @@ async fn github_e2e_create_verify_close() {
         .next()
         .expect("could not extract issue number");
 
-    // Step 2: Verify issue exists via list
-    let list = std::process::Command::new("gh")
+    // Step 2: Verify issue exists via direct view (avoids search index lag)
+    let view = std::process::Command::new("gh")
         .args([
             "issue",
-            "list",
+            "view",
+            issue_number,
             "-R",
             repo,
             "--json",
-            "number,title",
-            "--search",
-            test_title,
+            "number,title,state",
         ])
         .output()
-        .expect("gh issue list failed");
-    assert!(list.status.success());
-    let list_output = String::from_utf8_lossy(&list.stdout);
+        .expect("gh issue view failed");
     assert!(
-        list_output.contains(issue_number),
-        "created issue {} not found in list: {}",
+        view.status.success(),
+        "issue {} not found: {}",
         issue_number,
-        list_output
+        String::from_utf8_lossy(&view.stderr)
+    );
+    let view_output = String::from_utf8_lossy(&view.stdout);
+    assert!(
+        view_output.contains("OPEN"),
+        "issue should be open, got: {}",
+        view_output
     );
 
     // Step 3: Close the issue
