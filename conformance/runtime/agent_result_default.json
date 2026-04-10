@@ -1,0 +1,7 @@
+{
+  "name": "agent_result_default",
+  "category": "runtime",
+  "description": "AgentResult with no args produces all fields at default values",
+  "input": "fn main\n  r = AgentResult()\n  say r.plan\n  say \"{r.tests_run}\"\n  say \"{r.approval_needed}\"\n  say \"{r.cost_usd}\"\n",
+  "expected": { "outcome": "run_ok" }
+}

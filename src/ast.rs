@@ -454,6 +454,7 @@ pub enum TypeName {
     Response,
     Headers,
     Html,
+    AgentResult,
     Custom(String),
     /// Array type: `Text[9]` = Array(Text, Some(9)), `Player[]` = Array(Custom("Player"), None)
     Array(Box<TypeName>, Option<usize>),

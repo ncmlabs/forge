@@ -629,9 +629,10 @@ result = session "implement the login page" via claude in "/repo" timeout 30m
 ### AgentResult (new — #193)
 
 Built-in typed result contract for session returns:
-- Fields: `success`, `output`, `artifacts`, `cost`, `confidence`, `approval_needed`
+- Fields: `plan`, `patch_summary`, `files_changed`, `tests_run`, `tests_passed`, `cost_usd`, `confidence`, `approval_needed`, `metadata`
 - Replaces ad-hoc text parsing of agent output
 - Enables confident branching: `when result.sure -> ...`
+- `metadata: Map` extensibility hook for #203 (claim/evidence/verification contract)
 
 ### sandbox (new — #194)
 

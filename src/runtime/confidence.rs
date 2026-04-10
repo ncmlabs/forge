@@ -172,6 +172,80 @@ impl ConfidentValue {
         }
     }
 
+    /// Create a default AgentResult with all fields at zero/empty values.
+    pub fn default_agent_result() -> Self {
+        let fields = Self::default_agent_result_fields();
+        Self {
+            value: Value::Record(fields),
+            confidence: 0.0,
+            source: ConfidenceSource::Derived(0.0),
+        }
+    }
+
+    /// Build the default fields HashMap for AgentResult.
+    pub fn default_agent_result_fields() -> HashMap<String, ConfidentValue> {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "plan".to_string(),
+            ConfidentValue::deterministic(Value::Text(String::new())),
+        );
+        fields.insert(
+            "patch_summary".to_string(),
+            ConfidentValue::deterministic(Value::Text(String::new())),
+        );
+        fields.insert(
+            "files_changed".to_string(),
+            ConfidentValue::deterministic(Value::Array(Vec::new())),
+        );
+        fields.insert(
+            "tests_run".to_string(),
+            ConfidentValue::deterministic(Value::Number(0.0)),
+        );
+        fields.insert(
+            "tests_passed".to_string(),
+            ConfidentValue::deterministic(Value::Number(0.0)),
+        );
+        fields.insert(
+            "cost_usd".to_string(),
+            ConfidentValue::deterministic(Value::Number(0.0)),
+        );
+        fields.insert(
+            "confidence".to_string(),
+            ConfidentValue::deterministic(Value::Number(0.0)),
+        );
+        fields.insert(
+            "approval_needed".to_string(),
+            ConfidentValue::deterministic(Value::Bool(false)),
+        );
+        fields.insert(
+            "metadata".to_string(),
+            ConfidentValue::deterministic(Value::Record(HashMap::new())),
+        );
+        fields
+    }
+
+    /// Create an AgentResult from adapter output, merging with defaults and syncing confidence.
+    pub fn from_agent_result(fields: HashMap<String, ConfidentValue>) -> Self {
+        let mut result_fields = Self::default_agent_result_fields();
+        for (k, v) in fields {
+            result_fields.insert(k, v);
+        }
+        // Sync wrapper confidence from the confidence field
+        let conf = result_fields
+            .get("confidence")
+            .and_then(|cv| match &cv.value {
+                Value::Number(n) => Some(*n as f32),
+                _ => None,
+            })
+            .unwrap_or(0.0);
+        let conf = clamp_confidence(conf);
+        Self {
+            value: Value::Record(result_fields),
+            confidence: conf,
+            source: ConfidenceSource::Derived(conf),
+        }
+    }
+
     /// Create from external skill invocation — never deterministic (Principle I).
     /// Capped at 0.99 because external systems are oracles.
     pub fn from_skill(value: Value, confidence: f32) -> Self {
@@ -411,5 +485,79 @@ mod tests {
         let cv = ConfidentValue::from_skill(text_val("result"), 0.85);
         assert_eq!(cv.confidence, 0.85);
         assert!(cv.sure());
+    }
+
+    // ── AgentResult tests ──────────────────────────────────────
+
+    #[test]
+    fn default_agent_result_has_all_fields() {
+        let cv = ConfidentValue::default_agent_result();
+        if let Value::Record(fields) = &cv.value {
+            assert_eq!(fields.len(), 9);
+            assert!(fields.contains_key("plan"));
+            assert!(fields.contains_key("patch_summary"));
+            assert!(fields.contains_key("files_changed"));
+            assert!(fields.contains_key("tests_run"));
+            assert!(fields.contains_key("tests_passed"));
+            assert!(fields.contains_key("cost_usd"));
+            assert!(fields.contains_key("confidence"));
+            assert!(fields.contains_key("approval_needed"));
+            assert!(fields.contains_key("metadata"));
+        } else {
+            panic!("expected Record");
+        }
+    }
+
+    #[test]
+    fn default_agent_result_confidence_zero() {
+        let cv = ConfidentValue::default_agent_result();
+        assert_eq!(cv.confidence, 0.0);
+    }
+
+    #[test]
+    fn default_agent_result_field_defaults() {
+        let cv = ConfidentValue::default_agent_result();
+        if let Value::Record(fields) = &cv.value {
+            assert!(matches!(&fields["plan"].value, Value::Text(s) if s.is_empty()));
+            assert!(matches!(&fields["tests_run"].value, Value::Number(n) if *n == 0.0));
+            assert!(matches!(
+                &fields["approval_needed"].value,
+                Value::Bool(false)
+            ));
+            assert!(matches!(&fields["files_changed"].value, Value::Array(v) if v.is_empty()));
+            assert!(matches!(&fields["metadata"].value, Value::Record(m) if m.is_empty()));
+        } else {
+            panic!("expected Record");
+        }
+    }
+
+    #[test]
+    fn from_agent_result_syncs_confidence() {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "confidence".to_string(),
+            ConfidentValue::deterministic(Value::Number(0.85)),
+        );
+        let cv = ConfidentValue::from_agent_result(fields);
+        assert_eq!(cv.confidence, 0.85);
+        assert!(cv.sure());
+    }
+
+    #[test]
+    fn from_agent_result_merges_with_defaults() {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "plan".to_string(),
+            ConfidentValue::deterministic(Value::Text("fix bug".to_string())),
+        );
+        let cv = ConfidentValue::from_agent_result(fields);
+        if let Value::Record(f) = &cv.value {
+            assert_eq!(f.len(), 9);
+            assert!(matches!(&f["plan"].value, Value::Text(s) if s == "fix bug"));
+            // Unspecified fields should be defaults
+            assert!(matches!(&f["tests_run"].value, Value::Number(n) if *n == 0.0));
+        } else {
+            panic!("expected Record");
+        }
     }
 }

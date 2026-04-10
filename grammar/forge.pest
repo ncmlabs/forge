@@ -77,7 +77,8 @@ template_text   = @{ (!("\"" | "{" | "\\") ~ ANY)+ }
 builtin_type = @{
     ( "Text" | "Number" | "Bool" | "Results" | "Report" | "Intent"
     | "Summary" | "Failure" | "Classification" | "Conversation"
-    | "Profile" | "SearchResults" | "Request" | "Response" | "Headers" | "Html" )
+    | "Profile" | "SearchResults" | "Request" | "Response" | "Headers" | "Html"
+    | "AgentResult" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 type_name    = { (builtin_type | ident) ~ array_suffix? }

@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- `AgentResult` built-in type — standard typed result contract for agent/session runs with 9 fields: `plan`, `patch_summary`, `files_changed`, `tests_run`, `tests_passed`, `cost_usd`, `confidence`, `approval_needed`, `metadata` (#193)
+- `AgentResult` constructor with default fields: `AgentResult()` or `AgentResult(plan: "fix bug", confidence: 0.9)` — unspecified fields get zero/empty defaults (#193)
+- `AgentResult` confidence sync: the `confidence` field value propagates to the `ConfidentValue` wrapper, enabling `when result.sure ->` branching (#193)
 - Agent-to-CLI delegation research doc for Claude Code and Codex, including session adapter and AgentResult mapping tables plus live-tested invocation patterns (#165)
 - Reference typed SKILL.md wrappers for Claude Code and Codex under `skills/` (#165)
 - Rich SKILL.md capability signatures with multi-capability registration and compile-time validation of `skill.namespace.method(...)` calls (#164)

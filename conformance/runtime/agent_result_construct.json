@@ -1,0 +1,7 @@
+{
+  "name": "agent_result_construct",
+  "category": "runtime",
+  "description": "AgentResult built-in type: construction with named args and field access",
+  "input": "fn main\n  r = AgentResult(plan: \"fix the bug\", confidence: 0.85, tests_run: 3, tests_passed: 3)\n  say r.plan\n  say \"{r.confidence}\"\n  say \"{r.tests_passed}\"\n  say \"{r.approval_needed}\"\n",
+  "expected": { "outcome": "run_ok" }
+}

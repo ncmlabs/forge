@@ -124,6 +124,9 @@ fn default_for_type(ty: &TypeName) -> ConfidentValue {
         | TypeName::Custom(_) => Value::Record(HashMap::new()),
         TypeName::Results | TypeName::SearchResults => Value::List(vec![]),
         TypeName::Failure => Value::Text(String::new()),
+        TypeName::AgentResult => {
+            return ConfidentValue::default_agent_result();
+        }
         TypeName::Array(inner, size) => {
             let len = size.unwrap_or(0);
             let element_default = default_for_type(inner);

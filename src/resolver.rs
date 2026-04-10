@@ -608,6 +608,7 @@ fn infer_type(
         Expr::Compose(parts) => parts
             .last()
             .and_then(|expr| infer_type(expr, env, registry)),
+        Expr::Constructor(ctor) => Some(crate::types::from_type_name(&ctor.type_name.node)),
         Expr::ArrayLit(_) => None, // would need element type inference
         _ => None,
     }
