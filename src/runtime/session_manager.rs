@@ -1069,10 +1069,14 @@ impl SessionManager {
             None => return result,
         };
 
+        // Use the session's working_dir (set by `isolate worktree`), or fall
+        // back to the process working directory so the ReferenceValidator can
+        // check claimed files against the actual project.
         let working_dir = self
             .session_state(session_id)
             .and_then(|s| s.config.working_dir.clone())
-            .map(std::path::PathBuf::from);
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::current_dir().ok());
 
         let (fields, claims) =
             crate::runtime::verification_engine::extract_verification_inputs(&result);

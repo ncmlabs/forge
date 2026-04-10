@@ -17,4 +17,6 @@ fn main
   say "verification status: {result.metadata.verification.status}"
   say "verification risk_class: {result.metadata.verification.risk_class}"
   say "verification claims: {result.metadata.verification.claims}"
+  say "verification evidence: {result.metadata.verification.evidence}"
+  say "verification contradictions: {result.metadata.verification.contradictions}"
   say "done"
