@@ -402,6 +402,95 @@ impl Tracer {
         );
     }
 
+    // ── Session tracing (issue #190) ───────────────────────────────────────
+
+    pub fn session_spawned(&self, session_id: &str) {
+        self.emit(
+            "session_spawned",
+            serde_json::json!({
+                "session_id": session_id,
+            }),
+        );
+    }
+
+    pub fn session_state_changed(&self, session_id: &str, status: &str) {
+        self.emit(
+            "session_state_changed",
+            serde_json::json!({
+                "session_id": session_id,
+                "status": status,
+            }),
+        );
+    }
+
+    pub fn session_progress(&self, session_id: &str, total_cost_usd: f32) {
+        self.emit(
+            "session_progress",
+            serde_json::json!({
+                "session_id": session_id,
+                "total_cost_usd": total_cost_usd,
+            }),
+        );
+    }
+
+    pub fn session_budget_updated(&self, session_id: &str, total_cost_usd: f32) {
+        self.emit(
+            "session_budget_updated",
+            serde_json::json!({
+                "session_id": session_id,
+                "total_cost_usd": total_cost_usd,
+            }),
+        );
+    }
+
+    pub fn session_completed(&self, session_id: &str, total_cost_usd: f32) {
+        self.emit(
+            "session_completed",
+            serde_json::json!({
+                "session_id": session_id,
+                "total_cost_usd": total_cost_usd,
+            }),
+        );
+    }
+
+    pub fn session_failed(&self, session_id: &str, error: &str) {
+        self.emit(
+            "session_failed",
+            serde_json::json!({
+                "session_id": session_id,
+                "error": error,
+            }),
+        );
+    }
+
+    pub fn session_cancelled(&self, session_id: &str) {
+        self.emit(
+            "session_cancelled",
+            serde_json::json!({
+                "session_id": session_id,
+            }),
+        );
+    }
+
+    pub fn session_resume_attempted(&self, session_id: &str) {
+        self.emit(
+            "session_resume_attempted",
+            serde_json::json!({
+                "session_id": session_id,
+            }),
+        );
+    }
+
+    pub fn session_resume_failed(&self, session_id: &str, error: &str) {
+        self.emit(
+            "session_resume_failed",
+            serde_json::json!({
+                "session_id": session_id,
+                "error": error,
+            }),
+        );
+    }
+
     // ── Skill tracing (issue #40) ──────────────────────────────────────────
 
     pub fn skill_call(&self, skill_name: &str) {

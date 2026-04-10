@@ -672,10 +672,14 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     }
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
+    let session_mgr =
+        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
+    let _ = session_mgr.resume_all().await;
     let mut executor =
         forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
             .with_config(config_clone)
-            .with_command_manager(cmd_mgr);
+            .with_command_manager(cmd_mgr)
+            .with_session_manager(session_mgr);
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }
@@ -786,13 +790,17 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     })?;
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
+    let session_mgr =
+        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
+    let _ = session_mgr.resume_all().await;
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
         Arc::clone(&providers),
         tracer,
     )
     .with_config(config_clone)
-    .with_command_manager(cmd_mgr);
+    .with_command_manager(cmd_mgr)
+    .with_session_manager(session_mgr);
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }
@@ -984,13 +992,16 @@ fn try_build_executor_multi(
     let (skill_exec, _skill_sigs) =
         build_skill_executor(&config, &providers, tracer.as_ref(), None, None);
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
+    let session_mgr =
+        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
         Arc::clone(&providers),
         tracer,
     )
     .with_config(config.clone())
-    .with_command_manager(cmd_mgr);
+    .with_command_manager(cmd_mgr)
+    .with_session_manager(session_mgr);
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }
@@ -1057,10 +1068,13 @@ fn try_build_executor(
     let (skill_exec, _skill_sigs) =
         build_skill_executor(&config, &providers, tracer.as_ref(), None, None);
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
+    let session_mgr =
+        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
     let mut executor =
         forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
             .with_config(config.clone())
-            .with_command_manager(cmd_mgr);
+            .with_command_manager(cmd_mgr)
+            .with_session_manager(session_mgr);
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }

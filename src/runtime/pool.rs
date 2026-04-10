@@ -155,12 +155,17 @@ impl PoolExecutor {
                     let cmd_mgr = std::sync::Arc::new(std::sync::Mutex::new(
                         crate::runtime::command_manager::CommandManager::new(),
                     ));
+                    let session_mgr =
+                        crate::runtime::session_manager::new_shared_default_session_manager(
+                            self.tracer.clone(),
+                        );
                     let executor = TaskExecutor::new(
                         self.program.clone(),
                         self.providers.clone(),
                         self.tracer.clone(),
                     )
-                    .with_command_manager(cmd_mgr);
+                    .with_command_manager(cmd_mgr)
+                    .with_session_manager(session_mgr);
                     let decl = task_decl.clone();
                     let args = args.to_vec();
                     join_set.spawn(async move { executor.call_task(&decl, args).await });
@@ -378,12 +383,16 @@ impl PoolExecutor {
         let cmd_mgr = std::sync::Arc::new(std::sync::Mutex::new(
             crate::runtime::command_manager::CommandManager::new(),
         ));
+        let session_mgr = crate::runtime::session_manager::new_shared_default_session_manager(
+            self.tracer.clone(),
+        );
         let executor = TaskExecutor::new(
             self.program.clone(),
             self.providers.clone(),
             self.tracer.clone(),
         )
-        .with_command_manager(cmd_mgr);
+        .with_command_manager(cmd_mgr)
+        .with_session_manager(session_mgr);
 
         // Look up the fallback as a task
         let task = self

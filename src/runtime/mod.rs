@@ -15,6 +15,7 @@ pub mod knowledge_store;
 pub mod markdown;
 pub mod memory;
 pub mod pool;
+pub mod session_manager;
 pub mod skill;
 pub mod skill_executor;
 pub mod skill_loader;
