@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- Verification contract types: `Claim`, `Evidence`, `VerificationResult`, `Contradiction`, `RiskClass` — runtime claim-evidence-verification model for trust progression, accessible via `AgentResult.metadata.verification` (#203)
+- Implicit claim extraction from AgentResult fields: `files_changed`, `tests_run`/`tests_passed`, and `plan` automatically seed verification claims during session result parsing (#203)
+- `VerificationResult` predicates: `is_verified()`, `is_contradicted()`, `is_actionable(max_risk)` for downstream approval gates (#203)
 - Sandbox isolation: `isolate worktree "branch"` modifier on `spawn` and `session` creates a git worktree at `.forge-data/worktrees/{branch-slug}/` for filesystem isolation, with automatic cleanup on agent retire or session completion (#194)
 - Session polling + event integration: `SessionManager` publishes typed events (`session.progress`, `session.complete`, `session.failed`, `session.cancelled`) directly to `EventBus`, enriched with timestamp, message, duration, and final status fields (#192)
 - Timer-based session polling with configurable interval (default 5s) — publishes `session.poll` events for active sessions to EventBus (#192)

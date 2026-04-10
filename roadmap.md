@@ -664,8 +664,8 @@ Worktree isolation for safe agent execution:
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| #193 | AgentResult built-in type | Open |
-| #203 | Phase 2 reliability: claim/evidence/verification contract | Open |
+| #193 | AgentResult built-in type | Done ✅ |
+| #203 | Phase 2 reliability: claim/evidence/verification contract | Done ✅ |
 
 ### P2.M4: Session Adapters + Events
 

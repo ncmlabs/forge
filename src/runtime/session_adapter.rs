@@ -303,12 +303,17 @@ pub fn parse_final(
                 meta_fields.insert(key.clone(), cv);
             }
         }
-        if !meta_fields.is_empty() {
-            fields.insert(
-                "metadata".to_string(),
-                ConfidentValue::from_skill(Value::Record(meta_fields), conf),
-            );
-        }
+        // Inject pending verification contract with implicit claims (#203)
+        let implicit_claims = crate::runtime::verification::extract_implicit_claims(&fields);
+        crate::runtime::verification::inject_pending_verification(
+            &mut meta_fields,
+            implicit_claims,
+        );
+
+        fields.insert(
+            "metadata".to_string(),
+            ConfidentValue::from_skill(Value::Record(meta_fields), conf),
+        );
     } else {
         // Text fallback: entire stdout becomes the plan field
         if !stdout.trim().is_empty() {
