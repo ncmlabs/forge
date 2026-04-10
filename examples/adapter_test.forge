@@ -1,9 +1,0 @@
-task adapter_test
-  gives Text
-  do
-    result = session "adapter-test" agent "claude" prompt "What is 2 + 2? Respond with just the number." tools [Read] timeout 30s budget 0.05 gives AgentResult
-    when result.sure -> give result.plan
-    else -> give "session failed"
-
-fn main
-  say adapter_test()
