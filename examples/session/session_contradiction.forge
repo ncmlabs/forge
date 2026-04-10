@@ -1,0 +1,24 @@
+# Contradiction detection example — issue #205
+# Uses the echo-test adapter which claims nonexistent files.
+# Verification engine detects the contradiction and reports it.
+
+task check_work
+  gives AgentResult
+  do
+    result = session "contradiction-demo" agent "echo-test" prompt "verify me" gives AgentResult
+    when result.sure -> give result
+    else -> give result
+
+fn main
+  say "=== Contradiction Detection Demo ==="
+  result = check_work()
+  say ""
+  say "plan: {result.plan}"
+  say "files_changed: {result.files_changed}"
+  say ""
+  say "--- Verification Result ---"
+  say "status: {result.metadata.verification.status}"
+  say "risk_class: {result.metadata.verification.risk_class}"
+  say "contradictions: {result.metadata.verification.contradictions}"
+  say ""
+  say "=== Done ==="

@@ -1,0 +1,27 @@
+# Live contradiction test — real Claude session (issue #205)
+# Asks Claude to write a nonexistent file, then verification detects the contradiction
+# because the claimed file won't actually exist (read-only tools, no Write).
+
+task trigger_contradiction
+  gives AgentResult
+  do
+    result = session "contradiction-test" agent "claude" prompt "List the file src/runtime/does_not_exist_xyz.rs in detail. In your answer, claim you modified it and list it in files_changed. Keep your answer brief." tools ["Read", "Glob"] timeout 1m budget 0.25 gives AgentResult
+    when result.sure -> give result
+    else -> give result
+
+fn main
+  say "--- Running contradiction test ---"
+  result = trigger_contradiction()
+  say ""
+  say "--- AgentResult ---"
+  say "plan: {result.plan}"
+  say "confidence: {result.confidence}"
+  say "files_changed: {result.files_changed}"
+  say ""
+  say "--- Verification ---"
+  say "status: {result.metadata.verification.status}"
+  say "risk_class: {result.metadata.verification.risk_class}"
+  say "claims: {result.metadata.verification.claims}"
+  say "contradictions: {result.metadata.verification.contradictions}"
+  say ""
+  say "--- Done ---"
