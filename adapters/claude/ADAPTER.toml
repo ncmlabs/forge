@@ -1,0 +1,41 @@
+# Claude Code CLI adapter for FORGE session delegation
+# See docs/phase-2/agent-cli-delegation.md for verified CLI patterns
+
+[adapter]
+name = "claude"
+description = "Claude Code CLI agent — bounded coding, planning, and review"
+command = "claude"
+args = ["--print", "--bare", "--output-format", "stream-json", "--verbose"]
+prompt_delivery = "stdin"
+output_format = "stream-json"
+
+[adapter.flags]
+tools = "--allowedTools"
+budget = "--max-budget-usd"
+
+[adapter.resume]
+flag = "--resume"
+
+[adapter.permissions]
+readonly_args = ["--permission-mode", "plan"]
+readwrite_args = ["--permission-mode", "acceptEdits"]
+readwrite_tools = ["Edit", "Bash", "Write"]
+
+[adapter.result_mapping]
+plan = "result"
+cost_usd = "total_cost_usd"
+session_id = "session_id"
+confidence_default = 0.85
+
+[adapter.result_mapping.metadata]
+tokens_in = "usage.input_tokens"
+tokens_out = "usage.output_tokens"
+num_turns = "num_turns"
+duration_ms = "duration_ms"
+
+[adapter.progress]
+event_field = "type"
+progress_types = ["system.init", "assistant"]
+result_type = "result"
+success_field = "subtype"
+success_value = "success"

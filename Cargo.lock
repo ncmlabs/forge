@@ -391,6 +391,7 @@ dependencies = [
  "dirs",
  "hex",
  "hmac",
+ "libc",
  "notify",
  "pest",
  "pest_derive",

@@ -1,6 +1,7 @@
 // FORGE runtime
 // See issues #9 (executor), #11 (agent), #12 (pool) for full implementation
 
+pub mod adapter_loader;
 pub mod agent;
 pub mod command_manager;
 pub mod confidence;
@@ -15,6 +16,7 @@ pub mod knowledge_store;
 pub mod markdown;
 pub mod memory;
 pub mod pool;
+pub mod session_adapter;
 pub mod session_manager;
 pub mod skill;
 pub mod skill_executor;

@@ -14,6 +14,18 @@ pub struct ProjectManifest {
     pub build: Option<BuildConfig>,
     pub config: Option<ConfigEmbed>,
     pub skills: Option<HashMap<String, SkillDeclaration>>,
+    pub adapters: Option<HashMap<String, AdapterReference>>,
+}
+
+/// A single adapter declaration in the [adapters] table.
+/// Keys are adapter names (matching session `agent` field); values control
+/// where to find the adapter's ADAPTER.toml.
+#[derive(Debug, Deserialize, Clone)]
+pub struct AdapterReference {
+    /// Local path to adapter directory (relative to project root).
+    pub path: Option<String>,
+    /// Remote source identifier (future: registry).
+    pub source: Option<String>,
 }
 
 /// A single skill declaration in the [skills] table.
@@ -237,7 +249,98 @@ impl ProjectManifest {
             }),
             config: None,
             skills: None,
+            adapters: None,
         }
+    }
+
+    /// Resolve declared adapters to their ADAPTER.toml paths on disk.
+    ///
+    /// Resolution chain per adapter:
+    ///   1. Explicit `path` (if declared) → `{base_dir}/{path}/ADAPTER.toml`
+    ///   2. Project local: `{base_dir}/adapters/{name}/ADAPTER.toml`
+    ///   3. Project installed: `{base_dir}/.forge-data/adapters/{name}/ADAPTER.toml`
+    ///   4. Built-in dirs (shipped with forge binary)
+    pub fn resolve_adapters(
+        &self,
+        base_dir: &Path,
+        builtin_dirs: &[PathBuf],
+    ) -> anyhow::Result<Vec<(String, PathBuf)>> {
+        let adapters = match &self.adapters {
+            Some(a) => a,
+            None => return Ok(Vec::new()),
+        };
+
+        let mut resolved = Vec::new();
+
+        for (name, decl) in adapters {
+            let mut searched = Vec::new();
+
+            // 1. Explicit path
+            if let Some(ref path) = decl.path {
+                let adapter_toml = base_dir.join(path).join("ADAPTER.toml");
+                searched.push(adapter_toml.clone());
+                if adapter_toml.exists() {
+                    resolved.push((name.clone(), adapter_toml));
+                    continue;
+                }
+                anyhow::bail!(
+                    "adapter '{}' path not found: {}\n  hint: create {}/ADAPTER.toml or fix the path in [adapters.{}]",
+                    name,
+                    adapter_toml.display(),
+                    base_dir.join(path).display(),
+                    name,
+                );
+            }
+
+            // 2. Project local: ./adapters/{name}/
+            let local = base_dir.join("adapters").join(name).join("ADAPTER.toml");
+            searched.push(local.clone());
+            if local.exists() {
+                resolved.push((name.clone(), local));
+                continue;
+            }
+
+            // 3. Project installed: .forge-data/adapters/{name}/
+            let installed = base_dir
+                .join(".forge-data/adapters")
+                .join(name)
+                .join("ADAPTER.toml");
+            searched.push(installed.clone());
+            if installed.exists() {
+                resolved.push((name.clone(), installed));
+                continue;
+            }
+
+            // 4. Built-in dirs
+            let mut found = false;
+            for dir in builtin_dirs {
+                let builtin = dir.join(name).join("ADAPTER.toml");
+                searched.push(builtin.clone());
+                if builtin.exists() {
+                    resolved.push((name.clone(), builtin));
+                    found = true;
+                    break;
+                }
+            }
+            if found {
+                continue;
+            }
+
+            let searched_list = searched
+                .iter()
+                .map(|p| format!("    {}", p.display()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow::bail!(
+                "adapter '{}' declared in forge.project.toml but not found\n  searched:\n{}\n  hint: create adapters/{}/ADAPTER.toml or set path = \"...\" in [adapters.{}]",
+                name,
+                searched_list,
+                name,
+                name,
+            );
+        }
+
+        Ok(resolved)
     }
 }
 
@@ -373,6 +476,7 @@ name = "hello"
                     source: None,
                 },
             )])),
+            adapters: None,
         };
 
         let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
@@ -403,6 +507,7 @@ name = "hello"
                     source: None,
                 },
             )])),
+            adapters: None,
         };
 
         let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
@@ -432,6 +537,7 @@ name = "hello"
                     source: None,
                 },
             )])),
+            adapters: None,
         };
 
         let resolved = manifest.resolve_skills(tmp.path(), &[]).unwrap();
@@ -467,6 +573,7 @@ name = "hello"
                     source: None,
                 },
             )])),
+            adapters: None,
         };
 
         let resolved = manifest.resolve_skills(tmp.path(), &[global_dir]).unwrap();
@@ -499,6 +606,7 @@ name = "hello"
                     source: None,
                 },
             )])),
+            adapters: None,
         };
 
         let err = manifest.resolve_skills(tmp.path(), &[]).unwrap_err();
@@ -526,12 +634,133 @@ name = "hello"
                     source: None,
                 },
             )])),
+            adapters: None,
         };
 
         let err = manifest.resolve_skills(tmp.path(), &[]).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("path not found"));
         assert!(msg.contains("does/not/exist"));
+    }
+
+    #[test]
+    fn parse_manifest_with_adapters() {
+        let toml = r#"
+[project]
+name = "myapp"
+
+[adapters]
+claude = {}
+codex = {}
+opencode = { path = "adapters/opencode" }
+"#;
+        let manifest: ProjectManifest = toml::from_str(toml).unwrap();
+        let adapters = manifest.adapters.as_ref().unwrap();
+        assert_eq!(adapters.len(), 3);
+        assert!(adapters["claude"].path.is_none());
+        assert_eq!(
+            adapters["opencode"].path.as_deref(),
+            Some("adapters/opencode")
+        );
+    }
+
+    #[test]
+    fn resolve_adapters_from_local_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let adapter_dir = tmp.path().join("adapters/myagent");
+        std::fs::create_dir_all(&adapter_dir).unwrap();
+        std::fs::write(
+            adapter_dir.join("ADAPTER.toml"),
+            "[adapter]\nname = \"myagent\"\ncommand = \"myagent\"",
+        )
+        .unwrap();
+
+        let manifest = ProjectManifest {
+            project: ProjectMeta {
+                name: "test".into(),
+                version: None,
+                description: None,
+            },
+            build: None,
+            config: None,
+            skills: None,
+            adapters: Some(HashMap::from([(
+                "myagent".into(),
+                AdapterReference {
+                    path: None,
+                    source: None,
+                },
+            )])),
+        };
+
+        let resolved = manifest.resolve_adapters(tmp.path(), &[]).unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].0, "myagent");
+        assert!(resolved[0].1.ends_with("ADAPTER.toml"));
+    }
+
+    #[test]
+    fn resolve_adapters_from_builtin_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let builtin_dir = tmp.path().join("builtin");
+        let adapter = builtin_dir.join("claude");
+        std::fs::create_dir_all(&adapter).unwrap();
+        std::fs::write(
+            adapter.join("ADAPTER.toml"),
+            "[adapter]\nname = \"claude\"\ncommand = \"claude\"",
+        )
+        .unwrap();
+
+        let manifest = ProjectManifest {
+            project: ProjectMeta {
+                name: "test".into(),
+                version: None,
+                description: None,
+            },
+            build: None,
+            config: None,
+            skills: None,
+            adapters: Some(HashMap::from([(
+                "claude".into(),
+                AdapterReference {
+                    path: None,
+                    source: None,
+                },
+            )])),
+        };
+
+        let resolved = manifest
+            .resolve_adapters(tmp.path(), &[builtin_dir])
+            .unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert!(resolved[0].1.to_string_lossy().contains("builtin"));
+    }
+
+    #[test]
+    fn resolve_adapters_missing_gives_clear_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = ProjectManifest {
+            project: ProjectMeta {
+                name: "test".into(),
+                version: None,
+                description: None,
+            },
+            build: None,
+            config: None,
+            skills: None,
+            adapters: Some(HashMap::from([(
+                "nonexistent".into(),
+                AdapterReference {
+                    path: None,
+                    source: None,
+                },
+            )])),
+        };
+
+        let err = manifest.resolve_adapters(tmp.path(), &[]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("nonexistent"));
+        assert!(msg.contains("declared in forge.project.toml but not found"));
     }
 
     #[test]
@@ -557,6 +786,7 @@ name = "hello"
                     source: None,
                 },
             )])),
+            adapters: None,
         };
 
         let resolved = manifest.resolve_skills(tmp.path(), &[global_dir]).unwrap();

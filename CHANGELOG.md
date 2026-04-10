@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- Declarative adapter system: `ADAPTER.toml` format for CLI agent integration with field mapping, permission modes, and progress detection (#191)
+- Built-in adapters for Claude Code (`adapters/claude/`) and Codex (`adapters/codex/`) with verified CLI patterns (#191)
+- `ConfigDrivenDriver` — generic `SessionDriver` that reads any ADAPTER.toml and handles process spawn, stdin piping, stdout parsing, and AgentResult extraction (#191)
+- Adapter resolution chain: project local → installed → built-in, with `[adapters]` section in `forge.project.toml` (#191)
+- Generic fallback adapter for arbitrary CLI agents (command = agent name, text output, 0.5 confidence) (#191)
 - `SessionManager` runtime for long-running external agent sessions with UUID-backed session IDs, persisted JSON state under `.forge-data/sessions/`, startup `resume_all()`, progress listeners, budget enforcement, and graceful cancel escalation (#190)
 - `session` runtime execution in `TaskExecutor` with `on progress` / `on complete` hook emission, `Text`/`AgentResult` output coercion, and lifecycle tracing for Principle VIII (#190)
 - `session` expression front-end: grammar, AST, parser, checker, resolver, cost estimation, and runtime placeholder support with `agent`, `prompt`, `tools`, `timeout`, `budget`, `gives AgentResult`, and `on progress`/`on complete` emit hooks (#189)
