@@ -405,6 +405,9 @@ fn check_refs_in_stmt(
                         check_refs_in_expr(expr, boundary, registry, file, diagnostics);
                     }
                     SpawnOption::KnowledgeFilter(_) => {}
+                    SpawnOption::Isolate(iso) => {
+                        check_refs_in_expr(&iso.branch, boundary, registry, file, diagnostics);
+                    }
                 }
             }
         }

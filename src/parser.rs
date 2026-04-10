@@ -580,6 +580,7 @@ fn build_session_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let mut gives = None;
     let mut on_progress = None;
     let mut on_complete = None;
+    let mut isolate = None;
 
     for modifier in inner {
         match modifier.as_rule() {
@@ -618,6 +619,15 @@ fn build_session_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
                     _ => return Err(parse_error(&kind_pair, "unknown session hook kind")),
                 }
             }
+            Rule::session_isolate_modifier => {
+                let mod_span = to_span(&modifier);
+                let branch_arg = modifier.into_inner().next().unwrap();
+                let branch_expr = build_string_arg(branch_arg)?;
+                isolate = Some(IsolateConfig {
+                    strategy: Spanned::new(IsolateStrategy::Worktree, mod_span),
+                    branch: Box::new(branch_expr),
+                });
+            }
             _ => {}
         }
     }
@@ -633,6 +643,7 @@ fn build_session_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
             gives,
             on_progress,
             on_complete,
+            isolate,
         }),
         span,
     ))
@@ -1260,6 +1271,15 @@ fn build_spawn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
                 let opt_span = to_span(&child);
                 let opt_inner = child.into_inner().next().unwrap();
                 let option = match opt_inner.as_rule() {
+                    Rule::spawn_isolate_option => {
+                        let branch_arg = opt_inner.into_inner().next().unwrap();
+                        let branch_expr = build_string_arg(branch_arg)?;
+                        let strategy_span = opt_span;
+                        SpawnOption::Isolate(IsolateConfig {
+                            strategy: Spanned::new(IsolateStrategy::Worktree, strategy_span),
+                            branch: Box::new(branch_expr),
+                        })
+                    }
                     Rule::spawn_knowledge_option => {
                         let pred = opt_inner.into_inner().next().unwrap(); // spawn_knowledge_pred
                         let cat_str_arg = pred.into_inner().next().unwrap(); // string_arg

@@ -75,7 +75,7 @@ Everything in this document exists to reach that moment.
 | P2.M3 — AgentResult + Contract | Typed result contract plus claims/evidence/verification model | #193, #203 | Open |
 | P2.M4 — Session Adapters + Events | Agent adapters, polling, and event integration | #191, #192 | Open |
 | P2.M5 — Verification + Contradictions | Verification engine and contradiction/warden integration | #204, #205 | Open |
-| P2.M6 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 | Open |
+| P2.M6 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 ✅ | Done |
 | P2.M7 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research | #163 ✅ #164 ✅ #165 | In Progress |
 | P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176-#179 | Open |
 | P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180-#182 | Open |
@@ -685,7 +685,7 @@ Worktree isolation for safe agent execution:
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| #194 | sandbox isolation — spawn modifier + worktree | Open |
+| #194 | sandbox isolation — spawn modifier + worktree | Done ✅ |
 
 ### P2.M7: Skills Foundation
 
@@ -937,7 +937,7 @@ P2.M2  Session Core    ███████████████████
 P2.M3  Result+Contract ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 P2.M4  Adapters+Events ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 P2.M5  Verify+Contra   ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
-P2.M6  Sandbox         ░░░░░░░░░░░░░░░░░░░░  0/1  (  0%)
+P2.M6  Sandbox         ████████████████████  1/1  (100%)
 P2.M7  Skills          █████████████░░░░░░░  2/3  ( 67%)
 P2.M8  CLI Skills      ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
 P2.M9  Orchestration   ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
@@ -1324,7 +1324,7 @@ Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (8/37 issues done)**
   ⬜ P2.M3: `AgentResult` + reliability contract — claims, evidence, verification (#193, #203)
   ⬜ P2.M4: session adapters + events — Claude/Codex/generic and event hooks (#191-#192)
   ⬜ P2.M5: verification + contradictions — trusted gating before repo mutations (#204-#205)
-  ⬜ P2.M6: `sandbox` — worktree isolation for safe execution (#194)
+  ✅ P2.M6: `sandbox` — worktree isolation for safe execution (#194 ✅)
   ✅ P2.M7: Skills foundation — pluggable architecture, rich types (#163 ✅, #164 ✅, #165 ✅)
   ⬜ P2.M8: CLI skills — GitHub, Slack, Claude Code, Codex/Ollama (#176-#179)
   ⬜ P2.M9: Orchestration — Slack Monitor, Triager, Approval gate (#180-#182)

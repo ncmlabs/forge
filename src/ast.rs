@@ -543,6 +543,7 @@ pub struct SessionExpr {
     pub gives: Option<Spanned<TypeName>>,
     pub on_progress: Option<Spanned<SessionHook>>,
     pub on_complete: Option<Spanned<SessionHook>>,
+    pub isolate: Option<IsolateConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -743,6 +744,23 @@ pub enum SpawnOption {
     ConfidenceCap(Spanned<Expr>),
     /// `with memory field: value`
     MemoryInit(Spanned<String>, Spanned<Expr>),
+    /// `isolate worktree "branch"`
+    Isolate(IsolateConfig),
+}
+
+// ── Sandbox isolation (issue #194) ────────────────────────────
+
+/// Isolation strategy for sandbox creation.
+#[derive(Debug, Clone)]
+pub enum IsolateStrategy {
+    Worktree,
+}
+
+/// Configuration for sandbox isolation on spawn or session.
+#[derive(Debug, Clone)]
+pub struct IsolateConfig {
+    pub strategy: Spanned<IsolateStrategy>,
+    pub branch: Box<Spanned<Expr>>,
 }
 
 // ── Find expression (runtime instance discovery, issue #84) ─

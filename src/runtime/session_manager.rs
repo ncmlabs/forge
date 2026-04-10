@@ -66,6 +66,9 @@ pub struct SessionConfig {
     pub budget_usd: Option<f32>,
     pub gives: Option<String>,
     pub cancel_timeout_secs: u64,
+    /// Working directory for sandbox isolation (issue #194).
+    #[serde(default)]
+    pub working_dir: Option<String>,
 }
 
 impl SessionConfig {
@@ -79,6 +82,7 @@ impl SessionConfig {
             budget_usd: None,
             gives: None,
             cancel_timeout_secs: 5,
+            working_dir: None,
         }
     }
 }

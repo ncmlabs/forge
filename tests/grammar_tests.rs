@@ -870,6 +870,32 @@ fn spawn_with_memory_init_only() {
     ForgeParser::parse(Rule::task_decl, src).unwrap();
 }
 
+// isolate worktree (#194)
+
+#[test]
+fn spawn_with_isolate_worktree() {
+    let src = "task run_it\n  do\n    spawn worker\n      isolate worktree \"feature/fix-123\"\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn spawn_with_isolate_and_knowledge() {
+    let src = "task run_it\n  do\n    id = spawn implementer\n      isolate worktree \"feature/new\"\n      with knowledge where category == \"CODE\"\n      with confidence_cap: 0.9\n";
+    ForgeParser::parse(Rule::task_decl, src).unwrap();
+}
+
+#[test]
+fn session_with_isolate_worktree() {
+    let src = r#"session "implement" agent "claude" prompt "do it" isolate worktree "feature/fix-123" timeout 30m"#;
+    ForgeParser::parse(Rule::session_expr, src).unwrap();
+}
+
+#[test]
+fn session_with_isolate_and_hooks() {
+    let src = r#"session "implement" agent "claude" prompt "do it" isolate worktree "feature/fix" on progress -> emit status(it)"#;
+    ForgeParser::parse(Rule::session_expr, src).unwrap();
+}
+
 // find_expr (#84)
 
 #[test]

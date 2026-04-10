@@ -1,0 +1,9 @@
+# Session with sandbox isolation — issue #194
+# The isolate worktree modifier creates a git worktree so
+# the session agent operates on an isolated copy of the repo.
+
+task implement_feature
+  gives Text
+  do
+    result = session "implement" agent "claude" prompt "Fix the login bug" isolate worktree "feature/fix-login" timeout 30m gives AgentResult
+    say "Session completed with plan: {result.plan}"

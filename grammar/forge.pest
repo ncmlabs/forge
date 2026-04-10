@@ -375,8 +375,9 @@ spawn_stmt_i3 = {
     (nl ~ i4 ~ spawn_option)*
 }
 spawn_option = {
-    spawn_knowledge_option | spawn_confidence_cap_option | spawn_memory_option
+    spawn_isolate_option | spawn_knowledge_option | spawn_confidence_cap_option | spawn_memory_option
 }
+spawn_isolate_option        = { "isolate" ~ _s ~ "worktree" ~ _s ~ string_arg }
 spawn_knowledge_option      = { "with" ~ _s ~ "knowledge" ~ _s ~ "where" ~ _s ~ spawn_knowledge_pred }
 spawn_knowledge_pred        = { "category" ~ _s_opt ~ "==" ~ _s_opt ~ string_arg }
 spawn_confidence_cap_option = { "with" ~ _s ~ "confidence_cap" ~ _s_opt ~ ":" ~ _s_opt ~ expr }
@@ -607,14 +608,16 @@ session_modifier = _{
   | session_budget_modifier
   | session_gives_modifier
   | session_hook_modifier
+  | session_isolate_modifier
 }
-session_agent_modifier = { "agent" ~ _s ~ string_arg }
-session_prompt_modifier = { "prompt" ~ _s ~ string_arg }
-session_tools_modifier = { "tools" ~ _s ~ expr }
+session_agent_modifier   = { "agent" ~ _s ~ string_arg }
+session_prompt_modifier  = { "prompt" ~ _s ~ string_arg }
+session_tools_modifier   = { "tools" ~ _s ~ expr }
 session_timeout_modifier = { "timeout" ~ _s ~ duration }
-session_budget_modifier = { "budget" ~ _s ~ expr }
-session_gives_modifier = { "gives" ~ _s ~ "AgentResult" }
-session_hook_modifier = { "on" ~ _s ~ session_hook_kind ~ _s_opt ~ "->" ~ _s_opt ~ session_emit_hook }
+session_budget_modifier  = { "budget" ~ _s ~ expr }
+session_gives_modifier   = { "gives" ~ _s ~ "AgentResult" }
+session_hook_modifier    = { "on" ~ _s ~ session_hook_kind ~ _s_opt ~ "->" ~ _s_opt ~ session_emit_hook }
+session_isolate_modifier = { "isolate" ~ _s ~ "worktree" ~ _s ~ string_arg }
 session_hook_kind = { "progress" | "complete" }
 session_emit_hook = { "emit" ~ _s ~ ident ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
 env_map      = { "{" ~ _s_opt ~ env_entry ~ (_s_opt ~ "," ~ _s_opt ~ env_entry)* ~ _s_opt ~ "}" }

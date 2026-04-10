@@ -16,6 +16,7 @@ pub mod knowledge_store;
 pub mod markdown;
 pub mod memory;
 pub mod pool;
+pub mod sandbox;
 pub mod session_adapter;
 pub mod session_manager;
 pub mod skill;
