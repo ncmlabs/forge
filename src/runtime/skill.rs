@@ -3,15 +3,23 @@
 
 use crate::types::CapabilitySignature;
 
+#[derive(Debug, Clone)]
+pub struct SkillCapability {
+    pub name: String,
+    pub signature: CapabilitySignature,
+}
+
 /// Metadata about a skill, loaded from SKILL.md frontmatter or config.
 #[derive(Debug, Clone)]
 pub struct SkillManifest {
-    /// Fully-qualified name: "slack.post_message"
+    /// Namespace name: "slack"
     pub name: String,
     /// Human-readable description
     pub description: String,
-    /// Type signature for compile-time validation
-    pub signature: CapabilitySignature,
+    /// Explicit typed capabilities exposed by this skill.
+    pub capabilities: Vec<SkillCapability>,
+    /// Legacy single-capability compatibility surface for skills without explicit capabilities.
+    pub legacy_signature: Option<CapabilitySignature>,
     /// Default confidence for results (capped at 0.99)
     pub default_confidence: f32,
     /// Timeout in seconds for skill execution
@@ -35,6 +43,9 @@ pub struct LoadedSkill {
 pub enum SkillError {
     #[error("skill not found: {name}")]
     NotFound { name: String },
+
+    #[error("skill method not found: {skill}.{method}")]
+    UnknownMethod { skill: String, method: String },
 
     #[error("skill execution failed: {name}: {reason}")]
     ExecutionFailed { name: String, reason: String },

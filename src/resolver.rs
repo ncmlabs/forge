@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Expr, Program, Spanned, Stmt, TopLevel};
 use crate::diagnostic::Diagnostic;
-use crate::types::{is_compatible, CapabilitySignature, ForgeType};
+use crate::types::{from_type_name, is_compatible, CapabilitySignature, ForgeType};
 
 // ── Errors ───────────────────────────────────────────────────
 
@@ -22,6 +22,24 @@ pub enum ResolveError {
     CompositionMismatch {
         left: String,
         right: String,
+        span_start: usize,
+        span_end: usize,
+    },
+
+    #[error("capability `{name}` expects {expected} arguments but got {actual}")]
+    ArgumentCountMismatch {
+        name: String,
+        expected: usize,
+        actual: usize,
+        span_start: usize,
+        span_end: usize,
+    },
+
+    #[error("argument type mismatch for `{name}`: expected `{expected}`, got `{actual}`")]
+    ArgumentTypeMismatch {
+        name: String,
+        expected: String,
+        actual: String,
         span_start: usize,
         span_end: usize,
     },
@@ -72,6 +90,36 @@ impl ResolveError {
                 format!("composition type mismatch: `{}` → `{}`", left, right),
                 *span_start..*span_end,
                 format!("`{}` is not compatible with `{}`", left, right),
+            ),
+            ResolveError::ArgumentCountMismatch {
+                name,
+                expected,
+                actual,
+                span_start,
+                span_end,
+            } => Diagnostic::error(
+                file,
+                format!(
+                    "capability '{}' expects {} arguments but got {}",
+                    name, expected, actual
+                ),
+                *span_start..*span_end,
+                "adjust the skill call to match the declared signature",
+            ),
+            ResolveError::ArgumentTypeMismatch {
+                name,
+                expected,
+                actual,
+                span_start,
+                span_end,
+            } => Diagnostic::error(
+                file,
+                format!(
+                    "argument type mismatch for '{}': expected `{}`, got `{}`",
+                    name, expected, actual
+                ),
+                *span_start..*span_end,
+                "change the argument or update the skill capability signature",
             ),
         }
     }
@@ -282,26 +330,33 @@ impl CheckContext {
         for item in &program.items {
             match &item.node {
                 TopLevel::Task(task) => {
-                    self.check_stmts_composition(&task_body_stmts(task));
+                    let mut env = params_env(&task.needs);
+                    self.check_stmts_composition(&task_body_stmts(task), &mut env);
                 }
                 TopLevel::Pure(pure) => {
-                    self.check_stmts_composition(&pure.body);
+                    let mut env = params_env(&pure.needs);
+                    self.check_stmts_composition(&pure.body, &mut env);
                 }
                 TopLevel::Flow(flow) => {
+                    let base_env = params_env(&flow.needs);
                     for stage in &flow.stages {
-                        self.check_stmts_composition(&stage.node.body);
+                        let mut env = base_env.clone();
+                        self.check_stmts_composition(&stage.node.body, &mut env);
                     }
                 }
                 TopLevel::Agent(agent) => {
                     for handler in &agent.handlers {
-                        self.check_stmts_composition(&handler.node.body);
+                        let mut env = HashMap::new();
+                        self.check_stmts_composition(&handler.node.body, &mut env);
                     }
                 }
                 TopLevel::Endpoint(ep) => {
-                    self.check_stmts_composition(&ep.body);
+                    let mut env = params_env(&ep.params);
+                    self.check_stmts_composition(&ep.body, &mut env);
                 }
                 TopLevel::FnMain(main) => {
-                    self.check_stmts_composition(&main.body);
+                    let mut env = HashMap::new();
+                    self.check_stmts_composition(&main.body, &mut env);
                 }
                 _ => {}
             }
@@ -315,64 +370,88 @@ impl CheckContext {
     }
 
     /// Walk statements looking for Compose expressions and check type compatibility.
-    fn check_stmts_composition(&mut self, stmts: &[Spanned<Stmt>]) {
+    fn check_stmts_composition(
+        &mut self,
+        stmts: &[Spanned<Stmt>],
+        env: &mut HashMap<String, ForgeType>,
+    ) {
         for stmt in stmts {
-            self.check_stmt_composition(stmt);
+            self.check_stmt_composition(stmt, env);
         }
     }
 
-    fn check_stmt_composition(&mut self, stmt: &Spanned<Stmt>) {
+    fn check_stmt_composition(
+        &mut self,
+        stmt: &Spanned<Stmt>,
+        env: &mut HashMap<String, ForgeType>,
+    ) {
         match &stmt.node {
-            Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
-                self.check_expr_composition(expr);
+            Stmt::Bind(name, expr) => {
+                self.check_expr_composition(expr, env);
+                if let Some(ty) = infer_type(expr, env, &self.registry) {
+                    env.insert(name.node.clone(), ty);
+                }
+            }
+            Stmt::Say(expr) | Stmt::ExprStmt(expr) => {
+                self.check_expr_composition(expr, env);
             }
             Stmt::Give(expr, metas) => {
-                self.check_expr_composition(expr);
+                self.check_expr_composition(expr, env);
                 for meta in metas {
-                    self.check_expr_composition(&meta.node.value);
+                    self.check_expr_composition(&meta.node.value, env);
                 }
             }
             Stmt::When(when) => {
                 for clause in &when.clauses {
-                    self.check_stmt_composition(&clause.node.body);
+                    let mut branch_env = env.clone();
+                    self.check_stmt_composition(&clause.node.body, &mut branch_env);
                 }
                 if let Some(else_clause) = &when.else_body {
-                    self.check_stmt_composition(&else_clause.node.body);
+                    let mut branch_env = env.clone();
+                    self.check_stmt_composition(&else_clause.node.body, &mut branch_env);
                 }
             }
             Stmt::Match(m) => {
-                self.check_expr_composition(&m.subject);
+                self.check_expr_composition(&m.subject, env);
                 for arm in &m.arms {
-                    self.check_stmt_composition(&arm.node.body);
+                    let mut branch_env = env.clone();
+                    self.check_stmt_composition(&arm.node.body, &mut branch_env);
                 }
             }
             Stmt::IfElse(ie) => {
-                self.check_expr_composition(&ie.condition);
-                self.check_stmts_composition(&ie.then_body);
+                self.check_expr_composition(&ie.condition, env);
+                let mut then_env = env.clone();
+                self.check_stmts_composition(&ie.then_body, &mut then_env);
                 for (cond, body) in &ie.else_ifs {
-                    self.check_expr_composition(cond);
-                    self.check_stmts_composition(body);
+                    self.check_expr_composition(cond, env);
+                    let mut branch_env = env.clone();
+                    self.check_stmts_composition(body, &mut branch_env);
                 }
                 if let Some(body) = &ie.else_body {
-                    self.check_stmts_composition(body);
+                    let mut else_env = env.clone();
+                    self.check_stmts_composition(body, &mut else_env);
                 }
             }
             Stmt::For(f) => {
-                self.check_expr_composition(&f.iterable);
-                self.check_stmts_composition(&f.body);
+                self.check_expr_composition(&f.iterable, env);
+                let mut loop_env = env.clone();
+                self.check_stmts_composition(&f.body, &mut loop_env);
             }
             _ => {}
         }
     }
 
-    fn check_expr_composition(&mut self, expr: &Spanned<Expr>) {
+    fn check_expr_composition(&mut self, expr: &Spanned<Expr>, env: &HashMap<String, ForgeType>) {
         match &expr.node {
             Expr::Compose(parts) => {
                 // Check adjacent pairs for type compatibility
                 for window in parts.windows(2) {
                     let left = &window[0];
                     let right = &window[1];
-                    if let (Some(lt), Some(rt)) = (infer_type(left), infer_input_type(right)) {
+                    if let (Some(lt), Some(rt)) = (
+                        infer_type(left, env, &self.registry),
+                        infer_input_type(right, env, &self.registry),
+                    ) {
                         if !is_compatible(&lt, &rt) {
                             self.errors.push(ResolveError::CompositionMismatch {
                                 left: lt.to_string(),
@@ -385,44 +464,101 @@ impl CheckContext {
                 }
                 // Recurse into sub-expressions
                 for p in parts {
-                    self.check_expr_composition(p);
+                    self.check_expr_composition(p, env);
                 }
             }
             Expr::TryOr(a, b) => {
-                self.check_expr_composition(a);
-                self.check_expr_composition(b);
+                self.check_expr_composition(a, env);
+                self.check_expr_composition(b, env);
             }
             Expr::FanOut(parts) => {
                 for p in parts {
-                    self.check_expr_composition(p);
+                    self.check_expr_composition(p, env);
                 }
             }
             Expr::BinOp(a, _, b) => {
-                self.check_expr_composition(a);
-                self.check_expr_composition(b);
+                self.check_expr_composition(a, env);
+                self.check_expr_composition(b, env);
             }
             Expr::UnaryOp(_, a) => {
-                self.check_expr_composition(a);
+                self.check_expr_composition(a, env);
             }
             Expr::Call(c) => {
                 for arg in &c.args {
-                    self.check_expr_composition(&arg.node.value);
+                    self.check_expr_composition(&arg.node.value, env);
                 }
             }
             Expr::Paren(inner) | Expr::FieldAccess(inner, _) | Expr::GlobAccess(inner) => {
-                self.check_expr_composition(inner);
+                self.check_expr_composition(inner, env);
             }
             Expr::Index(a, b) => {
-                self.check_expr_composition(a);
-                self.check_expr_composition(b);
+                self.check_expr_composition(a, env);
+                self.check_expr_composition(b, env);
             }
-            Expr::MethodCall(inner, _, args) => {
-                self.check_expr_composition(inner);
+            Expr::MethodCall(inner, method, args) => {
+                self.check_skill_call(inner, method, args, env);
+                self.check_expr_composition(inner, env);
                 for arg in args {
-                    self.check_expr_composition(&arg.node.value);
+                    self.check_expr_composition(&arg.node.value, env);
                 }
             }
             _ => {}
+        }
+    }
+
+    fn check_skill_call(
+        &mut self,
+        inner: &Spanned<Expr>,
+        method: &Spanned<String>,
+        args: &[Spanned<crate::ast::CallArg>],
+        env: &HashMap<String, ForgeType>,
+    ) {
+        let Expr::FieldAccess(target, namespace) = &inner.node else {
+            return;
+        };
+        let Expr::Ident(prefix) = &target.node else {
+            return;
+        };
+        if prefix != "skill" {
+            return;
+        }
+
+        let full_name = format!("skill.{}.{}", namespace.node, method.node);
+        if let Some(sig) = self.registry.resolve(&full_name) {
+            if sig.inputs.len() != args.len() {
+                self.errors.push(ResolveError::ArgumentCountMismatch {
+                    name: full_name,
+                    expected: sig.inputs.len(),
+                    actual: args.len(),
+                    span_start: method.span.start,
+                    span_end: method.span.end,
+                });
+                return;
+            }
+
+            for (arg, expected) in args.iter().zip(&sig.inputs) {
+                if let Some(actual) = infer_type(&arg.node.value, env, &self.registry) {
+                    if !is_compatible(&actual, expected) {
+                        self.errors.push(ResolveError::ArgumentTypeMismatch {
+                            name: full_name.clone(),
+                            expected: expected.to_string(),
+                            actual: actual.to_string(),
+                            span_start: arg.span.start,
+                            span_end: arg.span.end,
+                        });
+                    }
+                }
+            }
+            return;
+        }
+
+        let legacy_name = format!("skill.{}", namespace.node);
+        if self.registry.resolve(&legacy_name).is_none() {
+            self.errors.push(ResolveError::UnknownCapability {
+                name: full_name,
+                span_start: method.span.start,
+                span_end: method.span.end,
+            });
         }
     }
 }
@@ -430,24 +566,59 @@ impl CheckContext {
 // ── Type inference (partial, POC) ────────────────────────────
 
 /// Infer the output type of an expression (partial — returns None for unknowns).
-fn infer_type(expr: &Spanned<Expr>) -> Option<ForgeType> {
+fn infer_type(
+    expr: &Spanned<Expr>,
+    env: &HashMap<String, ForgeType>,
+    registry: &CapabilityRegistry,
+) -> Option<ForgeType> {
     match &expr.node {
         Expr::NumberLit(_) => Some(ForgeType::Number),
         Expr::BoolLit(_) => Some(ForgeType::Bool),
+        Expr::Ident(name) => env.get(name).cloned(),
         Expr::Template(_) => Some(ForgeType::Text),
         Expr::Reason(_) => Some(ForgeType::Text),
         Expr::Exec(_) => Some(ForgeType::Text),
         Expr::Command(_) | Expr::CommandMethod(_, _) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Classification),
         Expr::Search(_) => Some(ForgeType::Results),
-        Expr::Compose(parts) => parts.last().and_then(infer_type),
+        Expr::Paren(inner) => infer_type(inner, env, registry),
+        Expr::FieldAccess(inner, field) => {
+            if matches!(&inner.node, Expr::Ident(prefix) if prefix == "skill") {
+                return registry
+                    .resolve(&format!("skill.{}", field.node))
+                    .map(|sig| sig.output.clone());
+            }
+            None
+        }
+        Expr::MethodCall(inner, method, _) => {
+            if let Expr::FieldAccess(target, namespace) = &inner.node {
+                if matches!(&target.node, Expr::Ident(prefix) if prefix == "skill") {
+                    return registry
+                        .resolve(&format!("skill.{}.{}", namespace.node, method.node))
+                        .map(|sig| sig.output.clone())
+                        .or_else(|| {
+                            registry
+                                .resolve(&format!("skill.{}", namespace.node))
+                                .map(|sig| sig.output.clone())
+                        });
+                }
+            }
+            None
+        }
+        Expr::Compose(parts) => parts
+            .last()
+            .and_then(|expr| infer_type(expr, env, registry)),
         Expr::ArrayLit(_) => None, // would need element type inference
         _ => None,
     }
 }
 
 /// Infer the expected input type for an expression when used as the RHS of `>>`.
-fn infer_input_type(expr: &Spanned<Expr>) -> Option<ForgeType> {
+fn infer_input_type(
+    expr: &Spanned<Expr>,
+    _env: &HashMap<String, ForgeType>,
+    registry: &CapabilityRegistry,
+) -> Option<ForgeType> {
     match &expr.node {
         // Most callables accept Text in the POC
         Expr::Call(_) => Some(ForgeType::Text),
@@ -456,8 +627,35 @@ fn infer_input_type(expr: &Spanned<Expr>) -> Option<ForgeType> {
         Expr::Command(_) | Expr::CommandMethod(_, _) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Text),
         Expr::Search(_) => Some(ForgeType::Text),
+        Expr::MethodCall(inner, method, _) => {
+            if let Expr::FieldAccess(target, namespace) = &inner.node {
+                if matches!(&target.node, Expr::Ident(prefix) if prefix == "skill") {
+                    return registry
+                        .resolve(&format!("skill.{}.{}", namespace.node, method.node))
+                        .and_then(|sig| sig.inputs.first().cloned())
+                        .or_else(|| {
+                            registry
+                                .resolve(&format!("skill.{}", namespace.node))
+                                .and_then(|sig| sig.inputs.first().cloned())
+                        });
+                }
+            }
+            None
+        }
         _ => None,
     }
+}
+
+fn params_env(params: &[Spanned<crate::ast::Param>]) -> HashMap<String, ForgeType> {
+    params
+        .iter()
+        .map(|param| {
+            (
+                param.node.name.clone(),
+                from_type_name(&param.node.type_name.node),
+            )
+        })
+        .collect()
 }
 
 /// Extract statements from a task body.

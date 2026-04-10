@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- Rich SKILL.md capability signatures with multi-capability registration and compile-time validation of `skill.namespace.method(...)` calls (#164)
 - `forge.project.toml` gains `[skills]` section for project-level skill declarations with `path` and `source` options (#163)
 - Skill resolution chain: project local (`./skills/`) → installed (`.agents/skills/`) → global (`~/.forge/skills/`) with clear error on missing (#163)
 - `skills-lock.json` integrity verification — warns when installed skill content diverges from lock hash (#163)
