@@ -13,6 +13,7 @@ use forge::llm::ToolCallRequest;
 use forge::runtime::skill_executor::SkillExecutor;
 use forge::runtime::skill_loader::SkillLoader;
 use forge::runtime::skill_registry::SkillRegistry;
+use forge::tracer::Tracer;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -230,6 +231,7 @@ async fn mock_tool_call_sequence_drains() {
         ]);
 
     let providers = mock_registry(mock);
+    let _tracer = Tracer::with_capture(); // Principle VIII: trace oracle calls
 
     // Turn 1: should have tool calls
     let req = forge::llm::CompletionRequest::simple("test");
