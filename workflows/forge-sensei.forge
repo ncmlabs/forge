@@ -363,6 +363,8 @@ warden sensei_warden
   on stuck: nudge, self
     after 3: escalate
   on hallucination: restart, self
+  on contradiction: nudge, self
+    after 2: escalate
   on crash: restart, self
   on timeout: restart, self
   on budget: nudge, self

@@ -19,10 +19,10 @@ task get_recent_commits
     else -> give "Could not read git log"
 
 task run_and_report
-  needs command: Text
+  needs cmd_text: Text
   gives Text
   do
-    output = exec command
+    output = exec cmd_text
     when output.sure -> give output
     else -> give "Command failed or timed out"
 

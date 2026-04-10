@@ -1,3 +1,5 @@
+#! boundary: server
+
 use
   llm.reason
   web.search
@@ -21,7 +23,10 @@ flow research
 
   stage verify
     needs synthesize.draft
-    give reason "is this factually consistent? if not, correct it: {synthesize.draft}"
+    checked = reason "is this factually consistent? if not, correct it: {synthesize.draft}"
+    when checked.sure -> give checked
+    when checked.unsure -> give checked
+    else -> give "Could not verify report."
 
 fn main
   result = research("artificial intelligence")

@@ -1,3 +1,9 @@
+#! boundary: server
+
+use
+  web.search
+  llm.classify
+
 event MatchRequest
   player: Text
   rank: Number

@@ -1,5 +1,3 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.26s
-     Running `target/debug/forge run examples/llm/docgen.forge`
 # FORGE Language Reference
 
 This document is a complete reference for the FORGE programming language, designed for teaching LLM agents how to write correct FORGE code.
@@ -2171,7 +2169,7 @@ FORGE enforces **taint tracking** on LLM oracle outputs to guarantee that uncert
 
 | Rule | Description |
 |------|-------------|
-| Oracle expressions produce taint | `reason`, `classify`, and `search` return tainted (uncertain) values |
+| Oracle expressions produce taint | `reason`, `classify`, `search`, `recall`, `exec`, `command`, `session`, and `command.*`/`session.*` methods return tainted (uncertain) values |
 | Taint blocks `give` | A tainted value **cannot** be passed directly to `give` -- this is a compile error |
 | Clearing taint | The value must be dispatched through `when` or `match` before it can be used in `give` |
 | Taint propagates through assignment | Assigning a tainted value to a new variable keeps it tainted |
@@ -2257,3 +2255,280 @@ The `match` construct forces structural dispatch, which clears the taint on each
 ### Design Rationale
 
 Without this enforcement, an LLM hallucination could propagate silently through a program and be returned as authoritative output. By requiring explicit confidence dispatch, FORGE guarantees that every oracle result is acknowledged as uncertain before it can influence program output. This is a compile-time guarantee, not a runtime check.
+
+---
+
+## 18. Command, Exec, and Process Handles
+
+FORGE has two process-execution surfaces:
+
+- `exec` is the older direct CLI primitive. It executes a shell command and returns `uncertain<Text>`.
+- `command` is the structured process primitive. It returns a record with `stdout`, `stderr`, `exit_code`, and `success`, or a background handle when `background true` is used.
+
+Both are side-effecting runtime operations. They are allowed in `task` bodies and agent handlers, rejected inside `pure`, and must be handled through confidence-aware control flow before being returned with `give`.
+
+### Exec
+
+```forge
+task git_status_summary
+  gives Text
+  do
+    result = exec "git status --short"
+    when result.sure -> give result
+    when result.unsure -> give "status uncertain: {result}"
+    else -> give "could not read status"
+```
+
+### Command
+
+`command` accepts either a shell string or a structured argv array. Prefer the array form when interpolating user or model-provided values.
+
+```forge
+task run_tests
+  gives Text
+  do
+    result = command ["cargo", "test"] timeout 10m
+    when result.sure -> give result.stdout
+    when result.unsure -> give result.stderr
+    else -> give "test command failed"
+```
+
+Supported modifiers:
+
+| Modifier | Example |
+|----------|---------|
+| Working directory | `command ["cargo", "test"] in "crates/core"` |
+| Timeout | `command "npm test" timeout 2m` |
+| Environment | `command "cargo test" env { RUST_LOG: "debug" }` |
+| Background execution | `command "cargo watch -x test" background true` |
+
+Background commands return a handle. Use the imperative command methods to inspect or cancel it:
+
+```forge
+task watch_once
+  gives Text
+  do
+    handle = command "cargo watch -x test" background true
+    status = command.status(handle)
+    output = command.output(handle)
+    command.cancel(handle)
+    when output.sure -> give output.stdout
+    else -> give "no output"
+```
+
+---
+
+## 19. Sessions, AgentResult, and Verification Metadata
+
+`session` starts or resumes a long-running external agent session through a configured adapter. It supports Claude Code, Codex, generic CLI adapters, and project-local adapter configuration.
+
+### Syntax
+
+```forge
+task review_patch
+  gives AgentResult
+  do
+    result = session "code-review" agent "claude" prompt "Review this patch for bugs" tools ["Read", "Grep"] timeout 5m budget 0.50 gives AgentResult
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give AgentResult(plan: "review failed", confidence: 0.0)
+```
+
+Supported modifiers:
+
+| Modifier | Purpose |
+|----------|---------|
+| `agent "name"` | Selects an adapter by name |
+| `prompt "text"` | Supplies the agent prompt |
+| `tools [...]` | Requests adapter-specific tools |
+| `timeout 5m` | Bounds runtime |
+| `budget 0.50` | Bounds spend |
+| `gives AgentResult` | Requests the typed agent result contract |
+| `on progress -> emit Event(...)` | Emits progress events |
+| `on complete -> emit Event(...)` | Emits completion events |
+| `isolate worktree "branch-name"` | Runs the session in an isolated git worktree |
+
+### Hooks
+
+```forge
+event ReviewUpdate
+  payload: Text
+
+event ReviewDone
+  payload: Text
+
+task run_review
+  gives Text
+  do
+    result = session "code-review" agent "codex" prompt "Review src/runtime for bugs" on progress -> emit ReviewUpdate(it) on complete -> emit ReviewDone(it)
+    when result.sure -> give result
+    else -> give "review failed"
+```
+
+### Session Methods
+
+`session.status(id)` returns a record with `status`, `cost_usd`, `started_at`, `updated_at`, and `error`. Session method results are uncertain and must be handled before `give`.
+
+### AgentResult
+
+`AgentResult` is a built-in typed result contract for external agent work:
+
+| Field | Meaning |
+|-------|---------|
+| `plan` | The intended or executed plan |
+| `patch_summary` | Summary of code changes |
+| `files_changed` | Files changed by the agent |
+| `tests_run` | Verification commands attempted |
+| `tests_passed` | Whether verification passed |
+| `cost_usd` | Session cost |
+| `confidence` | Agent-reported confidence |
+| `approval_needed` | Whether human approval is required |
+| `metadata` | Extensible runtime metadata |
+
+`AgentResult()` builds a default result. Field initializers override defaults:
+
+```forge
+AgentResult(plan: "fix parser example", confidence: 0.8)
+```
+
+When runtime verification is enabled, `AgentResult.metadata.verification` contains a `VerificationResult` with `status`, `claims`, `evidence`, `contradictions`, and `risk_class`. Contradictions are reported to wardens that declare an `on contradiction:` policy, or handled by the runtime fallback policy.
+
+---
+
+## 20. Knowledge, Recall, Spawn, Find, and Retire
+
+FORGE agents can own persistent searchable knowledge and spawn specialized child agents.
+
+### Knowledge Store
+
+```forge
+exportable agent forge_sensei
+  lifecycle: MasteryLevel
+  memory
+    interaction_count: Number
+  knowledge store: ".forge-knowledge/sensei"
+    max_entries: 50000
+    retention: 365d
+```
+
+`recall "query"` searches the agent knowledge store and returns an uncertain value:
+
+```forge
+task answer_from_memory
+  needs question: Text
+  gives Text
+  do
+    prior = recall "FORGE {question}"
+    when prior.sure -> give prior
+    when prior.unsure -> give "partial memory: {prior}"
+    else -> give "no matching memory"
+```
+
+`learn` writes knowledge:
+
+```forge
+learn "Tasks can call oracle primitives" category: "TASKS"
+learn from interaction(question, answer, 0.7)
+learn from document("docs/forge-reference.md")
+```
+
+### Spawn and Find
+
+`spawn` creates a runtime agent instance from an agent template. It can assign an alias, filter knowledge, cap confidence, initialize memory, and request worktree isolation:
+
+```forge
+child = spawn specialist as "specialist_{topic}"
+  with knowledge where category == topic
+  with confidence_cap: 0.8
+  with memory topic: topic
+  isolate worktree "specialist-{topic}"
+```
+
+`find "alias"` locates one runtime instance. `find all template where lifecycle == ready` locates matching instances by template and optional lifecycle.
+
+```forge
+existing = find "specialist_{topic}"
+ready_specialists = find all specialist where lifecycle == ready
+```
+
+`retire` shuts down an agent instance and can export knowledge:
+
+```forge
+retire "specialist_FORGE"
+  with knowledge export: "exports/specialist.forgepkg.json"
+```
+
+---
+
+## 21. Skills, Built-In Capabilities, and Project Manifests
+
+FORGE source declares capabilities with `use`. Built-ins include LLM operations, web/data/html/markdown helpers, assets, command execution, and project skills.
+
+```forge
+#! boundary: server
+
+use
+  llm.reason
+  web.fetch
+  data.store
+  markdown.render
+  skill.repo_check
+```
+
+Built-in capability families:
+
+| Family | Examples |
+|--------|----------|
+| LLM | `llm.reason`, `llm.classify` |
+| Web | `web.fetch`, `web.post` |
+| Data | `data.store`, `data.get`, `data.list`, `data.delete`, `data.embed`, `data.search` |
+| HTML | `html.layout`, `html.escape` |
+| Markdown | `markdown.render` |
+| Assets | `asset` |
+| Command | `command.status`, `command.output`, `command.cancel` |
+| Skills | `skill.<namespace>.<capability>(...)` |
+
+`search "query"` is restricted to `#! boundary: server`.
+
+Project skills are declared in `forge.project.toml`. Validate them through the project/manifest path, not as isolated single-file examples, because the checker needs the manifest-provided skill registry.
+
+```toml
+[project]
+name = "skill-project-demo"
+
+[build]
+entry = "main.forge"
+
+[skills]
+repo_check = {}
+```
+
+Then a FORGE file can use `skill.repo_check` and call declared capabilities. Skill calls are side-effecting and rejected inside `pure`.
+
+---
+
+## 22. Templates and Raw Interpolation
+
+Normal template interpolation uses `{expr}` and is escaped in HTML contexts. Raw interpolation uses `{!expr}` and skips HTML escaping. Use raw interpolation only for trusted or already-sanitized HTML.
+
+```forge
+endpoint page() -> Html
+  body = markdown.render("# Hello")
+  give html.layout("Docs", "{!body}")
+```
+
+---
+
+## 23. Example Validation Buckets
+
+Examples are not all validated the same way:
+
+| Bucket | Validation |
+|--------|------------|
+| Positive single-file examples | `cargo run -- check <file>` |
+| Expected-error examples | Keep the expected diagnostic in the example name, comment, or test fixture |
+| Live LLM/session examples | Check syntax locally; run only when real provider credentials and CLI adapters are available |
+| Manifest skill examples | Use `cargo run -- run --manifest <forge.project.toml>` or the checker path that loads the manifest registry |
+| Multi-file examples | Validate through `forge.project.toml` or a merged-source command, not by checking dependent files in isolation |
+
+When an example intentionally exercises a checker limitation, document the limitation beside the example or in the issue verification notes rather than treating a nonzero checker result as a passing smoke test.
