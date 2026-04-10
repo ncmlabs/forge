@@ -1,0 +1,12 @@
+agent Supervisor
+  on ReviewUpdate(update) ->
+    say "Progress: {update}"
+  on ReviewDone(result) ->
+    say "Review complete: {result}"
+
+system "session hooks demo"
+  agents
+    Supervisor
+  start
+    result = session "code-review" agent "claude" prompt "Review this file for bugs" on progress -> emit ReviewUpdate(it) on complete -> emit ReviewDone(it)
+    say "Final: {result}"

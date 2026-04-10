@@ -16,7 +16,7 @@ fn load_quiz_tutor() -> (
     Option<forge::ast::StatesDecl>,
     forge::ast::Program,
 ) {
-    let source = std::fs::read_to_string("examples/quiz_tutor.forge")
+    let source = std::fs::read_to_string("examples/agents/quiz_tutor.forge")
         .expect("could not read quiz_tutor.forge");
     let program = forge::parser::parse(&source).expect("parse failed");
 

@@ -21,9 +21,9 @@ cargo test
 ### Running FORGE Programs
 
 ```bash
-cargo run -- run examples/hello.forge
-cargo run -- check examples/hello.forge
-cargo run -- parse examples/hello.forge
+cargo run -- run examples/basics/hello.forge
+cargo run -- check examples/basics/hello.forge
+cargo run -- parse examples/basics/hello.forge
 ```
 
 ## Making Changes

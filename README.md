@@ -80,16 +80,16 @@ forge --help
 
 ```bash
 # Validate a FORGE program
-forge check examples/hello.forge
+forge check examples/basics/hello.forge
 
 # Run with configured LLM provider
-forge run examples/hello.forge
+forge run examples/basics/hello.forge
 
 # Serve a web app with hot-reload
 forge serve examples/wiki/ --watch
 
 # Build a standalone agent binary
-forge build examples/hello.forge -o bin/hello
+forge build examples/basics/hello.forge -o bin/hello
 
 # Run all tests (no API calls — uses mock provider)
 cargo test
@@ -829,10 +829,10 @@ Three things determine whether this reaches its potential:
 ```bash
 # Try it
 cargo build
-cargo run -- check examples/hello.forge       # semantic validation
-cargo run -- run examples/hello.forge          # execute with LLM
+cargo run -- check examples/basics/hello.forge       # semantic validation
+cargo run -- run examples/basics/hello.forge          # execute with LLM
 cargo run -- serve examples/wiki/ --watch      # web app with hot-reload
-cargo run -- build examples/hello.forge -o bin/hello  # standalone binary
+cargo run -- build examples/basics/hello.forge -o bin/hello  # standalone binary
 cargo test                                     # 883 tests, no API calls
 ```
 

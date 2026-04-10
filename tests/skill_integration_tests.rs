@@ -730,7 +730,7 @@ fn typed_skill_loader_parses_capabilities() {
 
 #[tokio::test]
 async fn skill_finder_example_validates() {
-    let program = parse_file("examples/skill_finder.forge");
+    let program = parse_file("examples/command/skill_finder.forge");
     let filename = "skill_finder.forge";
     let diags = forge::checker::check_all(&program, filename);
     let errs: Vec<_> = diags

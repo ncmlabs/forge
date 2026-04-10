@@ -406,7 +406,8 @@ entry = "main.forge"
 
     #[test]
     fn single_file_virtual_manifest() {
-        let manifest = ProjectManifest::from_single_file(Path::new("examples/hello.forge"), None);
+        let manifest =
+            ProjectManifest::from_single_file(Path::new("examples/basics/hello.forge"), None);
         assert_eq!(manifest.project.name, "hello");
         assert_eq!(manifest.output_name(), "hello");
     }
@@ -414,7 +415,7 @@ entry = "main.forge"
     #[test]
     fn single_file_with_output_override() {
         let manifest = ProjectManifest::from_single_file(
-            Path::new("examples/quiz_tutor.forge"),
+            Path::new("examples/agents/quiz_tutor.forge"),
             Some("forge-tutor"),
         );
         assert_eq!(manifest.project.name, "forge-tutor");
