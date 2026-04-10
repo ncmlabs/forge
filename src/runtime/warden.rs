@@ -105,6 +105,33 @@ pub fn resolve_policy<'a>(
         .map(|p| &p.node)
 }
 
+/// Built-in default policy for contradiction failures.
+/// Paper Section 7.3: nudge → restart (after 2) → escalate (after 4).
+/// Used as a fallback when no explicit `on contradiction:` policy is declared.
+pub fn default_contradiction_policy() -> WardPolicy {
+    WardPolicy {
+        failure_type: Spanned::new(FailureType::Contradiction, Span { start: 0, end: 0 }),
+        response: Spanned::new(WardResponse::Nudge, Span { start: 0, end: 0 }),
+        scope: Spanned::new(WardScope::This, Span { start: 0, end: 0 }),
+        after_clauses: vec![
+            Spanned::new(
+                AfterClause {
+                    count: 2,
+                    response: Spanned::new(WardResponse::Restart, Span { start: 0, end: 0 }),
+                },
+                Span { start: 0, end: 0 },
+            ),
+            Spanned::new(
+                AfterClause {
+                    count: 4,
+                    response: Spanned::new(WardResponse::Escalate, Span { start: 0, end: 0 }),
+                },
+                Span { start: 0, end: 0 },
+            ),
+        ],
+    }
+}
+
 /// Given a policy and the current retry count, determine the effective response
 /// by walking the escalation ladder.
 pub fn effective_response(policy: &WardPolicy, retry_count: u64) -> WardResponse {
@@ -139,13 +166,24 @@ impl Warden {
 
     /// Handle a failure signal from a managed agent.
     /// Returns the action taken, or None if no policy covers this failure type.
+    /// For `Contradiction` failures, falls back to the built-in default policy
+    /// when no explicit `on contradiction:` policy is declared.
     pub fn handle_failure(
         &mut self,
         signal: &FailureSignal,
         agent_overrides: &[Spanned<WardPolicy>],
         timestamp_ms: u64,
     ) -> Option<WardAction> {
-        let policy = resolve_policy(&self.decl, agent_overrides, signal.failure_type)?;
+        // Try explicit policy first; fall back to built-in default for contradictions.
+        let fallback;
+        let policy = match resolve_policy(&self.decl, agent_overrides, signal.failure_type) {
+            Some(p) => p,
+            None if signal.failure_type == FailureType::Contradiction => {
+                fallback = default_contradiction_policy();
+                &fallback
+            }
+            None => return None,
+        };
 
         let retry_count =
             self.retry_tracker
@@ -217,6 +255,7 @@ impl Warden {
             FailureType::Stuck,
             FailureType::Crash,
             FailureType::Hallucination,
+            FailureType::Contradiction,
             FailureType::Budget,
             FailureType::Timeout,
         ] {

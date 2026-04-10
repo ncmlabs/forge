@@ -404,6 +404,14 @@ impl WardedRuntime {
                             };
                             self.handle_signal(fs).await?;
                         }
+                        Some(AgentSignal::Contradiction { agent_name, detail, severity }) => {
+                            let fs = FailureSignal {
+                                agent_name,
+                                failure_type: FailureType::Contradiction,
+                                detail: format!("[{}] {}", severity, detail),
+                            };
+                            self.handle_signal(fs).await?;
+                        }
                         Some(AgentSignal::BudgetExceeded { agent_name, detail }) => {
                             let fs = FailureSignal {
                                 agent_name,

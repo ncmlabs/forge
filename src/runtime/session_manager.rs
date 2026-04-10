@@ -17,8 +17,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Notify};
 use uuid::Uuid;
 
+use crate::runtime::agent::AgentSignal;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::event_bus::{EventPayload, SharedEventBus};
+use crate::runtime::verification::{ContradictionSeverity, VerificationResult};
 use crate::tracer::Tracer;
 
 pub type SessionId = String;
@@ -94,6 +96,17 @@ pub struct SessionProgress {
     pub cost_delta_usd: f32,
 }
 
+/// Lightweight summary of verification contradictions for quick session-level
+/// access without parsing the full AgentResult metadata (issue #205).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContradictionSummary {
+    pub count: usize,
+    pub high_severity_count: usize,
+    pub max_severity: String,
+    pub verification_status: String,
+    pub risk_class: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionState {
     pub id: SessionId,
@@ -109,6 +122,10 @@ pub struct SessionState {
     pub progress_events: Vec<SessionProgress>,
     pub output: Option<ConfidentValue>,
     pub error: Option<String>,
+    /// Contradiction summary from verification (issue #205).
+    /// Persisted for quick resume-time access without parsing full metadata.
+    #[serde(default)]
+    pub contradiction_summary: Option<ContradictionSummary>,
 }
 
 impl SessionState {
@@ -128,6 +145,7 @@ impl SessionState {
             progress_events: Vec::new(),
             output: None,
             error: None,
+            contradiction_summary: None,
         }
     }
 
@@ -176,6 +194,15 @@ pub enum SessionEvent {
     ResumeFailed {
         session_id: SessionId,
         error: String,
+    },
+    /// Emitted when verification detects contradictions in a completed session (issue #205).
+    ContradictionDetected {
+        session_id: SessionId,
+        contradiction_count: usize,
+        high_severity_count: usize,
+        max_severity: String,
+        verification_status: String,
+        risk_class: String,
     },
 }
 
@@ -257,6 +284,8 @@ pub struct SessionManager {
     base_dir: PathBuf,
     tracer: Option<Tracer>,
     event_bus: Arc<Mutex<Option<SharedEventBus>>>,
+    /// Warden signal channel for reporting contradiction failures (issue #205).
+    warden_signal_tx: Arc<Mutex<Option<mpsc::Sender<AgentSignal>>>>,
     polling_cancel: Arc<AtomicBool>,
     inner: Arc<Mutex<SessionManagerInner>>,
     verification_engine: Option<Arc<crate::runtime::verification_engine::VerificationEngine>>,
@@ -270,6 +299,7 @@ impl SessionManager {
             base_dir,
             tracer: None,
             event_bus: Arc::new(Mutex::new(None)),
+            warden_signal_tx: Arc::new(Mutex::new(None)),
             polling_cancel: Arc::new(AtomicBool::new(false)),
             inner: Arc::new(Mutex::new(SessionManagerInner {
                 sessions: HashMap::new(),
@@ -301,6 +331,11 @@ impl SessionManager {
     /// Set the event bus on an already-constructed (possibly Arc'd) manager.
     pub fn set_event_bus(&self, bus: SharedEventBus) {
         *self.event_bus.lock().unwrap() = Some(bus);
+    }
+
+    /// Set the warden signal channel for reporting contradiction failures (issue #205).
+    pub fn set_warden_signal(&self, tx: mpsc::Sender<AgentSignal>) {
+        *self.warden_signal_tx.lock().unwrap() = Some(tx);
     }
 
     /// Start polling active sessions at the given interval, publishing
@@ -940,6 +975,29 @@ impl SessionManager {
         self.transition_status(session_id, SessionStatus::Completing);
         let result = self.inject_cost(result, session_id);
         let result = self.run_verification(result, session_id).await;
+
+        // Extract verification result for contradiction handling (issue #205).
+        let verification_result = Self::extract_verification_result(&result);
+        let contradiction_summary = verification_result.as_ref().and_then(|vr| {
+            if vr.has_contradictions() {
+                let max_severity = vr
+                    .contradictions
+                    .iter()
+                    .map(|c| c.severity)
+                    .max()
+                    .unwrap_or(ContradictionSeverity::Low);
+                Some(ContradictionSummary {
+                    count: vr.contradictions.len(),
+                    high_severity_count: vr.high_severity_contradictions().len(),
+                    max_severity: max_severity.as_str().to_string(),
+                    verification_status: vr.status.as_str().to_string(),
+                    risk_class: vr.risk_class.as_str().to_string(),
+                })
+            } else {
+                None
+            }
+        });
+
         let (snapshot, notify) = {
             let mut inner = self.inner.lock().unwrap();
             let Some(entry) = inner.sessions.get_mut(session_id) else {
@@ -947,6 +1005,7 @@ impl SessionManager {
             };
             entry.state.status = SessionStatus::Done;
             entry.state.output = Some(result.clone());
+            entry.state.contradiction_summary = contradiction_summary.clone();
             entry.state.updated_at = Utc::now();
             let notify = entry.live.as_ref().map(|live| live.notify.clone());
             entry.live = None;
@@ -963,6 +1022,32 @@ impl SessionManager {
             duration_secs,
             final_status: SessionStatus::Done,
         });
+
+        // Emit contradiction event and signal warden if contradictions found (issue #205).
+        if let Some(ref summary) = contradiction_summary {
+            self.dispatch_event(SessionEvent::ContradictionDetected {
+                session_id: session_id.to_string(),
+                contradiction_count: summary.count,
+                high_severity_count: summary.high_severity_count,
+                max_severity: summary.max_severity.clone(),
+                verification_status: summary.verification_status.clone(),
+                risk_class: summary.risk_class.clone(),
+            });
+
+            // Signal warden for contradiction handling.
+            // Use the agent name from config (not session UUID) so the warden
+            // can match it to its managed agent list.
+            let agent_name = snapshot.config.agent.clone();
+            self.send_warden_signal(AgentSignal::Contradiction {
+                agent_name,
+                detail: format!(
+                    "{} contradiction(s) detected ({} high severity)",
+                    summary.count, summary.high_severity_count
+                ),
+                severity: summary.max_severity.clone(),
+            });
+        }
+
         self.dispatch_event(SessionEvent::StateChanged {
             session_id: session_id.to_string(),
             status: SessionStatus::Done,
@@ -1091,6 +1176,41 @@ impl SessionManager {
         crate::runtime::verification_engine::inject_resolved_verification(result, vr)
     }
 
+    /// Extract a VerificationResult from the metadata.verification field of
+    /// a completed AgentResult ConfidentValue (issue #205).
+    fn extract_verification_result(result: &ConfidentValue) -> Option<VerificationResult> {
+        let fields = match &result.value {
+            Value::Record(f) => f,
+            _ => return None,
+        };
+        let meta = match fields.get("metadata") {
+            Some(cv) => match &cv.value {
+                Value::Record(m) => m,
+                _ => return None,
+            },
+            None => return None,
+        };
+        meta.get("verification")
+            .and_then(|cv| VerificationResult::from_value(&cv.value))
+    }
+
+    /// Send a signal to the warden (non-blocking, drop-on-full consistent with
+    /// event bus design; Principle V).
+    fn send_warden_signal(&self, signal: AgentSignal) {
+        let tx = self.warden_signal_tx.lock().unwrap().clone();
+        if let Some(tx) = tx {
+            if tx.try_send(signal).is_err() {
+                if let Some(ref t) = self.tracer {
+                    t.event_delivery_failed(
+                        "session.contradiction",
+                        "warden_signal",
+                        "full_or_closed",
+                    );
+                }
+            }
+        }
+    }
+
     fn state_path(&self, session_id: &str) -> PathBuf {
         self.base_dir.join(format!("{}.json", session_id))
     }
@@ -1209,7 +1329,8 @@ fn session_id_of(event: &SessionEvent) -> Option<&str> {
         | SessionEvent::Failed { session_id, .. }
         | SessionEvent::Cancelled { session_id }
         | SessionEvent::ResumeAttempted { session_id }
-        | SessionEvent::ResumeFailed { session_id, .. } => Some(session_id.as_str()),
+        | SessionEvent::ResumeFailed { session_id, .. }
+        | SessionEvent::ContradictionDetected { session_id, .. } => Some(session_id.as_str()),
     }
 }
 
@@ -1273,6 +1394,34 @@ fn session_event_to_payload(event: &SessionEvent) -> Option<EventPayload> {
             Some(EventPayload {
                 event_name: "session.cancelled".to_string(),
                 args: vec![text(session_id)],
+                source_agent: "session_manager".to_string(),
+                fields,
+            })
+        }
+        SessionEvent::ContradictionDetected {
+            session_id,
+            contradiction_count,
+            high_severity_count,
+            max_severity,
+            verification_status,
+            risk_class,
+        } => {
+            let mut fields = HashMap::new();
+            fields.insert("session_id".to_string(), text(session_id));
+            fields.insert(
+                "contradiction_count".to_string(),
+                num(*contradiction_count as f64),
+            );
+            fields.insert(
+                "high_severity_count".to_string(),
+                num(*high_severity_count as f64),
+            );
+            fields.insert("max_severity".to_string(), text(max_severity));
+            fields.insert("verification_status".to_string(), text(verification_status));
+            fields.insert("risk_class".to_string(), text(risk_class));
+            Some(EventPayload {
+                event_name: "session.contradiction".to_string(),
+                args: vec![num(*contradiction_count as f64)],
                 source_agent: "session_manager".to_string(),
                 fields,
             })

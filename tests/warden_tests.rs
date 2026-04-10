@@ -295,6 +295,7 @@ fn checker_full_coverage_no_warnings() {
   on stuck: nudge, self
   on crash: restart, all
   on hallucination: replace, downstream
+  on contradiction: nudge, self
   on budget: escalate, self
   on timeout: restart, self
 

@@ -17,6 +17,7 @@ use crate::runtime::session_manager::{
     SessionConfig, SessionEvent, SessionListener, SharedSessionManager,
 };
 use crate::runtime::timer_engine::TimerEngine;
+use crate::runtime::verification::{RiskClass, VerificationResult, VerificationStatus};
 use crate::tracer::{LLMResponseInfo, Tracer};
 // ── Errors ────────────────────────────────────────────────────────────────────
 
@@ -617,6 +618,70 @@ impl TaskExecutor {
         }
 
         Ok(result)
+    }
+
+    /// Check if a session result passes the verification gate for the given risk level.
+    /// Returns Ok(()) if the action is allowed, or an error describing why it's blocked.
+    /// Backward-compatible: allows everything when no verification engine is configured
+    /// or when verification hasn't run yet (Pending status). Issue #205.
+    pub fn check_verification_gate(
+        result: &ConfidentValue,
+        max_risk: RiskClass,
+    ) -> Result<(), RuntimeError> {
+        let vr = match Self::extract_verification_from_result(result) {
+            Some(vr) => vr,
+            None => return Ok(()), // No verification metadata — allow (backward compat)
+        };
+
+        match vr.status {
+            VerificationStatus::Pending => Ok(()), // Not yet checked — allow
+            VerificationStatus::Verified => {
+                if vr.is_actionable(max_risk) {
+                    Ok(())
+                } else {
+                    Err(RuntimeError::FlowError(format!(
+                        "verification gate: result verified but risk class {:?} exceeds allowed {:?}",
+                        vr.risk_class, max_risk
+                    )))
+                }
+            }
+            VerificationStatus::Contradicted => Err(RuntimeError::FlowError(format!(
+                "verification gate: {} contradiction(s) detected — blocking {:?} action",
+                vr.contradictions.len(),
+                max_risk
+            ))),
+            VerificationStatus::Insufficient => {
+                if max_risk >= RiskClass::ExternalSideEffect {
+                    Err(RuntimeError::FlowError(
+                        "verification gate: insufficient evidence for external side-effect action"
+                            .to_string(),
+                    ))
+                } else {
+                    Ok(()) // Allow lower-risk actions with insufficient evidence
+                }
+            }
+            VerificationStatus::Error => Err(RuntimeError::FlowError(
+                "verification gate: verification engine error — cannot authorize action"
+                    .to_string(),
+            )),
+        }
+    }
+
+    /// Extract a VerificationResult from an AgentResult's metadata.verification field.
+    fn extract_verification_from_result(result: &ConfidentValue) -> Option<VerificationResult> {
+        let fields = match &result.value {
+            Value::Record(f) => f,
+            _ => return None,
+        };
+        let meta = match fields.get("metadata") {
+            Some(cv) => match &cv.value {
+                Value::Record(m) => m,
+                _ => return None,
+            },
+            None => return None,
+        };
+        meta.get("verification")
+            .and_then(|cv| VerificationResult::from_value(&cv.value))
     }
 
     fn coerce_session_result_to_text(&self, result: ConfidentValue) -> ConfidentValue {

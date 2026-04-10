@@ -109,6 +109,7 @@ fn check_failure_type_coverage(warden: &WardenDecl, file: &str, diagnostics: &mu
         FailureType::Stuck,
         FailureType::Crash,
         FailureType::Hallucination,
+        FailureType::Contradiction,
         FailureType::Budget,
         FailureType::Timeout,
     ];
@@ -126,6 +127,7 @@ fn check_failure_type_coverage(warden: &WardenDecl, file: &str, diagnostics: &mu
             FailureType::Stuck => "stuck",
             FailureType::Crash => "crash",
             FailureType::Hallucination => "hallucination",
+            FailureType::Contradiction => "contradiction",
             FailureType::Budget => "budget",
             FailureType::Timeout => "timeout",
         })
