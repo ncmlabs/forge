@@ -18,14 +18,14 @@ max_total_tokens = 500000
 [providers.claude-haiku]
 type     = "anthropic"
 model    = "claude-haiku-4-5-20251001"
-api_key  = "REDACTED_USE_ENV_VAR"
+api_key  = "${ANTHROPIC_API_KEY}"
 fallback = "qwen-coder"
 
 # ── Claude Sonnet (higher quality for complex sections) ──────────────────────
 [providers.claude-sonnet]
 type    = "anthropic"
 model   = "claude-sonnet-4-5-20250514"
-api_key = "REDACTED_USE_ENV_VAR"
+api_key = "${ANTHROPIC_API_KEY}"
 
 # ── Ollama fallback ──────────────────────────────────────────────────────────
 [providers.qwen-coder]

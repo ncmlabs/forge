@@ -1,0 +1,11 @@
+[project]
+name = "slack-responder"
+version = "0.1.0"
+description = "Autonomous Slack @mention responder using Slack + Ollama skills"
+
+[build]
+entry = "main.forge"
+
+[skills]
+slack = { path = "../../../skills/slack" }
+ollama = { path = "../../../skills/ollama" }
