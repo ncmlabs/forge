@@ -27,6 +27,7 @@ pub enum ForgeType {
     Html,
     Embedding,
     Duration,
+    AgentResult,
     Named(String),
     Array(Box<ForgeType>, Option<usize>),
 }
@@ -53,6 +54,7 @@ impl std::fmt::Display for ForgeType {
             ForgeType::Html => write!(f, "Html"),
             ForgeType::Embedding => write!(f, "Embedding"),
             ForgeType::Duration => write!(f, "Duration"),
+            ForgeType::AgentResult => write!(f, "AgentResult"),
             ForgeType::Named(s) => write!(f, "{s}"),
             ForgeType::Array(inner, Some(n)) => write!(f, "{inner}[{n}]"),
             ForgeType::Array(inner, None) => write!(f, "{inner}[]"),
@@ -113,6 +115,7 @@ pub fn from_type_name(tn: &TypeName) -> ForgeType {
         TypeName::Response => ForgeType::Response,
         TypeName::Headers => ForgeType::Headers,
         TypeName::Html => ForgeType::Html,
+        TypeName::AgentResult => ForgeType::AgentResult,
         TypeName::Custom(s) => ForgeType::Named(s.clone()),
         TypeName::Array(inner, size) => ForgeType::Array(Box::new(from_type_name(inner)), *size),
     }
@@ -136,11 +139,35 @@ pub fn is_compatible(from: &ForgeType, to: &ForgeType) -> bool {
     if *from == ForgeType::Html && *to == ForgeType::Text {
         return true;
     }
+    // AgentResult is compatible with Text (for >> composition into text-consuming tasks)
+    if *from == ForgeType::AgentResult && *to == ForgeType::Text {
+        return true;
+    }
     // Arrays: compatible if element types match (ignore size)
     if let (ForgeType::Array(a, _), ForgeType::Array(b, _)) = (from, to) {
         return is_compatible(a, b);
     }
     false
+}
+
+// ── AgentResult field schema ────────────────────────────────
+
+/// Returns the known field names and their types for the built-in AgentResult type.
+pub fn agent_result_fields() -> Vec<(&'static str, ForgeType)> {
+    vec![
+        ("plan", ForgeType::Text),
+        ("patch_summary", ForgeType::Text),
+        (
+            "files_changed",
+            ForgeType::Array(Box::new(ForgeType::Text), None),
+        ),
+        ("tests_run", ForgeType::Number),
+        ("tests_passed", ForgeType::Number),
+        ("cost_usd", ForgeType::Number),
+        ("confidence", ForgeType::Number),
+        ("approval_needed", ForgeType::Bool),
+        ("metadata", ForgeType::Named("Map".to_string())),
+    ]
 }
 
 #[cfg(test)]
@@ -214,5 +241,54 @@ mod tests {
             ForgeType::Array(Box::new(ForgeType::Number), None).to_string(),
             "Number[]"
         );
+    }
+
+    // ── AgentResult tests ──────────────────────────────────────
+
+    #[test]
+    fn agent_result_display() {
+        assert_eq!(ForgeType::AgentResult.to_string(), "AgentResult");
+    }
+
+    #[test]
+    fn agent_result_from_type_name() {
+        assert_eq!(
+            from_type_name(&TypeName::AgentResult),
+            ForgeType::AgentResult
+        );
+    }
+
+    #[test]
+    fn agent_result_compatible_with_self() {
+        assert!(is_compatible(
+            &ForgeType::AgentResult,
+            &ForgeType::AgentResult
+        ));
+    }
+
+    #[test]
+    fn agent_result_compatible_with_text() {
+        assert!(is_compatible(&ForgeType::AgentResult, &ForgeType::Text));
+    }
+
+    #[test]
+    fn agent_result_fields_has_nine_entries() {
+        let fields = agent_result_fields();
+        assert_eq!(fields.len(), 9);
+    }
+
+    #[test]
+    fn agent_result_fields_contains_expected_names() {
+        let fields = agent_result_fields();
+        let names: Vec<&str> = fields.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"plan"));
+        assert!(names.contains(&"patch_summary"));
+        assert!(names.contains(&"files_changed"));
+        assert!(names.contains(&"tests_run"));
+        assert!(names.contains(&"tests_passed"));
+        assert!(names.contains(&"cost_usd"));
+        assert!(names.contains(&"confidence"));
+        assert!(names.contains(&"approval_needed"));
+        assert!(names.contains(&"metadata"));
     }
 }

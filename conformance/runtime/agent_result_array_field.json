@@ -1,0 +1,7 @@
+{
+  "name": "agent_result_array_field",
+  "category": "runtime",
+  "description": "AgentResult files_changed array field with length access",
+  "input": "fn main\n  r = AgentResult(files_changed: [\"src/main.rs\", \"src/lib.rs\"])\n  say \"{r.files_changed.len}\"\n",
+  "expected": { "outcome": "run_ok" }
+}

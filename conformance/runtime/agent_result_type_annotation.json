@@ -1,0 +1,7 @@
+{
+  "name": "agent_result_type_annotation",
+  "category": "runtime",
+  "description": "AgentResult used as return type annotation in a pure function",
+  "input": "pure make_result\n  needs plan_text: Text\n  gives AgentResult\n  do\n    give AgentResult(plan: plan_text, confidence: 0.9)\n\nfn main\n  r = make_result(\"deploy fix\")\n  say r.plan\n",
+  "expected": { "outcome": "run_ok" }
+}

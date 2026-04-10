@@ -149,6 +149,7 @@ fn build_type_name(pair: Pair) -> anyhow::Result<Spanned<TypeName>> {
             "Response" => TypeName::Response,
             "Headers" => TypeName::Headers,
             "Html" => TypeName::Html,
+            "AgentResult" => TypeName::AgentResult,
             other => TypeName::Custom(other.to_string()),
         },
         Rule::ident => TypeName::Custom(first.as_str().to_string()),
@@ -361,6 +362,7 @@ fn build_atom(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
                 "Response" => TypeName::Response,
                 "Headers" => TypeName::Headers,
                 "Html" => TypeName::Html,
+                "AgentResult" => TypeName::AgentResult,
                 other => TypeName::Custom(other.to_string()),
             };
             Ok(Spanned::new(
@@ -453,6 +455,7 @@ fn build_constructor_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         "Response" => TypeName::Response,
         "Headers" => TypeName::Headers,
         "Html" => TypeName::Html,
+        "AgentResult" => TypeName::AgentResult,
         other => TypeName::Custom(other.to_string()),
     };
     let args = if let Some(arg_list) = inner.next() {

@@ -2037,9 +2037,15 @@ impl TaskExecutor {
                     }
                 }
 
-                Expr::TypeAccess(_type_name, variant) => Ok(ConfidentValue::deterministic(
-                    Value::Text(variant.node.clone()),
-                )),
+                Expr::TypeAccess(type_name, variant) => {
+                    if matches!(type_name.node, TypeName::AgentResult) && variant.node == "default"
+                    {
+                        return Ok(ConfidentValue::default_agent_result());
+                    }
+                    Ok(ConfidentValue::deterministic(Value::Text(
+                        variant.node.clone(),
+                    )))
+                }
 
                 Expr::GlobAccess(inner) => self.eval_expr(inner, env).await,
 
@@ -2184,6 +2190,26 @@ impl TaskExecutor {
                             .map(|l| l.node.clone())
                             .unwrap_or_else(|| format!("_{}", i));
                         fields.insert(key, val);
+                    }
+                    // AgentResult: merge with defaults and sync confidence
+                    if matches!(ctor.type_name.node, TypeName::AgentResult) {
+                        let mut defaults = ConfidentValue::default_agent_result_fields();
+                        for (k, v) in fields {
+                            defaults.insert(k, v);
+                        }
+                        let wrapper_conf = defaults
+                            .get("confidence")
+                            .and_then(|cv| match &cv.value {
+                                Value::Number(n) => Some(*n as f32),
+                                _ => None,
+                            })
+                            .unwrap_or(0.0);
+                        let conf = wrapper_conf.clamp(0.0, 1.0);
+                        return Ok(ConfidentValue {
+                            value: Value::Record(defaults),
+                            confidence: conf,
+                            source: crate::types::ConfidenceSource::Derived(conf),
+                        });
                     }
                     Ok(ConfidentValue::deterministic(Value::Record(fields)))
                 }
