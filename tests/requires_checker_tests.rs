@@ -184,3 +184,18 @@ agent room
     assert!(warns[0].message.contains("reason"));
     assert!(warns[0].message.contains("LLM"));
 }
+
+#[test]
+fn session_in_requires_is_warning() {
+    let source = "\
+agent room
+  on review()
+    requires session \"code-review\" prompt \"check this\"
+    say \"ok\"
+";
+    let diags = check(source);
+    let warns = warnings(&diags);
+    assert_eq!(warns.len(), 1);
+    assert!(warns[0].message.contains("session"));
+    assert!(warns[0].message.contains("external agent"));
+}

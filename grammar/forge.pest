@@ -55,7 +55,8 @@ keyword = @{
     | "requires" | "emit" | "forward" | "subscribe" | "transition"
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
     | "match" | "recall" | "learn" | "spawn" | "find" | "retire"
-    | "exec" | "exportable" | "import" | "from" | "as" | "command" | "background" )
+    | "exec" | "exportable" | "import" | "from" | "as" | "command" | "background"
+    | "session" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -562,6 +563,7 @@ postfix_op   = {
 pipe_term = {
     command_method_expr
   | command_expr
+  | session_expr
   | exec_expr
   | find_expr
   | reason_expr
@@ -593,6 +595,25 @@ command_modifier = {
 command_expr = { "command" ~ _s ~ command_arg ~ (_s ~ command_modifier)* }
 command_method_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 command_method_expr = { "command" ~ "." ~ command_method_name ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
+session_expr = { "session" ~ _s ~ string_arg ~ (_s ~ session_modifier)* }
+session_modifier = _{
+    session_agent_modifier
+  | session_prompt_modifier
+  | session_tools_modifier
+  | session_timeout_modifier
+  | session_budget_modifier
+  | session_gives_modifier
+  | session_hook_modifier
+}
+session_agent_modifier = { "agent" ~ _s ~ string_arg }
+session_prompt_modifier = { "prompt" ~ _s ~ string_arg }
+session_tools_modifier = { "tools" ~ _s ~ expr }
+session_timeout_modifier = { "timeout" ~ _s ~ duration }
+session_budget_modifier = { "budget" ~ _s ~ expr }
+session_gives_modifier = { "gives" ~ _s ~ "AgentResult" }
+session_hook_modifier = { "on" ~ _s ~ session_hook_kind ~ _s_opt ~ "->" ~ _s_opt ~ session_emit_hook }
+session_hook_kind = { "progress" | "complete" }
+session_emit_hook = { "emit" ~ _s ~ ident ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
 env_map      = { "{" ~ _s_opt ~ env_entry ~ (_s_opt ~ "," ~ _s_opt ~ env_entry)* ~ _s_opt ~ "}" }
 env_entry    = { ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 reason_expr   = { "reason" ~ _s ~ string_arg }

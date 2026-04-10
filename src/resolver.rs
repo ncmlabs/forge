@@ -579,6 +579,13 @@ fn infer_type(
         Expr::Reason(_) => Some(ForgeType::Text),
         Expr::Exec(_) => Some(ForgeType::Text),
         Expr::Command(_) | Expr::CommandMethod(_, _) => Some(ForgeType::Text),
+        Expr::Session(session) => {
+            if session.gives.is_some() {
+                Some(ForgeType::AgentResult)
+            } else {
+                Some(ForgeType::Text)
+            }
+        }
         Expr::Classify(_) => Some(ForgeType::Classification),
         Expr::Search(_) => Some(ForgeType::Results),
         Expr::Paren(inner) => infer_type(inner, env, registry),
@@ -626,6 +633,7 @@ fn infer_input_type(
         Expr::Reason(_) => Some(ForgeType::Text),
         Expr::Exec(_) => Some(ForgeType::Text),
         Expr::Command(_) | Expr::CommandMethod(_, _) => Some(ForgeType::Text),
+        Expr::Session(_) => Some(ForgeType::Text),
         Expr::Classify(_) => Some(ForgeType::Text),
         Expr::Search(_) => Some(ForgeType::Text),
         Expr::MethodCall(inner, method, _) => {
@@ -719,5 +727,39 @@ mod tests {
         assert!(registry.resolve("data.embed").is_some());
         assert!(registry.resolve("data.search").is_some());
         assert!(registry.resolve("magic.wand").is_none());
+    }
+
+    #[test]
+    fn infer_session_type_defaults_to_text() {
+        let program = parse("task t\n  gives Text\n  do\n    result = session \"review\" prompt \"check\"\n    give result\n").unwrap();
+        let expr = match &program.items[0].node {
+            TopLevel::Task(task) => match &task.body.node {
+                crate::ast::TaskBody::Do(stmts) => match &stmts[0].node {
+                    Stmt::Bind(_, expr) => expr,
+                    other => panic!("expected bind, got {:?}", other),
+                },
+                _ => panic!("expected do block"),
+            },
+            _ => panic!("expected task"),
+        };
+        let ty = infer_type(expr, &HashMap::new(), &CapabilityRegistry::builtin());
+        assert_eq!(ty, Some(ForgeType::Text));
+    }
+
+    #[test]
+    fn infer_session_type_with_gives_is_agent_result() {
+        let program = parse("task t\n  gives Text\n  do\n    result = session \"review\" prompt \"check\" gives AgentResult\n    give result\n").unwrap();
+        let expr = match &program.items[0].node {
+            TopLevel::Task(task) => match &task.body.node {
+                crate::ast::TaskBody::Do(stmts) => match &stmts[0].node {
+                    Stmt::Bind(_, expr) => expr,
+                    other => panic!("expected bind, got {:?}", other),
+                },
+                _ => panic!("expected do block"),
+            },
+            _ => panic!("expected task"),
+        };
+        let ty = infer_type(expr, &HashMap::new(), &CapabilityRegistry::builtin());
+        assert_eq!(ty, Some(ForgeType::AgentResult));
     }
 }

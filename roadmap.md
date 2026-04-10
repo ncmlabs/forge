@@ -71,7 +71,7 @@ Everything in this document exists to reach that moment.
 | Milestone | Description | Issues | Status |
 |-----------|-------------|--------|--------|
 | P2.M1 — Command | `command` primitive: grammar, sync execution, background mode | #160 ✅ #161 ✅ #162 ✅ | Done |
-| P2.M2 — Session Core | `session` primitive: grammar and lifecycle manager | #189, #190 | Open |
+| P2.M2 — Session Core | `session` primitive: grammar and lifecycle manager | #189 ✅, #190 | In Progress |
 | P2.M3 — AgentResult + Contract | Typed result contract plus claims/evidence/verification model | #193, #203 | Open |
 | P2.M4 — Session Adapters + Events | Agent adapters, polling, and event integration | #191, #192 | Open |
 | P2.M5 — Verification + Contradictions | Verification engine and contradiction/warden integration | #204, #205 | Open |
@@ -657,7 +657,7 @@ Worktree isolation for safe agent execution:
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| #189 | session primitive — grammar, AST, and parser | Open |
+| #189 | session primitive — grammar, AST, and parser | Done |
 | #190 | session runtime — lifecycle manager | Open |
 
 ### P2.M3: AgentResult + Reliability Contract
@@ -933,7 +933,7 @@ command (#160-162) ✅
 
 ```
 P2.M1  Command         ████████████████████  3/3  (100%)  DONE
-P2.M2  Session Core    ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M2  Session Core    ██████████░░░░░░░░░░  1/2  ( 50%)
 P2.M3  Result+Contract ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 P2.M4  Adapters+Events ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 P2.M5  Verify+Contra   ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
@@ -946,7 +946,7 @@ P2.M11 Knowledge       ░░░░░░░░░░░░░░░░░░░
 P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
 P2.M13 Polish          ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 ─────────────────────────────────────────────────────────
-Phase 2 Overall         ██░░░░░░░░░░░░░░░░░░  4/37 ( 11%)
+Phase 2 Overall         ████░░░░░░░░░░░░░░░░  7/37 ( 19%)
 ```
 
 ---
@@ -1318,9 +1318,9 @@ Phase 1 (Layer 1): Build FORGE — **SHIPPED v0.1.0 on 2026-04-09**
   ⬜ WASM compilation (Cranelift backend) — deferred, not blocking Phase 2
   Goal: tic-tac-toe system runs end-to-end ✅
 
-Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (6/37 issues done)**
+Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (7/37 issues done)**
   ✅ P2.M1: `command` primitive — grammar, sync, background (#160-#162)
-  ⬜ P2.M2: `session` core — grammar and lifecycle manager (#189-#190)
+  🚧 P2.M2: `session` core — grammar done, runtime pending (#189 ✅, #190)
   ⬜ P2.M3: `AgentResult` + reliability contract — claims, evidence, verification (#193, #203)
   ⬜ P2.M4: session adapters + events — Claude/Codex/generic and event hooks (#191-#192)
   ⬜ P2.M5: verification + contradictions — trusted gating before repo mutations (#204-#205)
@@ -1371,5 +1371,5 @@ Everything in this document exists to reach that moment.
 
 *FORGE — Making It Real · Master Roadmap v3.0*
 *Layers: Substrate → Toolkit → Factory → Self-improvement*
-*Layer 1: v0.1.0 shipped (32/36 tracks, 89%) · Phase 2: 3/37 issues (8%) · Next: session core → AgentResult/reliability contract → verification*
+*Layer 1: v0.1.0 shipped (32/36 tracks, 89%) · Phase 2: 7/37 issues (19%) · Next: session runtime → AgentResult/reliability contract → verification*
 *Last updated: 2026-04-10*

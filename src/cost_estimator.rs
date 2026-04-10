@@ -83,6 +83,17 @@ impl CostWalker {
         let cost = (tokens_in as f32 * self.cost_per_1k_in
             + tokens_out as f32 * self.cost_per_1k_out)
             / 1000.0;
+        self.add_explicit_cost(kind, location, tokens_in, tokens_out, cost);
+    }
+
+    fn add_explicit_cost(
+        &mut self,
+        kind: &'static str,
+        location: String,
+        tokens_in: u32,
+        tokens_out: u32,
+        cost: f32,
+    ) {
         self.operations.push(OpEstimate {
             kind,
             location,
@@ -211,6 +222,40 @@ impl CostWalker {
             Expr::Command(_) | Expr::CommandMethod(_, _) => {
                 // command has zero token cost (direct CLI, no LLM)
             }
+            Expr::Session(session) => {
+                self.walk_expr(&session.name, context, multiplier);
+                if let Some(ref agent) = session.agent {
+                    self.walk_expr(agent, context, multiplier);
+                }
+                if let Some(ref prompt) = session.prompt {
+                    self.walk_expr(prompt, context, multiplier);
+                }
+                if let Some(ref tools) = session.tools {
+                    self.walk_expr(tools, context, multiplier);
+                }
+                if let Some(ref budget) = session.budget {
+                    self.walk_expr(budget, context, multiplier);
+                    if let Expr::NumberLit(amount) = &budget.node {
+                        self.add_explicit_cost(
+                            "session",
+                            context.to_string(),
+                            0,
+                            0,
+                            *amount as f32 * multiplier as f32,
+                        );
+                    }
+                }
+                if let Some(ref hook) = session.on_progress {
+                    for arg in &hook.node.args {
+                        self.walk_expr(&arg.node.value, context, multiplier);
+                    }
+                }
+                if let Some(ref hook) = session.on_complete {
+                    for arg in &hook.node.args {
+                        self.walk_expr(&arg.node.value, context, multiplier);
+                    }
+                }
+            }
             Expr::TryOr(a, b) => {
                 self.walk_expr(a, context, multiplier);
                 self.walk_expr(b, context, multiplier);
@@ -316,5 +361,41 @@ pub fn estimate(program: &Program, config: &ForgeConfig) -> CostEstimate {
         total_tokens_in: total_in,
         total_tokens_out: total_out,
         total_cost_usd: total_cost,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::ForgeConfig;
+    use crate::parser::parse;
+
+    #[test]
+    fn session_budget_literal_adds_explicit_cost() {
+        let program =
+            parse("task t\n  gives Text\n  do\n    result = session \"review\" prompt \"check\" budget 2.5\n    give result\n")
+                .unwrap();
+        let estimate =
+            crate::cost_estimator::estimate(&program, &ForgeConfig::default_mock_config());
+        assert!(
+            estimate.operations.iter().any(
+                |op| op.kind == "session" && (op.estimated_cost_usd - 2.5).abs() < f32::EPSILON
+            ),
+            "expected explicit session budget cost, got {:?}",
+            estimate.operations
+        );
+    }
+
+    #[test]
+    fn session_without_budget_does_not_invent_cost() {
+        let program =
+            parse("task t\n  gives Text\n  do\n    result = session \"review\" prompt \"check\"\n    give result\n")
+                .unwrap();
+        let estimate =
+            crate::cost_estimator::estimate(&program, &ForgeConfig::default_mock_config());
+        assert!(
+            estimate.operations.iter().all(|op| op.kind != "session"),
+            "session without explicit budget should not create a synthetic cost: {:?}",
+            estimate.operations
+        );
     }
 }
