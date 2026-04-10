@@ -76,7 +76,7 @@ Everything in this document exists to reach that moment.
 | P2.M4 — Session Adapters + Events | Agent adapters, polling, and event integration | #191, #192 | Open |
 | P2.M5 — Verification + Contradictions | Verification engine and contradiction/warden integration | #204, #205 | Open |
 | P2.M6 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 | Open |
-| P2.M7 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research | #163, #164, #165 | Open |
+| P2.M7 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research | #163 ✅ #164 #165 | In Progress |
 | P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176-#179 | Open |
 | P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180-#182 | Open |
 | P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Open |
@@ -690,7 +690,7 @@ Worktree isolation for safe agent execution:
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| #163 | Pluggable skill architecture — project-level declarations | Open |
+| #163 | Pluggable skill architecture — project-level declarations | Done |
 | #164 | Skill capability type system — rich signatures | Open |
 | #165 | Explore agent-to-CLI delegation patterns (Claude Code, Codex) | Open |
 
@@ -937,7 +937,7 @@ P2.M3  Result+Contract ░░░░░░░░░░░░░░░░░░░
 P2.M4  Adapters+Events ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 P2.M5  Verify+Contra   ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 P2.M6  Sandbox         ░░░░░░░░░░░░░░░░░░░░  0/1  (  0%)
-P2.M7  Skills          ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
+P2.M7  Skills          ███████░░░░░░░░░░░░░  1/3  ( 33%)
 P2.M8  CLI Skills      ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
 P2.M9  Orchestration   ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
 P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
@@ -945,7 +945,7 @@ P2.M11 Knowledge       ░░░░░░░░░░░░░░░░░░░
 P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
 P2.M13 Polish          ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 ─────────────────────────────────────────────────────────
-Phase 2 Overall         ██░░░░░░░░░░░░░░░░░░  3/37 (  8%)
+Phase 2 Overall         ██░░░░░░░░░░░░░░░░░░  4/37 ( 11%)
 ```
 
 ---
@@ -1317,14 +1317,14 @@ Phase 1 (Layer 1): Build FORGE — **SHIPPED v0.1.0 on 2026-04-09**
   ⬜ WASM compilation (Cranelift backend) — deferred, not blocking Phase 2
   Goal: tic-tac-toe system runs end-to-end ✅
 
-Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (3/37 issues done)**
+Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (4/37 issues done)**
   ✅ P2.M1: `command` primitive — grammar, sync, background (#160-#162)
   ⬜ P2.M2: `session` core — grammar and lifecycle manager (#189-#190)
   ⬜ P2.M3: `AgentResult` + reliability contract — claims, evidence, verification (#193, #203)
   ⬜ P2.M4: session adapters + events — Claude/Codex/generic and event hooks (#191-#192)
   ⬜ P2.M5: verification + contradictions — trusted gating before repo mutations (#204-#205)
   ⬜ P2.M6: `sandbox` — worktree isolation for safe execution (#194)
-  ⬜ P2.M7: Skills foundation — pluggable architecture, rich types (#163-#165)
+  ◐ P2.M7: Skills foundation — pluggable architecture, rich types (#163 ✅, #164-#165 open)
   ⬜ P2.M8: CLI skills — GitHub, Slack, Claude Code, Codex/Ollama (#176-#179)
   ⬜ P2.M9: Orchestration — Slack Monitor, Triager, Approval gate (#180-#182)
   ⬜ P2.M10: Dev system — ProjectAgent, Executor, two-project proof (#183-#185)
