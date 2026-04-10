@@ -12,6 +12,7 @@ use crate::llm::{CompletionRequest, ToolDefinition};
 use crate::runtime::confidence::ConfidentValue;
 use crate::runtime::skill::{LoadedSkill, SkillError};
 use crate::runtime::skill_registry::SharedSkillRegistry;
+use crate::tracer::LLMResponseInfo;
 use crate::tracer::Tracer;
 
 /// Executes skills by running an agentic loop:
@@ -139,6 +140,10 @@ impl SkillExecutor {
         user: &str,
         default_confidence: &f32,
     ) -> Result<ConfidentValue, SkillError> {
+        if let Some(ref tracer) = self.tracer {
+            tracer.llm_request("skill", user);
+        }
+
         let request = CompletionRequest::simple(user).with_system(system.to_string());
         let response = self
             .providers
@@ -147,6 +152,20 @@ impl SkillExecutor {
             .map_err(|e| SkillError::ProviderError(e.to_string()))?;
 
         let confidence = response.estimate_confidence().min(*default_confidence);
+
+        if let Some(ref tracer) = self.tracer {
+            tracer.llm_response(&LLMResponseInfo {
+                operation: "skill",
+                provider: &response.provider_name,
+                model: &response.model_used,
+                tokens_in: response.tokens_in,
+                tokens_out: response.tokens_out,
+                cost_usd: response.cost_usd,
+                confidence,
+                agent_name: None,
+            });
+        }
+
         Ok(ConfidentValue::from_skill(
             crate::runtime::confidence::Value::Text(response.content),
             confidence,
@@ -163,6 +182,10 @@ impl SkillExecutor {
         let mut prompt = initial_prompt.to_string();
 
         for turn in 0..self.max_turns {
+            if let Some(ref tracer) = self.tracer {
+                tracer.llm_request("skill_tool", &prompt);
+            }
+
             let request = CompletionRequest::simple(&prompt)
                 .with_system(system.to_string())
                 .with_tools(tools.to_vec());
@@ -171,6 +194,20 @@ impl SkillExecutor {
                 .resolve_and_complete(request, None)
                 .await
                 .map_err(|e| SkillError::ProviderError(e.to_string()))?;
+
+            if let Some(ref tracer) = self.tracer {
+                let confidence = response.estimate_confidence().min(*default_confidence);
+                tracer.llm_response(&LLMResponseInfo {
+                    operation: "skill_tool",
+                    provider: &response.provider_name,
+                    model: &response.model_used,
+                    tokens_in: response.tokens_in,
+                    tokens_out: response.tokens_out,
+                    cost_usd: response.cost_usd,
+                    confidence,
+                    agent_name: None,
+                });
+            }
 
             // If no tool calls, the LLM is done
             if response.tool_calls.is_empty() {
