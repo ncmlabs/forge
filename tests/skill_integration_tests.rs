@@ -707,6 +707,39 @@ fn use_skill_validated_at_compile_time() {
 }
 
 #[test]
+fn use_skill_namespace_imports_all_typed_capabilities() {
+    // `use skill.github` should pass when typed capabilities like
+    // skill.github.create_issue, skill.github.list_issues exist
+    let source = "use\n  skill.github\n\ntask run\n  gives Text\n  do\n    give skill.github.create_issue(\"repo\", \"title\", \"body\")\n";
+    let program = forge::parser::parse(source).unwrap();
+
+    let mut sigs = std::collections::HashMap::new();
+    sigs.insert(
+        "skill.github.create_issue".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+            ],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    sigs.insert(
+        "skill.github.list_issues".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![forge::types::ForgeType::Text, forge::types::ForgeType::Text],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    let ctx = forge::resolver::CheckContext::with_skills("test.forge", sigs);
+    assert!(
+        ctx.check(&program).is_ok(),
+        "use skill.github should pass when typed capabilities exist under that namespace"
+    );
+}
+
+#[test]
 fn use_typed_skill_capability_validated_at_compile_time() {
     let source = "use\n  skill.github.create_issue\n\ntask run\n  gives Text\n  do\n    give skill.github.create_issue(\"repo\", \"title\", \"body\")\n";
     let program = forge::parser::parse(source).unwrap();
