@@ -1,7 +1,7 @@
 use crate::config::ProviderConfig;
 use crate::llm::{
     CompletionRequest, CompletionResponse, LLMProvider, ProviderCapabilities, ProviderError,
-    QualityTier,
+    QualityTier, ToolCallRequest,
 };
 use async_trait::async_trait;
 use reqwest::Client;
@@ -86,6 +86,19 @@ impl AnthropicProvider {
 // ── Anthropic wire types ──────────────────────────────────────────────────────
 
 #[derive(Serialize)]
+struct AnthropicTool<'a> {
+    name: &'a str,
+    description: &'a str,
+    input_schema: &'a serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct AnthropicToolChoice {
+    #[serde(rename = "type")]
+    type_: String,
+}
+
+#[derive(Serialize)]
 struct AnthropicRequest<'a> {
     model: &'a str,
     max_tokens: u32,
@@ -95,6 +108,10 @@ struct AnthropicRequest<'a> {
     temperature: f32,
     #[serde(skip_serializing_if = "<[String]>::is_empty")]
     stop_sequences: &'a [String],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<AnthropicTool<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<AnthropicToolChoice>,
 }
 
 #[derive(Serialize)]
@@ -115,6 +132,10 @@ struct AnthropicContent {
     #[serde(rename = "type")]
     type_: String,
     text: Option<String>,
+    // Present on tool_use content blocks:
+    id: Option<String>,
+    name: Option<String>,
+    input: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -148,6 +169,24 @@ impl LLMProvider for AnthropicProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
+        let tools: Vec<AnthropicTool> = req
+            .tools
+            .iter()
+            .map(|t| AnthropicTool {
+                name: &t.name,
+                description: &t.description,
+                input_schema: &t.input_schema,
+            })
+            .collect();
+
+        let tool_choice = if tools.is_empty() {
+            None
+        } else {
+            Some(AnthropicToolChoice {
+                type_: "auto".to_string(),
+            })
+        };
+
         let body = AnthropicRequest {
             model: &self.model,
             max_tokens: req.max_tokens,
@@ -158,6 +197,8 @@ impl LLMProvider for AnthropicProvider {
             system: req.system.as_deref(),
             temperature: req.temperature,
             stop_sequences: &req.stop_sequences,
+            tools,
+            tool_choice,
         };
 
         let start = Instant::now();
@@ -220,12 +261,31 @@ impl LLMProvider for AnthropicProvider {
                     reason: e.to_string(),
                 })?;
 
-        let content = resp
-            .content
-            .into_iter()
-            .find(|c| c.type_ == "text")
-            .and_then(|c| c.text)
-            .unwrap_or_default();
+        let mut text_parts: Vec<String> = Vec::new();
+        let mut tool_calls: Vec<ToolCallRequest> = Vec::new();
+
+        for block in resp.content {
+            match block.type_.as_str() {
+                "text" => {
+                    if let Some(text) = block.text {
+                        text_parts.push(text);
+                    }
+                }
+                "tool_use" => {
+                    if let (Some(id), Some(name), Some(input)) = (block.id, block.name, block.input)
+                    {
+                        tool_calls.push(ToolCallRequest {
+                            id,
+                            name,
+                            arguments: input,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let content = text_parts.join("\n");
 
         let tokens_in = resp.usage.input_tokens;
         let tokens_out = resp.usage.output_tokens;
@@ -234,7 +294,7 @@ impl LLMProvider for AnthropicProvider {
 
         Ok(CompletionResponse {
             content,
-            tool_calls: vec![],
+            tool_calls,
             tokens_in,
             tokens_out,
             latency_ms,

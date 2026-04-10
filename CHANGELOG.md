@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Anthropic provider now sends tool definitions and parses `tool_use` response blocks, enabling skill executor agentic loop (#198)
+
 ### Added
 - `command` expression primitive with optional `in`, `timeout`, and `background` modifiers (#160)
 - Structured argv form for `command`: `command ["git", "commit", "-m", msg]` — safe, no injection (#160)
