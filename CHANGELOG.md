@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- Verification engine: 5-stage validator pipeline (schema, reference, environment, execution, policy) that resolves pending `VerificationResult` from claims to `Verified`/`Insufficient`/`Contradicted`/`Error` by checking real filesystem and test state (#204)
+- `VerificationEngine` orchestrator with pluggable `Validator` trait, integrated into `SessionManager.mark_completed()` for automatic verification on session completion (#204)
+- Risk classification helper `classify_risk()` — derives `RiskClass` from AgentResult fields and metadata side-effect markers (#204)
 - Verification contract types: `Claim`, `Evidence`, `VerificationResult`, `Contradiction`, `RiskClass` — runtime claim-evidence-verification model for trust progression, accessible via `AgentResult.metadata.verification` (#203)
 - Implicit claim extraction from AgentResult fields: `files_changed`, `tests_run`/`tests_passed`, and `plan` automatically seed verification claims during session result parsing (#203)
 - `VerificationResult` predicates: `is_verified()`, `is_contradicted()`, `is_actionable(max_risk)` for downstream approval gates (#203)

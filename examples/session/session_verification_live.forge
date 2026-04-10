@@ -1,0 +1,34 @@
+# Live verification contract test — real Claude session
+# Asks Claude to investigate the forge-workflow skill
+
+task investigate
+  gives AgentResult
+  do
+    result = session "skill-research" agent "claude" prompt "Look at the file workflows/dev-cycle.forge in this repo. Give a brief summary of what it defines — the agents, events, states, and how they connect. Keep your answer under 200 words." tools ["Read", "Glob", "Grep"] timeout 2m budget 0.50 gives AgentResult
+    when result.sure -> give result
+    else -> give result
+
+fn main
+  say "--- Running live Claude session ---"
+  result = investigate()
+  say ""
+  say "--- AgentResult ---"
+  say "plan: {result.plan}"
+  say "confidence: {result.confidence}"
+  say "cost_usd: {result.cost_usd}"
+  say "files_changed: {result.files_changed}"
+  say "approval_needed: {result.approval_needed}"
+  say ""
+  say "--- Metadata ---"
+  say "tokens_in: {result.metadata.tokens_in}"
+  say "tokens_out: {result.metadata.tokens_out}"
+  say "num_turns: {result.metadata.num_turns}"
+  say ""
+  say "--- Verification Engine ---"
+  say "status: {result.metadata.verification.status}"
+  say "risk_class: {result.metadata.verification.risk_class}"
+  say "claims: {result.metadata.verification.claims}"
+  say "evidence: {result.metadata.verification.evidence}"
+  say "contradictions: {result.metadata.verification.contradictions}"
+  say ""
+  say "--- Done ---"

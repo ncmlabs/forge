@@ -21,7 +21,7 @@ readwrite_args = ["--full-auto"]
 readwrite_tools = ["Edit", "Bash", "Write"]
 
 [adapter.result_mapping]
-plan = "content.text"
+plan = "item.text"
 session_id = "thread_id"
 confidence_default = 0.80
 

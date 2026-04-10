@@ -1,0 +1,29 @@
+# Live verification engine test with Codex — issue #204
+# Spawns a real Codex session that creates a file, then checks
+# that the verification engine resolved claims against reality.
+
+task create_file
+  gives AgentResult
+  do
+    result = session "codex-engine-test" agent "codex" prompt "Create a file at examples/session/_codex_engine_test_output.txt with the content 'FORGE verification engine test — created by Codex'. Do NOT create any other files." tools ["Write", "Bash"] timeout 2m gives AgentResult
+    when result.sure -> give result
+    else -> give result
+
+fn main
+  say "=== Verification Engine — Codex Live Test ==="
+  say ""
+  result = create_file()
+  say "--- AgentResult ---"
+  say "plan: {result.plan}"
+  say "confidence: {result.confidence}"
+  say "cost: {result.cost_usd}"
+  say "files: {result.files_changed}"
+  say ""
+  say "--- Verification Engine Output ---"
+  say "status: {result.metadata.verification.status}"
+  say "risk_class: {result.metadata.verification.risk_class}"
+  say "claims: {result.metadata.verification.claims}"
+  say "evidence: {result.metadata.verification.evidence}"
+  say "contradictions: {result.metadata.verification.contradictions}"
+  say ""
+  say "=== Done ==="

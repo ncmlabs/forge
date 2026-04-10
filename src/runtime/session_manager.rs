@@ -259,6 +259,7 @@ pub struct SessionManager {
     event_bus: Arc<Mutex<Option<SharedEventBus>>>,
     polling_cancel: Arc<AtomicBool>,
     inner: Arc<Mutex<SessionManagerInner>>,
+    verification_engine: Option<Arc<crate::runtime::verification_engine::VerificationEngine>>,
 }
 
 impl SessionManager {
@@ -275,6 +276,7 @@ impl SessionManager {
                 listeners: HashMap::new(),
                 drivers: HashMap::new(),
             })),
+            verification_engine: None,
         }
     }
 
@@ -285,6 +287,14 @@ impl SessionManager {
 
     pub fn with_event_bus(self, bus: SharedEventBus) -> Self {
         *self.event_bus.lock().unwrap() = Some(bus);
+        self
+    }
+
+    pub fn with_verification_engine(
+        mut self,
+        engine: crate::runtime::verification_engine::VerificationEngine,
+    ) -> Self {
+        self.verification_engine = Some(Arc::new(engine));
         self
     }
 
@@ -929,6 +939,7 @@ impl SessionManager {
     async fn mark_completed(&self, session_id: &str, result: ConfidentValue) {
         self.transition_status(session_id, SessionStatus::Completing);
         let result = self.inject_cost(result, session_id);
+        let result = self.run_verification(result, session_id).await;
         let (snapshot, notify) = {
             let mut inner = self.inner.lock().unwrap();
             let Some(entry) = inner.sessions.get_mut(session_id) else {
@@ -1048,6 +1059,36 @@ impl SessionManager {
                 source: result.source,
             },
         }
+    }
+
+    /// Run the verification engine (if configured) on a completed session result.
+    /// Updates metadata.verification from Pending to the resolved status.
+    async fn run_verification(&self, result: ConfidentValue, session_id: &str) -> ConfidentValue {
+        let engine = match &self.verification_engine {
+            Some(e) => Arc::clone(e),
+            None => return result,
+        };
+
+        // Use the session's working_dir (set by `isolate worktree`), or fall
+        // back to the process working directory so the ReferenceValidator can
+        // check claimed files against the actual project.
+        let working_dir = self
+            .session_state(session_id)
+            .and_then(|s| s.config.working_dir.clone())
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::current_dir().ok());
+
+        let (fields, claims) =
+            crate::runtime::verification_engine::extract_verification_inputs(&result);
+
+        let ctx = crate::runtime::verification_engine::VerificationContext {
+            working_dir,
+            agent_fields: fields,
+            claims,
+        };
+
+        let vr = engine.verify(&ctx).await;
+        crate::runtime::verification_engine::inject_resolved_verification(result, vr)
     }
 
     fn state_path(&self, session_id: &str) -> PathBuf {
@@ -1247,7 +1288,11 @@ pub fn default_session_dir(root: impl AsRef<Path>) -> PathBuf {
 
 pub fn new_shared_default_session_manager(tracer: Option<Tracer>) -> SharedSessionManager {
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let manager = SessionManager::new(default_session_dir(&root)).with_tracer(tracer);
+    let manager = SessionManager::new(default_session_dir(&root))
+        .with_tracer(tracer)
+        .with_verification_engine(
+            crate::runtime::verification_engine::VerificationEngine::coding_session(),
+        );
 
     // Auto-register adapters from the resolution chain:
     //   1. Project local: ./adapters/{name}/ADAPTER.toml
