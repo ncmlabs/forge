@@ -4,7 +4,8 @@
 
 ## Related Issues
 
-<!-- e.g., Fixes #123, Relates to #456 -->
+Closes #XXX
+<!-- Replace XXX with the issue number. Use "Closes" so the issue auto-closes on merge. -->
 
 ## Checklist
 
