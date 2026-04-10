@@ -1,0 +1,27 @@
+# Echo test adapter — outputs a fixed JSON result for verification contract testing
+# Used by examples/session/session_verification.forge
+
+[adapter]
+name = "echo-test"
+description = "Test adapter that echoes a fixed JSON result"
+command = "bash"
+args = ["-c", "echo '{\"subtype\":\"success\",\"result\":\"Fixed login bug by patching auth.rs and login.rs\",\"total_cost_usd\":0.05,\"session_id\":\"test-session-001\",\"usage\":{\"input_tokens\":1000,\"output_tokens\":500},\"num_turns\":3,\"duration_ms\":5000,\"files_changed\":[\"src/auth.rs\",\"src/login.rs\"]}'"]
+prompt_delivery = "stdin"
+output_format = "json"
+
+[adapter.result_mapping]
+plan = "result"
+files_changed = "files_changed"
+cost_usd = "total_cost_usd"
+session_id = "session_id"
+confidence_default = 0.85
+
+[adapter.result_mapping.metadata]
+tokens_in = "usage.input_tokens"
+tokens_out = "usage.output_tokens"
+num_turns = "num_turns"
+duration_ms = "duration_ms"
+
+[adapter.progress]
+success_field = "subtype"
+success_value = "success"
