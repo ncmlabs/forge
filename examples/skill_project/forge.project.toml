@@ -1,0 +1,10 @@
+[project]
+name = "skill-project-demo"
+version = "0.1.0"
+description = "Demonstrates project-level skill declarations"
+
+[build]
+entry = "main.forge"
+
+[skills]
+repo_check = {}

@@ -1,0 +1,14 @@
+use
+  skill.repo_check
+
+task check_repo
+  gives Text
+  do
+    report = skill.repo_check.analyze()
+    when report.sure -> give report
+    else -> give "skill returned uncertain result"
+
+fn main
+  say "=== FORGE Skill Project Demo ==="
+  say check_repo()
+  say "=== Done ==="

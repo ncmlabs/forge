@@ -503,19 +503,112 @@ fn parse_or_exit(source: &str, file: &Path) -> forge::ast::Program {
     }
 }
 
-/// Build a [`SkillExecutor`] from config when the `[skills]` section is present.
+/// Build a [`SkillExecutor`] and return skill capability signatures for compile-time validation.
+///
+/// When a manifest with `[skills]` is provided, only declared skills are loaded (project-level).
+/// Otherwise falls back to scanning `skill_dirs` from config (global-level).
 fn build_skill_executor(
     config: &forge::config::ForgeConfig,
     providers: &Arc<forge::llm::registry::ProviderRegistry>,
     tracer: Option<&forge::tracer::Tracer>,
-) -> Option<Arc<forge::runtime::skill_executor::SkillExecutor>> {
-    let skills_cfg = config.skills.as_ref()?;
-    let dirs = skills_cfg.skill_dirs_or_default();
-    let loaded = forge::runtime::skill_loader::SkillLoader::load_from_dirs(&dirs);
+    manifest: Option<&forge::manifest::ProjectManifest>,
+    base_dir: Option<&Path>,
+) -> (
+    Option<Arc<forge::runtime::skill_executor::SkillExecutor>>,
+    HashMap<String, forge::types::CapabilitySignature>,
+) {
+    let skills_cfg = match config.skills.as_ref() {
+        Some(cfg) => cfg,
+        None => {
+            // No [skills] in config — try project manifest alone
+            if let (Some(m), Some(bd)) = (manifest, base_dir) {
+                if m.skills.is_some() {
+                    // Manifest declares skills but no config [skills] section;
+                    // use defaults for runtime params.
+                    let default_cfg = forge::config::SkillsConfig {
+                        skill_dirs: None,
+                        timeout_secs: None,
+                        max_turns: None,
+                    };
+                    return build_skill_executor_inner(
+                        &default_cfg,
+                        providers,
+                        tracer,
+                        Some(m),
+                        Some(bd),
+                    );
+                }
+            }
+            return (None, HashMap::new());
+        }
+    };
+    build_skill_executor_inner(skills_cfg, providers, tracer, manifest, base_dir)
+}
+
+fn build_skill_executor_inner(
+    skills_cfg: &forge::config::SkillsConfig,
+    providers: &Arc<forge::llm::registry::ProviderRegistry>,
+    tracer: Option<&forge::tracer::Tracer>,
+    manifest: Option<&forge::manifest::ProjectManifest>,
+    base_dir: Option<&Path>,
+) -> (
+    Option<Arc<forge::runtime::skill_executor::SkillExecutor>>,
+    HashMap<String, forge::types::CapabilitySignature>,
+) {
     let mut registry = forge::runtime::skill_registry::SkillRegistry::new();
-    for skill in loaded {
-        registry.register(skill);
+
+    // Project-level skill resolution (authoritative when present)
+    let has_project_skills = if let (Some(m), Some(bd)) = (manifest, base_dir) {
+        if m.skills.is_some() {
+            let global_dirs = skills_cfg.skill_dirs_or_default();
+            match m.resolve_skills(bd, &global_dirs) {
+                Ok(resolved) => {
+                    // Verify against lock file
+                    let lock_path = bd.join("skills-lock.json");
+                    if let Ok(Some(lock)) = forge::skill_lock::SkillLockFile::load(&lock_path) {
+                        let mismatched = lock.verify(&resolved);
+                        for name in &mismatched {
+                            eprintln!(
+                                "warning: skill '{}' has changed since lock. Run `npx skills add` to update skills-lock.json.",
+                                name
+                            );
+                        }
+                    }
+
+                    // Load each resolved skill
+                    for (_, skill_path) in &resolved {
+                        match forge::runtime::skill_loader::SkillLoader::parse_skill_md(skill_path)
+                        {
+                            Ok(skill) => registry.register(skill),
+                            Err(e) => {
+                                eprintln!("warning: failed to load {}: {}", skill_path.display(), e)
+                            }
+                        }
+                    }
+                    true
+                }
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    // Fallback: scan skill_dirs (global-level, only when no project skills)
+    if !has_project_skills {
+        let dirs = skills_cfg.skill_dirs_or_default();
+        let loaded = forge::runtime::skill_loader::SkillLoader::load_from_dirs(&dirs);
+        for skill in loaded {
+            registry.register(skill);
+        }
     }
+
+    let signatures = registry.capability_signatures();
     let shared = Arc::new(Mutex::new(registry));
     let mut executor =
         forge::runtime::skill_executor::SkillExecutor::new(Arc::clone(providers), shared);
@@ -524,7 +617,7 @@ fn build_skill_executor(
     if let Some(t) = tracer {
         executor = executor.with_tracer(Arc::new(t.clone()));
     }
-    Some(Arc::new(executor))
+    (Some(Arc::new(executor)), signatures)
 }
 
 async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
@@ -532,10 +625,35 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     let program = parse_or_exit(&source, file);
     let fname = file.display().to_string();
 
-    // Validate before execution
+    // Load config and skills early — needed for compile-time skill validation
+    let config = forge::config::ForgeConfig::load_or_default();
+    let config_clone = config.clone();
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
+
+    let tracer = if trace
+        || std::env::var("FORGE_TRACE")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    {
+        Some(forge::tracer::Tracer::new())
+    } else {
+        None
+    };
+
+    // Build skill executor to get capability signatures for compile-time validation
+    let (skill_exec, skill_sigs) =
+        build_skill_executor(&config_clone, &providers, tracer.as_ref(), None, None);
+
+    // Validate before execution (with skill-aware capability registry)
     let mut diagnostics = Vec::new();
 
-    let ctx = forge::resolver::CheckContext::new(&fname);
+    let ctx = if skill_sigs.is_empty() {
+        forge::resolver::CheckContext::new(&fname)
+    } else {
+        forge::resolver::CheckContext::with_skills(&fname, skill_sigs)
+    };
     if let Err(errors) = ctx.check(&program) {
         let registry = forge::resolver::CapabilityRegistry::builtin();
         diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
@@ -553,23 +671,6 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
-    let config = forge::config::ForgeConfig::load_or_default();
-    let config_clone = config.clone();
-    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
-        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
-    let providers = Arc::new(registry);
-
-    let tracer = if trace
-        || std::env::var("FORGE_TRACE")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-    {
-        Some(forge::tracer::Tracer::new())
-    } else {
-        None
-    };
-
-    let skill_exec = build_skill_executor(&config_clone, &providers, tracer.as_ref());
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let mut executor =
         forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
@@ -595,6 +696,32 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let source_paths = manifest.resolve_sources(base_dir)?;
 
+    // Load config and skills early — needed for compile-time skill validation
+    let config = forge::config::ForgeConfig::load_or_default();
+    let config_clone = config.clone();
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
+
+    let tracer = if trace
+        || std::env::var("FORGE_TRACE")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    {
+        Some(forge::tracer::Tracer::new())
+    } else {
+        None
+    };
+
+    // Build skill executor with project-level declarations
+    let (skill_exec, skill_sigs) = build_skill_executor(
+        &config_clone,
+        &providers,
+        tracer.as_ref(),
+        Some(&manifest),
+        Some(base_dir),
+    );
+
     // Parse all source files
     let mut source_files = Vec::new();
     let mut diagnostics = Vec::new();
@@ -604,11 +731,23 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
         let fname = path.display().to_string();
         let program = parse_or_exit(&source, path);
 
-        // Per-file validation
-        let ctx = forge::resolver::CheckContext::new(&fname);
+        // Per-file validation (with skill-aware capability registry)
+        let ctx = if skill_sigs.is_empty() {
+            forge::resolver::CheckContext::new(&fname)
+        } else {
+            forge::resolver::CheckContext::with_skills(&fname, skill_sigs.clone())
+        };
         if let Err(errors) = ctx.check(&program) {
-            let registry = forge::resolver::CapabilityRegistry::builtin();
-            diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+            let cap_registry = if skill_sigs.is_empty() {
+                forge::resolver::CapabilityRegistry::builtin()
+            } else {
+                forge::resolver::CapabilityRegistry::with_skills(skill_sigs.clone())
+            };
+            diagnostics.extend(
+                errors
+                    .iter()
+                    .map(|e| e.to_diagnostic(&fname, &cap_registry)),
+            );
         }
         diagnostics.extend(forge::checker::check_all(&program, &fname));
 
@@ -646,23 +785,6 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
         )
     })?;
 
-    let config = forge::config::ForgeConfig::load_or_default();
-    let config_clone = config.clone();
-    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
-        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
-    let providers = Arc::new(registry);
-
-    let tracer = if trace
-        || std::env::var("FORGE_TRACE")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-    {
-        Some(forge::tracer::Tracer::new())
-    } else {
-        None
-    };
-
-    let skill_exec = build_skill_executor(&config_clone, &providers, tracer.as_ref());
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
@@ -859,7 +981,8 @@ fn try_build_executor_multi(
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
     let providers = Arc::new(registry);
 
-    let skill_exec = build_skill_executor(&config, &providers, tracer.as_ref());
+    let (skill_exec, _skill_sigs) =
+        build_skill_executor(&config, &providers, tracer.as_ref(), None, None);
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
@@ -931,7 +1054,8 @@ fn try_build_executor(
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
     let providers = Arc::new(registry);
 
-    let skill_exec = build_skill_executor(&config, &providers, tracer.as_ref());
+    let (skill_exec, _skill_sigs) =
+        build_skill_executor(&config, &providers, tracer.as_ref(), None, None);
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let mut executor =
         forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
