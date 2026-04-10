@@ -171,13 +171,16 @@ pub fn parse_final(
     _stderr: &str,
     exit_code: Option<i32>,
 ) -> Result<(ConfidentValue, Option<String>), String> {
-    // Non-zero exit code is a failure for all adapters
+    // Non-zero exit code is a failure — try to extract a meaningful error
+    // message from the output before returning the generic code error.
     if let Some(code) = exit_code {
         if code != 0 {
-            return Err(format!(
-                "adapter '{}' exited with code {}",
-                adapter.name, code
-            ));
+            // Try to find an error message in stdout JSONL events
+            let error_msg = extract_error_from_output(stdout, _stderr);
+            return Err(match error_msg {
+                Some(msg) => format!("adapter '{}' failed: {}", adapter.name, msg),
+                None => format!("adapter '{}' exited with code {}", adapter.name, code),
+            });
         }
     }
 
@@ -338,6 +341,43 @@ fn find_result_event(adapter: &AdapterConfig, stdout: &str) -> Option<serde_json
         }
     }
     last_match
+}
+
+/// Try to extract a human-readable error message from CLI output.
+///
+/// Checks JSONL events for `"type": "error"` or `"type": "turn.failed"`,
+/// then falls back to stderr content.
+fn extract_error_from_output(stdout: &str, stderr: &str) -> Option<String> {
+    // Check JSONL events for error messages
+    for line in stdout.lines() {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+            // Direct error event: {"type": "error", "message": "..."}
+            if json.get("type").and_then(|v| v.as_str()) == Some("error") {
+                if let Some(msg) = json.get("message").and_then(|v| v.as_str()) {
+                    return Some(msg.to_string());
+                }
+            }
+            // Nested error: {"type": "turn.failed", "error": {"message": "..."}}
+            if let Some(err_obj) = json.get("error") {
+                if let Some(msg) = err_obj.get("message").and_then(|v| v.as_str()) {
+                    return Some(msg.to_string());
+                }
+                // Error as string
+                if let Some(msg) = err_obj.as_str() {
+                    return Some(msg.to_string());
+                }
+            }
+        }
+    }
+
+    // Fall back to stderr if non-empty
+    let trimmed = stderr.trim();
+    if !trimmed.is_empty() {
+        // Take first meaningful line
+        return trimmed.lines().next().map(|s| s.to_string());
+    }
+
+    None
 }
 
 // ── Process controller ───────────────────────────────────────
@@ -797,5 +837,42 @@ mod tests {
         let (result, _) = parse_final(&adapter, "", "", Some(0)).unwrap();
         // Should succeed with default fields
         assert!(matches!(result.value, Value::Record(_)));
+    }
+
+    // ── error extraction tests ───────────────────────────────
+
+    #[test]
+    fn codex_error_extraction_from_jsonl() {
+        // Real Codex output when hitting usage limit
+        let stdout = r#"{"type":"thread.started","thread_id":"019d77ba-58b8-7411-be37-5c4e70330777"}
+{"type":"turn.started"}
+{"type":"error","message":"You've hit your usage limit. Upgrade to Pro."}
+{"type":"turn.failed","error":{"message":"You've hit your usage limit. Upgrade to Pro."}}
+"#;
+        let adapter = codex_config();
+        let err = parse_final(&adapter, stdout, "", Some(1)).unwrap_err();
+        assert!(
+            err.contains("usage limit"),
+            "error should contain the actual message, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn error_extraction_from_stderr() {
+        let adapter = generic_fallback_adapter("test");
+        let err = parse_final(&adapter, "", "command not found: test", Some(127)).unwrap_err();
+        assert!(
+            err.contains("command not found"),
+            "error should contain stderr, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn nonzero_exit_with_no_output() {
+        let adapter = generic_fallback_adapter("test");
+        let err = parse_final(&adapter, "", "", Some(1)).unwrap_err();
+        assert!(err.contains("exited with code 1"));
     }
 }
