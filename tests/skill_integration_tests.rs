@@ -2,7 +2,7 @@
 // Tests the full SKILL.md loading pipeline and exec-based skill execution.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use forge::llm::providers::mock::MockProvider;
@@ -87,6 +87,34 @@ fn skill_loader_parses_local_find_skills() {
         "instructions should mention npx skills, got first 100 chars: {}",
         &skill.instructions[..100.min(skill.instructions.len())]
     );
+}
+
+#[test]
+fn skill_loader_parses_repo_reference_cli_skills() {
+    for (path, expected_name, expected_capabilities) in [
+        ("skills/claude-code/SKILL.md", "claude", 4usize),
+        ("skills/codex/SKILL.md", "codex", 4usize),
+    ] {
+        let skill = SkillLoader::parse_skill_md(Path::new(path)).unwrap();
+        assert_eq!(skill.manifest.name, expected_name);
+        assert_eq!(skill.manifest.capabilities.len(), expected_capabilities);
+        assert!(
+            skill.manifest.legacy_signature.is_none(),
+            "typed reference skills should not expose legacy signatures"
+        );
+        assert!(
+            !skill.manifest.allowed_tools.is_empty(),
+            "reference skill should declare allowed tools"
+        );
+        assert!(
+            skill.instructions.contains("Session Adapter Mapping"),
+            "reference skill should document adapter mapping"
+        );
+        assert!(
+            skill.instructions.contains("AgentResult Mapping"),
+            "reference skill should document AgentResult mapping"
+        );
+    }
 }
 
 #[test]
