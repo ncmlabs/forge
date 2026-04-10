@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- `SessionManager` runtime for long-running external agent sessions with UUID-backed session IDs, persisted JSON state under `.forge-data/sessions/`, startup `resume_all()`, progress listeners, budget enforcement, and graceful cancel escalation (#190)
+- `session` runtime execution in `TaskExecutor` with `on progress` / `on complete` hook emission, `Text`/`AgentResult` output coercion, and lifecycle tracing for Principle VIII (#190)
 - `session` expression front-end: grammar, AST, parser, checker, resolver, cost estimation, and runtime placeholder support with `agent`, `prompt`, `tools`, `timeout`, `budget`, `gives AgentResult`, and `on progress`/`on complete` emit hooks (#189)
 - `AgentResult` built-in type — standard typed result contract for agent/session runs with 9 fields: `plan`, `patch_summary`, `files_changed`, `tests_run`, `tests_passed`, `cost_usd`, `confidence`, `approval_needed`, `metadata` (#193)
 - `AgentResult` constructor with default fields: `AgentResult()` or `AgentResult(plan: "fix bug", confidence: 0.9)` — unspecified fields get zero/empty defaults (#193)

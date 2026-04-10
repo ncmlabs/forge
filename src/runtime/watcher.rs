@@ -209,16 +209,22 @@ fn attempt_reload(
     let cmd_mgr = std::sync::Arc::new(std::sync::Mutex::new(
         crate::runtime::command_manager::CommandManager::new(),
     ));
+    let session_mgr =
+        crate::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
     let mut new_executor =
         crate::runtime::executor::TaskExecutor::new(program, std::sync::Arc::new(registry), tracer)
             .with_config(config)
-            .with_command_manager(cmd_mgr);
+            .with_command_manager(cmd_mgr)
+            .with_session_manager(session_mgr);
 
     // Preserve storage handle from the old executor (#140)
     {
         let old_guard = swappable.read().unwrap();
         if let Some(storage) = old_guard.storage_handle() {
             new_executor = new_executor.with_storage(storage);
+        }
+        if let Some(session_mgr) = old_guard.session_manager() {
+            new_executor = new_executor.with_session_manager(session_mgr.clone());
         }
     }
 

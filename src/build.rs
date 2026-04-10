@@ -469,9 +469,11 @@ async fn main() -> anyhow::Result<()> {{
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {{}}", e))?;
     let cmd_mgr = Arc::new(std::sync::Mutex::new(forge::runtime::command_manager::CommandManager::new()));
+    let session_mgr = forge::runtime::session_manager::new_shared_default_session_manager(None);
+    let _ = session_mgr.resume_all().await;
     let executor = forge::runtime::executor::TaskExecutor::new(
         program, Arc::new(registry), None,
-    ).with_command_manager(cmd_mgr);
+    ).with_command_manager(cmd_mgr).with_session_manager(session_mgr);
     match executor.run().await {{
         Ok(_) => Ok(()),
         Err(e) => {{
@@ -804,9 +806,11 @@ async fn main() -> anyhow::Result<()> {{
     let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
         .map_err(|e| anyhow::anyhow!("provider setup failed: {{}}", e))?;
     let cmd_mgr = Arc::new(std::sync::Mutex::new(forge::runtime::command_manager::CommandManager::new()));
+    let session_mgr = forge::runtime::session_manager::new_shared_default_session_manager(None);
+    let _ = session_mgr.resume_all().await;
     let executor = forge::runtime::executor::TaskExecutor::new(
         program, Arc::new(registry), None,
-    ).with_command_manager(cmd_mgr);
+    ).with_command_manager(cmd_mgr).with_session_manager(session_mgr);
     let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
     let mut server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
         .with_event_bus(event_bus);

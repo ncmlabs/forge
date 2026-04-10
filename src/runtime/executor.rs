@@ -13,6 +13,9 @@ use crate::runtime::agent::{AgentContext, EmittedEvent};
 use crate::runtime::command_manager::SharedCommandManager;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::instance_registry::{InstanceInfo, InstanceStatus};
+use crate::runtime::session_manager::{
+    SessionConfig, SessionEvent, SessionListener, SharedSessionManager,
+};
 use crate::runtime::timer_engine::TimerEngine;
 use crate::tracer::{LLMResponseInfo, Tracer};
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -70,6 +73,7 @@ pub struct EndpointResult {
 
 // ── Environment (scope stack) ─────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub(crate) struct Env {
     scopes: Vec<HashMap<String, ConfidentValue>>,
 }
@@ -151,6 +155,8 @@ pub struct TaskExecutor {
     vector_index: Option<crate::runtime::vector_index::SharedVectorIndex>,
     /// Command manager for background process lifecycle (issue #162).
     command_manager: Option<SharedCommandManager>,
+    /// Session manager for long-running external agent sessions (issue #190).
+    session_manager: Option<SharedSessionManager>,
 }
 
 impl Clone for TaskExecutor {
@@ -179,6 +185,7 @@ impl Clone for TaskExecutor {
             embedding_provider: self.embedding_provider.clone(),
             vector_index: self.vector_index.clone(),
             command_manager: self.command_manager.clone(),
+            session_manager: self.session_manager.clone(),
         }
     }
 }
@@ -215,7 +222,7 @@ impl TaskExecutor {
         Self {
             program,
             providers,
-            tracer,
+            tracer: tracer.clone(),
             task_map,
             pure_map,
             flow_map,
@@ -236,6 +243,9 @@ impl TaskExecutor {
             embedding_provider: None,
             vector_index: None,
             command_manager: None,
+            session_manager: Some(
+                crate::runtime::session_manager::new_shared_default_session_manager(tracer.clone()),
+            ),
         }
     }
 
@@ -314,6 +324,17 @@ impl TaskExecutor {
         self.command_manager.as_ref()
     }
 
+    /// Attach a session manager for long-running external agent sessions (issue #190).
+    pub fn with_session_manager(mut self, mgr: SharedSessionManager) -> Self {
+        self.session_manager = Some(mgr);
+        self
+    }
+
+    /// Get a reference to the session manager.
+    pub fn session_manager(&self) -> Option<&SharedSessionManager> {
+        self.session_manager.as_ref()
+    }
+
     /// Configure persistent memory storage (issue #57).
     pub fn with_persistent_memory(
         mut self,
@@ -359,6 +380,286 @@ impl TaskExecutor {
     ) -> Self {
         self.knowledge_store = Some(Arc::new(Mutex::new(ks)));
         self
+    }
+
+    async fn emit_named_args(
+        &self,
+        event_name: &str,
+        args: &[Spanned<CallArg>],
+        env: &mut Env,
+    ) -> Result<(), RuntimeError> {
+        let mut arg_vals = Vec::new();
+        let mut fields = std::collections::HashMap::new();
+        for arg in args {
+            let val = self.eval_expr(&arg.node.value, env).await?;
+            if let Some(ref label) = arg.node.label {
+                fields.insert(label.node.clone(), val.clone());
+            }
+            arg_vals.push(val);
+        }
+        self.emit_precomputed(event_name, arg_vals, fields).await
+    }
+
+    async fn emit_precomputed(
+        &self,
+        event_name: &str,
+        arg_vals: Vec<ConfidentValue>,
+        fields: HashMap<String, ConfidentValue>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(ref ctx_arc) = self.agent_context {
+            ctx_arc
+                .lock()
+                .unwrap()
+                .event_sink
+                .emitted
+                .push(EmittedEvent {
+                    name: event_name.to_string(),
+                    args: arg_vals,
+                    fields,
+                });
+        } else if let Some(ref bus) = self.event_bus {
+            let source = self
+                .agent_name
+                .clone()
+                .unwrap_or_else(|| "endpoint".to_string());
+            let payload = crate::runtime::event_bus::EventPayload {
+                event_name: event_name.to_string(),
+                args: arg_vals,
+                source_agent: source.clone(),
+                fields,
+            };
+            let delivered = bus.read().await.publish(&payload);
+            if let Some(ref t) = self.tracer {
+                t.event_emit(&source, event_name, delivered);
+            }
+        } else {
+            return Err(RuntimeError::Unsupported("emit outside agent".into()));
+        }
+        Ok(())
+    }
+
+    async fn emit_session_hook(
+        &self,
+        hook: &SessionHook,
+        payload: ConfidentValue,
+        env: &Env,
+    ) -> Result<(), RuntimeError> {
+        let mut hook_env = env.clone();
+        hook_env.push_scope();
+        hook_env.bind("it", payload);
+        self.emit_named_args(&hook.event.node, &hook.args, &mut hook_env)
+            .await
+    }
+
+    fn type_name_to_string(type_name: &TypeName) -> String {
+        match type_name {
+            TypeName::Text => "Text".to_string(),
+            TypeName::Number => "Number".to_string(),
+            TypeName::Bool => "Bool".to_string(),
+            TypeName::Results => "Results".to_string(),
+            TypeName::Report => "Report".to_string(),
+            TypeName::Intent => "Intent".to_string(),
+            TypeName::Summary => "Summary".to_string(),
+            TypeName::Failure => "Failure".to_string(),
+            TypeName::Classification => "Classification".to_string(),
+            TypeName::Conversation => "Conversation".to_string(),
+            TypeName::Profile => "Profile".to_string(),
+            TypeName::SearchResults => "SearchResults".to_string(),
+            TypeName::Request => "Request".to_string(),
+            TypeName::Response => "Response".to_string(),
+            TypeName::Headers => "Headers".to_string(),
+            TypeName::Html => "Html".to_string(),
+            TypeName::AgentResult => "AgentResult".to_string(),
+            TypeName::Custom(name) => name.clone(),
+            TypeName::Array(inner, Some(size)) => {
+                format!("{}[{}]", Self::type_name_to_string(inner), size)
+            }
+            TypeName::Array(inner, None) => format!("{}[]", Self::type_name_to_string(inner)),
+        }
+    }
+
+    async fn eval_session_expr(
+        &self,
+        session: &SessionExpr,
+        env: &mut Env,
+    ) -> Result<ConfidentValue, RuntimeError> {
+        let Some(manager) = self.session_manager.as_ref() else {
+            return Err(RuntimeError::Unsupported(
+                "session requires a session manager".to_string(),
+            ));
+        };
+
+        let name = format!("{}", self.eval_expr(&session.name, env).await?.value);
+        let agent = match &session.agent {
+            Some(agent_expr) => format!("{}", self.eval_expr(agent_expr, env).await?.value),
+            None => "default".to_string(),
+        };
+        let prompt = match &session.prompt {
+            Some(prompt_expr) => Some(format!("{}", self.eval_expr(prompt_expr, env).await?.value)),
+            None => None,
+        };
+        let tools = match &session.tools {
+            Some(tools_expr) => match self.eval_expr(tools_expr, env).await?.value {
+                Value::Array(items) | Value::List(items) => items
+                    .into_iter()
+                    .map(|item| format!("{}", item.value))
+                    .collect(),
+                other => {
+                    return Err(RuntimeError::TypeError {
+                        expected: "Array".to_string(),
+                        got: format!("{}", other),
+                    })
+                }
+            },
+            None => Vec::new(),
+        };
+        let budget_usd = match &session.budget {
+            Some(budget_expr) => {
+                let budget = self.eval_expr(budget_expr, env).await?;
+                match budget.value {
+                    Value::Number(n) => Some(n as f32),
+                    other => {
+                        return Err(RuntimeError::TypeError {
+                            expected: "Number".to_string(),
+                            got: format!("{}", other),
+                        })
+                    }
+                }
+            }
+            None => None,
+        };
+
+        let mut config = SessionConfig::new(name, agent);
+        config.prompt = prompt;
+        config.tools = tools;
+        config.timeout_secs = session
+            .timeout
+            .as_ref()
+            .map(|dur| dur.node.to_std().as_secs());
+        config.budget_usd = budget_usd;
+        config.gives = session
+            .gives
+            .as_ref()
+            .map(|gives| Self::type_name_to_string(&gives.node));
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
+        let listener: SessionListener = Arc::new(move |event| {
+            let _ = tx.send(event);
+        });
+
+        let run_fut = manager.run_to_completion(config, vec![listener]);
+        tokio::pin!(run_fut);
+
+        loop {
+            tokio::select! {
+                state = &mut run_fut => {
+                    let state = state.map_err(RuntimeError::FlowError)?;
+                    let output = state.output.unwrap_or_else(ConfidentValue::default_agent_result);
+                    while let Ok(event) = rx.try_recv() {
+                        if let SessionEvent::Progress { payload, .. } = event {
+                            if let Some(ref hook) = session.on_progress {
+                                self.emit_session_hook(&hook.node, payload, env).await?;
+                            }
+                        }
+                    }
+                    if let Some(ref hook) = session.on_complete {
+                        self.emit_session_hook(&hook.node, output.clone(), env).await?;
+                    }
+                    return if matches!(session.gives.as_ref().map(|g| &g.node), Some(TypeName::AgentResult)) {
+                        Ok(self.coerce_session_result_to_agent_result(output, state.cost_usd))
+                    } else {
+                        Ok(self.coerce_session_result_to_text(output))
+                    };
+                }
+                event = rx.recv() => {
+                    let Some(event) = event else {
+                        continue;
+                    };
+                    if let SessionEvent::Progress { payload, .. } = event {
+                        if let Some(ref hook) = session.on_progress {
+                            self.emit_session_hook(&hook.node, payload, env).await?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn coerce_session_result_to_text(&self, result: ConfidentValue) -> ConfidentValue {
+        match result.value {
+            Value::Text(_) | Value::Html(_) => result,
+            other => {
+                ConfidentValue::from_skill(Value::Text(format!("{}", other)), result.confidence)
+            }
+        }
+    }
+
+    fn coerce_session_result_to_agent_result(
+        &self,
+        result: ConfidentValue,
+        total_cost_usd: f32,
+    ) -> ConfidentValue {
+        match result.value {
+            Value::Record(mut fields) => {
+                if fields.contains_key("cost_usd") {
+                    fields.insert(
+                        "cost_usd".to_string(),
+                        ConfidentValue::deterministic(Value::Number(total_cost_usd as f64)),
+                    );
+                    if !fields.contains_key("confidence") {
+                        fields.insert(
+                            "confidence".to_string(),
+                            ConfidentValue::deterministic(Value::Number(result.confidence as f64)),
+                        );
+                    }
+                    ConfidentValue::from_agent_result(fields)
+                } else {
+                    let record_text = format!("{}", Value::Record(fields));
+                    let mut defaults = ConfidentValue::default_agent_result_fields();
+                    defaults.insert(
+                        "plan".to_string(),
+                        ConfidentValue::from_skill(
+                            Value::Text(record_text.clone()),
+                            result.confidence,
+                        ),
+                    );
+                    defaults.insert(
+                        "patch_summary".to_string(),
+                        ConfidentValue::from_skill(Value::Text(record_text), result.confidence),
+                    );
+                    defaults.insert(
+                        "cost_usd".to_string(),
+                        ConfidentValue::deterministic(Value::Number(total_cost_usd as f64)),
+                    );
+                    defaults.insert(
+                        "confidence".to_string(),
+                        ConfidentValue::deterministic(Value::Number(result.confidence as f64)),
+                    );
+                    ConfidentValue::from_agent_result(defaults)
+                }
+            }
+            other => {
+                let text = format!("{}", other);
+                let mut fields = ConfidentValue::default_agent_result_fields();
+                fields.insert(
+                    "plan".to_string(),
+                    ConfidentValue::from_skill(Value::Text(text.clone()), result.confidence),
+                );
+                fields.insert(
+                    "patch_summary".to_string(),
+                    ConfidentValue::from_skill(Value::Text(text), result.confidence),
+                );
+                fields.insert(
+                    "cost_usd".to_string(),
+                    ConfidentValue::deterministic(Value::Number(total_cost_usd as f64)),
+                );
+                fields.insert(
+                    "confidence".to_string(),
+                    ConfidentValue::deterministic(Value::Number(result.confidence as f64)),
+                );
+                ConfidentValue::from_agent_result(fields)
+            }
+        }
     }
 
     /// Check if an OutputType includes Html.
@@ -672,47 +973,7 @@ impl TaskExecutor {
 
                 // ── Agent features (issue #11) ─────────────────────────────
                 Stmt::Emit(name, args) => {
-                    let mut arg_vals = Vec::new();
-                    let mut fields = std::collections::HashMap::new();
-                    for arg in args {
-                        let val = self.eval_expr(&arg.node.value, env).await?;
-                        if let Some(ref label) = arg.node.label {
-                            fields.insert(label.node.clone(), val.clone());
-                        }
-                        arg_vals.push(val);
-                    }
-
-                    if let Some(ref ctx_arc) = self.agent_context {
-                        // Inside agent: collect in sink for batch publish
-                        ctx_arc
-                            .lock()
-                            .unwrap()
-                            .event_sink
-                            .emitted
-                            .push(EmittedEvent {
-                                name: name.node.clone(),
-                                args: arg_vals,
-                                fields,
-                            });
-                    } else if let Some(ref bus) = self.event_bus {
-                        // Outside agent (e.g. endpoint/webhook): publish directly
-                        let source = self
-                            .agent_name
-                            .clone()
-                            .unwrap_or_else(|| "endpoint".to_string());
-                        let payload = crate::runtime::event_bus::EventPayload {
-                            event_name: name.node.clone(),
-                            args: arg_vals,
-                            source_agent: source.clone(),
-                            fields,
-                        };
-                        let delivered = bus.read().await.publish(&payload);
-                        if let Some(ref t) = self.tracer {
-                            t.event_emit(&source, &name.node, delivered);
-                        }
-                    } else {
-                        return Err(RuntimeError::Unsupported("emit outside agent".into()));
-                    }
+                    self.emit_named_args(&name.node, args, env).await?;
                 }
                 Stmt::TransitionTo(state) => {
                     if let Some(ref ctx_arc) = self.agent_context {
@@ -2414,9 +2675,7 @@ impl TaskExecutor {
                     }
                 }
 
-                Expr::Session(_) => Err(RuntimeError::Unsupported(
-                    "session runtime is not implemented yet; see issue #190".to_string(),
-                )),
+                Expr::Session(session) => self.eval_session_expr(session, env).await,
 
                 // ── command.method() expressions (issue #162) ────────────────
                 Expr::CommandMethod(method, args) => {
