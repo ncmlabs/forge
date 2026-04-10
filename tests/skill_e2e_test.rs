@@ -13,6 +13,7 @@ use forge::llm::ToolCallRequest;
 use forge::runtime::skill_executor::SkillExecutor;
 use forge::runtime::skill_loader::SkillLoader;
 use forge::runtime::skill_registry::SkillRegistry;
+use forge::tracer::Tracer;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -112,6 +113,109 @@ async fn skill_e2e_mock_tool_use() {
     );
 }
 
+// ── E2E: GitHub skill live integration (requires gh auth) ──────
+
+#[tokio::test]
+#[ignore] // Run with: cargo test github_e2e -- --ignored
+async fn github_e2e_create_verify_close() {
+    // Skip if gh is not authenticated
+    let auth = std::process::Command::new("gh")
+        .args(["auth", "status"])
+        .output();
+    match auth {
+        Ok(o) if o.status.success() => {}
+        _ => {
+            eprintln!("Skipping: gh not authenticated");
+            return;
+        }
+    }
+
+    let repo = "ncmlabs/forge";
+    let test_title = "[test] Integration test issue — safe to close";
+    let test_body = "Automated integration test for GitHub skill (#176). This issue will be closed automatically.";
+
+    // Step 1: Create issue
+    let create = std::process::Command::new("gh")
+        .args([
+            "issue", "create", "-R", repo, "--title", test_title, "--body", test_body,
+        ])
+        .output()
+        .expect("gh issue create failed");
+    assert!(
+        create.status.success(),
+        "create issue failed: {}",
+        String::from_utf8_lossy(&create.stderr)
+    );
+    let issue_url = String::from_utf8_lossy(&create.stdout).trim().to_string();
+    assert!(
+        issue_url.contains("/issues/"),
+        "expected issue URL, got: {}",
+        issue_url
+    );
+
+    // Extract issue number from URL
+    let issue_number = issue_url
+        .rsplit('/')
+        .next()
+        .expect("could not extract issue number");
+
+    // Step 2: Verify issue exists via direct view (avoids search index lag)
+    let view = std::process::Command::new("gh")
+        .args([
+            "issue",
+            "view",
+            issue_number,
+            "-R",
+            repo,
+            "--json",
+            "number,title,state",
+        ])
+        .output()
+        .expect("gh issue view failed");
+    assert!(
+        view.status.success(),
+        "issue {} not found: {}",
+        issue_number,
+        String::from_utf8_lossy(&view.stderr)
+    );
+    let view_output = String::from_utf8_lossy(&view.stdout);
+    assert!(
+        view_output.contains("OPEN"),
+        "issue should be open, got: {}",
+        view_output
+    );
+
+    // Step 3: Close the issue
+    let close = std::process::Command::new("gh")
+        .args(["issue", "close", issue_number, "-R", repo])
+        .output()
+        .expect("gh issue close failed");
+    assert!(
+        close.status.success(),
+        "close issue failed: {}",
+        String::from_utf8_lossy(&close.stderr)
+    );
+
+    // Step 4: Verify closed
+    let view = std::process::Command::new("gh")
+        .args([
+            "issue",
+            "view",
+            issue_number,
+            "-R",
+            repo,
+            "--json",
+            "state",
+            "-q",
+            ".state",
+        ])
+        .output()
+        .expect("gh issue view failed");
+    assert!(view.status.success());
+    let state = String::from_utf8_lossy(&view.stdout).trim().to_string();
+    assert_eq!(state, "CLOSED", "issue should be closed, got: {}", state);
+}
+
 // ── Mock provider: multi-turn sequence drains correctly ─────────
 
 #[tokio::test]
@@ -130,6 +234,7 @@ async fn mock_tool_call_sequence_drains() {
         ]);
 
     let providers = mock_registry(mock);
+    let _tracer = Tracer::with_capture(); // Principle VIII: trace oracle calls
 
     // Turn 1: should have tool calls
     let req = forge::llm::CompletionRequest::simple("test");

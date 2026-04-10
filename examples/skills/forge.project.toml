@@ -1,0 +1,10 @@
+[project]
+name = "github-skill-demo"
+version = "0.1.0"
+description = "Demonstrates the GitHub skill for gh CLI operations"
+
+[build]
+entry = "github_ops.forge"
+
+[skills]
+github = { path = "../../skills/github" }

@@ -94,6 +94,7 @@ fn skill_loader_parses_repo_reference_cli_skills() {
     for (path, expected_name, expected_capabilities) in [
         ("skills/claude-code/SKILL.md", "claude", 4usize),
         ("skills/codex/SKILL.md", "codex", 4usize),
+        ("skills/github/SKILL.md", "github", 8usize),
     ] {
         let skill = SkillLoader::parse_skill_md(Path::new(path)).unwrap();
         assert_eq!(skill.manifest.name, expected_name);
@@ -160,6 +161,73 @@ fn skill_loader_discovers_multiple_skills() {
     let names: Vec<&str> = skills.iter().map(|s| s.manifest.name.as_str()).collect();
     assert!(names.contains(&"skill-a"));
     assert!(names.contains(&"skill-b"));
+}
+
+#[test]
+fn skill_loader_parses_github_skill() {
+    let skill = SkillLoader::parse_skill_md(Path::new("skills/github/SKILL.md")).unwrap();
+    assert_eq!(skill.manifest.name, "github");
+    assert_eq!(skill.manifest.capabilities.len(), 8);
+    assert!(
+        skill.manifest.legacy_signature.is_none(),
+        "typed skill should not have legacy signature"
+    );
+    assert_eq!(skill.manifest.timeout_secs, 120);
+    assert!(
+        skill
+            .manifest
+            .allowed_tools
+            .iter()
+            .any(|t| t.contains("gh")),
+        "allowed-tools should reference gh"
+    );
+    let cap_names: Vec<&str> = skill
+        .manifest
+        .capabilities
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    for expected in [
+        "create_issue",
+        "list_issues",
+        "create_branch",
+        "create_pr",
+        "check_ci",
+        "merge_pr",
+        "delete_branch",
+        "close_issue",
+    ] {
+        assert!(
+            cap_names.contains(&expected),
+            "missing capability: {}",
+            expected
+        );
+    }
+}
+
+#[test]
+fn github_skill_registers_all_capabilities() {
+    let skill = SkillLoader::parse_skill_md(Path::new("skills/github/SKILL.md")).unwrap();
+    let mut registry = SkillRegistry::new();
+    registry.register(skill);
+
+    let sigs = registry.capability_signatures();
+    for cap in [
+        "skill.github.create_issue",
+        "skill.github.list_issues",
+        "skill.github.create_branch",
+        "skill.github.create_pr",
+        "skill.github.check_ci",
+        "skill.github.merge_pr",
+        "skill.github.delete_branch",
+        "skill.github.close_issue",
+    ] {
+        assert!(sigs.contains_key(cap), "missing signature for {}", cap);
+    }
+    assert!(
+        !sigs.contains_key("skill.github"),
+        "typed skill should not have legacy entry"
+    );
 }
 
 // ── Skill Registry Tests ────────────────────────────────────────
@@ -635,6 +703,39 @@ fn use_skill_validated_at_compile_time() {
         result_with_skills.is_ok(),
         "use skill.myskill should pass with skill registered: {:?}",
         result_with_skills.err()
+    );
+}
+
+#[test]
+fn use_skill_namespace_imports_all_typed_capabilities() {
+    // `use skill.github` should pass when typed capabilities like
+    // skill.github.create_issue, skill.github.list_issues exist
+    let source = "use\n  skill.github\n\ntask run\n  gives Text\n  do\n    give skill.github.create_issue(\"repo\", \"title\", \"body\")\n";
+    let program = forge::parser::parse(source).unwrap();
+
+    let mut sigs = std::collections::HashMap::new();
+    sigs.insert(
+        "skill.github.create_issue".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+            ],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    sigs.insert(
+        "skill.github.list_issues".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![forge::types::ForgeType::Text, forge::types::ForgeType::Text],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    let ctx = forge::resolver::CheckContext::with_skills("test.forge", sigs);
+    assert!(
+        ctx.check(&program).is_ok(),
+        "use skill.github should pass when typed capabilities exist under that namespace"
     );
 }
 

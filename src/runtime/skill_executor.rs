@@ -345,11 +345,11 @@ impl SkillExecutor {
         let has_bash = allowed_tools.is_empty()
             || allowed_tools
                 .iter()
-                .any(|t| t == "Bash" || t == "bash_exec");
+                .any(|t| t == "Bash" || t == "bash_exec" || t.starts_with("Bash("));
         let has_http = allowed_tools.is_empty()
             || allowed_tools
                 .iter()
-                .any(|t| t == "WebFetch" || t == "http_request");
+                .any(|t| t == "WebFetch" || t == "http_request" || t.starts_with("WebFetch("));
 
         if has_bash {
             tools.push(ToolDefinition {

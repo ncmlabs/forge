@@ -281,6 +281,13 @@ impl CapabilityRegistry {
     pub fn resolve(&self, name: &str) -> Option<&CapabilitySignature> {
         self.capabilities.get(name)
     }
+
+    /// Check if `name` is a namespace prefix for one or more capabilities.
+    /// e.g. "skill.github" matches "skill.github.create_issue", "skill.github.list_issues", etc.
+    pub fn has_namespace(&self, name: &str) -> bool {
+        let prefix = format!("{}.", name);
+        self.capabilities.keys().any(|k| k.starts_with(&prefix))
+    }
 }
 
 // ── Check context ────────────────────────────────────────────
@@ -315,7 +322,9 @@ impl CheckContext {
         for item in &program.items {
             if let TopLevel::Use(use_decl) = &item.node {
                 for cap in &use_decl.capabilities {
-                    if self.registry.resolve(&cap.node).is_none() {
+                    if self.registry.resolve(&cap.node).is_none()
+                        && !self.registry.has_namespace(&cap.node)
+                    {
                         self.errors.push(ResolveError::UnknownCapability {
                             name: cap.node.clone(),
                             span_start: cap.span.start,
