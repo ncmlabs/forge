@@ -71,16 +71,18 @@ Everything in this document exists to reach that moment.
 | Milestone | Description | Issues | Status |
 |-----------|-------------|--------|--------|
 | P2.M1 — Command | `command` primitive: grammar, sync execution, background mode | #160 ✅ #161 ✅ #162 ✅ | Done |
-| P2.M2 — Session | `session` primitive: grammar, lifecycle, agent adapters, polling | #189, #190, #191, #192 | Open |
-| P2.M3 — AgentResult | Built-in typed result contract for sessions | #193 | Open |
-| P2.M4 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 | Open |
-| P2.M5 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research | #163, #164, #165 | Open |
-| P2.M6 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer | #166, #167 | Open |
-| P2.M7 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168-#175 | Open |
+| P2.M2 — Session Core | `session` primitive: grammar and lifecycle manager | #189, #190 | Open |
+| P2.M3 — AgentResult + Contract | Typed result contract plus claims/evidence/verification model | #193, #203 | Open |
+| P2.M4 — Session Adapters + Events | Agent adapters, polling, and event integration | #191, #192 | Open |
+| P2.M5 — Verification + Contradictions | Verification engine and contradiction/warden integration | #204, #205 | Open |
+| P2.M6 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 | Open |
+| P2.M7 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research | #163, #164, #165 | Open |
 | P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176-#179 | Open |
-| P2.M9 — Orchestration | Slack Monitor, Inbound Triager, Approval gate pattern | #180-#182 | Open |
+| P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180-#182 | Open |
 | P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Open |
-| P2.M11 — Polish | CostEstimator, DocumentationAgent | #186-#187 | Open |
+| P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer | #166, #167 | Open |
+| P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168-#175 | Open |
+| P2.M13 — Polish | CostEstimator, DocumentationAgent | #186-#187 | Open |
 
 ### Future Layers
 
@@ -650,54 +652,47 @@ Worktree isolation for safe agent execution:
 | #161 | `command` runtime — synchronous execution | Done |
 | #162 | `command` background mode — process manager | Done |
 
-### P2.M2: Session Primitive
+### P2.M2: Session Core
 
 | Issue | Title | Status |
 |-------|-------|--------|
 | #189 | session primitive — grammar, AST, and parser | Open |
 | #190 | session runtime — lifecycle manager | Open |
-| #191 | session agent adapters — Claude, Codex, generic | Open |
-| #192 | session polling + event integration | Open |
 
-### P2.M3: AgentResult Built-in Type
+### P2.M3: AgentResult + Reliability Contract
 
 | Issue | Title | Status |
 |-------|-------|--------|
 | #193 | AgentResult built-in type | Open |
+| #203 | Phase 2 reliability: claim/evidence/verification contract | Open |
 
-### P2.M4: Sandbox Isolation
+### P2.M4: Session Adapters + Events
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #191 | session agent adapters — Claude, Codex, generic | Open |
+| #192 | session polling + event integration | Open |
+
+### P2.M5: Verification + Contradictions
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #204 | Phase 2 reliability: verification engine for coding sessions | Open |
+| #205 | Phase 2 reliability: contradiction events and warden integration | Open |
+
+### P2.M6: Sandbox Isolation
 
 | Issue | Title | Status |
 |-------|-------|--------|
 | #194 | sandbox isolation — spawn modifier + worktree | Open |
 
-### P2.M5: Skills Foundation
+### P2.M7: Skills Foundation
 
 | Issue | Title | Status |
 |-------|-------|--------|
 | #163 | Pluggable skill architecture — project-level declarations | Open |
 | #164 | Skill capability type system — rich signatures | Open |
 | #165 | Explore agent-to-CLI delegation patterns (Claude Code, Codex) | Open |
-
-### P2.M6: Knowledge School
-
-| Issue | Title | Status |
-|-------|-------|--------|
-| #166 | forge-sensei code-generation curriculum | Open |
-| #167 | Toolkit agent knowledge transfer infrastructure | Open |
-
-### P2.M7: Toolkit Agents
-
-| Issue | Title | Status |
-|-------|-------|--------|
-| #168 | Generator contract and shared validation infrastructure | Open |
-| #169 | TaskGenerator agent | Open |
-| #170 | FlowGenerator agent | Open |
-| #171 | AgentGenerator agent | Open |
-| #172 | SystemAssembler agent | Open |
-| #173 | RepairAgent | Open |
-| #174 | TestGenerator agent | Open |
-| #175 | SpecAnalyzer — capstone agent | Open |
 
 ### P2.M8: CLI Skills (SKILL.md)
 
@@ -724,12 +719,66 @@ Worktree isolation for safe agent execution:
 | #184 | Executor agent — full issue lifecycle (explore→merge) | Open |
 | #185 | Dev orchestration system assembly — FORGE + forge-wiki proof | Open |
 
-### P2.M11: Polish
+### P2.M11: Knowledge School
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #166 | forge-sensei code-generation curriculum | Open |
+| #167 | Toolkit agent knowledge transfer infrastructure | Open |
+
+### P2.M12: Toolkit Agents
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| #168 | Generator contract and shared validation infrastructure | Open |
+| #169 | TaskGenerator agent | Open |
+| #170 | FlowGenerator agent | Open |
+| #171 | AgentGenerator agent | Open |
+| #172 | SystemAssembler agent | Open |
+| #173 | RepairAgent | Open |
+| #174 | TestGenerator agent | Open |
+| #175 | SpecAnalyzer — capstone agent | Open |
+
+### P2.M13: Polish
 
 | Issue | Title | Status |
 |-------|-------|--------|
 | #186 | CostEstimator agent | Open |
 | #187 | DocumentationAgent | Open |
+
+---
+
+## L2.1a — Phase 2 critical path
+
+Phase 2 is tracked around the trustworthy dev-automation backbone:
+
+1. `P2.M2` Session Core — `#189`, `#190`
+2. `P2.M3` AgentResult + Reliability Contract — `#193`, `#203`
+3. `P2.M4` Session Adapters + Events — `#191`, `#192`
+4. `P2.M5` Verification + Contradictions — `#204`, `#205`
+5. `P2.M6` Sandbox — `#194`
+6. `P2.M9` Orchestration — `#180-#182`
+7. `P2.M10` Dev System — `#183-#185`
+
+Current execution rule:
+
+- `sure/unsure` remains a language branching primitive
+- verification establishes trust
+- policy and approval gates establish actionability
+- commit / PR / merge flows must key off verification and policy, not raw confidence
+
+Now:
+- `P2.M2` Session Core
+
+Blocked next by:
+- `P2.M3` AgentResult + Reliability Contract
+- `P2.M4` Session Adapters + Events
+- `P2.M5` Verification + Contradictions
+
+Then:
+- `P2.M6` Sandbox
+- `P2.M9` Orchestration
+- `P2.M10` Dev System
 
 ---
 
@@ -883,18 +932,20 @@ command (#160-162) ✅
 
 ```
 P2.M1  Command         ████████████████████  3/3  (100%)  DONE
-P2.M2  Session         ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
-P2.M3  AgentResult     ░░░░░░░░░░░░░░░░░░░░  0/1  (  0%)
-P2.M4  Sandbox         ░░░░░░░░░░░░░░░░░░░░  0/1  (  0%)
-P2.M5  Skills          ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
-P2.M6  Knowledge       ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
-P2.M7  Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
+P2.M2  Session Core    ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M3  Result+Contract ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M4  Adapters+Events ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M5  Verify+Contra   ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M6  Sandbox         ░░░░░░░░░░░░░░░░░░░░  0/1  (  0%)
+P2.M7  Skills          ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
 P2.M8  CLI Skills      ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
 P2.M9  Orchestration   ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
 P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
-P2.M11 Polish          ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M11 Knowledge       ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
+P2.M13 Polish          ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 ─────────────────────────────────────────────────────────
-Phase 2 Overall         ███░░░░░░░░░░░░░░░░░  3/34 (  9%)
+Phase 2 Overall         ██░░░░░░░░░░░░░░░░░░  3/37 (  8%)
 ```
 
 ---
@@ -1266,18 +1317,20 @@ Phase 1 (Layer 1): Build FORGE — **SHIPPED v0.1.0 on 2026-04-09**
   ⬜ WASM compilation (Cranelift backend) — deferred, not blocking Phase 2
   Goal: tic-tac-toe system runs end-to-end ✅
 
-Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (3/34 issues done)**
+Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (3/37 issues done)**
   ✅ P2.M1: `command` primitive — grammar, sync, background (#160-#162)
-  ⬜ P2.M2: `session` primitive — long-running agent delegation (#189-#192)
-  ⬜ P2.M3: `AgentResult` — typed result contract for sessions (#193)
-  ⬜ P2.M4: `sandbox` — worktree isolation for safe execution (#194)
-  ⬜ P2.M5: Skills foundation — pluggable architecture, rich types (#163-#165)
-  ⬜ P2.M6: Knowledge school — sensei curriculum, knowledge transfer (#166-#167)
-  ⬜ P2.M7: Toolkit agents — Generator contract, 7 generators (#168-#175)
+  ⬜ P2.M2: `session` core — grammar and lifecycle manager (#189-#190)
+  ⬜ P2.M3: `AgentResult` + reliability contract — claims, evidence, verification (#193, #203)
+  ⬜ P2.M4: session adapters + events — Claude/Codex/generic and event hooks (#191-#192)
+  ⬜ P2.M5: verification + contradictions — trusted gating before repo mutations (#204-#205)
+  ⬜ P2.M6: `sandbox` — worktree isolation for safe execution (#194)
+  ⬜ P2.M7: Skills foundation — pluggable architecture, rich types (#163-#165)
   ⬜ P2.M8: CLI skills — GitHub, Slack, Claude Code, Codex/Ollama (#176-#179)
   ⬜ P2.M9: Orchestration — Slack Monitor, Triager, Approval gate (#180-#182)
   ⬜ P2.M10: Dev system — ProjectAgent, Executor, two-project proof (#183-#185)
-  ⬜ P2.M11: Polish — CostEstimator, DocumentationAgent (#186-#187)
+  ⬜ P2.M11: Knowledge school — sensei curriculum, knowledge transfer (#166-#167)
+  ⬜ P2.M12: Toolkit agents — Generator contract, 7 generators (#168-#175)
+  ⬜ P2.M13: Polish — CostEstimator, DocumentationAgent (#186-#187)
   Goal: describe a system → get runnable FORGE code; dev orchestration for FORGE + forge-wiki
 
 Phase 3 (Layer 3): Build the factory
@@ -1317,5 +1370,5 @@ Everything in this document exists to reach that moment.
 
 *FORGE — Making It Real · Master Roadmap v3.0*
 *Layers: Substrate → Toolkit → Factory → Self-improvement*
-*Layer 1: v0.1.0 shipped (32/36 tracks, 89%) · Phase 2: 3/34 issues (9%) · Next: session primitive*
-*Last updated: 2026-04-09*
+*Layer 1: v0.1.0 shipped (32/36 tracks, 89%) · Phase 2: 3/37 issues (8%) · Next: session core → AgentResult/reliability contract → verification*
+*Last updated: 2026-04-10*
