@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Quiz tutor example now runs cleanly with `FORGE_MOCK=1 forge run examples/agents/quiz_tutor.forge`, and mock-runnable examples reject checker warnings in the validation gate (#231)
 - FORGE reference, training workflow doc, and local examples now cover implemented command/session/AgentResult/verification/knowledge/skill surfaces (#229)
 - Anthropic provider now sends tool definitions and parses `tool_use` response blocks, enabling skill executor agentic loop (#198)
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)

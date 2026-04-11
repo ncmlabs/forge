@@ -123,6 +123,12 @@ async fn example_validation_manifest_passes() {
                     "case `{}` cannot be mock-run because check errors were present",
                     case.name
                 );
+                assert!(
+                    case_warnings.is_empty(),
+                    "case `{}` is mock-runnable but has checker warnings: {:?}",
+                    case.name,
+                    case_warnings.iter().map(|d| &d.message).collect::<Vec<_>>()
+                );
                 run_mock_case(&outcome.programs, case).await;
                 mock_runs += 1;
             }
