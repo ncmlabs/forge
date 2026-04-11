@@ -46,9 +46,30 @@ echo "  Binary built: $INSTALL_DIR/forge-sensei-bin"
 # ── 3. Create wrapper script ─────────────────────────────────
 cat > "$BIN_DIR/forge-sensei" <<'WRAPPER'
 #!/bin/sh
-# forge-sensei wrapper — sets app-specific config path
-FORGE_APP_CONFIG="$HOME/.forge/sensei/config.toml" \
-  exec "$HOME/.forge/sensei/forge-sensei-bin" "$@"
+# forge-sensei wrapper — sets config path + periodic health check
+SENSEI_DIR="$HOME/.forge/sensei"
+STATE_FILE="$SENSEI_DIR/state.json"
+STALE_HOURS=24
+
+# Health check: if last eval was >24h ago and knowledge store exists, warn on status
+if [ "$1" = "status" ] && [ -f "$SENSEI_DIR/knowledge.json" ]; then
+  if [ -f "$STATE_FILE" ]; then
+    last_ts=$(grep -o '"last_eval":"[^"]*"' "$STATE_FILE" 2>/dev/null | cut -d'"' -f4)
+    if [ -n "$last_ts" ]; then
+      last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$last_ts" +%s 2>/dev/null || echo 0)
+      now_epoch=$(date +%s)
+      hours_since=$(( (now_epoch - last_epoch) / 3600 ))
+      if [ "$hours_since" -gt "$STALE_HOURS" ]; then
+        echo "Note: last evaluation was ${hours_since}h ago. Consider running: bash scripts/pretrain-toolkit.sh --verify-only"
+      fi
+    fi
+  else
+    echo "Note: no evaluation recorded yet. Run: bash scripts/pretrain-toolkit.sh --verify-only"
+  fi
+fi
+
+FORGE_APP_CONFIG="$SENSEI_DIR/config.toml" \
+  exec "$SENSEI_DIR/forge-sensei-bin" "$@"
 WRAPPER
 chmod +x "$BIN_DIR/forge-sensei"
 echo "  Wrapper: $BIN_DIR/forge-sensei"
