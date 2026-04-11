@@ -78,6 +78,13 @@ impl RetryTracker {
     pub fn all_counts(&self) -> &HashMap<(String, FailureType), u64> {
         &self.counts
     }
+
+    /// Clear all retry state (counts and group failures).
+    /// Used by half-open circuit breaker recovery to get a clean slate.
+    pub fn reset_all(&mut self) {
+        self.counts.clear();
+        self.group_failures.clear();
+    }
 }
 
 // ── Policy Resolver ─────────────────────────────────────────────────────────
@@ -264,7 +271,7 @@ impl Warden {
     }
 }
 
-fn duration_to_ms(d: &Duration) -> u64 {
+pub fn duration_to_ms(d: &Duration) -> u64 {
     match d.unit {
         DurationUnit::Seconds => d.value * 1000,
         DurationUnit::Minutes => d.value * 60 * 1000,

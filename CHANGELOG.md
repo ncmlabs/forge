@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Half-open circuit breaker recovery: warden no longer terminates on trip — enters cooldown → probe → resume cycle, making servers self-healing when providers recover (#247)
+- Generated server binaries now support `--check` (validate config + provider health), `--config <path>` (explicit config), and `--reset` (clear persisted state) CLI flags (#247)
+- Startup health check and banner: servers print config source and provider reachability on boot, continue in degraded mode if providers are unreachable (#247)
+- Server resilience integration tests: HTTP binding under provider failure, health check API, circuit breaker reset verification (#247)
 - forge-sensei server/client deployment path: `forge build --entry/--source` can build the composed server binary, generated sensei CLIs can route commands through `--server`, JSON `/api/*` endpoints cover CLI workflows, and install scripts now install CLI/server wrappers plus a macOS LaunchAgent helper (#240)
 - Toolkit agent knowledge transfer infrastructure: forge-sensei subscribes to `LearnedInsight` events from toolkit and specialist agents, closing the feedback loop so spawned agents' learnings compound in sensei's knowledge store (#167)
 - `--version` flag for all FORGE agent binaries built with `forge build`, sourced from `forge.project.toml` version field (#167)
@@ -16,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example toolkit agent (`examples/agents/toolkit_demo.forge`) demonstrating spawn→recall→emit→absorb pattern (#167)
 
 ### Fixed
+- `install-sensei.sh` default config now points to vLLM on `192.168.10.195:8000` instead of stale Ollama localhost defaults; server wrapper uses `--config` flag for unambiguous config resolution (#247)
 - Multi-file project builds (`forge build`) no longer fail on cross-file lifecycle references; checker now validates the merged program (#167)
 - Quiz tutor example now runs cleanly with `FORGE_MOCK=1 forge run examples/agents/quiz_tutor.forge`, and mock-runnable examples reject checker warnings in the validation gate (#231)
 - FORGE reference, training workflow doc, and local examples now cover implemented command/session/AgentResult/verification/knowledge/skill surfaces (#229)

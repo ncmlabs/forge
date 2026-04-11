@@ -77,8 +77,7 @@ cat > "$BIN_DIR/forge-sensei-server" <<'WRAPPER'
 # forge-sensei-server wrapper — runs the long-lived HTTP daemon.
 SENSEI_DIR="$HOME/.forge/sensei"
 cd "$SENSEI_DIR"
-FORGE_CONFIG="${FORGE_CONFIG:-$SENSEI_DIR/config.toml}" \
-  exec "$SENSEI_DIR/forge-sensei-server-bin" "$@"
+exec "$SENSEI_DIR/forge-sensei-server-bin" --config "$SENSEI_DIR/config.toml" "$@"
 WRAPPER
 chmod +x "$BIN_DIR/forge-sensei-server"
 
@@ -89,24 +88,24 @@ if [ ! -f "$INSTALL_DIR/config.toml" ] || [ "$FORCE_CONFIG" = true ]; then
 # Edit to point to your preferred LLM provider.
 
 [llm]
-default = "ollama"
+default = "vllm"
 
 [llm.routing]
-fast     = "ollama"
-balanced = "ollama"
+fast     = "vllm"
+balanced = "vllm"
 
 [llm.budget]
 max_cost_usd     = 0.00
 max_total_tokens = 100000
 
-[providers.ollama]
+[providers.vllm]
 type         = "openai-compat"
-model        = "gemma4:e4b"
-base_url     = "http://localhost:11434/v1"
+model        = "google/gemma-4-E4B-it"
+base_url     = "http://192.168.10.195:8000/v1"
 api_key      = "not-required"
 timeout_secs = 120
 
-[providers.ollama.capabilities]
+[providers.vllm.capabilities]
 quality_tier = "balanced"
 TOML
   echo "  Config: $INSTALL_DIR/config.toml"
