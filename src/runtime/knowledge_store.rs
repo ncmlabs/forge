@@ -266,8 +266,7 @@ impl KnowledgeStore {
                 tokenize(&self.entries[best_idx].content)
                     .into_iter()
                     .collect();
-            let query_set: std::collections::HashSet<&String> =
-                query_terms.iter().collect();
+            let query_set: std::collections::HashSet<&String> = query_terms.iter().collect();
             let matched = query_set
                 .iter()
                 .filter(|t| best_doc_terms.contains(**t))
@@ -614,7 +613,10 @@ mod tests {
 
         // No coverage: no terms match
         let result = store.recall("quantum computing blockchain", 1000);
-        assert_eq!(result.confidence, 0.0, "No matches should produce zero confidence");
+        assert_eq!(
+            result.confidence, 0.0,
+            "No matches should produce zero confidence"
+        );
     }
 
     #[test]
