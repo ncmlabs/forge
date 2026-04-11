@@ -68,7 +68,7 @@ if [ "$1" = "status" ] && [ -f "$SENSEI_DIR/knowledge.json" ]; then
   fi
 fi
 
-FORGE_APP_CONFIG="$SENSEI_DIR/config.toml" \
+FORGE_CONFIG="${FORGE_CONFIG:-$SENSEI_DIR/config.toml}" \
   exec "$SENSEI_DIR/forge-sensei-bin" "$@"
 WRAPPER
 chmod +x "$BIN_DIR/forge-sensei"

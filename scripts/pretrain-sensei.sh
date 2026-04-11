@@ -2,6 +2,7 @@
 # pretrain-sensei.sh — Bulk pre-training pipeline for forge-sensei
 # Usage: bash scripts/pretrain-sensei.sh [--force] [--dry-run]
 set -euo pipefail
+shopt -s globstar nullglob
 
 FORGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SENSEI_BIN="${SENSEI_BIN:-$HOME/.forge/bin/forge-sensei}"
@@ -43,8 +44,7 @@ collect() { [ -f "$1" ] && FILES+=("$1"); }
 for f in docs/forge-reference.md forge-principles.md README.md roadmap.md providers.md CONTRIBUTING.md; do
   collect "$FORGE_ROOT/$f"
 done
-for f in "$FORGE_ROOT"/examples/*.forge; do collect "$f"; done
-for f in "$FORGE_ROOT"/examples/tictactoe/*.forge; do collect "$f"; done
+for f in "$FORGE_ROOT"/examples/**/*.forge; do collect "$f"; done
 for f in "$FORGE_ROOT"/workflows/*.forge; do
   [ "$(basename "$f")" = "forge-sensei.forge" ] && continue
   collect "$f"
@@ -146,7 +146,7 @@ phase_time
 
 # ── Phase 2: Example Programs ────────────────────────────────
 echo "Phase 2: Example programs..."
-for f in "$FORGE_ROOT"/examples/*.forge "$FORGE_ROOT"/examples/tictactoe/*.forge; do
+for f in "$FORGE_ROOT"/examples/**/*.forge; do
   [ -f "$f" ] && ingest "$f"
 done
 phase_time
