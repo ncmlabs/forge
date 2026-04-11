@@ -726,10 +726,33 @@ async fn main() -> anyhow::Result<()> {{
             forge::runtime::instance_registry::InstanceRegistry::new(),
         ));
 
-    // Open persistent storage for memory across invocations
+    // Open persistent storage for memory across invocations.
+    // Derive storage path from knowledge store path (supports ~ expansion),
+    // falling back to .forge-data/ for agents without a knowledge store.
     let storage = {{
-        let db_path = std::path::Path::new(".forge-data").join("store.redb");
-        std::fs::create_dir_all(".forge-data").ok();
+        let data_dir = agent_decl.knowledge.as_ref().map(|kd| {{
+            let store_path = match &kd.node.store_path.node {{
+                forge::ast::Expr::Template(parts) => parts
+                    .iter()
+                    .filter_map(|p| match &p.node {{
+                        forge::ast::TemplatePart::Text(t) => Some(t.as_str()),
+                        _ => None,
+                    }})
+                    .collect::<String>(),
+                _ => ".forge-data".to_string(),
+            }};
+            // Expand ~ to home directory
+            if store_path.starts_with("~/") {{
+                dirs::home_dir()
+                    .map(|h| h.join(&store_path[2..]).to_string_lossy().to_string())
+                    .unwrap_or(store_path)
+            }} else {{
+                store_path
+            }}
+        }}).unwrap_or_else(|| ".forge-data".to_string());
+
+        let db_path = std::path::Path::new(&data_dir).join("store.redb");
+        std::fs::create_dir_all(&data_dir).ok();
         forge::runtime::storage::ForgeStorage::open(&db_path)
             .ok()
             .map(|s| std::sync::Arc::new(s))
