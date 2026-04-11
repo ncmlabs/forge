@@ -1,8 +1,8 @@
 [package]
 name = "forge"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.89"
 description = "FORGE — an agent-native programming language"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ncmlabs/forge"
@@ -36,7 +36,7 @@ toml = "1.1"
 dirs = "6"
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
-redb = "2"
+redb = "4"
 notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

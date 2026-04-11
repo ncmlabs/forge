@@ -53,7 +53,7 @@ curl -sL "https://github.com/ncmlabs/forge/releases/latest/download/forge-${TARG
 
 ### Install from source
 
-Requires [Rust](https://rustup.rs/) 1.85 or later:
+Requires [Rust](https://rustup.rs/) 1.89 or later:
 
 ```bash
 cargo install --git https://github.com/ncmlabs/forge.git
