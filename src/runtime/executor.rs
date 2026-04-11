@@ -384,6 +384,11 @@ impl TaskExecutor {
         &self.endpoint_map
     }
 
+    /// Get the parsed program backing this executor.
+    pub fn program(&self) -> &Program {
+        &self.program
+    }
+
     /// Get the event bus reference (for webhook wiring).
     pub fn event_bus(&self) -> Option<&crate::runtime::event_bus::SharedEventBus> {
         self.event_bus.as_ref()

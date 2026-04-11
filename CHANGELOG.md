@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- forge-sensei server/client deployment path: `forge build --entry/--source` can build the composed server binary, generated sensei CLIs can route commands through `--server`, JSON `/api/*` endpoints cover CLI workflows, and install scripts now install CLI/server wrappers plus a macOS LaunchAgent helper (#240)
 - Toolkit agent knowledge transfer infrastructure: forge-sensei subscribes to `LearnedInsight` events from toolkit and specialist agents, closing the feedback loop so spawned agents' learnings compound in sensei's knowledge store (#167)
 - `--version` flag for all FORGE agent binaries built with `forge build`, sourced from `forge.project.toml` version field (#167)
 - Knowledge transfer integration tests: export-by-category with confidence cap, AgentTransfer source tagging, full seed→export→cap→merge→recall cycle (#167)

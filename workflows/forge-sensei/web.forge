@@ -64,6 +64,43 @@ endpoint review(code: Text) -> Html
   body = render_review_result(review_result)
   give render_page("forge-sensei | Review", body)
 
+# ── JSON API Endpoints ────────────────────────────────────────
+
+endpoint api_status() -> ApiStatus
+  level = determine_level(0)
+  status_text = format_status(level, 0, 0)
+  give ApiStatus(status: status_text)
+
+endpoint api_ask(question: Text) -> QueryResult
+  result = answer_query(question)
+  give result
+
+endpoint api_review(code: Text) -> ApiTextResult
+  review_result = review_code(code)
+  give ApiTextResult(result: review_result)
+
+endpoint api_assess_detailed(test_input: Text, expected: Text) -> AssessmentResult
+  categories = categorize_for_recall("{test_input} expects {expected}")
+  prediction = predict_outcome(test_input, categories)
+  passed = check_prediction(prediction, expected)
+  give AssessmentResult(passed: passed, prediction: prediction, expected: expected, gap_topic: categories)
+
+endpoint api_deep_dive(topic: Text) -> ApiTextResult
+  emit LearnedInsight(category: topic, content: "Deep dive requested over HTTP", source: "api", confidence: 0.9)
+  give ApiTextResult(result: "Deep dive requested for [{topic}]")
+
+endpoint api_update_mastery(score: Number) -> ApiTextResult
+  level = determine_level(score)
+  emit AssessmentCompleted(level: level, score: score, passed: 0, total: 0, failures: "")
+  give ApiTextResult(result: "Mastery updated: {level} ({score}%)")
+
+endpoint api_batch_assess(tests: Text[], expectations: Text[]) -> AssessmentResult
+  first_test = tests[0]
+  first_expected = expectations[0]
+  result = check_prediction(first_test, first_expected)
+  emit AssessmentCompleted(level: "novice", score: 0, passed: 0, total: 1, failures: first_test)
+  give AssessmentResult(passed: result, prediction: first_test, expected: first_expected, gap_topic: first_test)
+
 # ── Webhook Endpoints ─────────────────────────────────────────
 
 endpoint webhook_ingest(category: Text, fact: Text) -> Text
@@ -75,6 +112,12 @@ endpoint webhook_learn(question: Text, resolution: Text) -> Text
   emit LearnedInsight(category: "interactions", content: lesson, source: "webhook", confidence: 0.8)
   give "ok"
 
+# ── System Wiring ─────────────────────────────────────────────
+
+system forge_sensei_server
+  use
+    sensei: forge_sensei
+
 # ── Usage ─────────────────────────────────────────────────────
 # Dev:    forge serve workflows/forge-sensei/web.forge --watch
-# Build:  forge build workflows/forge-sensei/ --entry web.forge -o bin/forge-sensei-web
+# Build:  forge build workflows/forge-sensei/ --entry web.forge --source core.forge --source agent.forge -o bin/forge-sensei-server

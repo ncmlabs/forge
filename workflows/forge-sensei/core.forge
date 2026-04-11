@@ -15,6 +15,12 @@ type AssessmentResult
   expected: Text
   gap_topic: Text
 
+type ApiStatus
+  status: Text
+
+type ApiTextResult
+  result: Text
+
 # ── Events ────────────────────────────────────────────────────
 
 event LearnedInsight

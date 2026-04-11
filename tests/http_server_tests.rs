@@ -132,6 +132,45 @@ async fn post_endpoint_with_json_body() {
     assert_eq!(body, "Hello, world!");
 }
 
+const API_TYPED_SERVER: &str = r#"#! boundary: server
+
+type TypedPayload
+  score: Number
+  first: Text
+  enabled: Bool
+
+endpoint api_typed(score: Number, items: Text[], enabled: Bool) -> TypedPayload
+  give TypedPayload(score: score + 1, first: items[0], enabled: enabled)
+"#;
+
+#[tokio::test]
+async fn api_route_maps_to_prefixed_endpoint_and_preserves_json_types() {
+    let base = spawn_server(API_TYPED_SERVER).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/api/typed"))
+        .json(&serde_json::json!({
+            "score": 41,
+            "items": ["alpha", "beta"],
+            "enabled": true
+        }))
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "application/json");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["score"], 42.0);
+    assert_eq!(body["first"], "alpha");
+    assert_eq!(body["enabled"], true);
+}
+
 #[tokio::test]
 async fn unknown_route_returns_404() {
     let base = spawn_server(HELLO_SERVER).await;
@@ -1362,6 +1401,39 @@ async fn sensei_webhook_learn_accepts_json() {
 }
 
 #[tokio::test]
+async fn sensei_json_status_endpoint_returns_api_payload() {
+    let base = spawn_sensei_web_server().await;
+    let resp = reqwest::get(format!("{base}/api/status"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "application/json");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["status"].as_str().unwrap().contains("forge-sensei"));
+}
+
+#[tokio::test]
+async fn sensei_json_update_mastery_preserves_number_param() {
+    let base = spawn_sensei_web_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/api/update-mastery"))
+        .json(&serde_json::json!({"score": 72}))
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["result"].as_str().unwrap().contains("journeyman"));
+}
+
+#[tokio::test]
 async fn sensei_nonexistent_endpoint_returns_404() {
     let base = spawn_sensei_web_server().await;
     let resp = reqwest::get(format!("{base}/nonexistent"))
@@ -1397,7 +1469,7 @@ async fn sensei_all_endpoints_registered() {
     let executor = TaskExecutor::new(composed.program, mock_registry(), None);
     let endpoints = executor.endpoints();
 
-    // All 7 endpoints should be registered
+    // HTML, webhook, and JSON API endpoints should be registered.
     assert!(endpoints.contains_key("status"), "missing status endpoint");
     assert!(
         endpoints.contains_key("ask_form"),
@@ -1417,5 +1489,33 @@ async fn sensei_all_endpoints_registered() {
         endpoints.contains_key("webhook_learn"),
         "missing webhook_learn endpoint"
     );
-    assert_eq!(endpoints.len(), 7);
+    assert!(
+        endpoints.contains_key("api_status"),
+        "missing api_status endpoint"
+    );
+    assert!(
+        endpoints.contains_key("api_ask"),
+        "missing api_ask endpoint"
+    );
+    assert!(
+        endpoints.contains_key("api_review"),
+        "missing api_review endpoint"
+    );
+    assert!(
+        endpoints.contains_key("api_assess_detailed"),
+        "missing api_assess_detailed endpoint"
+    );
+    assert!(
+        endpoints.contains_key("api_deep_dive"),
+        "missing api_deep_dive endpoint"
+    );
+    assert!(
+        endpoints.contains_key("api_update_mastery"),
+        "missing api_update_mastery endpoint"
+    );
+    assert!(
+        endpoints.contains_key("api_batch_assess"),
+        "missing api_batch_assess endpoint"
+    );
+    assert_eq!(endpoints.len(), 14);
 }

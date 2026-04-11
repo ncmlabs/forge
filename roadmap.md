@@ -727,6 +727,7 @@ Worktree isolation for safe agent execution:
 |-------|-------|--------|
 | #166 | forge-sensei code-generation curriculum | Open |
 | #167 | Toolkit agent knowledge transfer infrastructure | Open |
+| #240 | forge-sensei server/client deployment path | In Progress |
 
 ### P2.M12: Toolkit Agents
 
