@@ -10,6 +10,7 @@ if [ ! -d "$SENSEI_SOURCE" ]; then
   SENSEI_SOURCE="$FORGE_ROOT/workflows/forge-sensei.forge"
 fi
 SENSEI_BIN="$FORGE_ROOT/bin/forge-sensei"
+SENSEI_SERVER_BIN="$FORGE_ROOT/bin/forge-sensei-server"
 HASH_FILE="$FORGE_ROOT/bin/.sensei-build-hash"
 
 # ── Prerequisites ─────────────────────────────────────────────
@@ -24,7 +25,7 @@ if [ -d "$SENSEI_SOURCE" ]; then
 else
   CURRENT_HASH=$(shasum -a 256 "$SENSEI_SOURCE" | cut -d' ' -f1)
 fi
-if [ -f "$HASH_FILE" ] && [ -x "$SENSEI_BIN" ]; then
+if [ -f "$HASH_FILE" ] && [ -x "$SENSEI_BIN" ] && [ -x "$SENSEI_SERVER_BIN" ]; then
   CACHED_HASH=$(cat "$HASH_FILE")
   if [ "$CURRENT_HASH" = "$CACHED_HASH" ]; then
     echo "Binary up to date (source unchanged)."
@@ -41,16 +42,23 @@ cargo run --manifest-path "$FORGE_ROOT/Cargo.toml" -- build \
   "$SENSEI_SOURCE" \
   -o "$SENSEI_BIN"
 
+cargo run --manifest-path "$FORGE_ROOT/Cargo.toml" -- build \
+  "$SENSEI_SOURCE" \
+  --entry web.forge \
+  --source core.forge \
+  --source agent.forge \
+  -o "$SENSEI_SERVER_BIN"
+
 ELAPSED=$((SECONDS - START))
 echo "$CURRENT_HASH" > "$HASH_FILE"
 
 # ── Smoke test ────────────────────────────────────────────────
 if "$SENSEI_BIN" status &>/dev/null; then
   echo ""
-  echo "Binary ready: bin/forge-sensei (${ELAPSED}s)"
+  echo "Binaries ready: bin/forge-sensei, bin/forge-sensei-server (${ELAPSED}s)"
   echo "Run: bin/forge-sensei --help"
 else
   echo ""
-  echo "Binary ready: bin/forge-sensei (${ELAPSED}s)"
+  echo "Binaries ready: bin/forge-sensei, bin/forge-sensei-server (${ELAPSED}s)"
   echo "Note: smoke test returned non-zero (may need pretrain first)"
 fi

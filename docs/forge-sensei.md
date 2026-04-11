@@ -768,7 +768,15 @@ Location: `conformance/{parser,checker,runtime}/sensei_*.json`
 
 ```bash
 bash scripts/build-sensei.sh
-# Uses: forge build workflows/forge-sensei/ -o bin/forge-sensei
+# Builds:
+#   bin/forge-sensei
+#   bin/forge-sensei-server
+```
+
+The CLI build uses the agent entry from `forge.project.toml`. The server build composes the web entry with the shared core and agent sources:
+
+```bash
+forge build workflows/forge-sensei/ --entry web.forge --source core.forge --source agent.forge -o bin/forge-sensei-server
 ```
 
 ### Pre-train
@@ -792,6 +800,12 @@ bash scripts/pretrain-toolkit.sh --dry-run
 ```bash
 bin/forge-sensei query "how do flows work in FORGE?"
 bin/forge-sensei query "what is the difference between task and pure?"
+```
+
+To route the CLI through a long-running server instead of local dispatch:
+
+```bash
+bin/forge-sensei --server http://127.0.0.1:3000 query "how do flows work in FORGE?"
 ```
 
 ### Review
@@ -828,6 +842,17 @@ bin/forge-sensei deep-dive "SYNTAX"
 forge serve workflows/forge-sensei/ --watch
 # Web UI at http://localhost:3030
 ```
+
+### Installed Server
+
+```bash
+bash scripts/install-sensei.sh --skip-pretrain
+bash scripts/install-sensei-server.sh install
+bash scripts/install-sensei-server.sh start
+~/.forge/bin/forge-sensei --server http://127.0.0.1:3000 status
+```
+
+The install script preserves an existing `~/.forge/sensei/config.toml` by default, installs `~/.forge/bin/forge-sensei` and `~/.forge/bin/forge-sensei-server`, and writes wrappers that set `FORGE_CONFIG` to the installed sensei config. The server helper manages a macOS LaunchAgent at `~/Library/LaunchAgents/com.ncmlabs.forge-sensei.plist`.
 
 ## How Toolkit Agents Consume Knowledge
 

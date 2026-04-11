@@ -254,6 +254,8 @@ tokio = {{ version = "1", features = ["full"] }}
 clap = {{ version = "4", features = ["derive"] }}
 anyhow = "1"
 dirs = "6"
+reqwest = {{ version = "0.12", features = ["json"] }}
+serde_json = "1"
 "#,
             name = self.manifest.project.name,
             version = self.manifest.project.version.as_deref().unwrap_or("0.1.0"),
@@ -530,7 +532,7 @@ fn generate_agent_cli_main(
             match_arms.push(format!(
                 r#"        Command::{variant} => {{
             let params = std::collections::HashMap::new();
-            dispatch(&agent, "{event}", params).await?;
+            dispatch_selected(&server_url, &agent, "{event}", params).await?;
         }}"#,
                 variant = variant,
                 event = handler.event,
@@ -582,7 +584,7 @@ fn generate_agent_cli_main(
                 r#"        Command::{variant} {{ {destructure} }} => {{
             let mut params = std::collections::HashMap::new();
 {inserts}
-            dispatch(&agent, "{event}", params).await?;
+            dispatch_selected(&server_url, &agent, "{event}", params).await?;
         }}"#,
                 variant = variant,
                 event = handler.event,
@@ -615,6 +617,10 @@ const SOURCES: &[(&str, &str)] = &[
 #[derive(Parser)]
 #[command(name = "{agent_name}", about = "FORGE agent: {agent_name}", version = "{agent_version}")]
 struct Cli {{
+    /// Route commands to a long-running FORGE server instead of local dispatch
+    #[arg(long)]
+    server: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }}
@@ -622,6 +628,19 @@ struct Cli {{
 #[derive(Subcommand)]
 enum Command {{
 {variants}
+}}
+
+async fn dispatch_selected(
+    server_url: &Option<String>,
+    agent: &forge::runtime::agent::AgentProcess,
+    event: &str,
+    params: HashMap<String, forge::runtime::confidence::ConfidentValue>,
+) -> anyhow::Result<()> {{
+    if let Some(base_url) = server_url {{
+        dispatch_server(base_url, event, params).await
+    }} else {{
+        dispatch(agent, event, params).await
+    }}
 }}
 
 async fn dispatch(
@@ -638,6 +657,67 @@ async fn dispatch(
         }}
     }}
     Ok(())
+}}
+
+async fn dispatch_server(
+    base_url: &str,
+    event: &str,
+    params: HashMap<String, forge::runtime::confidence::ConfidentValue>,
+) -> anyhow::Result<()> {{
+    let client = reqwest::Client::new();
+    let base = base_url.trim_end_matches('/');
+    let (method, path) = server_route(event);
+    let url = format!("{{}}{{}}", base, path);
+    let response = if method == "GET" {{
+        client.get(url).send().await?
+    }} else {{
+        let body = params
+            .iter()
+            .map(|(k, v)| (k.clone(), value_to_json(v)))
+            .collect::<serde_json::Map<String, serde_json::Value>>();
+        client.post(url).json(&serde_json::Value::Object(body)).send().await?
+    }};
+
+    let status = response.status();
+    let text = response.text().await?;
+    if !status.is_success() {{
+        eprintln!("server error {{}}: {{}}", status, text);
+        std::process::exit(1);
+    }}
+    println!("{{}}", text);
+    Ok(())
+}}
+
+fn server_route(event: &str) -> (&'static str, String) {{
+    match event {{
+        "status" => ("GET", "/api/status".to_string()),
+        "query" => ("POST", "/api/ask".to_string()),
+        "review" => ("POST", "/api/review".to_string()),
+        "learn_from_session" => ("POST", "/webhook/webhook_learn".to_string()),
+        "ingest_fact" => ("POST", "/webhook/webhook_ingest".to_string()),
+        other => ("POST", format!("/api/{{}}", other.replace('_', "-"))),
+    }}
+}}
+
+fn value_to_json(value: &forge::runtime::confidence::ConfidentValue) -> serde_json::Value {{
+    use forge::runtime::confidence::Value;
+    match &value.value {{
+        Value::Text(s) | Value::Html(s) => serde_json::Value::String(s.clone()),
+        Value::Number(n) => serde_json::json!(n),
+        Value::Bool(b) => serde_json::Value::Bool(*b),
+        Value::Unit => serde_json::Value::Null,
+        Value::List(items) | Value::Array(items) => {{
+            serde_json::Value::Array(items.iter().map(value_to_json).collect())
+        }}
+        Value::Record(fields) => {{
+            serde_json::Value::Object(
+                fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), value_to_json(v)))
+                    .collect(),
+            )
+        }}
+    }}
 }}
 
 async fn run_repl(
@@ -725,6 +805,9 @@ fn parse_args(s: &str) -> Vec<String> {{
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {{
     let cli = Cli::parse();
+    let server_url = cli
+        .server
+        .or_else(|| std::env::var("FORGE_SENSEI_SERVER").ok());
     let program = forge::compose::parse_and_merge_sources(SOURCES)
         .map_err(|e| anyhow::anyhow!("{{}}", e))?;
     let config = resolve_config();
@@ -840,6 +923,8 @@ async fn main() -> anyhow::Result<()> {{
             host: Some(cli.host),
             port: Some(cli.port),
             cors_origins: None,
+            static_files: None,
+            webhook_secrets: None,
         }});
     }}
 
@@ -848,18 +933,118 @@ async fn main() -> anyhow::Result<()> {{
     let cmd_mgr = Arc::new(std::sync::Mutex::new(forge::runtime::command_manager::CommandManager::new()));
     let session_mgr = forge::runtime::session_manager::new_shared_default_session_manager(None);
     let _ = session_mgr.resume_all().await;
-    let executor = forge::runtime::executor::TaskExecutor::new(
+    let mut executor = forge::runtime::executor::TaskExecutor::new(
         program, Arc::new(registry), None,
-    ).with_command_manager(cmd_mgr).with_session_manager(session_mgr);
+    ).with_config(config.clone()).with_command_manager(cmd_mgr).with_session_manager(session_mgr);
+
     let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+    let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry =
+        Arc::new(tokio::sync::RwLock::new(
+            forge::runtime::instance_registry::InstanceRegistry::new(),
+        ));
+    let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
+        Arc::new(tokio::sync::RwLock::new(Vec::new()));
+    let storage_dir = sensei_storage_dir(&executor).unwrap_or_else(|| ".forge-data".to_string());
+    let storage_path = std::path::Path::new(&storage_dir).join("store.redb");
+    if let Some(parent) = storage_path.parent() {{
+        std::fs::create_dir_all(parent).ok();
+    }}
+    let mut inspect_storage = None;
+    if let Ok(storage) = forge::runtime::storage::ForgeStorage::open(&storage_path) {{
+        let shared = Arc::new(storage);
+        inspect_storage = Some(shared.clone());
+        executor = executor.with_storage(shared);
+    }}
+
+    let topology = executor.extract_topology();
+    let system_runtime = match executor.build_system_runtime() {{
+        Ok(Some(sr)) => {{
+            let mut sr = sr
+                .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
+                .with_shared_warden_snapshots(warden_snapshots.clone());
+            if let Some(ref storage) = inspect_storage {{
+                sr = sr.with_shared_storage(storage.clone());
+            }}
+            Some(sr)
+        }}
+        Ok(None) => None,
+        Err(e) => {{
+            eprintln!("Warning: failed to build system runtime: {{}}", e);
+            None
+        }}
+    }};
+    let signal_senders = system_runtime
+        .as_ref()
+        .map(|sr| sr.collect_signal_senders());
+    let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+    let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
+        forge::runtime::cost_aggregator::CostAggregator::new(),
+    ));
+    forge::runtime::cost_aggregator::spawn_cost_listener(
+        events_tx.subscribe(),
+        cost_aggregator.clone(),
+    );
+
     let mut server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
-        .with_event_bus(event_bus);
+        .with_event_bus(event_bus)
+        .with_events_tx(events_tx)
+        .with_instance_registry(instance_registry)
+        .with_warden_snapshots(warden_snapshots)
+        .with_cost_aggregator(cost_aggregator);
+    if let Some(senders) = signal_senders {{
+        server = server.with_signal_senders(senders);
+    }}
+    if let Some(storage) = inspect_storage {{
+        server = server.with_inspect_storage(storage);
+    }}
+    if let Some(topo) = topology {{
+        server = server.with_topology(topo);
+    }}
     if let Some(ref srv_config) = config.server {{
         if let Some(ref secrets) = srv_config.webhook_secrets {{
             server = server.with_webhook_secrets(secrets.clone());
         }}
     }}
+    if let Some(sr) = system_runtime {{
+        tokio::spawn(async move {{
+            if let Err(e) = sr.start().await {{
+                eprintln!("System runtime error: {{}}", e);
+            }}
+        }});
+    }}
     server.run().await
+}}
+
+fn sensei_storage_dir(executor: &forge::runtime::executor::TaskExecutor) -> Option<String> {{
+    executor
+        .program()
+        .items
+        .iter()
+        .find_map(|item| match &item.node {{
+            forge::ast::TopLevel::Agent(agent) => agent.knowledge.as_ref(),
+            _ => None,
+        }})
+        .and_then(|knowledge| match &knowledge.node.store_path.node {{
+            forge::ast::Expr::Template(parts) => Some(
+                parts
+                    .iter()
+                    .filter_map(|part| match &part.node {{
+                        forge::ast::TemplatePart::Text(text) => Some(text.as_str()),
+                        _ => None,
+                    }})
+                    .collect::<String>(),
+            ),
+            _ => None,
+        }})
+        .map(|path| {{
+            if let Some(rest) = path.strip_prefix("~/") {{
+                dirs::home_dir()
+                    .map(|home| home.join(rest).to_string_lossy().to_string())
+                    .unwrap_or(path)
+            }} else {{
+                path
+            }}
+        }})
 }}
 "#,
         sources = sources_array,

@@ -142,6 +142,12 @@ enum Command {
         /// Path to a .forge file or directory containing forge.project.toml
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Entry source file for a multi-file build (overrides manifest [build].entry)
+        #[arg(long)]
+        entry: Option<PathBuf>,
+        /// Additional source files for a multi-file build (overrides manifest [build].sources)
+        #[arg(long = "source", short = 's')]
+        sources: Vec<PathBuf>,
         /// Output binary name
         #[arg(long, short)]
         output: Option<String>,
@@ -447,6 +453,8 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Build {
             path,
+            entry,
+            sources,
             output,
             manifest,
             release,
@@ -455,11 +463,15 @@ async fn main() -> anyhow::Result<()> {
         } => {
             build_program(
                 &path,
-                output.as_deref(),
-                manifest.as_deref(),
-                release,
-                embed_config,
-                dry_run,
+                BuildProgramOptions {
+                    entry: entry.as_deref(),
+                    sources: &sources,
+                    output: output.as_deref(),
+                    manifest_path: manifest.as_deref(),
+                    release,
+                    embed_config,
+                    dry_run,
+                },
             )
             .await?;
         }
@@ -816,16 +828,19 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn build_program(
-    path: &Path,
-    output: Option<&str>,
-    manifest_path: Option<&Path>,
+struct BuildProgramOptions<'a> {
+    entry: Option<&'a Path>,
+    sources: &'a [PathBuf],
+    output: Option<&'a str>,
+    manifest_path: Option<&'a Path>,
     release: bool,
     embed_config: Option<PathBuf>,
     dry_run: bool,
-) -> anyhow::Result<()> {
+}
+
+async fn build_program(path: &Path, options: BuildProgramOptions<'_>) -> anyhow::Result<()> {
     // Resolve manifest: explicit path, directory with forge.project.toml, or single file
-    let (mut manifest, base_dir) = if let Some(mp) = manifest_path {
+    let (mut manifest, base_dir) = if let Some(mp) = options.manifest_path {
         let manifest = forge::manifest::ProjectManifest::load(mp)?;
         let base = mp.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
         (manifest, base)
@@ -850,8 +865,27 @@ async fn build_program(
         );
     };
 
+    if options.entry.is_some() || !options.sources.is_empty() {
+        let entry = options.entry.ok_or_else(|| {
+            anyhow::anyhow!("--entry is required when overriding build sources with --source")
+        })?;
+        let build = manifest.build.get_or_insert(forge::manifest::BuildConfig {
+            entry: None,
+            output: None,
+            sources: None,
+        });
+        build.entry = Some(entry.to_string_lossy().to_string());
+        build.sources = Some(
+            options
+                .sources
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect(),
+        );
+    }
+
     // Resolve output: if -o is a path with dir, split into dir + name
-    let (output_dir, output_name_override) = if let Some(out) = output {
+    let (output_dir, output_name_override) = if let Some(out) = options.output {
         let out_path = Path::new(out);
         if let Some(parent) = out_path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -888,14 +922,14 @@ async fn build_program(
     eprintln!("building {} ...", output_display);
 
     let pipeline = forge::build::BuildPipeline::new(manifest, base_dir)
-        .dry_run(dry_run)
-        .release(release)
-        .embed_config(embed_config)
+        .dry_run(options.dry_run)
+        .release(options.release)
+        .embed_config(options.embed_config)
         .output_dir(output_dir);
 
     let result = pipeline.build()?;
 
-    if dry_run {
+    if options.dry_run {
         eprintln!(
             "dry run complete — validation passed ({:?})",
             result.program_kind

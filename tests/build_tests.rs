@@ -118,6 +118,34 @@ fn detect_kind_server() {
 }
 
 #[test]
+fn detect_sensei_cli_and_server_build_shapes() {
+    let core = std::fs::read_to_string("workflows/forge-sensei/core.forge").expect("read core");
+    let agent = std::fs::read_to_string("workflows/forge-sensei/agent.forge").expect("read agent");
+    let web = std::fs::read_to_string("workflows/forge-sensei/web.forge").expect("read web");
+
+    let cli = compose::merge_programs(&[
+        parse_source("core.forge", &core),
+        parse_source("agent.forge", &agent),
+    ])
+    .expect("sensei CLI sources should merge");
+    assert_eq!(
+        compose::detect_kind(&cli.program),
+        Some(compose::ProgramKind::AgentCli)
+    );
+
+    let server = compose::merge_programs(&[
+        parse_source("web.forge", &web),
+        parse_source("core.forge", &core),
+        parse_source("agent.forge", &agent),
+    ])
+    .expect("sensei server sources should merge");
+    assert_eq!(
+        compose::detect_kind(&server.program),
+        Some(compose::ProgramKind::Server)
+    );
+}
+
+#[test]
 fn detect_kind_none_for_pure_library() {
     let f = parse_source(
         "lib.forge",

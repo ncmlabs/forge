@@ -224,6 +224,7 @@ impl ForgeServer {
         // Webhook route: POST /webhook/:name with Content-Type validation and optional HMAC
         let mut router = Router::new()
             .route("/webhook/{endpoint}", axum::routing::post(handle_webhook))
+            .route("/api/{endpoint}", get(handle_get_api).post(handle_post_api))
             .route("/{endpoint}", get(handle_get).post(handle_post))
             .route(
                 "/",
@@ -372,7 +373,25 @@ const RELOAD_SCRIPT: &str =
 async fn handle_get(
     State(state): State<AppState>,
     Path(endpoint_name): Path<String>,
-    Query(mut params): Query<HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    handle_get_endpoint(state, endpoint_name, params, headers).await
+}
+
+async fn handle_get_api(
+    State(state): State<AppState>,
+    Path(endpoint_name): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    handle_get_endpoint(state, api_endpoint_name(&endpoint_name), params, headers).await
+}
+
+async fn handle_get_endpoint(
+    state: AppState,
+    endpoint_name: String,
+    mut params: HashMap<String, String>,
     headers: HeaderMap,
 ) -> Response {
     let executor = state.executor.read().unwrap().clone();
@@ -382,13 +401,11 @@ async fn handle_get(
     // Fill in missing params with empty strings so endpoints don't crash on undefined vars
     if let Some(ep) = executor.endpoints().get(&endpoint_name) {
         for param in &ep.params {
-            params
-                .entry(param.node.name.clone())
-                .or_insert_with(String::new);
+            params.entry(param.node.name.clone()).or_default();
         }
     }
     let request = build_request_record("GET", &endpoint_name, &params, &headers, "");
-    let args = params_to_args(params);
+    let args = string_params_to_args(params);
     dispatch_endpoint(
         executor,
         &endpoint_name,
@@ -405,6 +422,30 @@ async fn handle_post(
     headers: HeaderMap,
     body_bytes: axum::body::Bytes,
 ) -> Response {
+    handle_post_endpoint(state, endpoint_name, headers, body_bytes).await
+}
+
+async fn handle_post_api(
+    State(state): State<AppState>,
+    Path(endpoint_name): Path<String>,
+    headers: HeaderMap,
+    body_bytes: axum::body::Bytes,
+) -> Response {
+    handle_post_endpoint(
+        state,
+        api_endpoint_name(&endpoint_name),
+        headers,
+        body_bytes,
+    )
+    .await
+}
+
+async fn handle_post_endpoint(
+    state: AppState,
+    endpoint_name: String,
+    headers: HeaderMap,
+    body_bytes: axum::body::Bytes,
+) -> Response {
     let executor = state.executor.read().unwrap().clone();
     if !executor.endpoints().contains_key(&endpoint_name) {
         return (StatusCode::NOT_FOUND, "not found").into_response();
@@ -415,49 +456,42 @@ async fn handle_post(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let params: HashMap<String, String> = if content_type.contains("application/json") {
-        // JSON body
-        match serde_json::from_slice::<serde_json::Value>(&body_bytes) {
-            Ok(json) => match json.as_object() {
-                Some(map) => map
-                    .iter()
-                    .map(|(k, v)| {
-                        let s = match v {
-                            serde_json::Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        };
-                        (k.clone(), s)
-                    })
-                    .collect(),
-                None => HashMap::new(),
-            },
-            Err(_) => HashMap::new(),
-        }
-    } else {
-        // Form-encoded body (application/x-www-form-urlencoded)
-        raw_body
-            .split('&')
-            .filter_map(|pair| {
-                let mut parts = pair.splitn(2, '=');
-                let key = parts.next()?;
-                let value = parts.next().unwrap_or("");
-                if key.is_empty() {
-                    return None;
-                }
-                // Decode percent-encoding (+ as space)
-                let decode = |s: &str| {
-                    let replaced = s.replace('+', " ");
-                    urlencoding::decode(&replaced)
-                        .map(|c| c.into_owned())
-                        .unwrap_or(replaced)
-                };
-                Some((decode(key), decode(value)))
-            })
-            .collect()
-    };
+    let (params, args): (HashMap<String, String>, HashMap<String, ConfidentValue>) =
+        if content_type.contains("application/json") {
+            // JSON body
+            match serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+                Ok(json) => match json.as_object() {
+                    Some(map) => (json_object_to_string_params(map), json_object_to_args(map)),
+                    None => (HashMap::new(), HashMap::new()),
+                },
+                Err(_) => (HashMap::new(), HashMap::new()),
+            }
+        } else {
+            // Form-encoded body (application/x-www-form-urlencoded)
+            let params: HashMap<String, String> = raw_body
+                .split('&')
+                .filter_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    let key = parts.next()?;
+                    let value = parts.next().unwrap_or("");
+                    if key.is_empty() {
+                        return None;
+                    }
+                    // Decode percent-encoding (+ as space)
+                    let decode = |s: &str| {
+                        let replaced = s.replace('+', " ");
+                        urlencoding::decode(&replaced)
+                            .map(|c| c.into_owned())
+                            .unwrap_or(replaced)
+                    };
+                    Some((decode(key), decode(value)))
+                })
+                .collect();
+            let args = string_params_to_args(params.clone());
+            (params, args)
+        };
 
     let request = build_request_record("POST", &endpoint_name, &params, &headers, &raw_body);
-    let args = params_to_args(params);
     dispatch_endpoint(
         executor,
         &endpoint_name,
@@ -795,22 +829,13 @@ async fn handle_webhook(
         return (StatusCode::NOT_FOUND, "webhook endpoint not found").into_response();
     }
 
-    let params: HashMap<String, String> = match json_value.as_object() {
-        Some(map) => map
-            .iter()
-            .map(|(k, v)| {
-                let s = match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                (k.clone(), s)
-            })
-            .collect(),
-        None => HashMap::new(),
-    };
+    let (params, args): (HashMap<String, String>, HashMap<String, ConfidentValue>) =
+        match json_value.as_object() {
+            Some(map) => (json_object_to_string_params(map), json_object_to_args(map)),
+            None => (HashMap::new(), HashMap::new()),
+        };
 
     let request = build_request_record("POST", &endpoint_name, &params, &headers, &body_str);
-    let args = params_to_args(params);
     dispatch_endpoint(
         executor,
         &endpoint_name,
@@ -848,11 +873,54 @@ fn verify_hmac_signature(secret: &str, body: &[u8], signature: &str) -> bool {
         .into()
 }
 
-fn params_to_args(params: HashMap<String, String>) -> HashMap<String, ConfidentValue> {
+fn api_endpoint_name(endpoint_name: &str) -> String {
+    format!("api_{}", endpoint_name.replace('-', "_"))
+}
+
+fn string_params_to_args(params: HashMap<String, String>) -> HashMap<String, ConfidentValue> {
     params
         .into_iter()
         .map(|(k, v)| (k, ConfidentValue::deterministic(Value::Text(v))))
         .collect()
+}
+
+fn json_object_to_string_params(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> HashMap<String, String> {
+    map.iter()
+        .map(|(k, v)| {
+            let s = match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            (k.clone(), s)
+        })
+        .collect()
+}
+
+fn json_object_to_args(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> HashMap<String, ConfidentValue> {
+    map.iter()
+        .map(|(k, v)| (k.clone(), json_value_to_confident(v)))
+        .collect()
+}
+
+fn json_value_to_confident(value: &serde_json::Value) -> ConfidentValue {
+    let converted = match value {
+        serde_json::Value::Null => Value::Unit,
+        serde_json::Value::Bool(v) => Value::Bool(*v),
+        serde_json::Value::Number(v) => Value::Number(v.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(v) => Value::Text(v.clone()),
+        serde_json::Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(json_value_to_confident)
+                .collect::<Vec<ConfidentValue>>(),
+        ),
+        serde_json::Value::Object(fields) => Value::Record(json_object_to_args(fields)),
+    };
+    ConfidentValue::deterministic(converted)
 }
 
 async fn dispatch_endpoint(
@@ -1013,12 +1081,25 @@ fn value_to_json(val: &ConfidentValue) -> serde_json::Value {
             serde_json::Value::Array(items.iter().map(value_to_json).collect())
         }
         Value::Record(fields) => {
+            if let Some(inner) = custom_record_payload(fields) {
+                return value_to_json(inner);
+            }
             let map: serde_json::Map<String, serde_json::Value> = fields
                 .iter()
                 .map(|(k, v)| (k.clone(), value_to_json(v)))
                 .collect();
             serde_json::Value::Object(map)
         }
+    }
+}
+
+fn custom_record_payload(fields: &HashMap<String, ConfidentValue>) -> Option<&ConfidentValue> {
+    if !matches!(fields.get("_type")?.value, Value::Text(_)) {
+        return None;
+    }
+    match &fields.get("_value")?.value {
+        Value::Record(_) => fields.get("_value"),
+        _ => None,
     }
 }
 
