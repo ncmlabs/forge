@@ -1,12 +1,16 @@
-agent Supervisor
-  on ReviewUpdate(update) ->
-    say "Progress: {update}"
-  on ReviewDone(result) ->
-    say "Review complete: {result}"
+# session hook example for progress and completion event forwarding
+event ReviewUpdate
+  payload: Text
 
-system "session hooks demo"
-  agents
-    Supervisor
-  start
+event ReviewDone
+  payload: Text
+
+task run_review
+  gives Text
+  do
     result = session "code-review" agent "claude" prompt "Review this file for bugs" on progress -> emit ReviewUpdate(it) on complete -> emit ReviewDone(it)
-    say "Final: {result}"
+    when result.sure -> give result
+    else -> give "session failed"
+
+fn main
+  say run_review()

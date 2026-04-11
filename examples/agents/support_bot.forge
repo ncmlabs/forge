@@ -14,6 +14,8 @@ states SupportPhase
   greeting -> active when message_count > 0
   active -> resolved
   active -> escalated
+  resolved -> greeting
+  escalated -> greeting
 
 agent support_bot
   lifecycle: SupportPhase
@@ -33,6 +35,7 @@ agent support_bot
     else -> escalate to human
 
   on resolve(customer: Text)
+    requires lifecycle == active on fail: give "session is not active"
     emit Resolved(customer: customer, summary: memory.topic)
     transition to resolved
 

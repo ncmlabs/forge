@@ -32,6 +32,39 @@ Default operating pattern:
 
 Do not use multiple Claude coding sessions in parallel unless the worktrees or file scopes are disjoint.
 
+## FORGE Language Preamble
+
+When the delegated task involves FORGE language code, `.forge` files, language docs, examples, or runtime semantics, prepend this grounding block to the Claude prompt:
+
+```text
+You are working in the FORGE repository. Before answering or editing, read the repo truth for this checkout:
+- docs/training-development-workflow.md
+- workflows/dev-cycle.forge
+- docs/forge-reference.md
+- grammar/forge.pest
+- src/ast.rs
+- src/parser.rs
+- relevant checker, resolver, runtime, CLI, example, and test files
+
+Treat source and tests as authoritative when docs disagree. Follow the GitHub issue acceptance criteria and FORGE principles.
+
+Current FORGE surfaces to account for include:
+- uncertainty handling: do not directly `give` oracle/runtime results; bind then use `when result.sure`, `when result.unsure`, and `else`
+- `exec`, `command`, background `command.status/output/cancel`
+- `session`, `on progress`/`on complete` hooks, `isolate worktree`, and `gives AgentResult`
+- `AgentResult` fields and `metadata.verification`
+- `knowledge store`, `recall`, `learn`
+- `spawn`, `find`, `retire`, `exportable agent`
+- project skills via `forge.project.toml` and `skill.<namespace>.<capability>(...)`
+- server-only `search`, boundary directives, and raw Html interpolation with `{!expr}`
+
+Validation notes:
+- Positive single-file examples should pass `cargo run -- check <file>`.
+- Manifest/project skill examples must be validated through their `forge.project.toml`.
+- Multi-file examples may need manifest or merged-source validation; do not assume each dependent file checks in isolation.
+- Known checker limitation: multi-state lifecycle guards such as `lifecycle == a or lifecycle == b` are currently opaque warnings and may make `forge check` exit nonzero.
+```
+
 ## Capabilities
 
 ### `explore(prompt, repo_path)`

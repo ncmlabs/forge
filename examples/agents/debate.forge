@@ -6,13 +6,19 @@ task argue_for
   needs topic: Text
   gives Text
   do
-    give reason "Make a compelling 2-sentence argument FOR: {topic}"
+    result = reason "Make a compelling 2-sentence argument FOR: {topic}"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "No confident argument for {topic}"
 
 task argue_against
   needs topic: Text
   gives Text
   do
-    give reason "Make a compelling 2-sentence argument AGAINST: {topic}"
+    result = reason "Make a compelling 2-sentence argument AGAINST: {topic}"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "No confident argument against {topic}"
 
 task score_argument
   needs argument: Text

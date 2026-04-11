@@ -93,6 +93,7 @@ states IssueLifecycle
   testing -> in_progress when not tests_passed
   testing -> review_ready when tests_passed and changelog_updated
   review_ready -> merged
+  merged -> open when issue_reopened
 
 states ReleasePhase
   unreleased -> freezing
@@ -378,6 +379,8 @@ warden dev_lead
   on crash: restart, self
   on hallucination: nudge, self
     after 3: escalate
+  on contradiction: nudge, self
+    after 2: escalate
   on budget: nudge, all
     after 1: restart
     after 3: escalate

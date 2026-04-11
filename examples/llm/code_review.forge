@@ -15,13 +15,19 @@ task analyze_quality
   needs code: Text, language: Text
   gives Text
   do
-    give reason "You are a code reviewer. Analyze this {language} code for quality issues (readability, naming, structure). Be concise, list max 3 issues:\n\n{code}"
+    result = reason "You are a code reviewer. Analyze this {language} code for quality issues (readability, naming, structure). Be concise, list max 3 issues:\n\n{code}"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Quality review inconclusive."
 
 task analyze_security
   needs code: Text, language: Text
   gives Text
   do
-    give reason "You are a security auditor. Analyze this {language} code for security vulnerabilities (injection, auth, data exposure). Be concise, list max 3 issues:\n\n{code}"
+    result = reason "You are a security auditor. Analyze this {language} code for security vulnerabilities (injection, auth, data exposure). Be concise, list max 3 issues:\n\n{code}"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Security review inconclusive."
 
 pure format_verdict
   needs language: Text, quality: Text, security: Text
