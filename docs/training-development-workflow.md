@@ -41,3 +41,13 @@ cargo clippy --all-targets -- -D warnings
 ```
 
 For language and runtime changes, also run a `.forge` example that exercises the changed surface. For documentation-only updates, run representative parser/checker examples and note whether real-LLM execution was skipped.
+
+## Example Corpus Gate
+
+Use the mock-only example gate before changing checked-in `.forge` examples:
+
+```bash
+bash scripts/check-forge-examples.sh
+```
+
+The gate uses `examples/validation.toml` to classify every example under `examples/` and `workflows/`. Required validation must stay deterministic: parser/checker APIs and `FORGE_MOCK=1` are allowed; real LLM providers, live Claude/Codex sessions, credentials, and external side effects stay in `live_only` buckets.

@@ -82,7 +82,7 @@ Everything in this document exists to reach that moment.
 | P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Open |
 | P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer | #166, #167 | Open |
 | P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168-#175 | Open |
-| P2.M13 — Polish | CostEstimator, DocumentationAgent, reference/skill refresh | #186-#187, #229 | In Progress |
+| P2.M13 — Polish | CostEstimator, DocumentationAgent, reference/skill refresh, example validation | #186-#187, #229, #231 ✅ | In Progress |
 
 ### Future Layers
 
@@ -747,6 +747,7 @@ Worktree isolation for safe agent execution:
 | #186 | CostEstimator agent | Open |
 | #187 | DocumentationAgent | Open |
 | #229 | Reference, skill, and example refresh | In Progress |
+| #231 | Mock-only FORGE example validation CI gate | Done ✅ |
 
 ---
 
@@ -945,9 +946,9 @@ P2.M9  Orchestration   ░░░░░░░░░░░░░░░░░░░
 P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
 P2.M11 Knowledge       ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
-P2.M13 Polish          ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
+P2.M13 Polish          █████░░░░░░░░░░░░░░░  1/4  ( 25%)
 ─────────────────────────────────────────────────────────
-Phase 2 Overall         ████░░░░░░░░░░░░░░░░  8/38 ( 21%)
+Phase 2 Overall         █████░░░░░░░░░░░░░░░  9/39 ( 23%)
 ```
 
 ---
@@ -1319,7 +1320,7 @@ Phase 1 (Layer 1): Build FORGE — **SHIPPED v0.1.0 on 2026-04-09**
   ⬜ WASM compilation (Cranelift backend) — deferred, not blocking Phase 2
   Goal: tic-tac-toe system runs end-to-end ✅
 
-Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (8/38 issues done)**
+Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (9/39 issues done)**
   ✅ P2.M1: `command` primitive — grammar, sync, background (#160-#162)
   ✅ P2.M2: `session` core — grammar and lifecycle manager done (#189 ✅, #190 ✅)
   ⬜ P2.M3: `AgentResult` + reliability contract — claims, evidence, verification (#193, #203)
@@ -1332,7 +1333,7 @@ Phase 2 (Layer 2): Build the toolkit — **IN PROGRESS (8/38 issues done)**
   ⬜ P2.M10: Dev system — ProjectAgent, Executor, two-project proof (#183-#185)
   ⬜ P2.M11: Knowledge school — sensei curriculum, knowledge transfer (#166-#167)
   ⬜ P2.M12: Toolkit agents — Generator contract, 7 generators (#168-#175)
-  ⬜ P2.M13: Polish — CostEstimator, DocumentationAgent, reference/skill refresh (#186-#187, #229)
+  ⬜ P2.M13: Polish — CostEstimator, DocumentationAgent, reference/skill refresh, example validation (#186-#187, #229, #231 ✅)
   Goal: describe a system → get runnable FORGE code; dev orchestration for FORGE + forge-wiki
 
 Phase 3 (Layer 3): Build the factory
@@ -1372,5 +1373,5 @@ Everything in this document exists to reach that moment.
 
 *FORGE — Making It Real · Master Roadmap v3.0*
 *Layers: Substrate → Toolkit → Factory → Self-improvement*
-*Layer 1: v0.1.0 shipped (32/36 tracks, 89%) · Phase 2: 8/37 issues (22%) · Next: session adapters/events → AgentResult/reliability contract → verification*
-*Last updated: 2026-04-10*
+*Layer 1: v0.1.0 shipped (32/36 tracks, 89%) · Phase 2: 9/39 issues (23%) · Next: session adapters/events → AgentResult/reliability contract → verification*
+*Last updated: 2026-04-11*

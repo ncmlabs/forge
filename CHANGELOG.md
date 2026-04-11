@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Added
+- Mock-only FORGE example validation gate: every checked-in `.forge` example is classified in `examples/validation.toml`, expected-error examples assert diagnostics, live/external examples are counted as skipped, and `scripts/check-forge-examples.sh` runs the fast `FORGE_MOCK=1` validation path (#231)
 - Slack skill — bidirectional Web API via `curl` with 13 typed capabilities: send-message, send-rich-message (Block Kit), reply-thread, add-reaction, list-channels, read-history (incremental polling), read-thread, detect-mentions, send-approval (interactive buttons + webhook callback), edit-message, delete-message, pin-message, member-info (#177)
 - GitHub skill — `gh` CLI wrapper with 8 typed capabilities: create-issue, list-issues, create-branch, create-pr, check-ci, merge-pr, delete-branch, close-issue (#176)
 - Contradiction events and warden integration: `Contradiction` failure type in grammar/AST/parser/checker, `AgentSignal::Contradiction` variant, `SessionEvent::ContradictionDetected` with `session.contradiction` EventBus payload, `ContradictionSummary` persisted in session state for resume, verification gate in executor blocking high-risk actions on contradicted results (#205)
