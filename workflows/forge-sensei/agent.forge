@@ -17,6 +17,7 @@ exportable agent forge_sensei
     max_entries: 50000
     retention: 365d
   timer self_assess: 6h
+  subscribe LearnedInsight where source == "toolkit" or source == "specialist"
 
   on start
     memory.current_level = "novice"
@@ -57,6 +58,13 @@ exportable agent forge_sensei
     learn "{lesson}"
     emit LearnedInsight(category: "interactions", content: lesson, source: "session", confidence: 0.8)
     say "Learned from session."
+
+  # ── Absorb: incorporate toolkit agent insights ─────────────
+
+  on LearnedInsight(category: Text, content: Text, source: Text, confidence: Number)
+    learn "{content}" category: category
+    memory.interaction_count = memory.interaction_count + 1
+    say "Sensei absorbed insight from {source}: [{category}]"
 
   # ── Deep Dive: spawn specialist for focused domain learning ──
 

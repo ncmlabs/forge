@@ -44,7 +44,7 @@ fi
 
 # ── Counters ─────────────────────────────────────────────────
 COUNT=0
-TOTAL=63
+TOTAL=64
 FAILED=0
 FAIL_LOG=()
 PHASE_START=$SECONDS
@@ -1110,6 +1110,23 @@ Key rules:
   - The spawned agent type must be declared in the same program
   - Specialists subscribe to events filtered by their topic
 Related: see specialist agent pattern for the spawned agent's implementation
+FACT
+)"
+
+ingest_fact "AGENTS" "$(cat <<'FACT'
+FORGE toolkit agent knowledge feedback pattern. Toolkit agents emit LearnedInsight events on success or failure. The parent subscribes and absorbs insights into its own knowledge store.
+Pattern (child emits):
+  emit LearnedInsight(category: "ERRORS", content: "what was learned", source: "toolkit", confidence: 0.5)
+Pattern (parent subscribes):
+  subscribe LearnedInsight where source == "toolkit"
+  on LearnedInsight(category: Text, content: Text, source: Text, confidence: Number)
+    learn "{content}" category: category
+Key rules:
+  - Toolkit agents use source: "toolkit" to distinguish from other LearnedInsight sources
+  - Parent subscribes with a filter to avoid feedback loops (not re-ingesting its own emissions)
+  - confidence_cap on spawn already limits transferred knowledge confidence (Principle I — Honesty)
+  - LearnedInsight events flow through the event bus; the parent must have a matching handler
+Related: see spawn with knowledge transfer pattern for how knowledge is initially seeded into toolkit agents
 FACT
 )"
 

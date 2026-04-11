@@ -14,6 +14,7 @@ paths = [
   "examples/agents/fact_check_pool.forge",
   "examples/agents/learning_agent.forge",
   "examples/agents/support_bot.forge",
+  "examples/agents/toolkit_demo.forge",
 ]
 check = "ok"
 
