@@ -1,0 +1,10 @@
+{
+  "name": "knowledge_transfer_spawn",
+  "category": "runtime",
+  "description": "Spawn agent with knowledge filter and confidence cap compiles and runs",
+  "input": "event LearnedInsight\n  category: Text\n  content: Text\n  source: Text\n  confidence: Number\n\nagent worker\n  memory\n    topic: Text\n  knowledge store: \".forge-knowledge/test-worker\"\n    max_entries: 100\n    retention: 30d\n\n  on start\n    say \"Worker started for {memory.topic}\"\n    emit LearnedInsight(category: memory.topic, content: \"worker learned something\", source: \"toolkit\", confidence: 0.8)\n\n  if stuck for 2 turns\n    escalate to human\n\nexportable agent parent\n  knowledge store: \".forge-knowledge/test-parent\"\n    max_entries: 100\n    retention: 30d\n  subscribe LearnedInsight where source == \"toolkit\"\n\n  on start\n    learn \"FORGE tasks use task keyword\" category: \"TASKS\"\n    child = spawn worker as \"worker_1\"\n      with knowledge where category == \"TASKS\"\n      with confidence_cap: 0.8\n      with memory topic: \"TASKS\"\n    say \"Spawned worker\"\n\n  on LearnedInsight(category: Text, content: Text, source: Text, confidence: Number)\n    learn \"{content}\" category: category\n    say \"Absorbed [{category}]\"\n\nfn main\n  say \"done\"\n",
+  "mock_responses": [],
+  "expected": {
+    "outcome": "run_ok"
+  }
+}

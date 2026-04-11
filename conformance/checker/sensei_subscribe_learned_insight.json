@@ -1,0 +1,10 @@
+{
+  "name": "sensei_subscribe_learned_insight",
+  "category": "checker",
+  "subcategory": "events",
+  "description": "Agent subscribing to LearnedInsight with compound or-filter compiles cleanly",
+  "input": "event LearnedInsight\n  category: Text\n  content: Text\n  source: Text\n  confidence: Number\n\nexportable agent sensei\n  knowledge store: \".forge-knowledge/test\"\n    max_entries: 100\n    retention: 30d\n  subscribe LearnedInsight where source == \"toolkit\" or source == \"specialist\"\n\n  on start\n    say \"Ready\"\n\n  on LearnedInsight(category: Text, content: Text, source: Text, confidence: Number)\n    learn \"{content}\" category: category\n    say \"Absorbed from {source}\"\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}

@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Toolkit agent knowledge transfer infrastructure: forge-sensei subscribes to `LearnedInsight` events from toolkit and specialist agents, closing the feedback loop so spawned agents' learnings compound in sensei's knowledge store (#167)
+- `--version` flag for all FORGE agent binaries built with `forge build`, sourced from `forge.project.toml` version field (#167)
+- Knowledge transfer integration tests: export-by-category with confidence cap, AgentTransfer source tagging, full seed→export→cap→merge→recall cycle (#167)
+- Conformance tests for `subscribe` with compound `or` filter and spawn-with-knowledge runtime execution (#167)
+- Example toolkit agent (`examples/agents/toolkit_demo.forge`) demonstrating spawn→recall→emit→absorb pattern (#167)
+
 ### Fixed
+- Multi-file project builds (`forge build`) no longer fail on cross-file lifecycle references; checker now validates the merged program (#167)
 - Quiz tutor example now runs cleanly with `FORGE_MOCK=1 forge run examples/agents/quiz_tutor.forge`, and mock-runnable examples reject checker warnings in the validation gate (#231)
 - FORGE reference, training workflow doc, and local examples now cover implemented command/session/AgentResult/verification/knowledge/skill surfaces (#229)
 - Anthropic provider now sends tool definitions and parses `tool_use` response blocks, enabling skill executor agentic loop (#198)

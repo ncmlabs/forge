@@ -89,28 +89,48 @@ impl BuildPipeline {
             });
         }
 
-        // Step 3: Per-file validation
+        // Step 3: Cross-file boundary check (on pre-merge programs)
         let mut diagnostics = Vec::new();
-        for sf in &source_files {
-            let ctx = crate::resolver::CheckContext::new(&sf.path);
-            if let Err(errors) = ctx.check(&sf.program) {
-                let registry = crate::resolver::CapabilityRegistry::builtin();
-                diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&sf.path, &registry)));
-            }
-            diagnostics.extend(crate::checker::check_all(&sf.program, &sf.path));
-        }
-
-        // Step 4: Cross-file boundary check (on pre-merge programs)
         let boundary_refs: Vec<_> = source_files
             .iter()
             .map(|sf| (&sf.program, sf.path.as_str()))
             .collect();
         diagnostics.extend(crate::checker::boundary_checker::check(&boundary_refs));
 
+        // Step 4: Merge programs (before full validation, so cross-file
+        // references like lifecycle states resolve correctly)
+        let composed = compose::merge_programs(&source_files).map_err(|errs| {
+            anyhow::anyhow!(
+                "composition failed:\n{}",
+                errs.iter()
+                    .map(|e| format!("  {}", e))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        })?;
+
+        // Step 5: Validate the merged program
+        let merged_fname = source_files
+            .first()
+            .map(|sf| sf.path.clone())
+            .unwrap_or_default();
+        let ctx = crate::resolver::CheckContext::new(&merged_fname);
+        if let Err(errors) = ctx.check(&composed.program) {
+            let registry = crate::resolver::CapabilityRegistry::builtin();
+            diagnostics.extend(
+                errors
+                    .iter()
+                    .map(|e| e.to_diagnostic(&merged_fname, &registry)),
+            );
+        }
+        diagnostics.extend(crate::checker::check_all(&composed.program, &merged_fname));
+
         // Render all diagnostics, but only fail on errors
         if !diagnostics.is_empty() {
             for diag in &diagnostics {
                 if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
+                    diag.render(&sf.source);
+                } else if let Some(sf) = source_files.first() {
                     diag.render(&sf.source);
                 }
             }
@@ -122,17 +142,6 @@ impl BuildPipeline {
                 anyhow::bail!("validation failed with {} error(s)", error_count);
             }
         }
-
-        // Step 5: Merge programs
-        let composed = compose::merge_programs(&source_files).map_err(|errs| {
-            anyhow::anyhow!(
-                "composition failed:\n{}",
-                errs.iter()
-                    .map(|e| format!("  {}", e))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        })?;
 
         // Step 6: Detect program kind
         let kind = compose::detect_kind(&composed.program).ok_or_else(|| {
@@ -298,6 +307,12 @@ dirs = "6"
 
                 return Ok(AgentInfo {
                     name: agent.name.node.clone(),
+                    version: self
+                        .manifest
+                        .project
+                        .version
+                        .clone()
+                        .unwrap_or_else(|| "0.1.0".to_string()),
                     handlers,
                 });
             }
@@ -369,6 +384,7 @@ dirs = "6"
 
 struct AgentInfo {
     name: String,
+    version: String,
     handlers: Vec<HandlerInfo>,
 }
 
@@ -597,7 +613,7 @@ const SOURCES: &[(&str, &str)] = &[
 {config}
 
 #[derive(Parser)]
-#[command(name = "{agent_name}", about = "FORGE agent: {agent_name}")]
+#[command(name = "{agent_name}", about = "FORGE agent: {agent_name}", version = "{agent_version}")]
 struct Cli {{
     #[command(subcommand)]
     command: Command,
@@ -777,6 +793,7 @@ async fn main() -> anyhow::Result<()> {{
         sources = sources_array,
         config = config_code,
         agent_name = agent.name,
+        agent_version = agent.version,
         variants = variants.join("\n"),
         match_arms = match_arms.join("\n"),
     )

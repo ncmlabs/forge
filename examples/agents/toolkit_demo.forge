@@ -1,0 +1,68 @@
+use
+  llm.reason
+
+# Types and Events
+
+event LearnedInsight
+  category: Text
+  content: Text
+  source: Text
+  confidence: Number
+
+# Toolkit Agent: spawned with filtered knowledge
+#
+# Demonstrates the spawn, recall, generate, learn, feedback
+# cycle defined in issue #167.
+
+agent task_generator
+  memory
+    topic: Text
+  knowledge store: ".forge-knowledge/toolkit-demo-worker"
+    max_entries: 1000
+    retention: 30d
+
+  on start
+    say "Worker started for [{memory.topic}]"
+
+  on generate(spec: Text)
+    prior = recall "{memory.topic} {spec}"
+    when prior.sure -> emit LearnedInsight(category: memory.topic, content: "Found pattern", source: "toolkit", confidence: 0.8)
+    when prior.unsure -> emit LearnedInsight(category: "ERRORS", content: "Low confidence", source: "toolkit", confidence: 0.3)
+    else -> emit LearnedInsight(category: "ERRORS", content: "No knowledge", source: "toolkit", confidence: 0.2)
+
+  if stuck for 2 turns
+    escalate to human
+
+# Parent Agent: seeds knowledge, spawns toolkit, absorbs insights
+
+exportable agent toolkit_demo
+  memory
+    insights_received: Number
+  knowledge store: ".forge-knowledge/toolkit-demo-parent"
+    max_entries: 5000
+    retention: 90d
+  subscribe LearnedInsight where source == "toolkit"
+
+  on start
+    memory.insights_received = 0
+    learn "FORGE tasks use task name needs params gives ReturnType do body" category: "TASKS"
+    learn "FORGE flows use flow name with stage declarations" category: "FLOWS"
+    say "Toolkit demo parent ready."
+
+  on spawn_generator(topic: Text)
+    child = spawn task_generator as "gen_{topic}"
+      with knowledge where category == topic
+      with confidence_cap: 0.8
+      with memory topic: topic
+    say "Spawned task_generator for [{topic}]"
+
+  on LearnedInsight(category: Text, content: Text, source: Text, confidence: Number)
+    learn "{content}" category: category
+    memory.insights_received = memory.insights_received + 1
+    say "Parent absorbed insight [{category}] from {source}"
+
+  on status
+    give "Insights received: {memory.insights_received}"
+
+  if stuck for 3 turns
+    escalate to human
