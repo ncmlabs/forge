@@ -30,7 +30,7 @@ exportable agent forge_sensei
     say "Ingested: {document_path}"
 
   on ingest_fact(category: Text, fact: Text)
-    learn "[{category}] {fact}"
+    learn "[{category}] {fact}" category: category
     say "Learned [{category}]"
     emit LearnedInsight(category: category, content: fact, source: "direct", confidence: 1.0)
 
