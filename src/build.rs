@@ -944,7 +944,11 @@ async fn main() -> anyhow::Result<()> {{
         ));
     let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
         Arc::new(tokio::sync::RwLock::new(Vec::new()));
-    let storage_dir = sensei_storage_dir(&executor).unwrap_or_else(|| ".forge-data".to_string());
+    let knowledge_config = agent_knowledge_config(&executor);
+    let storage_dir = knowledge_config
+        .as_ref()
+        .map(|config| config.store_path.clone())
+        .unwrap_or_else(|| ".forge-data".to_string());
     let storage_path = std::path::Path::new(&storage_dir).join("store.redb");
     if let Some(parent) = storage_path.parent() {{
         std::fs::create_dir_all(parent).ok();
@@ -954,6 +958,14 @@ async fn main() -> anyhow::Result<()> {{
         let shared = Arc::new(storage);
         inspect_storage = Some(shared.clone());
         executor = executor.with_storage(shared);
+    }}
+    if let Some(config) = knowledge_config {{
+        let knowledge_store = forge::runtime::knowledge_store::KnowledgeStore::new(
+            &config.store_path,
+            config.max_entries,
+            config.retention_days,
+        );
+        executor = executor.with_knowledge_store(knowledge_store);
     }}
 
     let topology = executor.extract_topology();
@@ -1015,7 +1027,15 @@ async fn main() -> anyhow::Result<()> {{
     server.run().await
 }}
 
-fn sensei_storage_dir(executor: &forge::runtime::executor::TaskExecutor) -> Option<String> {{
+struct AgentKnowledgeConfig {{
+    store_path: String,
+    max_entries: Option<usize>,
+    retention_days: Option<u64>,
+}}
+
+fn agent_knowledge_config(
+    executor: &forge::runtime::executor::TaskExecutor,
+) -> Option<AgentKnowledgeConfig> {{
     executor
         .program()
         .items
@@ -1024,26 +1044,36 @@ fn sensei_storage_dir(executor: &forge::runtime::executor::TaskExecutor) -> Opti
             forge::ast::TopLevel::Agent(agent) => agent.knowledge.as_ref(),
             _ => None,
         }})
-        .and_then(|knowledge| match &knowledge.node.store_path.node {{
-            forge::ast::Expr::Template(parts) => Some(
-                parts
-                    .iter()
-                    .filter_map(|part| match &part.node {{
-                        forge::ast::TemplatePart::Text(text) => Some(text.as_str()),
-                        _ => None,
-                    }})
-                    .collect::<String>(),
-            ),
-            _ => None,
-        }})
-        .map(|path| {{
-            if let Some(rest) = path.strip_prefix("~/") {{
+        .and_then(|knowledge| {{
+            let store_path = match &knowledge.node.store_path.node {{
+                forge::ast::Expr::Template(parts) => parts
+                        .iter()
+                        .filter_map(|part| match &part.node {{
+                            forge::ast::TemplatePart::Text(text) => Some(text.as_str()),
+                            _ => None,
+                        }})
+                        .collect::<String>(),
+                _ => return None,
+            }};
+            let store_path = if let Some(rest) = store_path.strip_prefix("~/") {{
                 dirs::home_dir()
                     .map(|home| home.join(rest).to_string_lossy().to_string())
-                    .unwrap_or(path)
+                    .unwrap_or_else(|| store_path.clone())
             }} else {{
-                path
-            }}
+                store_path
+            }};
+            let max_entries = knowledge.node.max_entries.as_ref().map(|m| m.node as usize);
+            let retention_days = knowledge.node.retention.as_ref().map(|r| match r.node.unit {{
+                forge::ast::DurationUnit::Days => r.node.value,
+                forge::ast::DurationUnit::Hours => r.node.value / 24,
+                forge::ast::DurationUnit::Minutes => r.node.value / (24 * 60),
+                forge::ast::DurationUnit::Seconds => r.node.value / (24 * 60 * 60),
+            }});
+            Some(AgentKnowledgeConfig {{
+                store_path,
+                max_entries,
+                retention_days,
+            }})
         }})
 }}
 "#,
@@ -1051,4 +1081,26 @@ fn sensei_storage_dir(executor: &forge::runtime::executor::TaskExecutor) -> Opti
         config = config_code,
         name = "forge-server",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_server_wires_agent_knowledge_store_for_endpoints() {
+        let source_entries = vec![
+            r#"    ("web.forge", include_str!("../sources/web.forge"))"#.to_string(),
+            r#"    ("agent.forge", include_str!("../sources/agent.forge"))"#.to_string(),
+        ];
+
+        let main_rs = generate_server_main(&source_entries, None);
+
+        assert!(main_rs.contains("struct AgentKnowledgeConfig"));
+        assert!(main_rs.contains(
+            "let knowledge_store = forge::runtime::knowledge_store::KnowledgeStore::new"
+        ));
+        assert!(main_rs.contains("executor = executor.with_knowledge_store(knowledge_store);"));
+        assert!(main_rs.contains("let storage_dir = knowledge_config"));
+    }
 }
