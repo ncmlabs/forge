@@ -824,7 +824,7 @@ async fn handle_webhook(
 /// Verify GitHub-style HMAC-SHA256 signature.
 /// Signature format: "sha256=<hex_digest>"
 fn verify_hmac_signature(secret: &str, body: &[u8], signature: &str) -> bool {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha256;
 
     let expected_hex = match signature.strip_prefix("sha256=") {
@@ -832,7 +832,7 @@ fn verify_hmac_signature(secret: &str, body: &[u8], signature: &str) -> bool {
         None => return false,
     };
 
-    let mut mac = match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
+    let mut mac: Hmac<Sha256> = match Hmac::new_from_slice(secret.as_bytes()) {
         Ok(m) => m,
         Err(_) => return false,
     };

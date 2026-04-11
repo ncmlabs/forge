@@ -844,7 +844,7 @@ async fn webhook_nonexistent_endpoint_returns_404() {
 
 #[tokio::test]
 async fn webhook_hmac_valid_signature_accepted() {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha256;
 
     let secret = "test-secret-123";
@@ -854,7 +854,7 @@ async fn webhook_hmac_valid_signature_accepted() {
     let base = spawn_webhook_server_with_secrets(WEBHOOK_SERVER, secrets).await;
 
     let body = r#"{"payload": "signed"}"#;
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+    let mut mac: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();
     mac.update(body.as_bytes());
     let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
 
