@@ -16,9 +16,7 @@ event SessionSummary
 # ── Lifecycle ─────────────────────────────────────────────────
 
 states TutorPhase
-  beginner -> intermediate when score >= 3
-  intermediate -> advanced when score >= 7
-  advanced -> advanced
+  active -> active
 
 # ── Quiz generation tasks ─────────────────────────────────────
 
@@ -56,7 +54,7 @@ task pick_topic
 
 # ── The tutor agent ───────────────────────────────────────────
 #
-# Demonstrates: memory, lifecycle, handlers, requires guards,
+# Demonstrates: memory, lifecycle guard, handlers, requires guards,
 # stuck detection, timers, event emission, escalation.
 
 agent forge_tutor
@@ -84,7 +82,7 @@ agent forge_tutor
 
   on answer(student_answer: Text)
     requires memory.questions_asked > 0 on fail: give "No active question. Send 'start' first."
-    requires lifecycle == beginner or lifecycle == intermediate on fail: silent
+    requires lifecycle == active on fail: silent
     verdict = check_answer(memory.current_question, student_answer)
     grade = classify verdict into ["correct", "partial", "wrong"]
     when grade.sure -> say "Graded with confidence."
@@ -105,13 +103,11 @@ agent forge_tutor
       emit TopicCompleted(topic: memory.current_topic, score: memory.score)
       memory.streak = 0
       say "Topic mastered!"
-    if memory.score >= 7 and lifecycle == intermediate
+    if memory.score >= 7 and memory.level == "intermediate"
       memory.level = "advanced"
-      transition to advanced
       say "Level up: ADVANCED!"
-    if memory.score >= 3 and lifecycle == beginner
+    if memory.score >= 3 and memory.level == "beginner"
       memory.level = "intermediate"
-      transition to intermediate
       say "Level up: INTERMEDIATE!"
     topic = pick_topic(memory.level, memory.current_topic)
     memory.current_topic = topic
@@ -155,3 +151,12 @@ agent forge_tutor
     say "Hint: {hint_text}"
     say "FORGE is built around honesty (confidence), composition, and supervision."
     say "Send 'skip' to move to a new question."
+
+fn main
+  topic = pick_topic("beginner", "")
+  question = generate_question(topic, "beginner")
+  hint_text = generate_hint(question, topic)
+  say "FORGE Quiz Tutor demo"
+  say "Topic: {topic}"
+  say "Question: {question}"
+  say "Hint: {hint_text}"
