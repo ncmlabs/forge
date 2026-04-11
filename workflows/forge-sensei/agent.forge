@@ -20,9 +20,10 @@ exportable agent forge_sensei
   subscribe LearnedInsight where source == "toolkit" or source == "specialist"
 
   on start
-    memory.current_level = "novice"
+    if memory.current_level == ""
+      memory.current_level = "novice"
     start self_assess
-    say "forge-sensei initialized. Level: novice. Ready to learn and teach FORGE."
+    say "forge-sensei initialized. Level: {memory.current_level}. Ready to learn and teach FORGE."
 
   # ── Pre-training: bulk document ingestion ───────────────────
 
@@ -85,7 +86,6 @@ exportable agent forge_sensei
   # ── Assess: objective self-evaluation ───────────────────────
 
   on assess_detailed(test_input: Text, expected: Text)
-    requires lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: give AssessmentResult(passed: false, prediction: "", expected: expected, gap_topic: "Must reach apprentice level first")
     memory.interaction_count = memory.interaction_count + 1
     categories = categorize_for_recall("{test_input} expects {expected}")
     prior = recall "{categories} {test_input}"
@@ -111,12 +111,12 @@ exportable agent forge_sensei
     score = compute_mastery_score(passed, total)
     memory.last_assessment_score = score
     level = determine_level(score)
-    if score >= 90 and lifecycle != expert
-      transition to expert
-    if score >= 70 and lifecycle == apprentice
-      transition to journeyman
     if score >= 40 and lifecycle == novice
       transition to apprentice
+    if score >= 70 and lifecycle == apprentice
+      transition to journeyman
+    if score >= 90 and lifecycle == journeyman
+      transition to expert
     emit AssessmentCompleted(level: level, score: score, passed: passed, total: total, failures: gaps)
     give AssessmentResult(passed: score >= 40, prediction: "{passed}/{total}", expected: ">=40%", gap_topic: gaps)
 

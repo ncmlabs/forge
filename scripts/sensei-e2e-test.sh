@@ -339,6 +339,38 @@ run_test "smoke-test-script" bash "$FORGE_ROOT/scripts/sensei-smoke-test.sh"
 run_test "cache-stats" bash "$FORGE_ROOT/scripts/sensei-cache.sh" stats
 echo ""
 
+# ── Category 10: Mastery Progression ────────────────────────
+echo "=== Category 10: Mastery Progression ==="
+
+# Save current state so we can restore after testing
+MASTERY_BACKUP=$(cat "$HOME/.forge/sensei/state.json" 2>/dev/null || echo '{}')
+
+# Reset to novice (clear redb lifecycle + memory state)
+bash "$FORGE_ROOT/scripts/sensei-cache.sh" reset >/dev/null 2>&1 || true
+
+# Verify status shows novice after reset
+check_contains "mastery-reset-novice" "novice" "$SENSEI_BIN" status
+
+# Verify review gate rejects at novice
+check_contains "review-gate-novice" "novice|apprentice|assessment" "$SENSEI_BIN" review "pure x gives Number do give 1"
+
+# Verify deep_dive gate rejects at novice
+check_contains "deepdive-gate-novice" "journeyman|level|assessment" "$SENSEI_BIN" deep-dive "SYNTAX"
+
+# Run assessment to advance (uses iterative update-mastery)
+run_test "mastery-assessment" bash "$HOME/.claude/skills/forge-sensei/assess.sh" --json
+
+# Verify status shows advanced level (not novice)
+check_not_contains "mastery-post-assess" "novice" "$SENSEI_BIN" status
+
+# Verify persistence: re-check status still shows advanced
+check_not_contains "mastery-persists" "novice" "$SENSEI_BIN" status
+
+# Verify review gate passes after advancement
+run_test "review-gate-post-assess" "$SENSEI_BIN" review "pure add needs a: Number gives Number do give a + 1"
+
+echo ""
+
 # ── Summary ───────────────────────────────────────────────────
 echo "============================================"
 echo " E2E Results: $PASSED passed, $FAILED failed, $TOTAL total"
