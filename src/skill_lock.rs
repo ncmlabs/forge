@@ -56,7 +56,7 @@ impl SkillLockFile {
             .map_err(|e| anyhow::anyhow!("cannot read {}: {}", path.display(), e))?;
         let mut hasher = Sha256::new();
         hasher.update(&content);
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hex::encode(hasher.finalize()))
     }
 }
 
