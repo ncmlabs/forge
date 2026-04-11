@@ -14,6 +14,7 @@ use forge::runtime::skill_executor::SkillExecutor;
 use forge::runtime::skill_loader::SkillLoader;
 use forge::runtime::skill_registry::SkillRegistry;
 use forge::tracer::Tracer;
+use forge::types::ConfidenceSource;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -35,6 +36,58 @@ fn create_temp_skill(name: &str, description: &str, body: &str) -> tempfile::Tem
     )
     .unwrap();
     dir
+}
+
+fn create_deterministic_skill(name: &str, capability: &str, body: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let skill_dir = dir.path().join(name);
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let mut file = std::fs::File::create(skill_dir.join("SKILL.md")).unwrap();
+    write!(
+        file,
+        r#"---
+name: {name}
+description: Deterministic test skill
+timeout: 30
+capabilities:
+  - name: {capability}
+    inputs: [Text]
+    output: Text
+    params: [text]
+    executor:
+      kind: command
+      argv: [printf, "%s", '{{{{"ok":true,"output":"{{text}}"}}}}']
+      result:
+        success_path: ok
+        error_path: error
+        json_path: output
+---
+
+{body}
+"#
+    )
+    .unwrap();
+    dir
+}
+
+fn executor_for_dir(
+    dir: &tempfile::TempDir,
+    mock: MockProvider,
+    tracer: Option<Tracer>,
+) -> SkillExecutor {
+    let skills = SkillLoader::load_from_dirs(&[dir.path().to_path_buf()]);
+    let mut registry = SkillRegistry::new();
+    for skill in skills {
+        registry.register(skill);
+    }
+    let shared_registry = Arc::new(Mutex::new(registry));
+    let mut executor = SkillExecutor::new(mock_registry(mock), shared_registry);
+    executor.max_turns = 5;
+    executor.default_timeout = Duration::from_secs(10);
+    if let Some(tracer) = tracer {
+        executor = executor.with_tracer(Arc::new(tracer));
+    }
+    executor
 }
 
 // ── E2E: full skill execution with mock tool-use ────────────────
@@ -110,6 +163,94 @@ async fn skill_e2e_mock_tool_use() {
         cv.confidence <= 0.99,
         "confidence should be capped at 0.99, got: {}",
         cv.confidence
+    );
+}
+
+#[tokio::test]
+async fn deterministic_skill_executor_skips_llm_and_maps_result() {
+    let dir = create_deterministic_skill(
+        "det-test",
+        "echo",
+        "This body should not be sent to the LLM for deterministic execution.",
+    );
+    let tracer = Tracer::with_capture();
+    let executor = executor_for_dir(
+        &dir,
+        MockProvider::new("mock").with_default("LLM_SHOULD_NOT_RUN"),
+        Some(tracer.clone()),
+    );
+    let mut args = HashMap::new();
+    args.insert(
+        "_0".to_string(),
+        forge::runtime::confidence::ConfidentValue::deterministic(
+            forge::runtime::confidence::Value::Text("hello from argv".to_string()),
+        ),
+    );
+
+    let result = executor.execute("det-test", "echo", &args).await.unwrap();
+
+    assert_eq!(result.value.to_string(), "hello from argv");
+    assert!(matches!(
+        result.source,
+        ConfidenceSource::SkillInvocation(conf) if (conf - 0.85).abs() < f32::EPSILON
+    ));
+    let events = tracer.captured_events();
+    assert!(events.contains(&"skill_call".to_string()));
+    assert!(events.contains(&"skill_return".to_string()));
+    assert!(!events.contains(&"llm_request".to_string()));
+    assert!(!events.contains(&"llm_response".to_string()));
+}
+
+#[tokio::test]
+async fn deterministic_skill_executor_does_not_use_shell_interpolation() {
+    let dir = create_deterministic_skill("det-test", "echo", "No LLM fallback.");
+    let executor = executor_for_dir(&dir, MockProvider::new("mock"), None);
+    let mut args = HashMap::new();
+    args.insert(
+        "_0".to_string(),
+        forge::runtime::confidence::ConfidentValue::deterministic(
+            forge::runtime::confidence::Value::Text("hello; exit 7".to_string()),
+        ),
+    );
+
+    let result = executor.execute("det-test", "echo", &args).await.unwrap();
+
+    assert_eq!(result.value.to_string(), "hello; exit 7");
+}
+
+#[tokio::test]
+async fn deterministic_skill_executor_reports_missing_env_placeholders() {
+    let dir = tempfile::tempdir().unwrap();
+    let skill_dir = dir.path().join("env-test");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        r#"---
+name: env-test
+capabilities:
+  - name: echo
+    inputs: [Text]
+    output: Text
+    params: [text]
+    executor:
+      kind: command
+      argv: [printf, "%s", "{env:FORGE_TEST_MISSING_ENV_237}"]
+---
+Body.
+"#,
+    )
+    .unwrap();
+    let executor = executor_for_dir(&dir, MockProvider::new("mock"), None);
+
+    let err = executor
+        .execute("env-test", "echo", &HashMap::new())
+        .await
+        .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("missing environment variable 'FORGE_TEST_MISSING_ENV_237'"),
+        "unexpected error: {err}"
     );
 }
 

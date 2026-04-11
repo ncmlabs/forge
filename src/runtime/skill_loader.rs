@@ -3,7 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::runtime::skill::{LoadedSkill, SkillCapability, SkillManifest};
+use crate::runtime::skill::{
+    LoadedSkill, SkillCapability, SkillCapabilityExecutor, SkillExecutorKind, SkillExecutorResult,
+    SkillManifest,
+};
 use crate::types::{CapabilitySignature, ForgeType};
 use serde::Deserialize;
 
@@ -100,6 +103,22 @@ struct SkillCapabilityFrontmatter {
     name: String,
     inputs: Vec<String>,
     output: String,
+    params: Option<Vec<String>>,
+    executor: Option<SkillCapabilityExecutorFrontmatter>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillCapabilityExecutorFrontmatter {
+    kind: String,
+    argv: Vec<String>,
+    result: Option<SkillExecutorResultFrontmatter>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillExecutorResultFrontmatter {
+    json_path: Option<String>,
+    success_path: Option<String>,
+    error_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,11 +145,46 @@ impl SkillFrontmatter {
                                     .collect::<Result<Vec<_>, _>>()?,
                                 output: parse_forge_type(&cap.output)?,
                             },
+                            executor: cap.parse_executor()?,
                         })
                     })
                     .collect()
             })
             .unwrap_or_else(|| Ok(Vec::new()))
+    }
+}
+
+impl SkillCapabilityFrontmatter {
+    fn parse_executor(&self) -> Result<Option<SkillCapabilityExecutor>, String> {
+        let Some(executor) = &self.executor else {
+            return Ok(None);
+        };
+        let kind = match executor.kind.as_str() {
+            "command" => SkillExecutorKind::Command,
+            other => {
+                return Err(format!(
+                    "unsupported executor kind '{}' for capability '{}'",
+                    other, self.name
+                ));
+            }
+        };
+        if executor.argv.is_empty() {
+            return Err(format!(
+                "executor argv must not be empty for capability '{}'",
+                self.name
+            ));
+        }
+
+        Ok(Some(SkillCapabilityExecutor {
+            params: self.params.clone().unwrap_or_default(),
+            kind,
+            argv: executor.argv.clone(),
+            result: executor.result.as_ref().map(|result| SkillExecutorResult {
+                json_path: result.json_path.clone(),
+                success_path: result.success_path.clone(),
+                error_path: result.error_path.clone(),
+            }),
+        }))
     }
 }
 
@@ -276,5 +330,34 @@ Body.
         assert_eq!(caps[0].name, "create_issue");
         assert_eq!(caps[0].signature.inputs.len(), 3);
         assert_eq!(caps[1].signature.output, ForgeType::Text);
+    }
+
+    #[test]
+    fn parse_typed_capability_executor() {
+        let content = r#"---
+name: demo
+capabilities:
+  - name: echo
+    inputs: [Text]
+    output: Text
+    params: [text]
+    executor:
+      kind: command
+      argv: [printf, "%s", "{text}"]
+      result:
+        json_path: output
+---
+Body.
+"#;
+        let (fm, _) = split_frontmatter(content).unwrap();
+        let caps = fm.parse_capabilities().unwrap();
+        let executor = caps[0].executor.as_ref().unwrap();
+        assert_eq!(executor.params, vec!["text"]);
+        assert_eq!(executor.kind, SkillExecutorKind::Command);
+        assert_eq!(executor.argv, vec!["printf", "%s", "{text}"]);
+        assert_eq!(
+            executor.result.as_ref().unwrap().json_path.as_deref(),
+            Some("output")
+        );
     }
 }

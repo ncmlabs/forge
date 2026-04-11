@@ -2505,6 +2505,24 @@ repo_check = {}
 
 Then a FORGE file can use `skill.repo_check` and call declared capabilities. Skill calls are side-effecting and rejected inside `pure`.
 
+Typed skill capabilities may optionally declare deterministic execution metadata in `SKILL.md`. When present, the runtime expands capability arguments into a structured `argv` command and executes it directly; when absent, the existing LLM-mediated SKILL.md agentic loop remains the fallback. Deterministic skill executors do not make LLM requests and have zero token cost, but they still return skill confidence rather than deterministic confidence because they perform external side effects.
+
+```yaml
+capabilities:
+  - name: add_reaction
+    inputs: [Text, Text, Text]
+    output: Text
+    params: [channel, timestamp, emoji]
+    executor:
+      kind: command
+      argv: [curl, -s, -X, POST, "https://slack.com/api/reactions.add", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "channel={channel}", --data-urlencode, "timestamp={timestamp}", --data-urlencode, "name={emoji}"]
+      result:
+        success_path: ok
+        error_path: error
+```
+
+Use `{param}` placeholders for capability arguments and `{env:NAME}` for environment variables. Use `{{` and `}}` for literal braces inside argv templates.
+
 ---
 
 ## 22. Templates and Raw Interpolation
