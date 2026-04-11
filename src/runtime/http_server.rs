@@ -223,8 +223,8 @@ impl ForgeServer {
         // so new/removed endpoints are visible immediately after hot-reload.
         // Webhook route: POST /webhook/:name with Content-Type validation and optional HMAC
         let mut router = Router::new()
-            .route("/webhook/:endpoint", axum::routing::post(handle_webhook))
-            .route("/:endpoint", get(handle_get).post(handle_post))
+            .route("/webhook/{endpoint}", axum::routing::post(handle_webhook))
+            .route("/{endpoint}", get(handle_get).post(handle_post))
             .route(
                 "/",
                 get(|| async { axum::response::Redirect::temporary("/home") }),
@@ -243,7 +243,7 @@ impl ForgeServer {
         // Introspection endpoints (issue #139) — always registered, return empty/404 gracefully
         router = router
             .route("/__forge/inspect/agents", get(handle_inspect_agents))
-            .route("/__forge/inspect/agents/:id", get(handle_inspect_agent))
+            .route("/__forge/inspect/agents/{id}", get(handle_inspect_agent))
             .route("/__forge/inspect/topology", get(handle_inspect_topology))
             .route("/__forge/inspect/wardens", get(handle_inspect_wardens))
             .route("/__forge/inspect/storage", get(handle_inspect_storage))
@@ -251,7 +251,7 @@ impl ForgeServer {
 
         // Failure injection endpoint (issue #143)
         router = router.route(
-            "/__forge/inject/:failure_type",
+            "/__forge/inject/{failure_type}",
             axum::routing::post(handle_inject),
         );
 
