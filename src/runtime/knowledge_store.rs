@@ -61,8 +61,16 @@ pub struct KnowledgeStore {
 
 impl KnowledgeStore {
     pub fn new(store_path: &str, max_entries: Option<usize>, retention_days: Option<u64>) -> Self {
+        // Expand ~ to user home directory for absolute paths
+        let expanded_path = if store_path.starts_with("~/") {
+            dirs::home_dir()
+                .map(|h| h.join(&store_path[2..]).to_string_lossy().to_string())
+                .unwrap_or_else(|| store_path.to_string())
+        } else {
+            store_path.to_string()
+        };
         let mut store = KnowledgeStore {
-            store_path: store_path.to_string(),
+            store_path: expanded_path,
             entries: Vec::new(),
             max_entries: max_entries.unwrap_or(10_000),
             retention_days,

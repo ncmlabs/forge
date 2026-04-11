@@ -8,7 +8,11 @@
 set -euo pipefail
 
 FORGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SENSEI_BIN="${SENSEI_BIN:-$FORGE_ROOT/bin/forge-sensei}"
+SENSEI_BIN="${SENSEI_BIN:-$HOME/.forge/bin/forge-sensei}"
+# Fallback to repo binary if installed version not found
+if [ ! -x "$SENSEI_BIN" ]; then
+  SENSEI_BIN="$FORGE_ROOT/bin/forge-sensei"
+fi
 
 # Auto-detect mock mode
 if [ "${FORGE_MOCK:-}" = "1" ] && [ -z "${FORGE_CONFIG:-}" ]; then

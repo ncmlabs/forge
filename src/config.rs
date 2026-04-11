@@ -195,12 +195,21 @@ impl ForgeConfig {
 
     /// Resolve the config file path that would be used by `load_or_default`.
     pub fn resolve_path() -> Option<std::path::PathBuf> {
+        // 1. Explicit override
         if let Ok(path) = std::env::var("FORGE_CONFIG") {
             let p = std::path::PathBuf::from(path);
             if p.exists() {
                 return Some(p);
             }
         }
+        // 2. App-specific config (set by wrapper scripts for installed apps)
+        if let Ok(path) = std::env::var("FORGE_APP_CONFIG") {
+            let p = std::path::PathBuf::from(path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        // 3. Local config, then home config
         let search_paths = [
             Some(std::path::PathBuf::from("forge.config.toml")),
             dirs::home_dir().map(|d| d.join(".forge/config.toml")),
@@ -221,10 +230,12 @@ impl ForgeConfig {
             .map(|v| v == "1")
             .unwrap_or(false);
 
-        // Check env override for config path
-        if let Ok(path) = std::env::var("FORGE_CONFIG") {
-            if let Ok(config) = Self::load(Path::new(&path)) {
-                return Self::apply_env_overrides(config);
+        // Check env overrides for config path
+        for var in ["FORGE_CONFIG", "FORGE_APP_CONFIG"] {
+            if let Ok(path) = std::env::var(var) {
+                if let Ok(config) = Self::load(Path::new(&path)) {
+                    return Self::apply_env_overrides(config);
+                }
             }
         }
 
