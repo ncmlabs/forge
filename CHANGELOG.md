@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
 ### Changed
+- Skill capabilities can now opt into deterministic command execution metadata, letting simple `skill.*` operations bypass the LLM-mediated SKILL.md loop while keeping agentic fallback behavior (#237)
 - Bumped `redb` from v2 to v4 and MSRV from 1.85 to 1.89 (#235)
 
 ### Added

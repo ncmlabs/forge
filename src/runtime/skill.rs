@@ -7,6 +7,27 @@ use crate::types::CapabilitySignature;
 pub struct SkillCapability {
     pub name: String,
     pub signature: CapabilitySignature,
+    pub executor: Option<SkillCapabilityExecutor>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SkillCapabilityExecutor {
+    pub params: Vec<String>,
+    pub kind: SkillExecutorKind,
+    pub argv: Vec<String>,
+    pub result: Option<SkillExecutorResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillExecutorKind {
+    Command,
+}
+
+#[derive(Debug, Clone)]
+pub struct SkillExecutorResult {
+    pub json_path: Option<String>,
+    pub success_path: Option<String>,
+    pub error_path: Option<String>,
 }
 
 /// Metadata about a skill, loaded from SKILL.md frontmatter or config.

@@ -76,7 +76,7 @@ Everything in this document exists to reach that moment.
 | P2.M4 — Session Adapters + Events | Agent adapters, polling, and event integration | #191, #192 | Open |
 | P2.M5 — Verification + Contradictions | Verification engine and contradiction/warden integration | #204, #205 | Open |
 | P2.M6 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 ✅ | Done |
-| P2.M7 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research | #163 ✅ #164 ✅ #165 | In Progress |
+| P2.M7 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research, deterministic execution | #163 ✅ #164 ✅ #165 ✅ #237 ✅ | Done |
 | P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176-#179 | Open |
 | P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180-#182 | Open |
 | P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Open |
@@ -694,6 +694,7 @@ Worktree isolation for safe agent execution:
 | #163 | Pluggable skill architecture — project-level declarations | Done |
 | #164 | Skill capability type system — rich signatures | Done |
 | #165 | Explore agent-to-CLI delegation patterns (Claude Code, Codex) | Done |
+| #237 | Hybrid deterministic skill execution for simple capabilities | Done |
 
 ### P2.M8: CLI Skills (SKILL.md)
 
@@ -940,7 +941,7 @@ P2.M3  Result+Contract ░░░░░░░░░░░░░░░░░░░
 P2.M4  Adapters+Events ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
 P2.M5  Verify+Contra   ██████████░░░░░░░░░░  1/2  ( 50%)
 P2.M6  Sandbox         ████████████████████  1/1  (100%)
-P2.M7  Skills          █████████████░░░░░░░  2/3  ( 67%)
+P2.M7  Skills          ████████████████████  4/4  (100%)
 P2.M8  CLI Skills      ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
 P2.M9  Orchestration   ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
 P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
@@ -948,7 +949,7 @@ P2.M11 Knowledge       ░░░░░░░░░░░░░░░░░░░
 P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
 P2.M13 Polish          █████░░░░░░░░░░░░░░░  1/4  ( 25%)
 ─────────────────────────────────────────────────────────
-Phase 2 Overall         █████░░░░░░░░░░░░░░░  9/39 ( 23%)
+Phase 2 Overall         █████░░░░░░░░░░░░░░░  10/40 ( 25%)
 ```
 
 ---
@@ -1373,5 +1374,5 @@ Everything in this document exists to reach that moment.
 
 *FORGE — Making It Real · Master Roadmap v3.0*
 *Layers: Substrate → Toolkit → Factory → Self-improvement*
-*Layer 1: v0.1.0 shipped (32/36 tracks, 89%) · Phase 2: 9/39 issues (23%) · Next: session adapters/events → AgentResult/reliability contract → verification*
+*Layer 1: v0.1.0 shipped (32/36 tracks, 89%) · Phase 2: 10/40 issues (25%) · Next: session adapters/events → AgentResult/reliability contract → verification*
 *Last updated: 2026-04-11*

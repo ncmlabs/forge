@@ -8,24 +8,63 @@ capabilities:
   - name: send_message
     inputs: [Text, Text]
     output: Text
+    params: [channel, text]
+    executor:
+      kind: command
+      argv: [curl, -s, -X, POST, "https://slack.com/api/chat.postMessage", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "channel={channel}", --data-urlencode, "text={text}"]
+      result:
+        success_path: ok
+        error_path: error
+        json_path: ts
   - name: send_rich_message
     inputs: [Text, Text]
     output: Text
   - name: reply_thread
     inputs: [Text, Text, Text]
     output: Text
+    params: [channel, thread_ts, text]
+    executor:
+      kind: command
+      argv: [curl, -s, -X, POST, "https://slack.com/api/chat.postMessage", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "channel={channel}", --data-urlencode, "thread_ts={thread_ts}", --data-urlencode, "text={text}"]
+      result:
+        success_path: ok
+        error_path: error
+        json_path: ts
   - name: add_reaction
     inputs: [Text, Text, Text]
     output: Text
+    params: [channel, timestamp, emoji]
+    executor:
+      kind: command
+      argv: [curl, -s, -X, POST, "https://slack.com/api/reactions.add", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "channel={channel}", --data-urlencode, "timestamp={timestamp}", --data-urlencode, "name={emoji}"]
+      result:
+        success_path: ok
+        error_path: error
   - name: list_channels
     inputs: [Text]
     output: Text
   - name: read_history
     inputs: [Text, Text, Text]
     output: Text
+    params: [channel, oldest, limit]
+    executor:
+      kind: command
+      argv: [curl, -s, -G, "https://slack.com/api/conversations.history", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "channel={channel}", --data-urlencode, "oldest={oldest}", --data-urlencode, "limit={limit}"]
+      result:
+        success_path: ok
+        error_path: error
+        json_path: messages
   - name: read_thread
     inputs: [Text, Text]
     output: Text
+    params: [channel, thread_ts]
+    executor:
+      kind: command
+      argv: [curl, -s, -G, "https://slack.com/api/conversations.replies", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "channel={channel}", --data-urlencode, "ts={thread_ts}"]
+      result:
+        success_path: ok
+        error_path: error
+        json_path: messages
   - name: detect_mentions
     inputs: [Text, Text]
     output: Text
@@ -35,15 +74,44 @@ capabilities:
   - name: edit_message
     inputs: [Text, Text, Text]
     output: Text
+    params: [channel, timestamp, text]
+    executor:
+      kind: command
+      argv: [curl, -s, -X, POST, "https://slack.com/api/chat.update", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "channel={channel}", --data-urlencode, "ts={timestamp}", --data-urlencode, "text={text}"]
+      result:
+        success_path: ok
+        error_path: error
   - name: delete_message
     inputs: [Text, Text]
     output: Text
+    params: [channel, timestamp]
+    executor:
+      kind: command
+      argv: [curl, -s, -X, POST, "https://slack.com/api/chat.delete", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "channel={channel}", --data-urlencode, "ts={timestamp}"]
+      result:
+        success_path: ok
+        error_path: error
   - name: pin_message
     inputs: [Text, Text]
     output: Text
+    params: [channel, timestamp]
+    executor:
+      kind: command
+      argv: [curl, -s, -X, POST, "https://slack.com/api/pins.add", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "channel={channel}", --data-urlencode, "timestamp={timestamp}"]
+      result:
+        success_path: ok
+        error_path: error
   - name: member_info
     inputs: [Text]
     output: Text
+    params: [user_id]
+    executor:
+      kind: command
+      argv: [curl, -s, -G, "https://slack.com/api/users.info", -H, "Authorization: Bearer {env:SLACK_BOT_TOKEN}", --data-urlencode, "user={user_id}"]
+      result:
+        success_path: ok
+        error_path: error
+        json_path: user
 ---
 
 # Slack Skill

@@ -9,8 +9,10 @@ use std::time::Duration;
 
 use crate::llm::registry::ProviderRegistry;
 use crate::llm::{CompletionRequest, ToolDefinition};
-use crate::runtime::confidence::ConfidentValue;
-use crate::runtime::skill::{LoadedSkill, SkillError};
+use crate::runtime::confidence::{ConfidentValue, Value};
+use crate::runtime::skill::{
+    LoadedSkill, SkillCapabilityExecutor, SkillError, SkillExecutorKind, SkillExecutorResult,
+};
 use crate::runtime::skill_registry::SharedSkillRegistry;
 use crate::tracer::LLMResponseInfo;
 use crate::tracer::Tracer;
@@ -97,6 +99,18 @@ impl SkillExecutor {
         method: &str,
         args: &HashMap<String, ConfidentValue>,
     ) -> Result<ConfidentValue, SkillError> {
+        if let Some(executor) = skill
+            .manifest
+            .capabilities
+            .iter()
+            .find(|cap| cap.name == method)
+            .and_then(|cap| cap.executor.as_ref())
+        {
+            return self
+                .execute_deterministic(skill, method, executor, args)
+                .await;
+        }
+
         let system_prompt = format!(
             "You are executing a skill. Follow these instructions exactly.\n\n{}\n\n\
              Respond with the final result as plain text when done. \
@@ -144,6 +158,61 @@ impl SkillExecutor {
                 name: skill.manifest.name.clone(),
                 timeout_secs: skill.manifest.timeout_secs,
             }),
+        }
+    }
+
+    async fn execute_deterministic(
+        &self,
+        skill: &LoadedSkill,
+        method: &str,
+        executor: &SkillCapabilityExecutor,
+        args: &HashMap<String, ConfidentValue>,
+    ) -> Result<ConfidentValue, SkillError> {
+        match executor.kind {
+            SkillExecutorKind::Command => {
+                let argv = expand_argv(&executor.argv, &executor.params, args)?;
+                let (program, program_args) =
+                    argv.split_first()
+                        .ok_or_else(|| SkillError::ExecutionFailed {
+                            name: format!("{}.{}", skill.manifest.name, method),
+                            reason: "executor argv must not be empty".to_string(),
+                        })?;
+
+                let output = tokio::time::timeout(
+                    Duration::from_secs(skill.manifest.timeout_secs),
+                    tokio::process::Command::new(program)
+                        .args(program_args)
+                        .output(),
+                )
+                .await
+                .map_err(|_| SkillError::Timeout {
+                    name: skill.manifest.name.clone(),
+                    timeout_secs: skill.manifest.timeout_secs,
+                })?
+                .map_err(|e| SkillError::ExecutionFailed {
+                    name: format!("{}.{}", skill.manifest.name, method),
+                    reason: e.to_string(),
+                })?;
+
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                if !output.status.success() {
+                    return Err(SkillError::ExecutionFailed {
+                        name: format!("{}.{}", skill.manifest.name, method),
+                        reason: if stderr.is_empty() { stdout } else { stderr },
+                    });
+                }
+
+                let text = apply_result_mapping(
+                    executor.result.as_ref(),
+                    &stdout,
+                    &format!("{}.{}", skill.manifest.name, method),
+                )?;
+                Ok(ConfidentValue::from_skill(
+                    Value::Text(text),
+                    skill.manifest.default_confidence,
+                ))
+            }
         }
     }
 
@@ -395,5 +464,143 @@ impl SkillExecutor {
         }
 
         tools
+    }
+}
+
+fn expand_argv(
+    argv: &[String],
+    params: &[String],
+    args: &HashMap<String, ConfidentValue>,
+) -> Result<Vec<String>, SkillError> {
+    argv.iter()
+        .map(|arg| expand_template(arg, params, args))
+        .collect()
+}
+
+fn expand_template(
+    template: &str,
+    params: &[String],
+    args: &HashMap<String, ConfidentValue>,
+) -> Result<String, SkillError> {
+    let mut output = String::new();
+    let mut rest = template;
+
+    while let Some(start) = rest.find(['{', '}']) {
+        output.push_str(&rest[..start]);
+        if rest[start..].starts_with("{{") {
+            output.push('{');
+            rest = &rest[start + 2..];
+            continue;
+        }
+        if rest[start..].starts_with("}}") {
+            output.push('}');
+            rest = &rest[start + 2..];
+            continue;
+        }
+        if rest[start..].starts_with('}') {
+            output.push('}');
+            rest = &rest[start + 1..];
+            continue;
+        }
+
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('}') else {
+            output.push_str(&rest[start..]);
+            return Ok(output);
+        };
+        let key = &after_start[..end];
+        output.push_str(&lookup_template_value(key, params, args)?);
+        rest = &after_start[end + 1..];
+    }
+    output.push_str(rest);
+    Ok(output)
+}
+
+fn lookup_template_value(
+    key: &str,
+    params: &[String],
+    args: &HashMap<String, ConfidentValue>,
+) -> Result<String, SkillError> {
+    if let Some(env_name) = key.strip_prefix("env:") {
+        return std::env::var(env_name).map_err(|_| SkillError::ExecutionFailed {
+            name: "deterministic_skill".to_string(),
+            reason: format!("missing environment variable '{}'", env_name),
+        });
+    }
+
+    if let Some(value) = args.get(key) {
+        return Ok(value.value.to_string());
+    }
+
+    if let Some(index) = params.iter().position(|param| param == key) {
+        if let Some(value) = args.get(&format!("_{}", index)) {
+            return Ok(value.value.to_string());
+        }
+    }
+
+    Err(SkillError::ExecutionFailed {
+        name: "deterministic_skill".to_string(),
+        reason: format!("missing argument '{}'", key),
+    })
+}
+
+fn apply_result_mapping(
+    mapping: Option<&SkillExecutorResult>,
+    stdout: &str,
+    name: &str,
+) -> Result<String, SkillError> {
+    let Some(mapping) = mapping else {
+        return Ok(stdout.trim().to_string());
+    };
+
+    let json: serde_json::Value =
+        serde_json::from_str(stdout).map_err(|e| SkillError::ExecutionFailed {
+            name: name.to_string(),
+            reason: format!("executor output was not valid JSON: {}", e),
+        })?;
+
+    if let Some(success_path) = &mapping.success_path {
+        if extract_json_path(&json, success_path) == Some(&serde_json::Value::Bool(false)) {
+            let reason = mapping
+                .error_path
+                .as_deref()
+                .and_then(|path| extract_json_path(&json, path))
+                .map(json_value_to_text)
+                .unwrap_or_else(|| "operation returned ok=false".to_string());
+            return Err(SkillError::ExecutionFailed {
+                name: name.to_string(),
+                reason,
+            });
+        }
+    }
+
+    if let Some(path) = &mapping.json_path {
+        let Some(value) = extract_json_path(&json, path) else {
+            return Err(SkillError::ExecutionFailed {
+                name: name.to_string(),
+                reason: format!("missing JSON result path '{}'", path),
+            });
+        };
+        return Ok(json_value_to_text(value));
+    }
+
+    Ok(stdout.trim().to_string())
+}
+
+fn extract_json_path<'a>(
+    value: &'a serde_json::Value,
+    path: &str,
+) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+fn json_value_to_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
     }
 }

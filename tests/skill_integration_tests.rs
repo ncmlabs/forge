@@ -206,6 +206,49 @@ fn skill_loader_parses_github_skill() {
 }
 
 #[test]
+fn skill_loader_parses_slack_deterministic_executors() {
+    let skill = SkillLoader::parse_skill_md(Path::new("skills/slack/SKILL.md")).unwrap();
+    assert_eq!(skill.manifest.name, "slack");
+    assert_eq!(skill.manifest.capabilities.len(), 13);
+
+    let deterministic: Vec<&str> = skill
+        .manifest
+        .capabilities
+        .iter()
+        .filter(|cap| cap.executor.is_some())
+        .map(|cap| cap.name.as_str())
+        .collect();
+    for expected in [
+        "send_message",
+        "reply_thread",
+        "add_reaction",
+        "read_history",
+        "read_thread",
+        "edit_message",
+        "delete_message",
+        "pin_message",
+        "member_info",
+    ] {
+        assert!(
+            deterministic.contains(&expected),
+            "missing deterministic executor for {}",
+            expected
+        );
+    }
+
+    let detect_mentions = skill
+        .manifest
+        .capabilities
+        .iter()
+        .find(|cap| cap.name == "detect_mentions")
+        .unwrap();
+    assert!(
+        detect_mentions.executor.is_none(),
+        "composite capability should keep the agentic fallback"
+    );
+}
+
+#[test]
 fn github_skill_registers_all_capabilities() {
     let skill = SkillLoader::parse_skill_md(Path::new("skills/github/SKILL.md")).unwrap();
     let mut registry = SkillRegistry::new();
