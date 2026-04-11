@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Anthropic provider now sends tool definitions and parses `tool_use` response blocks, enabling skill executor agentic loop (#198)
 - OpenAI-compatible provider now sends tool definitions and parses `tool_calls` response fields (#198)
 
+### Changed
+- Bumped `redb` from v2 to v4 and MSRV from 1.85 to 1.89 (#235)
+
 ### Added
 - Mock-only FORGE example validation gate: every checked-in `.forge` example is classified in `examples/validation.toml`, expected-error examples assert diagnostics, live/external examples are counted as skipped, and `scripts/check-forge-examples.sh` runs the fast `FORGE_MOCK=1` validation path (#231)
 - Slack skill — bidirectional Web API via `curl` with 13 typed capabilities: send-message, send-rich-message (Block Kit), reply-thread, add-reaction, list-channels, read-history (incremental polling), read-thread, detect-mentions, send-approval (interactive buttons + webhook callback), edit-message, delete-message, pin-message, member-info (#177)
@@ -154,7 +157,7 @@ First release of FORGE — the agent-native programming language where LLM calls
 - End-to-end wiki acceptance tests covering all 7 subsystems
 - Playwright E2E tests for wiki, observer, and embeddings
 - Conformance test suite for language correctness validation
-- CI/CD on ubuntu, macos, windows with MSRV 1.85
+- CI/CD on ubuntu, macos, windows with MSRV 1.89
 - FORGE syntax highlighting (Prism.js language definition)
 
 #### Documentation & Tooling

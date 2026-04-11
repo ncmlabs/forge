@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 const FORGE_KV: TableDefinition<&str, &str> = TableDefinition::new("forge_kv");
 
