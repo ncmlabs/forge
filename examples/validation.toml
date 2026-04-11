@@ -18,6 +18,14 @@ paths = [
 check = "ok"
 
 [[cases]]
+name = "slack responder agent"
+paths = [
+  "examples/agents/slack-responder/main.forge",
+]
+check = "ok"
+manifest = "examples/agents/slack-responder/forge.project.toml"
+
+[[cases]]
 name = "mock-runnable quiz tutor agent"
 paths = ["examples/agents/quiz_tutor.forge"]
 check = "ok"
