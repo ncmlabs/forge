@@ -1,0 +1,148 @@
+# ================================================================
+# Slack Responder — autonomous @mention handler
+# ================================================================
+# Polls a Slack channel for @mentions, classifies urgency with
+# local LLM (Ollama), and replies in-thread. Demonstrates the
+# agent polling loop: timer → detect → ack → think → reply → done.
+#
+# Prerequisites:
+#   - SLACK_BOT_TOKEN env var set (xoxb-...)
+#   - Bot invited to the target channel
+#   - Ollama running with glm-5.1:cloud pulled
+#
+# Usage:
+#   forge run --manifest examples/agents/slack-responder/forge.project.toml
+#
+# Issues: #180 (Slack Monitor agent), #227 (Slack responder example)
+# ================================================================
+
+use
+  skill.slack
+  skill.ollama
+
+# ── Events ──────────────────────────────────────────────────────
+# Emitted for each processed mention — downstream agents (triager,
+# logger) can subscribe to this event.
+
+event SlackMention
+  channel: Text
+  user: Text
+  message: Text
+  thread_ts: Text
+  timestamp: Text
+  urgency: Text
+
+# ── Task: triage_urgency ────────────────────────────────────────
+# Classifies a Slack message into urgency categories using local LLM.
+
+task triage_urgency
+  needs msg: Text
+  gives Text
+  do
+    triage_prompt = "Classify this Slack message into exactly one category: question, request, fyi, urgent. Respond with only the category name.\n\nMessage: {msg}"
+    label = reason triage_prompt
+    when label.sure -> give label
+    when label.unsure -> give "fyi"
+    else -> give "fyi"
+
+# ── Task: read_context ──────────────────────────────────────────
+# Reads thread context for a message, falling back gracefully.
+
+task read_context
+  needs ch: Text, ts: Text
+  gives Text
+  do
+    ctx = skill.slack.read_thread(ch, ts)
+    when ctx.sure -> give ctx
+    when ctx.unsure -> give "No thread context."
+    else -> give "No thread context."
+
+# ── Task: draft_reply ───────────────────────────────────────────
+# Generates a reply using local LLM with message + context + urgency.
+
+task draft_reply
+  needs msg: Text, thread_ctx: Text, urg: Text
+  gives Text
+  do
+    instruction = "You are a helpful Slack assistant. Respond concisely.\nUrgency: {urg}\nContext: {thread_ctx}\nMessage: {msg}"
+    response = reason instruction
+    when response.sure -> give response
+    when response.unsure -> give "I received your message but am not confident. Let me escalate."
+    else -> give "Could not generate a response."
+
+# ── Task: process_mention ───────────────────────────────────────
+# Full respond flow: ack → classify → context → reply → done → emit.
+# Each step assigns the skill result to handle confidence properly.
+
+task process_mention
+  needs ch: Text, mention_data: Text
+  gives Text
+  do
+    ack = skill.slack.add_reaction(ch, mention_data, "eyes")
+    urg = triage_urgency(mention_data)
+    reply = draft_reply(mention_data, "No prior context.", urg)
+    sent = skill.slack.reply_thread(ch, mention_data, reply)
+    done = skill.slack.add_reaction(ch, mention_data, "white_check_mark")
+    give urg
+
+# ── The Agent ───────────────────────────────────────────────────
+# Core loop:
+#   1. Timer fires every 30s
+#   2. detect_mentions returns new @mentions since last_seen_ts
+#   3. Delegates to process_mention for the full respond flow
+#   4. Updates last_seen_ts so the next poll is incremental
+
+agent slack_responder
+  memory
+    channel: Text
+    last_seen_ts: Text
+    poll_count: Number
+    reply_count: Number
+  timer poll: 30s
+
+  on start
+    memory.channel = "C0AS3AQRNN9"
+    memory.last_seen_ts = "0"
+    memory.poll_count = 0
+    memory.reply_count = 0
+    start poll
+    say "Slack responder active. Polling every 30s."
+
+  on poll.expired
+    mentions = skill.slack.detect_mentions(memory.channel, memory.last_seen_ts)
+    memory.poll_count = memory.poll_count + 1
+    when mentions.sure -> process_mention(memory.channel, mentions)
+    when mentions.sure -> emit SlackMention(channel: memory.channel, user: "unknown", message: mentions, thread_ts: mentions, timestamp: mentions, urgency: "unknown")
+    when mentions.unsure -> say "Poll {memory.poll_count}: partial data, skipping."
+    memory.last_seen_ts = mentions
+    reset poll
+
+  on status
+    give "Polls: {memory.poll_count}, Replies: {memory.reply_count}, Channel: {memory.channel}"
+
+  if stuck for 5 turns
+    say "Responder stuck. Escalating."
+    escalate to human
+
+# ── Entry Point ─────────────────────────────────────────────────
+
+task extract_latest_ts
+  needs history_json: Text
+  gives Text
+  do
+    ts = reason "Extract ONLY the ts value of the most recent message that contains <@U0AS6KJJ8D8> from this JSON. Return ONLY the timestamp number like 1234567890.123456 with no other text.\n\n{history_json}"
+    when ts.sure -> give ts
+    else -> give ""
+
+task poll_once
+  gives Text
+  do
+    history = skill.slack.read_history("C0AS3AQRNN9", "0", "5")
+    ts = extract_latest_ts(history)
+    result = process_mention("C0AS3AQRNN9", ts)
+    give result
+
+fn main
+  say "=== Slack Responder Agent ==="
+  say "Polling #test for @mentions..."
+  say poll_once()
