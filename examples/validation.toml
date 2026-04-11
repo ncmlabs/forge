@@ -1,0 +1,217 @@
+# FORGE example validation manifest.
+#
+# `check = "ok"` means parser/resolver/checkers must produce no errors.
+# Warnings are allowed and remain visible in the test summary.
+# `check = "error"` means the example intentionally fails with the listed text.
+# `run = "mock"` means the example may execute in required CI with FORGE_MOCK=1.
+# `run = "live_only"` means runtime execution requires external agents, providers,
+# credentials, or side effects and is skipped by required CI.
+
+[[cases]]
+name = "agent examples"
+paths = [
+  "examples/agents/debate.forge",
+  "examples/agents/fact_check_pool.forge",
+  "examples/agents/learning_agent.forge",
+  "examples/agents/quiz_tutor.forge",
+  "examples/agents/support_bot.forge",
+]
+check = "ok"
+
+[[cases]]
+name = "hello world"
+paths = ["examples/basics/hello.forge"]
+check = "ok"
+run = "mock"
+
+[[cases]]
+name = "command examples"
+paths = [
+  "examples/command/command_argv.forge",
+  "examples/command/command_background.forge",
+  "examples/command/command_background_cancel.forge",
+  "examples/command/command_env.forge",
+  "examples/command/command_fail.forge",
+  "examples/command/command_stderr.forge",
+  "examples/command/command_success.forge",
+  "examples/command/command_timeout.forge",
+  "examples/command/command_workdir.forge",
+  "examples/command/exec_compose.forge",
+  "examples/command/exec_fail.forge",
+  "examples/command/exec_multi.forge",
+  "examples/command/skill_finder.forge",
+]
+check = "ok"
+
+[[cases]]
+name = "mock-runnable exec examples"
+paths = [
+  "examples/command/exec_success.forge",
+  "examples/command/exec_when_dispatch.forge",
+  "examples/command/skill_bot.forge",
+]
+check = "ok"
+run = "mock"
+
+[[cases]]
+name = "boundary expected error"
+paths = [
+  "examples/errors/boundary_error_client.forge",
+  "examples/errors/boundary_error_server.forge",
+]
+check = "error"
+expect = ["server-only symbol"]
+merge = true
+
+[[cases]]
+name = "exec pure expected error"
+paths = ["examples/errors/exec_pure_error.forge"]
+check = "error"
+expect = ["cannot use", "exec"]
+
+[[cases]]
+name = "exec uncertain expected error"
+paths = ["examples/errors/exec_uncertain_error.forge"]
+check = "error"
+expect = ["unhandled uncertain"]
+
+[[cases]]
+name = "pure expected error"
+paths = ["examples/errors/pure_error.forge"]
+check = "error"
+expect = ["cannot use", "reason"]
+
+[[cases]]
+name = "states expected error"
+paths = ["examples/errors/states_error.forge"]
+check = "error"
+expect = ["illegal transition"]
+
+[[cases]]
+name = "uncertain expected error"
+paths = ["examples/errors/uncertain_error.forge"]
+check = "error"
+expect = ["unhandled uncertain"]
+
+[[cases]]
+name = "llm examples"
+paths = [
+  "examples/llm/code_review.forge",
+  "examples/llm/docgen.forge",
+  "examples/llm/research.forge",
+  "examples/llm/security_scanner.forge",
+]
+check = "ok"
+
+[[cases]]
+name = "mock-runnable classify example"
+paths = ["examples/llm/classify.forge"]
+check = "ok"
+run = "mock"
+
+[[cases]]
+name = "observer web example"
+paths = [
+  "examples/observer/server.forge",
+  "examples/observer/shared.forge",
+]
+check = "ok"
+
+[[cases]]
+name = "sentinel web example"
+paths = [
+  "examples/sentinel/server.forge",
+  "examples/sentinel/shared.forge",
+]
+check = "ok"
+config = "examples/sentinel/forge.config.toml"
+merge = true
+
+[[cases]]
+name = "basic server example"
+paths = ["examples/server/hello_server.forge"]
+check = "ok"
+
+[[cases]]
+name = "session examples"
+paths = [
+  "examples/session/session_contradiction.forge",
+  "examples/session/session_hooks.forge",
+  "examples/session/session_isolate.forge",
+  "examples/session/session_placeholder.forge",
+  "examples/session/session_status.forge",
+  "examples/session/session_verification.forge",
+]
+check = "ok"
+
+[[cases]]
+name = "live session examples"
+paths = [
+  "examples/session/session_contradiction_live.forge",
+  "examples/session/session_engine_codex_live.forge",
+  "examples/session/session_engine_live.forge",
+  "examples/session/session_verification_live.forge",
+]
+check = "ok"
+run = "live_only"
+
+[[cases]]
+name = "local skill project example"
+paths = ["examples/skill_project/main.forge"]
+check = "ok"
+manifest = "examples/skill_project/forge.project.toml"
+
+[[cases]]
+name = "github skill example"
+paths = ["examples/skills/github_ops.forge"]
+check = "ok"
+manifest = "examples/skills/forge.project.toml"
+run = "live_only"
+
+[[cases]]
+name = "tic-tac-toe multi-file example"
+paths = [
+  "examples/tictactoe/platform.forge",
+  "examples/tictactoe/room_agent.forge",
+  "examples/tictactoe/ai_opponent.forge",
+  "examples/tictactoe/matchmaking.forge",
+]
+check = "ok"
+manifest = "examples/tictactoe/forge.project.toml"
+merge = true
+
+[[cases]]
+name = "wiki multi-file example"
+paths = [
+  "examples/wiki/server.forge",
+  "examples/wiki/shared.forge",
+]
+check = "ok"
+config = "examples/wiki/forge.config.toml"
+merge = true
+
+[[cases]]
+name = "wiki client boundary example"
+paths = ["examples/wiki/client.forge"]
+check = "ok"
+
+[[cases]]
+name = "development lifecycle workflow"
+paths = ["workflows/dev-cycle.forge"]
+check = "ok"
+
+[[cases]]
+name = "forge-sensei single-file workflow"
+paths = ["workflows/forge-sensei.forge"]
+check = "ok"
+
+[[cases]]
+name = "forge-sensei multi-file workflow"
+paths = [
+  "workflows/forge-sensei/core.forge",
+  "workflows/forge-sensei/agent.forge",
+  "workflows/forge-sensei/web.forge",
+]
+check = "ok"
+manifest = "workflows/forge-sensei/forge.project.toml"
+merge = true
