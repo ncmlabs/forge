@@ -13,7 +13,7 @@ exportable agent forge_sensei
     last_assessment_score: Number
     current_level: Text
     gap_count: Number
-  knowledge store: ".forge-knowledge/sensei"
+  knowledge store: "~/.forge/sensei"
     max_entries: 50000
     retention: 365d
   timer self_assess: 6h
@@ -30,7 +30,7 @@ exportable agent forge_sensei
     say "Ingested: {document_path}"
 
   on ingest_fact(category: Text, fact: Text)
-    learn "[{category}] {fact}"
+    learn "[{category}] {fact}" category: category
     say "Learned [{category}]"
     emit LearnedInsight(category: category, content: fact, source: "direct", confidence: 1.0)
 
@@ -152,7 +152,7 @@ agent specialist
     topic: Text
     query_count: Number
     absorbed_count: Number
-  knowledge store: ".forge-knowledge/specialist"
+  knowledge store: "~/.forge/sensei/specialist"
     max_entries: 10000
     retention: 180d
   subscribe LearnedInsight where category == memory.topic

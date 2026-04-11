@@ -72,17 +72,17 @@ Everything in this document exists to reach that moment.
 |-----------|-------------|--------|--------|
 | P2.M1 — Command | `command` primitive: grammar, sync execution, background mode | #160 ✅ #161 ✅ #162 ✅ | Done |
 | P2.M2 — Session Core | `session` primitive: grammar and lifecycle manager | #189 ✅, #190 ✅ | Done |
-| P2.M3 — AgentResult + Contract | Typed result contract plus claims/evidence/verification model | #193, #203 | Open |
-| P2.M4 — Session Adapters + Events | Agent adapters, polling, and event integration | #191, #192 | Open |
-| P2.M5 — Verification + Contradictions | Verification engine and contradiction/warden integration | #204, #205 | Open |
+| P2.M3 — AgentResult + Contract | Typed result contract plus claims/evidence/verification model | #193 ✅ #203 ✅ | Done |
+| P2.M4 — Session Adapters + Events | Agent adapters, polling, and event integration | #191 ✅ #192 ✅ | Done |
+| P2.M5 — Verification + Contradictions | Verification engine and contradiction/warden integration | #204 ✅ #205 ✅ | Done |
 | P2.M6 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 ✅ | Done |
 | P2.M7 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research, deterministic execution | #163 ✅ #164 ✅ #165 ✅ #237 ✅ | Done |
-| P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176-#179 | Open |
-| P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180-#182 | Open |
-| P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Open |
-| P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer | #166, #167 | Open |
-| P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168-#175 | Open |
-| P2.M13 — Polish | CostEstimator, DocumentationAgent, reference/skill refresh, example validation | #186-#187, #229, #231 ✅ | In Progress |
+| P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176 ✅ #177 ✅ #178 ✅ #179 ✅ | Done |
+| P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180 ✅, #181, #182 | In Progress |
+| P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Frozen |
+| P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer + operational readiness | #166, #167, #240 | Open |
+| P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168, #169-#175 (frozen) | Frozen (except #168) |
+| P2.M13 — Polish | CostEstimator, DocumentationAgent, reference/skill refresh, example validation | #186 (frozen), #187 (frozen), #229, #231 ✅ | In Progress |
 
 ### Future Layers
 
@@ -945,11 +945,11 @@ P2.M7  Skills          ███████████████████
 P2.M8  CLI Skills      ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
 P2.M9  Orchestration   ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
 P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
-P2.M11 Knowledge       ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
+P2.M11 Knowledge       ██████████░░░░░░░░░░  1/2  ( 50%)  #166 curriculum done
 P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
 P2.M13 Polish          █████░░░░░░░░░░░░░░░  1/4  ( 25%)
 ─────────────────────────────────────────────────────────
-Phase 2 Overall         █████░░░░░░░░░░░░░░░  10/40 ( 25%)
+Phase 2 Overall         █████░░░░░░░░░░░░░░░  11/40 ( 28%)
 ```
 
 ---

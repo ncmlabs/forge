@@ -1,0 +1,9 @@
+{
+  "name": "sensei_ingest_fact_categorized",
+  "category": "checker",
+  "description": "learn with category: modifier compiles successfully in an agent handler",
+  "input": "exportable agent test_agent\n  knowledge store: \".forge-knowledge/test\"\n    max_entries: 100\n    retention: 30d\n\n  on ingest_fact(category: Text, fact: Text)\n    learn \"[{category}] {fact}\" category: category\n    say \"Learned [{category}]\"\n",
+  "expected": {
+    "outcome": "compile_ok"
+  }
+}
