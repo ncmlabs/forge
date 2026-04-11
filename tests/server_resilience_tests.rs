@@ -84,7 +84,7 @@ async fn health_check_all_with_mock_provider() {
     let results = registry.health_check_all().await;
 
     // Mock provider should always be healthy
-    for (_name, result) in &results {
+    for result in results.values() {
         assert!(result.is_ok(), "mock provider should be healthy");
     }
 }
@@ -128,7 +128,7 @@ async fn health_check_all_with_unreachable_provider() {
     let results = registry.health_check_all().await;
 
     // Unreachable provider should fail health check
-    for (_name, result) in &results {
+    for result in results.values() {
         assert!(
             result.is_err(),
             "unreachable provider should fail health check"
