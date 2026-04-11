@@ -255,8 +255,40 @@ impl KnowledgeStore {
             };
         }
 
-        // Normalize score to 0.0-1.0 confidence range
-        let confidence = best_score.clamp(0.0, 1.0);
+        // Compute confidence from query term coverage in the best-matching document.
+        // Raw TF-IDF scores depend on corpus size and document length, making them
+        // poor direct confidence values. Instead, measure what fraction of query terms
+        // actually appear in the best result — this directly answers "how well does
+        // this entry match what was asked?"
+        let confidence = if !query_terms.is_empty() {
+            let best_idx = scores[0].0;
+            let best_doc_terms: std::collections::HashSet<String> =
+                tokenize(&self.entries[best_idx].content)
+                    .into_iter()
+                    .collect();
+            let query_set: std::collections::HashSet<&String> =
+                query_terms.iter().collect();
+            let matched = query_set
+                .iter()
+                .filter(|t| best_doc_terms.contains(**t))
+                .count();
+            let coverage = matched as f32 / query_set.len() as f32;
+
+            // Bonus for score separation: if the best result is clearly better
+            // than the second-best, the match is more decisive
+            let separation_bonus = if scores.len() >= 2 && scores[1].1 > 0.0 {
+                let ratio = scores[0].1 / scores[1].1;
+                ((ratio - 1.0) * 0.1).clamp(0.0, 0.15)
+            } else if scores.len() == 1 {
+                0.1 // single match gets a small bonus
+            } else {
+                0.0
+            };
+
+            (coverage + separation_bonus).clamp(0.0, 1.0)
+        } else {
+            best_score.clamp(0.0, 1.0)
+        };
         let text = result_parts.join("\n---\n");
 
         self.save();
@@ -548,6 +580,41 @@ mod tests {
 
         let result = store.recall("anything", 1000);
         assert_eq!(result.confidence, 0.0);
+    }
+
+    #[test]
+    fn test_recall_confidence_scales_with_term_coverage() {
+        let tmp = TempDir::new().unwrap();
+        let store_path = tmp
+            .path()
+            .join("test_knowledge")
+            .to_string_lossy()
+            .to_string();
+        let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+        store.learn_direct("[TASKS] FORGE task declaration pattern needs gives do give");
+        store.learn_direct("Python is great for data science");
+        store.learn_direct("Unrelated content about cooking recipes");
+
+        // High coverage: all query terms match the first entry
+        let result = store.recall("FORGE task declaration needs gives", 1000);
+        assert!(
+            result.confidence >= 0.8,
+            "Full term coverage should produce sure confidence, got {}",
+            result.confidence
+        );
+
+        // Partial coverage: only some terms match
+        let result = store.recall("FORGE agent lifecycle", 1000);
+        assert!(
+            result.confidence < 0.8 && result.confidence > 0.0,
+            "Partial coverage should produce unsure or lower confidence, got {}",
+            result.confidence
+        );
+
+        // No coverage: no terms match
+        let result = store.recall("quantum computing blockchain", 1000);
+        assert_eq!(result.confidence, 0.0, "No matches should produce zero confidence");
     }
 
     #[test]

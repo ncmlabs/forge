@@ -2901,9 +2901,13 @@ impl TaskExecutor {
                     }
 
                     let request = CompletionRequest::simple(&prompt_text);
+                    let hint = crate::llm::CapabilityHint {
+                        quality: Some(crate::llm::QualityTier::Balanced),
+                        ..Default::default()
+                    };
                     let response = self
                         .providers
-                        .resolve_and_complete(request, None)
+                        .resolve_and_complete(request, Some(&hint))
                         .await
                         .map_err(|e| RuntimeError::LLMError(e.to_string()))?;
                     let confidence = response.estimate_confidence();
@@ -2942,9 +2946,13 @@ impl TaskExecutor {
                     }
 
                     let request = CompletionRequest::simple(&prompt).with_temperature(0.0);
+                    let hint = crate::llm::CapabilityHint {
+                        quality: Some(crate::llm::QualityTier::Fast),
+                        ..Default::default()
+                    };
                     let response = self
                         .providers
-                        .resolve_and_complete(request, None)
+                        .resolve_and_complete(request, Some(&hint))
                         .await
                         .map_err(|e| RuntimeError::LLMError(e.to_string()))?;
                     let confidence = response.estimate_confidence();

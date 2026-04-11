@@ -1875,15 +1875,16 @@ if [ "$DRY_RUN" = false ]; then
     local min_confidence="$2"
     local output
     # Use query handler which runs answer_query flow (categorize → recall → respond)
+    # Output format varies: structured "{confidence_tier: X}" or raw lines "X\nN\nQueryResult"
     output=$("$SENSEI_BIN" query "$query" 2>&1) || true
-    if echo "$output" | grep -q "confidence_tier: sure\|confidence_tier: unsure"; then
+    if echo "$output" | grep -qiE "confidence_tier: (sure|unsure)|^(sure|unsure)$"; then
       VERIFY_PASS=$((VERIFY_PASS + 1))
       local tier
-      tier=$(echo "$output" | grep -o "confidence_tier: [a-z]*" | head -1 | cut -d' ' -f2)
-      printf "  PASS: query \"%s\" → confidence_tier: %s\n" "$query" "$tier"
-    elif echo "$output" | grep -q "confidence_tier: none"; then
+      tier=$(echo "$output" | grep -oiE "(sure|unsure)" | head -1 | tr '[:upper:]' '[:lower:]')
+      printf "  PASS: query \"%s\" → %s\n" "$query" "$tier"
+    elif echo "$output" | grep -qiE "confidence_tier: none|^none$"; then
       VERIFY_FAIL=$((VERIFY_FAIL + 1))
-      printf "  FAIL: query \"%s\" → confidence_tier: none (no knowledge matched)\n" "$query"
+      printf "  FAIL: query \"%s\" → none (no knowledge matched)\n" "$query"
     else
       VERIFY_FAIL=$((VERIFY_FAIL + 1))
       printf "  FAIL: query \"%s\" → unexpected output\n" "$query"
