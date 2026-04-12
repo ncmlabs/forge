@@ -664,6 +664,10 @@ async fn dispatch(
     match agent.dispatch(event, params).await {{
         Ok(Some(val)) => println!("{{}}", val.value),
         Ok(None) => {{}},
+        // Raised by the `exit(code)` capability (issue #258). Bypass the
+        // error-formatting path — the handler has already emitted any
+        // user-facing message via `say`.
+        Err(forge::runtime::executor::RuntimeError::Exit(code)) => std::process::exit(code),
         Err(e) => {{
             eprintln!("error: {{}}", e);
             std::process::exit(1);

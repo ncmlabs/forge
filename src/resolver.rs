@@ -190,6 +190,18 @@ impl CapabilityRegistry {
                 output: ForgeType::Text,
             },
         );
+        // proc.exit(code) -> never returns — signal process exit with the given code.
+        // Raises RuntimeError::Exit which the generated CLI dispatch translates to
+        // std::process::exit(code). Used by one-shot clients to propagate a
+        // failure exit code when a remote dependency is unreachable.
+        // See issue #258 (part of epic #249).
+        caps.insert(
+            "proc.exit".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Number],
+                output: ForgeType::Unit,
+            },
+        );
         caps.insert(
             "data.store".into(),
             CapabilitySignature {

@@ -4,52 +4,94 @@ use
   web.fetch
   web.post
   env.get
+  proc.exit
 
 agent forge_sensei_client
+  on check
+    base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
+    response = try web.fetch("{base}/api/status") or ""
+    if response == ""
+      say "server unreachable at {base}"
+      say "start with: forge-sensei-server service start"
+      proc.exit(1)
+    say "server ok at {base}"
+
   on status
     base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
-    response = try web.fetch("{base}/api/status") or "server unreachable at {base}"
+    response = try web.fetch("{base}/api/status") or ""
+    if response == ""
+      say "server unreachable at {base}"
+      proc.exit(1)
     say response
 
   on query(question: Text)
     base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
-    response = try web.post("{base}/api/ask", question) or "server unreachable at {base}"
+    payload = "question={question}"
+    response = try web.post("{base}/api/ask", payload) or ""
+    if response == ""
+      say "server unreachable at {base}"
+      proc.exit(1)
     say response
 
   on review(code: Text)
     base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
-    response = try web.post("{base}/api/review", code) or "server unreachable at {base}"
+    payload = "code={code}"
+    response = try web.post("{base}/api/review", payload) or ""
+    if response == ""
+      say "server unreachable at {base}"
+      proc.exit(1)
     say response
 
   on ingest(document_path: Text)
     base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
-    response = try web.post("{base}/api/ingest", document_path) or "server unreachable at {base}"
+    payload = "document_path={document_path}"
+    response = try web.post("{base}/api/ingest", payload) or ""
+    if response == ""
+      say "server unreachable at {base}"
+      proc.exit(1)
     say response
 
   on ingest_fact(category: Text, fact: Text)
     base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
     payload = "category={category}&fact={fact}"
-    response = try web.post("{base}/api/ingest-fact", payload) or "server unreachable at {base}"
+    response = try web.post("{base}/api/ingest-fact", payload) or ""
+    if response == ""
+      say "server unreachable at {base}"
+      proc.exit(1)
     say response
 
   on learn_from_session(question: Text, resolution: Text)
     base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
     payload = "question={question}&resolution={resolution}"
-    response = try web.post("{base}/api/learn-from-session", payload) or "server unreachable at {base}"
+    response = try web.post("{base}/api/learn-from-session", payload) or ""
+    if response == ""
+      say "server unreachable at {base}"
+      proc.exit(1)
     say response
 
   on deep_dive(topic: Text)
     base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
-    response = try web.post("{base}/api/deep-dive", topic) or "server unreachable at {base}"
+    payload = "topic={topic}"
+    response = try web.post("{base}/api/deep-dive", payload) or ""
+    if response == ""
+      say "server unreachable at {base}"
+      proc.exit(1)
     say response
 
   on assess_detailed(test_input: Text, expected: Text)
     base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
     payload = "test_input={test_input}&expected={expected}"
-    response = try web.post("{base}/api/assess-detailed", payload) or "server unreachable at {base}"
+    response = try web.post("{base}/api/assess-detailed", payload) or ""
+    if response == ""
+      say "server unreachable at {base}"
+      proc.exit(1)
     say response
 
   on update_mastery(score: Number)
     base = env.get("FORGE_SENSEI_SERVER", "http://127.0.0.1:3000")
-    response = try web.post("{base}/api/update-mastery", "{score}") or "server unreachable at {base}"
+    payload = "score={score}"
+    response = try web.post("{base}/api/update-mastery", payload) or ""
+    if response == ""
+      say "server unreachable at {base}"
+      proc.exit(1)
     say response

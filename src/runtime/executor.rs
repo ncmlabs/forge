@@ -60,6 +60,14 @@ pub enum RuntimeError {
     // Control flow — not a real error, used to signal graceful agent retirement
     #[error("retire signal (internal)")]
     RetireSignal,
+
+    // Control flow — raised by the `exit(code)` capability in one-shot CLI clients
+    // to propagate a process exit code. See issue #258 (part of epic #249).
+    // The generated CLI dispatch (src/build.rs) catches this and calls
+    // std::process::exit(code) without printing — the handler has already
+    // emitted any user-facing message via `say`.
+    #[error("")]
+    Exit(i32),
 }
 
 /// Result from executing an endpoint, including optional response metadata.
@@ -1872,6 +1880,27 @@ impl TaskExecutor {
                                 .unwrap_or_default();
                             let value = std::env::var(&name).unwrap_or_else(|_| default.clone());
                             return Ok(ConfidentValue::deterministic(Value::Text(value)));
+                        }
+                    }
+
+                    // proc.exit(code) — signal process exit. See issue #258.
+                    // Raises RuntimeError::Exit, which the generated CLI dispatch
+                    // (src/build.rs) translates to std::process::exit(code). Non-CLI
+                    // contexts propagate the error like any other uncaught signal.
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "proc" && method.node == "exit" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let code = match arg_vals.first().map(|v| &v.value) {
+                                Some(Value::Number(n)) => {
+                                    // Clamp to conventional Unix exit-code range.
+                                    (n.trunc() as i64).clamp(0, 255) as i32
+                                }
+                                _ => 1,
+                            };
+                            return Err(RuntimeError::Exit(code));
                         }
                     }
 
