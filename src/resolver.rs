@@ -180,6 +180,16 @@ impl CapabilityRegistry {
                 output: ForgeType::Text,
             },
         );
+        // env.get(name, default) -> Text — read an environment variable at runtime,
+        // with fallback. Allowed in all boundaries (server, client, shared).
+        // See issue #251 (part of epic #249).
+        caps.insert(
+            "env.get".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
         caps.insert(
             "data.store".into(),
             CapabilitySignature {

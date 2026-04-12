@@ -1854,6 +1854,27 @@ impl TaskExecutor {
                         }
                     }
 
+                    // env.get(name, default) — read an environment variable with fallback.
+                    // See issue #251 (part of epic #249).
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "env" && method.node == "get" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let name = arg_vals
+                                .first()
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_default();
+                            let default = arg_vals
+                                .get(1)
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_default();
+                            let value = std::env::var(&name).unwrap_or_else(|_| default.clone());
+                            return Ok(ConfidentValue::deterministic(Value::Text(value)));
+                        }
+                    }
+
                     // web.fetch() / web.post() — built-in HTTP client capabilities
                     if let Expr::Ident(ref ns) = obj_expr.node {
                         if ns == "web" {
