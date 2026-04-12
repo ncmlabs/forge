@@ -1918,24 +1918,27 @@ impl TaskExecutor {
                             for arg in args {
                                 arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
                             }
-                            let storage = self.storage.as_ref().ok_or_else(|| {
-                                RuntimeError::Unsupported(
-                                    "data.* requires storage — configure [storage] in forge.config.toml or use forge serve".to_string(),
-                                )
-                            })?;
+                            // When no storage is attached (e.g., lightweight server
+                            // setups or tests without an attached redb), data.* degrades
+                            // gracefully: get/list return empty, store/delete are no-ops.
+                            // This lets endpoints like /api/status that fall back on
+                            // `if raw == ""` keep working in any runtime configuration.
+                            let storage = self.storage.as_ref();
                             match method.node.as_str() {
                                 "store" => {
-                                    let key = arg_vals
-                                        .first()
-                                        .map(|v| format!("{}", v.value))
-                                        .unwrap_or_default();
-                                    let value = arg_vals
-                                        .get(1)
-                                        .map(|v| format!("{}", v.value))
-                                        .unwrap_or_default();
-                                    storage.store(&key, &value).map_err(|e| {
-                                        RuntimeError::FlowError(format!("data.store: {e}"))
-                                    })?;
+                                    if let Some(storage) = storage {
+                                        let key = arg_vals
+                                            .first()
+                                            .map(|v| format!("{}", v.value))
+                                            .unwrap_or_default();
+                                        let value = arg_vals
+                                            .get(1)
+                                            .map(|v| format!("{}", v.value))
+                                            .unwrap_or_default();
+                                        storage.store(&key, &value).map_err(|e| {
+                                            RuntimeError::FlowError(format!("data.store: {e}"))
+                                        })?;
+                                    }
                                     return Ok(ConfidentValue::deterministic(Value::Unit));
                                 }
                                 "get" => {
@@ -1943,18 +1946,30 @@ impl TaskExecutor {
                                         .first()
                                         .map(|v| format!("{}", v.value))
                                         .unwrap_or_default();
-                                    match storage.get(&key) {
-                                        Ok(Some(val)) => {
+                                    match storage {
+                                        Some(storage) => match storage.get(&key) {
+                                            Ok(Some(val)) => {
+                                                return Ok(ConfidentValue::deterministic(
+                                                    Value::Text(val),
+                                                ));
+                                            }
+                                            // Missing key → empty string so callers can
+                                            // use `if raw == ""` to detect absence.
+                                            Ok(None) => {
+                                                return Ok(ConfidentValue::deterministic(
+                                                    Value::Text(String::new()),
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                return Err(RuntimeError::FlowError(format!(
+                                                    "data.get: {e}"
+                                                )));
+                                            }
+                                        },
+                                        // No storage attached → same semantics as missing key.
+                                        None => {
                                             return Ok(ConfidentValue::deterministic(Value::Text(
-                                                val,
-                                            )));
-                                        }
-                                        Ok(None) => {
-                                            return Ok(ConfidentValue::deterministic(Value::Unit));
-                                        }
-                                        Err(e) => {
-                                            return Err(RuntimeError::FlowError(format!(
-                                                "data.get: {e}"
+                                                String::new(),
                                             )));
                                         }
                                     }
@@ -1964,33 +1979,44 @@ impl TaskExecutor {
                                         .first()
                                         .map(|v| format!("{}", v.value))
                                         .unwrap_or_default();
-                                    match storage.list(&prefix) {
-                                        Ok(keys) => {
-                                            let items = keys
-                                                .into_iter()
-                                                .map(|k| {
-                                                    ConfidentValue::deterministic(Value::Text(k))
-                                                })
-                                                .collect();
+                                    match storage {
+                                        Some(storage) => match storage.list(&prefix) {
+                                            Ok(keys) => {
+                                                let items = keys
+                                                    .into_iter()
+                                                    .map(|k| {
+                                                        ConfidentValue::deterministic(Value::Text(
+                                                            k,
+                                                        ))
+                                                    })
+                                                    .collect();
+                                                return Ok(ConfidentValue::deterministic(
+                                                    Value::Array(items),
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                return Err(RuntimeError::FlowError(format!(
+                                                    "data.list: {e}"
+                                                )));
+                                            }
+                                        },
+                                        None => {
                                             return Ok(ConfidentValue::deterministic(
-                                                Value::Array(items),
+                                                Value::Array(Vec::new()),
                                             ));
-                                        }
-                                        Err(e) => {
-                                            return Err(RuntimeError::FlowError(format!(
-                                                "data.list: {e}"
-                                            )));
                                         }
                                     }
                                 }
                                 "delete" => {
-                                    let key = arg_vals
-                                        .first()
-                                        .map(|v| format!("{}", v.value))
-                                        .unwrap_or_default();
-                                    storage.delete(&key).map_err(|e| {
-                                        RuntimeError::FlowError(format!("data.delete: {e}"))
-                                    })?;
+                                    if let Some(storage) = storage {
+                                        let key = arg_vals
+                                            .first()
+                                            .map(|v| format!("{}", v.value))
+                                            .unwrap_or_default();
+                                        storage.delete(&key).map_err(|e| {
+                                            RuntimeError::FlowError(format!("data.delete: {e}"))
+                                        })?;
+                                    }
                                     return Ok(ConfidentValue::deterministic(Value::Unit));
                                 }
                                 "embed" => {
