@@ -311,6 +311,17 @@ fn check_refs_in_stmt(
             }
         }
         Stmt::Emit(name, args) => {
+            if boundary == BoundaryKind::Client {
+                diagnostics.push(
+                    Diagnostic::error(
+                        file,
+                        format!("emit `{}` is not allowed in client boundary", name.node),
+                        name.span.start..name.span.end,
+                        "the event bus is a server-runtime construct; a one-shot client has no bus to emit onto",
+                    )
+                    .with_help("call a server endpoint (via web.post) that emits the event server-side"),
+                );
+            }
             check_name_ref(
                 &name.node,
                 name.span.start,
@@ -396,6 +407,17 @@ fn check_refs_in_stmt(
             }
         }
         Stmt::Spawn(s) => {
+            if boundary == BoundaryKind::Client {
+                diagnostics.push(
+                    Diagnostic::error(
+                        file,
+                        format!("spawn `{}` is not allowed in client boundary", s.template.node),
+                        s.template.span.start..s.template.span.end,
+                        "spawn requires a supervising runtime that outlives a single request; a client is a one-shot process",
+                    )
+                    .with_help("call a server endpoint that performs the spawn, or move this code to `#! boundary: server`"),
+                );
+            }
             if let Some(ref alias) = s.alias {
                 check_refs_in_expr(alias, boundary, registry, file, diagnostics);
             }
@@ -559,31 +581,43 @@ fn check_refs_in_expr(
             check_refs_in_expr(a, boundary, registry, file, diagnostics);
         }
         Expr::MethodCall(inner, method, args) => {
-            // Boundary enforcement: web.fetch and web.post are server-only
             if let Expr::Ident(ref ns) = inner.node {
+                // web.fetch / web.post: allowed in server AND client (HTTP egress is a
+                // legitimate client capability); rejected in shared (shared is types/pure).
                 if ns == "web"
                     && (method.node == "fetch" || method.node == "post")
-                    && boundary != BoundaryKind::Server
+                    && boundary == BoundaryKind::Shared
                 {
-                    let boundary_name = match boundary {
-                        BoundaryKind::Client => "client",
-                        BoundaryKind::Shared => "shared",
-                        _ => unreachable!(),
-                    };
                     diagnostics.push(
                         Diagnostic::error(
                             file,
-                            format!(
-                                "web.{}() is not allowed in {} boundary",
-                                method.node, boundary_name
-                            ),
+                            format!("web.{}() is not allowed in shared boundary", method.node),
                             inner.span.start..method.span.end,
                             format!(
-                                "web.{}() can only be used in server boundary files",
+                                "web.{}() makes HTTP requests and must live in server or client boundary files",
                                 method.node
                             ),
                         )
-                        .with_help("move this code to a file with `#! boundary: server`"),
+                        .with_help("move this code to a file with `#! boundary: server` or `#! boundary: client`"),
+                    );
+                }
+                // data.store / data.get: durable storage is a server-lifecycle concept
+                // and is not available in a one-shot client process.
+                if ns == "data"
+                    && (method.node == "store"
+                        || method.node == "get"
+                        || method.node == "list"
+                        || method.node == "delete")
+                    && boundary == BoundaryKind::Client
+                {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            file,
+                            format!("data.{}() is not allowed in client boundary", method.node),
+                            inner.span.start..method.span.end,
+                            "durable storage is a server capability; a client has no storage runtime",
+                        )
+                        .with_help("call a server endpoint that reads or writes the data, or move this code to `#! boundary: server`"),
                     );
                 }
             }
