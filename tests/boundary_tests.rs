@@ -452,7 +452,9 @@ task noop
 // ── HTTP client boundary enforcement (issue #51) ────────────
 
 #[test]
-fn web_fetch_in_client_boundary_is_error() {
+fn web_fetch_in_client_boundary_is_ok() {
+    // Updated for #250: web.fetch is a legitimate client capability for pure-FORGE
+    // HTTP clients talking to a server. Only shared boundary still rejects it.
     let source = "\
 #! boundary: client
 
@@ -462,13 +464,16 @@ fn main
 ";
     let diags = check_boundary(&[(source, "client.forge")]);
     let errs = errors(&diags);
-    assert_eq!(errs.len(), 1);
-    assert!(errs[0].message.contains("web.fetch()"));
-    assert!(errs[0].message.contains("client"));
+    assert!(
+        errs.is_empty(),
+        "web.fetch should be allowed in client boundary (#250), got: {:?}",
+        errs
+    );
 }
 
 #[test]
-fn web_post_in_client_boundary_is_error() {
+fn web_post_in_client_boundary_is_ok() {
+    // Updated for #250: see above.
     let source = "\
 #! boundary: client
 
@@ -478,9 +483,29 @@ fn main
 ";
     let diags = check_boundary(&[(source, "client.forge")]);
     let errs = errors(&diags);
+    assert!(
+        errs.is_empty(),
+        "web.post should be allowed in client boundary (#250), got: {:?}",
+        errs
+    );
+}
+
+#[test]
+fn web_fetch_in_shared_boundary_is_error() {
+    // Added for #250: shared is the one boundary where web.* is not allowed
+    // (shared is for types + pure code that both sides import).
+    let source = "\
+#! boundary: shared
+
+fn main
+  page = web.fetch(\"https://example.com\")
+  give page
+";
+    let diags = check_boundary(&[(source, "shared.forge")]);
+    let errs = errors(&diags);
     assert_eq!(errs.len(), 1);
-    assert!(errs[0].message.contains("web.post()"));
-    assert!(errs[0].message.contains("client"));
+    assert!(errs[0].message.contains("web.fetch()"));
+    assert!(errs[0].message.contains("shared"));
 }
 
 #[test]
