@@ -20,7 +20,7 @@ use crate::runtime::agent::{AgentProcess, AgentSignal};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
 use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
-use crate::runtime::warden::{FailureSignal, WardAction, Warden};
+use crate::runtime::warden::{duration_to_ms, FailureSignal, WardAction, Warden};
 use crate::tracer::Tracer;
 
 // ── Introspection Snapshot ─────────────────────────────────────────────────
@@ -464,7 +464,7 @@ impl WardedRuntime {
             // Check circuit breaker after every signal
             let now = self.timestamp_ms();
             if self.warden.circuit_breaker_tripped(now) {
-                // Graceful degradation: stop all agents, mark as degraded, but don't crash
+                // Graceful degradation: stop all agents, mark as degraded
                 eprintln!(
                     "[warden] CIRCUIT BREAKER: warden '{}' tripped — stopping all agents. \
                      Deterministic endpoints continue serving.",
@@ -477,7 +477,15 @@ impl WardedRuntime {
                 }
                 self.trace_supervision_tree();
                 self.update_shared_snapshot().await;
-                break;
+
+                // Half-open recovery: sleep → probe → resume instead of dying
+                loop {
+                    match self.half_open_recovery().await {
+                        Ok(true) => continue, // still failing, retry after next cooldown
+                        Ok(false) => break,   // recovered, resume main monitoring loop
+                        Err(e) => return Err(e),
+                    }
+                }
             }
 
             // Update shared snapshot after state changes
@@ -485,6 +493,92 @@ impl WardedRuntime {
         }
 
         Ok(())
+    }
+
+    /// Compute the cooldown duration for half-open recovery.
+    /// Uses half the max_retries window, clamped to [5s, 120s].
+    fn cooldown_duration(&self) -> std::time::Duration {
+        if let Some(ref mr) = self.warden.decl.max_retries {
+            let window_ms = duration_to_ms(&mr.node.window.node);
+            let cooldown_ms = (window_ms / 2).clamp(5_000, 120_000);
+            std::time::Duration::from_millis(cooldown_ms)
+        } else {
+            std::time::Duration::from_secs(30)
+        }
+    }
+
+    /// Attempt half-open circuit breaker recovery.
+    /// Returns Ok(true) to keep retrying, Ok(false) when recovered.
+    async fn half_open_recovery(&mut self) -> Result<bool, RuntimeError> {
+        let cooldown = self.cooldown_duration();
+        eprintln!(
+            "[warden] {}: half-open recovery — sleeping {:?} before probe",
+            self.warden.decl.name.node, cooldown,
+        );
+        tokio::time::sleep(cooldown).await;
+
+        // Reset retry tracker so circuit breaker is no longer tripped
+        self.warden.retry_tracker.reset_all();
+
+        // Pick a probe agent from blueprints
+        let probe_name = match self.blueprints.keys().next() {
+            Some(name) => name.clone(),
+            None => return Ok(false), // no blueprints, nothing to recover
+        };
+
+        // Spawn the probe agent
+        if let Err(e) = self.spawn_one(&probe_name).await {
+            eprintln!(
+                "[warden] {}: probe spawn failed: {}",
+                self.warden.decl.name.node, e
+            );
+            return Ok(true); // keep trying
+        }
+
+        // Give the probe 10 seconds to stay alive
+        let probe_timeout = std::time::Duration::from_secs(10);
+        tokio::time::sleep(probe_timeout).await;
+
+        // Check if probe agent survived
+        if let Some(agent) = self.agents.get(&probe_name) {
+            if agent.handle.is_finished() {
+                // Probe died — clean up and retry
+                self.agents.remove(&probe_name);
+                eprintln!(
+                    "[warden] {}: probe agent '{}' died during recovery, retrying",
+                    self.warden.decl.name.node, probe_name,
+                );
+                self.update_shared_snapshot().await;
+                return Ok(true);
+            }
+        } else {
+            // Agent was somehow removed, retry
+            return Ok(true);
+        }
+
+        // Probe succeeded — spawn remaining agents and resume
+        eprintln!(
+            "[warden] {}: probe succeeded, resuming all agents",
+            self.warden.decl.name.node,
+        );
+        self.degraded_agents.clear();
+        let remaining: Vec<String> = self
+            .blueprints
+            .keys()
+            .filter(|n| !self.agents.contains_key(*n))
+            .cloned()
+            .collect();
+        for name in remaining {
+            if let Err(e) = self.spawn_one(&name).await {
+                eprintln!(
+                    "[warden] {}: failed to respawn '{}' after recovery: {}",
+                    self.warden.decl.name.node, name, e,
+                );
+            }
+        }
+        self.trace_supervision_tree();
+        self.update_shared_snapshot().await;
+        Ok(false) // recovered — resume main monitoring loop
     }
 
     /// Handle a failure signal: resolve policy, execute response, apply scope.

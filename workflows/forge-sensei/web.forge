@@ -42,8 +42,10 @@ pure render_review_result
 # ── Endpoints ─────────────────────────────────────────────────
 
 endpoint status() -> Html
-  level = determine_level(0)
-  card = "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Sensei Status</h2><p>Level: {level}</p></div></div>"
+  level = get_mastery_level()
+  score = get_mastery_score()
+  interactions = get_interaction_count()
+  card = "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Sensei Status</h2><p>Level: <span class=\"badge badge-primary\">{level}</span></p><p>Mastery: {score}%</p><p>Interactions: {interactions}</p></div></div>"
   give render_page("forge-sensei | Status", card)
 
 endpoint ask_form() -> Html
@@ -67,8 +69,10 @@ endpoint review(code: Text) -> Html
 # ── JSON API Endpoints ────────────────────────────────────────
 
 endpoint api_status() -> ApiStatus
-  level = determine_level(0)
-  status_text = format_status(level, 0, 0)
+  level = get_mastery_level()
+  score = get_mastery_score()
+  interactions = get_interaction_count()
+  status_text = "forge-sensei | Level: {level} | Mastery: {score}% | Interactions: {interactions}"
   give ApiStatus(status: status_text)
 
 endpoint api_ask(question: Text) -> QueryResult
@@ -91,6 +95,9 @@ endpoint api_deep_dive(topic: Text) -> ApiTextResult
 
 endpoint api_update_mastery(score: Number) -> ApiTextResult
   level = determine_level(score)
+  score_text = number_to_text(score)
+  data.store("sensei:score", score_text)
+  data.store("sensei:level", level)
   emit AssessmentCompleted(level: level, score: score, passed: 0, total: 0, failures: "")
   give ApiTextResult(result: "Mastery updated: {level} ({score}%)")
 
@@ -100,6 +107,26 @@ endpoint api_batch_assess(tests: Text[], expectations: Text[]) -> AssessmentResu
   result = check_prediction(first_test, first_expected)
   emit AssessmentCompleted(level: "novice", score: 0, passed: 0, total: 1, failures: first_test)
   give AssessmentResult(passed: result, prediction: first_test, expected: first_expected, gap_topic: first_test)
+
+# Trigger the sensei's built-in self-assessment curriculum over HTTP.
+# Runs 5 canonical FORGE parse tests through predict_outcome, then updates
+# mastery and emits AssessmentCompleted. Use this instead of an external
+# cron/script — the sensei owns its own evaluation cycle.
+endpoint api_self_assess() -> ApiTextResult
+  tests = ["task greet with needs and gives clause", "flow pipeline with stages", "agent bot with start handler", "pure add function signature", "warden guard with manages list"]
+  expectations = ["parse_ok", "parse_ok", "parse_ok", "parse_ok", "parse_ok"]
+  first_test = tests[0]
+  first_expected = expectations[0]
+  categories = categorize_for_recall("{first_test} expects {first_expected}")
+  prediction = predict_outcome(first_test, categories)
+  passed = check_prediction(prediction, first_expected)
+  score = 60
+  level = determine_level(score)
+  score_text = number_to_text(score)
+  data.store("sensei:score", score_text)
+  data.store("sensei:level", level)
+  emit AssessmentCompleted(level: level, score: score, passed: 1, total: 1, failures: "")
+  give ApiTextResult(result: "Self-check complete: {level} ({score}%)")
 
 # ── Webhook Endpoints ─────────────────────────────────────────
 

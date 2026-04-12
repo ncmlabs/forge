@@ -936,3 +936,81 @@ fn stuck_detector_not_hallucinating_with_mixed_confidence() {
     // Mixed confidence — not hallucinating
     assert!(!sd.is_hallucinating());
 }
+
+// ── Issue #247: Circuit breaker reset + half-open recovery ─────────────────
+
+#[test]
+fn retry_tracker_reset_all_clears_everything() {
+    let mut tracker = RetryTracker::new();
+
+    tracker.record("agent_a", FailureType::Stuck, 1000);
+    tracker.record("agent_a", FailureType::Crash, 2000);
+    tracker.record("agent_b", FailureType::Stuck, 3000);
+    assert_eq!(tracker.count("agent_a", FailureType::Stuck), 1);
+    assert_eq!(tracker.count("agent_a", FailureType::Crash), 1);
+    assert_eq!(tracker.count("agent_b", FailureType::Stuck), 1);
+    assert_eq!(tracker.group_count_in_window(5000, 10000), 3);
+
+    tracker.reset_all();
+
+    assert_eq!(tracker.count("agent_a", FailureType::Stuck), 0);
+    assert_eq!(tracker.count("agent_a", FailureType::Crash), 0);
+    assert_eq!(tracker.count("agent_b", FailureType::Stuck), 0);
+    assert_eq!(tracker.group_count_in_window(5000, 10000), 0);
+}
+
+#[test]
+fn circuit_breaker_clears_after_reset_all() {
+    let decl = basic_warden(); // max_retries: 5 per 60s
+    let mut warden = Warden::new(decl, None);
+
+    let signal = FailureSignal {
+        agent_name: "agent_a".to_string(),
+        failure_type: FailureType::Crash,
+        detail: "crashed".to_string(),
+    };
+
+    // Trip the circuit breaker
+    for i in 0..5 {
+        warden.handle_failure(&signal, &[], i * 1000);
+    }
+    assert!(warden.circuit_breaker_tripped(5000));
+
+    // Reset clears the breaker
+    warden.retry_tracker.reset_all();
+    assert!(!warden.circuit_breaker_tripped(5000));
+}
+
+#[test]
+fn duration_to_ms_conversions() {
+    use forge::runtime::warden::duration_to_ms;
+
+    assert_eq!(
+        duration_to_ms(&Duration {
+            value: 30,
+            unit: DurationUnit::Seconds,
+        }),
+        30_000
+    );
+    assert_eq!(
+        duration_to_ms(&Duration {
+            value: 5,
+            unit: DurationUnit::Minutes,
+        }),
+        300_000
+    );
+    assert_eq!(
+        duration_to_ms(&Duration {
+            value: 1,
+            unit: DurationUnit::Hours,
+        }),
+        3_600_000
+    );
+    assert_eq!(
+        duration_to_ms(&Duration {
+            value: 1,
+            unit: DurationUnit::Days,
+        }),
+        86_400_000
+    );
+}

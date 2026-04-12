@@ -1517,5 +1517,9 @@ async fn sensei_all_endpoints_registered() {
         endpoints.contains_key("api_batch_assess"),
         "missing api_batch_assess endpoint"
     );
-    assert_eq!(endpoints.len(), 14);
+    assert!(
+        endpoints.contains_key("api_self_assess"),
+        "missing api_self_assess endpoint (#247)"
+    );
+    assert_eq!(endpoints.len(), 15);
 }

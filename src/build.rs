@@ -905,14 +905,38 @@ struct Cli {{
     host: String,
     #[arg(long, default_value = "3000")]
     port: u16,
+    /// Path to forge.config.toml (overrides FORGE_CONFIG env and auto-discovery).
+    #[arg(long)]
+    config: Option<String>,
+    /// Validate config and test provider connectivity, then exit.
+    #[arg(long)]
+    check: bool,
+    /// Clear persisted state (storage, lifecycle) before starting.
+    #[arg(long)]
+    reset: bool,
 }}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {{
     let cli = Cli::parse();
+
+    // --config flag overrides all other config resolution
+    if let Some(ref config_path) = cli.config {{
+        std::env::set_var("FORGE_CONFIG", config_path);
+    }}
+
     let program = forge::compose::parse_and_merge_sources(SOURCES)
         .map_err(|e| anyhow::anyhow!("{{}}", e))?;
     let mut config = resolve_config();
+
+    // Print which config was loaded
+    if let Some(ref path) = cli.config {{
+        eprintln!("  Config: {{}} (--config)", path);
+    }} else if let Ok(env_path) = std::env::var("FORGE_CONFIG") {{
+        eprintln!("  Config: {{}} (FORGE_CONFIG env)", env_path);
+    }} else {{
+        eprintln!("  Config: auto-discovered");
+    }}
 
     // Apply CLI overrides
     if let Some(ref mut server) = config.server {{
@@ -930,6 +954,28 @@ async fn main() -> anyhow::Result<()> {{
 
     let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
         .map_err(|e| anyhow::anyhow!("provider setup failed: {{}}", e))?;
+
+    // Startup health check: test all provider connectivity
+    let health_results = registry.health_check_all().await;
+    let mut any_unhealthy = false;
+    for (name, result) in &health_results {{
+        match result {{
+            Ok(()) => eprintln!("  Provider '{{}}': reachable", name),
+            Err(e) => {{
+                eprintln!("  Provider '{{}}': unreachable — {{}}", name, e);
+                any_unhealthy = true;
+            }}
+        }}
+    }}
+    if any_unhealthy {{
+        eprintln!("  -> Starting in degraded mode (deterministic endpoints only)");
+    }}
+
+    // --check: validate and exit
+    if cli.check {{
+        std::process::exit(if any_unhealthy {{ 1 }} else {{ 0 }});
+    }}
+
     let cmd_mgr = Arc::new(std::sync::Mutex::new(forge::runtime::command_manager::CommandManager::new()));
     let session_mgr = forge::runtime::session_manager::new_shared_default_session_manager(None);
     let _ = session_mgr.resume_all().await;
@@ -953,6 +999,15 @@ async fn main() -> anyhow::Result<()> {{
     if let Some(parent) = storage_path.parent() {{
         std::fs::create_dir_all(parent).ok();
     }}
+
+    // --reset: clear persisted state before opening storage
+    if cli.reset {{
+        if storage_path.exists() {{
+            std::fs::remove_file(&storage_path).ok();
+            eprintln!("  Reset: cleared persisted state at {{}}", storage_path.display());
+        }}
+    }}
+
     let mut inspect_storage = None;
     if let Ok(storage) = forge::runtime::storage::ForgeStorage::open(&storage_path) {{
         let shared = Arc::new(storage);
@@ -1024,6 +1079,11 @@ async fn main() -> anyhow::Result<()> {{
             }}
         }});
     }}
+
+    let listen_host = config.server.as_ref().and_then(|s| s.host.as_deref()).unwrap_or("127.0.0.1");
+    let listen_port = config.server.as_ref().and_then(|s| s.port).unwrap_or(3000);
+    eprintln!("  Listening on http://{{}}:{{}}", listen_host, listen_port);
+
     server.run().await
 }}
 
