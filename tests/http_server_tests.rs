@@ -1211,26 +1211,7 @@ async fn multi_file_html_rendering_across_files() {
 
 /// Load and merge the actual forge-sensei source files.
 async fn spawn_sensei_web_server() -> String {
-    let core_source =
-        std::fs::read_to_string("workflows/forge-sensei/core.forge").expect("read core.forge");
-    let web_source =
-        std::fs::read_to_string("workflows/forge-sensei/web.forge").expect("read web.forge");
-
-    let core_program = forge::parser::parse(&core_source).expect("parse core.forge failed");
-    let web_program = forge::parser::parse(&web_source).expect("parse web.forge failed");
-
-    let source_files = vec![
-        forge::compose::SourceFile {
-            path: "core.forge".to_string(),
-            source: core_source,
-            program: core_program,
-        },
-        forge::compose::SourceFile {
-            path: "web.forge".to_string(),
-            source: web_source,
-            program: web_program,
-        },
-    ];
+    let source_files = sensei_server_source_files();
     let composed =
         forge::compose::merge_programs(&source_files).expect("merge sensei files failed");
     let executor = TaskExecutor::new(composed.program, mock_registry(), None);
@@ -1251,6 +1232,30 @@ async fn spawn_sensei_web_server() -> String {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     format!("http://127.0.0.1:{port}")
+}
+
+fn sensei_server_source_files() -> Vec<forge::compose::SourceFile> {
+    [
+        ("types.forge", "workflows/forge-sensei/shared/types.forge"),
+        ("events.forge", "workflows/forge-sensei/shared/events.forge"),
+        ("states.forge", "workflows/forge-sensei/shared/states.forge"),
+        ("tasks.forge", "workflows/forge-sensei/server/tasks.forge"),
+        ("flows.forge", "workflows/forge-sensei/server/flows.forge"),
+        ("agent.forge", "workflows/forge-sensei/server/agent.forge"),
+        ("web.forge", "workflows/forge-sensei/server/web.forge"),
+    ]
+    .into_iter()
+    .map(|(name, path)| {
+        let source = std::fs::read_to_string(path).unwrap_or_else(|_| panic!("read {path}"));
+        let program =
+            forge::parser::parse(&source).unwrap_or_else(|_| panic!("parse {path} failed"));
+        forge::compose::SourceFile {
+            path: name.to_string(),
+            source,
+            program,
+        }
+    })
+    .collect()
 }
 
 #[tokio::test]
@@ -1434,6 +1439,21 @@ async fn sensei_json_update_mastery_preserves_number_param() {
 }
 
 #[tokio::test]
+async fn sensei_raw_body_update_mastery_preserves_number_param() {
+    let base = spawn_sensei_web_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/api/update-mastery"))
+        .body("75")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["result"].as_str().unwrap().contains("journeyman"));
+}
+
+#[tokio::test]
 async fn sensei_nonexistent_endpoint_returns_404() {
     let base = spawn_sensei_web_server().await;
     let resp = reqwest::get(format!("{base}/nonexistent"))
@@ -1444,26 +1464,7 @@ async fn sensei_nonexistent_endpoint_returns_404() {
 
 #[tokio::test]
 async fn sensei_all_endpoints_registered() {
-    let core_source =
-        std::fs::read_to_string("workflows/forge-sensei/core.forge").expect("read core.forge");
-    let web_source =
-        std::fs::read_to_string("workflows/forge-sensei/web.forge").expect("read web.forge");
-
-    let core_program = forge::parser::parse(&core_source).expect("parse core.forge failed");
-    let web_program = forge::parser::parse(&web_source).expect("parse web.forge failed");
-
-    let source_files = vec![
-        forge::compose::SourceFile {
-            path: "core.forge".to_string(),
-            source: core_source,
-            program: core_program,
-        },
-        forge::compose::SourceFile {
-            path: "web.forge".to_string(),
-            source: web_source,
-            program: web_program,
-        },
-    ];
+    let source_files = sensei_server_source_files();
     let composed =
         forge::compose::merge_programs(&source_files).expect("merge sensei files failed");
     let executor = TaskExecutor::new(composed.program, mock_registry(), None);
@@ -1502,6 +1503,18 @@ async fn sensei_all_endpoints_registered() {
         "missing api_review endpoint"
     );
     assert!(
+        endpoints.contains_key("api_ingest"),
+        "missing api_ingest endpoint"
+    );
+    assert!(
+        endpoints.contains_key("api_ingest_fact"),
+        "missing api_ingest_fact endpoint"
+    );
+    assert!(
+        endpoints.contains_key("api_learn_from_session"),
+        "missing api_learn_from_session endpoint"
+    );
+    assert!(
         endpoints.contains_key("api_assess_detailed"),
         "missing api_assess_detailed endpoint"
     );
@@ -1521,5 +1534,5 @@ async fn sensei_all_endpoints_registered() {
         endpoints.contains_key("api_self_assess"),
         "missing api_self_assess endpoint (#247)"
     );
-    assert_eq!(endpoints.len(), 15);
+    assert_eq!(endpoints.len(), 18);
 }

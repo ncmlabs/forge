@@ -1,9 +1,16 @@
 [project]
 name = "forge-sensei"
 version = "0.2.1"
-description = "FORGE language learning agent — CLI + web interface"
+description = "FORGE language learning agent server"
 
 [build]
-entry = "agent.forge"
-output = "forge-sensei"
-sources = ["core.forge"]
+entry = "server/web.forge"
+output = "forge-sensei-server"
+sources = [
+  "shared/types.forge",
+  "shared/events.forge",
+  "shared/states.forge",
+  "server/tasks.forge",
+  "server/flows.forge",
+  "server/agent.forge",
+]

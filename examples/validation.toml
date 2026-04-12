@@ -222,10 +222,20 @@ check = "ok"
 [[cases]]
 name = "forge-sensei multi-file workflow"
 paths = [
-  "workflows/forge-sensei/core.forge",
-  "workflows/forge-sensei/agent.forge",
-  "workflows/forge-sensei/web.forge",
+  "workflows/forge-sensei/shared/types.forge",
+  "workflows/forge-sensei/shared/events.forge",
+  "workflows/forge-sensei/shared/states.forge",
+  "workflows/forge-sensei/server/tasks.forge",
+  "workflows/forge-sensei/server/flows.forge",
+  "workflows/forge-sensei/server/agent.forge",
+  "workflows/forge-sensei/server/web.forge",
 ]
 check = "ok"
 manifest = "workflows/forge-sensei/forge.project.toml"
 merge = true
+
+[[cases]]
+name = "forge-sensei client workflow"
+paths = ["workflows/forge-sensei/client/client.forge"]
+check = "ok"
+manifest = "workflows/forge-sensei/client/forge.project.toml"

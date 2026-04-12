@@ -202,9 +202,19 @@ fn circuit_breaker_reset_enables_fresh_start() {
 fn generated_server_code_includes_resilience_flags() {
     // Verify the generated server main template includes the new CLI flags
     // by building the sensei server sources and checking the program structure
-    let core = std::fs::read_to_string("workflows/forge-sensei/core.forge").expect("read core");
-    let agent = std::fs::read_to_string("workflows/forge-sensei/agent.forge").expect("read agent");
-    let web = std::fs::read_to_string("workflows/forge-sensei/web.forge").expect("read web");
+    let types =
+        std::fs::read_to_string("workflows/forge-sensei/shared/types.forge").expect("read types");
+    let events =
+        std::fs::read_to_string("workflows/forge-sensei/shared/events.forge").expect("read events");
+    let states =
+        std::fs::read_to_string("workflows/forge-sensei/shared/states.forge").expect("read states");
+    let tasks =
+        std::fs::read_to_string("workflows/forge-sensei/server/tasks.forge").expect("read tasks");
+    let flows =
+        std::fs::read_to_string("workflows/forge-sensei/server/flows.forge").expect("read flows");
+    let agent =
+        std::fs::read_to_string("workflows/forge-sensei/server/agent.forge").expect("read agent");
+    let web = std::fs::read_to_string("workflows/forge-sensei/server/web.forge").expect("read web");
 
     use forge::compose::{self, SourceFile};
     fn parse_source(name: &str, source: &str) -> SourceFile {
@@ -217,9 +227,13 @@ fn generated_server_code_includes_resilience_flags() {
     }
 
     let composed = compose::merge_programs(&[
-        parse_source("web.forge", &web),
-        parse_source("core.forge", &core),
+        parse_source("types.forge", &types),
+        parse_source("events.forge", &events),
+        parse_source("states.forge", &states),
+        parse_source("tasks.forge", &tasks),
+        parse_source("flows.forge", &flows),
         parse_source("agent.forge", &agent),
+        parse_source("web.forge", &web),
     ])
     .expect("sensei server sources should merge");
 

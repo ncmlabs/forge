@@ -1,0 +1,44 @@
+#! boundary: server
+
+flow answer_query
+  needs question: Text
+  gives QueryResult
+
+  stage categorize
+    categories = question >> categorize_for_recall(_pipe)
+
+  stage retrieve
+    needs categorize.categories
+    prior = recall "{categorize.categories} {question}"
+
+  stage respond
+    needs retrieve.prior, categorize.categories
+    prior = retrieve.prior
+    response = answer_forge_question(question, prior)
+    when prior.sure -> give QueryResult(answer: response, confidence_tier: "sure", sources_used: 1)
+    when prior.unsure -> give QueryResult(answer: response, confidence_tier: "unsure", sources_used: 1)
+    else -> give QueryResult(answer: response, confidence_tier: "none", sources_used: 0)
+
+flow review_code
+  needs code: Text
+  gives Text
+
+  stage categorize
+    categories = code >> categorize_for_recall(_pipe)
+
+  stage retrieve
+    needs categorize.categories
+    prior = recall "{categorize.categories} FORGE syntax patterns errors"
+
+  stage review
+    needs retrieve.prior
+    prior = retrieve.prior
+    when prior.sure -> give review_forge_code(code, prior)
+    when prior.unsure -> give review_forge_code(code, prior)
+    else -> give review_forge_code(code, "No prior knowledge. Review from first principles.")
+
+contract ForgeTutor
+  can query(question: Text) -> QueryResult
+  can review(code: Text) -> Text
+  can status() -> Text
+  can assess_detailed(test_input: Text, expected: Text) -> AssessmentResult

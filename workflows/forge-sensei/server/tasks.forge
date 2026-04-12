@@ -1,60 +1,10 @@
+#! boundary: server
+
 use
   llm.reason
   llm.classify
   data.store
   data.get
-
-# ── Types ─────────────────────────────────────────────────────
-
-type QueryResult
-  answer: Text
-  confidence_tier: Text
-  sources_used: Number
-
-type AssessmentResult
-  passed: Bool
-  prediction: Text
-  expected: Text
-  gap_topic: Text
-
-type ApiStatus
-  status: Text
-
-type ApiTextResult
-  result: Text
-
-# ── Events ────────────────────────────────────────────────────
-
-event LearnedInsight
-  category: Text
-  content: Text
-  source: Text
-  confidence: Number
-
-event AssessmentCompleted
-  level: Text
-  score: Number
-  passed: Number
-  total: Number
-  failures: Text
-
-event KnowledgeGapFound
-  category: Text
-  question: Text
-
-# ── Lifecycle ─────────────────────────────────────────────────
-
-states MasteryLevel
-  novice -> apprentice when conformance_score >= 40
-  apprentice -> journeyman when conformance_score >= 70
-  journeyman -> expert when conformance_score >= 90
-  expert -> expert
-
-states SpecialistPhase
-  learning -> ready when absorbed_count >= 5
-  ready -> ready
-
-# ── Pure Functions ────────────────────────────────────────────
 
 pure compute_mastery_score
   needs passed: Number, total: Number
@@ -95,8 +45,6 @@ pure check_prediction
     if predicted.contains(expected)
       give true
     give false
-
-# ── Tasks ─────────────────────────────────────────────────────
 
 task answer_forge_question
   needs question: Text, context: Text
@@ -143,11 +91,6 @@ task categorize_for_recall
     when result.unsure -> give result
     else -> give "GENERAL"
 
-# ── Shared tasks for reading mastery state from data.store ──────
-# The agent writes its mastery into data.store on update_mastery.
-# Endpoints read it here so /api/status reflects actual state instead
-# of a hardcoded 0.
-
 task get_mastery_score
   gives Text
   do
@@ -171,50 +114,3 @@ task get_interaction_count
     if raw == ""
       give "0"
     give raw
-
-# ── Flows ─────────────────────────────────────────────────────
-
-flow answer_query
-  needs question: Text
-  gives QueryResult
-
-  stage categorize
-    categories = question >> categorize_for_recall(_pipe)
-
-  stage retrieve
-    needs categorize.categories
-    prior = recall "{categorize.categories} {question}"
-
-  stage respond
-    needs retrieve.prior, categorize.categories
-    prior = retrieve.prior
-    response = answer_forge_question(question, prior)
-    when prior.sure -> give QueryResult(answer: response, confidence_tier: "sure", sources_used: 1)
-    when prior.unsure -> give QueryResult(answer: response, confidence_tier: "unsure", sources_used: 1)
-    else -> give QueryResult(answer: response, confidence_tier: "none", sources_used: 0)
-
-flow review_code
-  needs code: Text
-  gives Text
-
-  stage categorize
-    categories = code >> categorize_for_recall(_pipe)
-
-  stage retrieve
-    needs categorize.categories
-    prior = recall "{categorize.categories} FORGE syntax patterns errors"
-
-  stage review
-    needs retrieve.prior
-    prior = retrieve.prior
-    when prior.sure -> give review_forge_code(code, prior)
-    when prior.unsure -> give review_forge_code(code, prior)
-    else -> give review_forge_code(code, "No prior knowledge. Review from first principles.")
-
-# ── Contract ──────────────────────────────────────────────────
-
-contract ForgeTutor
-  can query(question: Text) -> QueryResult
-  can review(code: Text) -> Text
-  can status() -> Text
-  can assess_detailed(test_input: Text, expected: Text) -> AssessmentResult

@@ -83,6 +83,19 @@ endpoint api_review(code: Text) -> ApiTextResult
   review_result = review_code(code)
   give ApiTextResult(result: review_result)
 
+endpoint api_ingest(document_path: Text) -> ApiTextResult
+  learn from document(document_path)
+  give ApiTextResult(result: "Ingested: {document_path}")
+
+endpoint api_ingest_fact(category: Text, fact: Text) -> ApiTextResult
+  emit LearnedInsight(category: category, content: fact, source: "api", confidence: 1.0)
+  give ApiTextResult(result: "Learned [{category}]")
+
+endpoint api_learn_from_session(question: Text, resolution: Text) -> ApiTextResult
+  lesson = extract_lesson(question, resolution)
+  emit LearnedInsight(category: "interactions", content: lesson, source: "api", confidence: 0.8)
+  give ApiTextResult(result: "Learned from session.")
+
 endpoint api_assess_detailed(test_input: Text, expected: Text) -> AssessmentResult
   categories = categorize_for_recall("{test_input} expects {expected}")
   prediction = predict_outcome(test_input, categories)
@@ -146,5 +159,5 @@ system forge_sensei_server
     sensei: forge_sensei
 
 # ── Usage ─────────────────────────────────────────────────────
-# Dev:    forge serve workflows/forge-sensei/web.forge --watch
-# Build:  forge build workflows/forge-sensei/ --entry web.forge --source core.forge --source agent.forge -o bin/forge-sensei-server
+# Dev:    forge serve workflows/forge-sensei/server/web.forge --source workflows/forge-sensei/shared/types.forge --source workflows/forge-sensei/shared/events.forge --source workflows/forge-sensei/shared/states.forge --source workflows/forge-sensei/server/tasks.forge --source workflows/forge-sensei/server/flows.forge --source workflows/forge-sensei/server/agent.forge --watch
+# Build:  forge build workflows/forge-sensei/server -o bin/forge-sensei-server

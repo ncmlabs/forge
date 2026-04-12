@@ -119,13 +119,25 @@ fn detect_kind_server() {
 
 #[test]
 fn detect_sensei_cli_and_server_build_shapes() {
-    let core = std::fs::read_to_string("workflows/forge-sensei/core.forge").expect("read core");
-    let agent = std::fs::read_to_string("workflows/forge-sensei/agent.forge").expect("read agent");
-    let web = std::fs::read_to_string("workflows/forge-sensei/web.forge").expect("read web");
+    let types =
+        std::fs::read_to_string("workflows/forge-sensei/shared/types.forge").expect("read types");
+    let events =
+        std::fs::read_to_string("workflows/forge-sensei/shared/events.forge").expect("read events");
+    let states =
+        std::fs::read_to_string("workflows/forge-sensei/shared/states.forge").expect("read states");
+    let tasks =
+        std::fs::read_to_string("workflows/forge-sensei/server/tasks.forge").expect("read tasks");
+    let flows =
+        std::fs::read_to_string("workflows/forge-sensei/server/flows.forge").expect("read flows");
+    let agent =
+        std::fs::read_to_string("workflows/forge-sensei/server/agent.forge").expect("read agent");
+    let web = std::fs::read_to_string("workflows/forge-sensei/server/web.forge").expect("read web");
+    let client =
+        std::fs::read_to_string("workflows/forge-sensei/client/client.forge").expect("read client");
 
     let cli = compose::merge_programs(&[
-        parse_source("core.forge", &core),
-        parse_source("agent.forge", &agent),
+        parse_source("types.forge", &types),
+        parse_source("client.forge", &client),
     ])
     .expect("sensei CLI sources should merge");
     assert_eq!(
@@ -134,9 +146,13 @@ fn detect_sensei_cli_and_server_build_shapes() {
     );
 
     let server = compose::merge_programs(&[
-        parse_source("web.forge", &web),
-        parse_source("core.forge", &core),
+        parse_source("types.forge", &types),
+        parse_source("events.forge", &events),
+        parse_source("states.forge", &states),
+        parse_source("tasks.forge", &tasks),
+        parse_source("flows.forge", &flows),
         parse_source("agent.forge", &agent),
+        parse_source("web.forge", &web),
     ])
     .expect("sensei server sources should merge");
     assert_eq!(

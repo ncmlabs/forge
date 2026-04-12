@@ -316,6 +316,10 @@ serde_json = "1"
                         .clone()
                         .unwrap_or_else(|| "0.1.0".to_string()),
                     handlers,
+                    client_boundary: program
+                        .boundary
+                        .as_ref()
+                        .is_some_and(|b| b.node.kind.node == crate::ast::BoundaryKind::Client),
                 });
             }
         }
@@ -388,6 +392,7 @@ struct AgentInfo {
     name: String,
     version: String,
     handlers: Vec<HandlerInfo>,
+    client_boundary: bool,
 }
 
 struct HandlerInfo {
@@ -515,6 +520,14 @@ fn generate_agent_cli_main(
 ) -> String {
     let sources_array = source_entries.join(",\n    ");
     let config_code = config_resolution_code(embed_config);
+    let server_url_code = if agent.client_boundary {
+        "let server_url = None;".to_string()
+    } else {
+        r#"let server_url = cli
+        .server
+        .or_else(|| std::env::var("FORGE_SENSEI_SERVER").ok());"#
+            .to_string()
+    };
 
     // Generate subcommand variants
     let mut variants = Vec::new();
@@ -805,9 +818,7 @@ fn parse_args(s: &str) -> Vec<String> {{
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {{
     let cli = Cli::parse();
-    let server_url = cli
-        .server
-        .or_else(|| std::env::var("FORGE_SENSEI_SERVER").ok());
+    {server_url_code}
     let program = forge::compose::parse_and_merge_sources(SOURCES)
         .map_err(|e| anyhow::anyhow!("{{}}", e))?;
     let config = resolve_config();
@@ -875,6 +886,7 @@ async fn main() -> anyhow::Result<()> {{
 "#,
         sources = sources_array,
         config = config_code,
+        server_url_code = server_url_code,
         agent_name = agent.name,
         agent_version = agent.version,
         variants = variants.join("\n"),

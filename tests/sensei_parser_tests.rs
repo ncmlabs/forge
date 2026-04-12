@@ -1,19 +1,42 @@
 // FORGE forge-sensei parser tests
-// Validates the AST structure of workflows/forge-sensei.forge after parsing.
+// Validates the AST structure of the split workflows/forge-sensei server after parsing.
 
 use forge::ast::{Program, TopLevel};
 
-fn parse_file(path: &str) -> Program {
-    let source =
-        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("could not read {}: {}", path, e));
-    forge::parser::parse(&source).unwrap_or_else(|e| panic!("parse failed for {}: {:?}", path, e))
+fn parse_sensei_server() -> Program {
+    let files = [
+        "workflows/forge-sensei/shared/types.forge",
+        "workflows/forge-sensei/shared/events.forge",
+        "workflows/forge-sensei/shared/states.forge",
+        "workflows/forge-sensei/server/tasks.forge",
+        "workflows/forge-sensei/server/flows.forge",
+        "workflows/forge-sensei/server/agent.forge",
+        "workflows/forge-sensei/server/web.forge",
+    ];
+    let source_files = files
+        .into_iter()
+        .map(|path| {
+            let source = std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("could not read {}: {}", path, e));
+            let program = forge::parser::parse(&source)
+                .unwrap_or_else(|e| panic!("parse failed for {}: {:?}", path, e));
+            forge::compose::SourceFile {
+                path: path.to_string(),
+                source,
+                program,
+            }
+        })
+        .collect::<Vec<_>>();
+    forge::compose::merge_programs(&source_files)
+        .expect("sensei server files should merge")
+        .program
 }
 
 // ── Test 1: full program AST structure counts ───────────────────
 
 #[test]
 fn parse_sensei_full_program_ast_structure() {
-    let program = parse_file("workflows/forge-sensei.forge");
+    let program = parse_sensei_server();
 
     let mut types = 0;
     let mut events = 0;
@@ -40,10 +63,7 @@ fn parse_sensei_full_program_ast_structure() {
         }
     }
 
-    assert_eq!(
-        types, 2,
-        "expected 2 type defs (QueryResult, AssessmentResult)"
-    );
+    assert_eq!(types, 4, "expected 4 type defs");
     assert_eq!(
         events, 3,
         "expected 3 events (LearnedInsight, AssessmentCompleted, KnowledgeGapFound)"
@@ -52,8 +72,8 @@ fn parse_sensei_full_program_ast_structure() {
         states, 2,
         "expected 2 states (MasteryLevel, SpecialistPhase)"
     );
-    assert_eq!(pures, 4, "expected 4 pure functions");
-    assert_eq!(tasks, 5, "expected 5 tasks");
+    assert_eq!(pures, 11, "expected 11 pure functions");
+    assert_eq!(tasks, 8, "expected 8 tasks");
     assert_eq!(flows, 2, "expected 2 flows (answer_query, review_code)");
     assert_eq!(contracts, 1, "expected 1 contract (ForgeTutor)");
     assert_eq!(agents, 2, "expected 2 agents (forge_sensei, specialist)");
@@ -64,7 +84,7 @@ fn parse_sensei_full_program_ast_structure() {
 
 #[test]
 fn parse_sensei_agent_handlers_complete() {
-    let program = parse_file("workflows/forge-sensei.forge");
+    let program = parse_sensei_server();
 
     let sensei = program
         .items
@@ -88,6 +108,7 @@ fn parse_sensei_agent_handlers_complete() {
         "query",
         "review",
         "learn_from_session",
+        "LearnedInsight",
         "deep_dive",
         "assess_detailed",
         "batch_assess",
@@ -117,7 +138,7 @@ fn parse_sensei_agent_handlers_complete() {
 
 #[test]
 fn parse_sensei_warden_policies() {
-    let program = parse_file("workflows/forge-sensei.forge");
+    let program = parse_sensei_server();
 
     let warden = program
         .items
