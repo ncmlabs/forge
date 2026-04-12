@@ -1,6 +1,8 @@
 use
   llm.reason
   llm.classify
+  data.store
+  data.get
 
 # ── Types ─────────────────────────────────────────────────────
 
@@ -80,6 +82,12 @@ pure format_status
   do
     give "forge-sensei | Level: {level} | Mastery: {score}% | Interactions: {interactions}"
 
+pure number_to_text
+  needs n: Number
+  gives Text
+  do
+    give "{n}"
+
 pure check_prediction
   needs predicted: Text, expected: Text
   gives Bool
@@ -134,6 +142,35 @@ task categorize_for_recall
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "GENERAL"
+
+# ── Shared tasks for reading mastery state from data.store ──────
+# The agent writes its mastery into data.store on update_mastery.
+# Endpoints read it here so /api/status reflects actual state instead
+# of a hardcoded 0.
+
+task get_mastery_score
+  gives Text
+  do
+    raw = data.get("sensei:score")
+    if raw == ""
+      give "0"
+    give raw
+
+task get_mastery_level
+  gives Text
+  do
+    raw = data.get("sensei:level")
+    if raw == ""
+      give "novice"
+    give raw
+
+task get_interaction_count
+  gives Text
+  do
+    raw = data.get("sensei:interactions")
+    if raw == ""
+      give "0"
+    give raw
 
 # ── Flows ─────────────────────────────────────────────────────
 

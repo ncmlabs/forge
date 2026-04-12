@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- forge-sensei `/api/self-assess` endpoint: triggers built-in curriculum evaluation and persists mastery internally via `data.store` — no external assess.sh/cron needed (#247)
+- forge-sensei status endpoints (`/api/status`, `/status` HTML) now reflect persisted mastery state instead of hardcoded 0 (#247)
 - Half-open circuit breaker recovery: warden no longer terminates on trip — enters cooldown → probe → resume cycle, making servers self-healing when providers recover (#247)
 - Generated server binaries now support `--check` (validate config + provider health), `--config <path>` (explicit config), and `--reset` (clear persisted state) CLI flags (#247)
 - Startup health check and banner: servers print config source and provider reachability on boot, continue in degraded mode if providers are unreachable (#247)
