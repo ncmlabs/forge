@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `proc.exit(code)` runtime primitive: one-shot CLI handlers can signal a non-zero exit, translated by the generated dispatch into `std::process::exit(code)` without the error-formatting path (#258)
+- forge-sensei client `check` command: reports `server ok` and exit 0 when `/api/status` is reachable, prints a clear unreachable message with start instructions and exits 1 otherwise (#258)
+- forge-sensei client handlers now exit 1 when the server is unreachable (query/review/status/ingest/etc.), so shell scripts and CI can rely on the exit code (#258)
 - forge-sensei native boundary split: shared/server/client FORGE projects now build separate server and pure HTTP client binaries, with client-safe API endpoints for sensei commands (#256)
 - forge-sensei `/api/self-assess` endpoint: triggers built-in curriculum evaluation and persists mastery internally via `data.store` — no external assess.sh/cron needed (#247)
 - forge-sensei status endpoints (`/api/status`, `/status` HTML) now reflect persisted mastery state instead of hardcoded 0 (#247)
@@ -23,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example toolkit agent (`examples/agents/toolkit_demo.forge`) demonstrating spawn→recall→emit→absorb pattern (#167)
 
 ### Fixed
+- forge-sensei client handlers (query/review/ingest/deep-dive/update-mastery) now form-encode their POST bodies (e.g. `question=...`) so the server can bind the parameters instead of failing with `undefined variable` (#258)
 - `install-sensei.sh` default config now points to vLLM on `192.168.10.195:8000` instead of stale Ollama localhost defaults; server wrapper uses `--config` flag for unambiguous config resolution (#247)
 - Multi-file project builds (`forge build`) no longer fail on cross-file lifecycle references; checker now validates the merged program (#167)
 - Quiz tutor example now runs cleanly with `FORGE_MOCK=1 forge run examples/agents/quiz_tutor.forge`, and mock-runnable examples reject checker warnings in the validation gate (#231)
