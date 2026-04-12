@@ -1,0 +1,18 @@
+#! boundary: shared
+
+type QueryResult
+  answer: Text
+  confidence_tier: Text
+  sources_used: Number
+
+type AssessmentResult
+  passed: Bool
+  prediction: Text
+  expected: Text
+  gap_topic: Text
+
+type ApiStatus
+  status: Text
+
+type ApiTextResult
+  result: Text

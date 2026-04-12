@@ -456,6 +456,7 @@ async fn handle_post_endpoint(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
+    let endpoint = executor.endpoints().get(&endpoint_name).cloned();
     let (params, args): (HashMap<String, String>, HashMap<String, ConfidentValue>) =
         if content_type.contains("application/json") {
             // JSON body
@@ -465,6 +466,14 @@ async fn handle_post_endpoint(
                     None => (HashMap::new(), HashMap::new()),
                 },
                 Err(_) => (HashMap::new(), HashMap::new()),
+            }
+        } else if !raw_body.contains('=') {
+            match endpoint.as_ref() {
+                Some(ep) => match raw_body_to_single_param_args(ep, &raw_body) {
+                    Some(args) => (single_param_string_params(ep, &raw_body), args),
+                    None => (HashMap::new(), HashMap::new()),
+                },
+                None => (HashMap::new(), HashMap::new()),
             }
         } else {
             // Form-encoded body (application/x-www-form-urlencoded)
@@ -921,6 +930,45 @@ fn json_value_to_confident(value: &serde_json::Value) -> ConfidentValue {
         serde_json::Value::Object(fields) => Value::Record(json_object_to_args(fields)),
     };
     ConfidentValue::deterministic(converted)
+}
+
+fn single_param_string_params(
+    endpoint: &crate::ast::EndpointDecl,
+    raw_body: &str,
+) -> HashMap<String, String> {
+    endpoint
+        .params
+        .first()
+        .map(|param| HashMap::from([(param.node.name.clone(), raw_body.to_string())]))
+        .unwrap_or_default()
+}
+
+fn raw_body_to_single_param_args(
+    endpoint: &crate::ast::EndpointDecl,
+    raw_body: &str,
+) -> Option<HashMap<String, ConfidentValue>> {
+    if endpoint.params.len() != 1 {
+        return None;
+    }
+
+    let param = endpoint.params.first()?;
+    let value = match &param.node.type_name.node {
+        crate::ast::TypeName::Number => raw_body
+            .trim()
+            .parse::<f64>()
+            .map(Value::Number)
+            .unwrap_or_else(|_| Value::Text(raw_body.to_string())),
+        crate::ast::TypeName::Bool => {
+            let normalized = raw_body.trim();
+            Value::Bool(normalized == "true" || normalized == "1")
+        }
+        _ => Value::Text(raw_body.to_string()),
+    };
+
+    Some(HashMap::from([(
+        param.node.name.clone(),
+        ConfidentValue::deterministic(value),
+    )]))
 }
 
 async fn dispatch_endpoint(

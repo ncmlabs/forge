@@ -1,3 +1,5 @@
+#! boundary: server
+
 # ── The Sensei Agent ──────────────────────────────────────────
 #
 # A self-referential learning agent: written in FORGE to teach FORGE.
@@ -202,7 +204,5 @@ warden sensei_warden
   max_retries 3 per 1h then escalate
 
 # ── Usage ─────────────────────────────────────────────────────
-# Build:  forge build workflows/forge-sensei/ -o bin/forge-sensei
-# Run:    bin/forge-sensei query "how do flows work?"
-# REPL:   bin/forge-sensei repl
-# Help:   bin/forge-sensei --help
+# Build:  forge build workflows/forge-sensei/server -o bin/forge-sensei-server
+# Run:    bin/forge-sensei-server --port 3000

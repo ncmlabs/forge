@@ -1,0 +1,18 @@
+#! boundary: shared
+
+event LearnedInsight
+  category: Text
+  content: Text
+  source: Text
+  confidence: Number
+
+event AssessmentCompleted
+  level: Text
+  score: Number
+  passed: Number
+  total: Number
+  failures: Text
+
+event KnowledgeGapFound
+  category: Text
+  question: Text

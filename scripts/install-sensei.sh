@@ -30,15 +30,12 @@ mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 
 echo "Building forge-sensei CLI..."
 cargo run --manifest-path "$FORGE_ROOT/Cargo.toml" -- build \
-  "$FORGE_ROOT/workflows/forge-sensei" \
+  "$FORGE_ROOT/workflows/forge-sensei/client" \
   -o "$INSTALL_DIR/forge-sensei-bin"
 
 echo "Building forge-sensei server..."
 cargo run --manifest-path "$FORGE_ROOT/Cargo.toml" -- build \
-  "$FORGE_ROOT/workflows/forge-sensei" \
-  --entry web.forge \
-  --source core.forge \
-  --source agent.forge \
+  "$FORGE_ROOT/workflows/forge-sensei/server" \
   -o "$INSTALL_DIR/forge-sensei-server-bin"
 
 echo "  CLI binary:    $INSTALL_DIR/forge-sensei-bin"
@@ -67,7 +64,8 @@ if [ "$1" = "status" ] && [ -f "$SENSEI_DIR/knowledge.json" ]; then
   fi
 fi
 
-FORGE_CONFIG="${FORGE_CONFIG:-$SENSEI_DIR/config.toml}" \
+FORGE_SENSEI_SERVER="${FORGE_SENSEI_SERVER:-http://127.0.0.1:3000}" \
+  FORGE_CONFIG="${FORGE_CONFIG:-$SENSEI_DIR/config.toml}" \
   exec "$SENSEI_DIR/forge-sensei-bin" "$@"
 WRAPPER
 chmod +x "$BIN_DIR/forge-sensei"
@@ -77,7 +75,8 @@ cat > "$BIN_DIR/forge-sensei-server" <<'WRAPPER'
 # forge-sensei-server wrapper — runs the long-lived HTTP daemon.
 SENSEI_DIR="$HOME/.forge/sensei"
 cd "$SENSEI_DIR"
-exec "$SENSEI_DIR/forge-sensei-server-bin" --config "$SENSEI_DIR/config.toml" "$@"
+FORGE_CONFIG="${FORGE_CONFIG:-$SENSEI_DIR/config.toml}" \
+  exec "$SENSEI_DIR/forge-sensei-server-bin" "$@"
 WRAPPER
 chmod +x "$BIN_DIR/forge-sensei-server"
 

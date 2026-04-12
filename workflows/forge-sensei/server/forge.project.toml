@@ -1,0 +1,16 @@
+[project]
+name = "forge-sensei-server"
+version = "0.2.1"
+description = "FORGE language learning agent server"
+
+[build]
+entry = "web.forge"
+output = "forge-sensei-server"
+sources = [
+  "../shared/types.forge",
+  "../shared/events.forge",
+  "../shared/states.forge",
+  "tasks.forge",
+  "flows.forge",
+  "agent.forge",
+]

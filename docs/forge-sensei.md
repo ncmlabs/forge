@@ -12,9 +12,9 @@ forge-sensei is structured as a multi-file FORGE project in `workflows/forge-sen
 
 ```
 workflows/forge-sensei/
-  core.forge    — Types, events, states, pure functions, tasks, flows, contract
-  agent.forge   — Sensei agent, specialist agent, warden
-  web.forge     — HTTP endpoints for web UI
+  shared/       — Shared types, events, and lifecycle states
+  server/       — Tasks, flows, agents, warden, endpoints, and system wiring
+  client/       — Pure-FORGE HTTP client agent
 ```
 
 The component stack follows FORGE's natural declaration order:
@@ -773,10 +773,11 @@ bash scripts/build-sensei.sh
 #   bin/forge-sensei-server
 ```
 
-The CLI build uses the agent entry from `forge.project.toml`. The server build composes the web entry with the shared core and agent sources:
+The client and server builds use separate `forge.project.toml` manifests:
 
 ```bash
-forge build workflows/forge-sensei/ --entry web.forge --source core.forge --source agent.forge -o bin/forge-sensei-server
+forge build workflows/forge-sensei/client -o bin/forge-sensei
+forge build workflows/forge-sensei/server -o bin/forge-sensei-server
 ```
 
 ### Pre-train
@@ -839,7 +840,7 @@ bin/forge-sensei deep-dive "SYNTAX"
 ### Serve
 
 ```bash
-forge serve workflows/forge-sensei/ --watch
+forge serve workflows/forge-sensei/server/web.forge --source workflows/forge-sensei/shared/types.forge --source workflows/forge-sensei/shared/events.forge --source workflows/forge-sensei/shared/states.forge --source workflows/forge-sensei/server/tasks.forge --source workflows/forge-sensei/server/flows.forge --source workflows/forge-sensei/server/agent.forge --watch
 # Web UI at http://localhost:3030
 ```
 

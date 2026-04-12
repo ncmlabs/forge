@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- forge-sensei native boundary split: shared/server/client FORGE projects now build separate server and pure HTTP client binaries, with client-safe API endpoints for sensei commands (#256)
 - forge-sensei `/api/self-assess` endpoint: triggers built-in curriculum evaluation and persists mastery internally via `data.store` — no external assess.sh/cron needed (#247)
 - forge-sensei status endpoints (`/api/status`, `/status` HTML) now reflect persisted mastery state instead of hardcoded 0 (#247)
 - Half-open circuit breaker recovery: warden no longer terminates on trip — enters cooldown → probe → resume cycle, making servers self-healing when providers recover (#247)

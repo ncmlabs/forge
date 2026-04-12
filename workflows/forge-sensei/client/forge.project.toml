@@ -1,0 +1,11 @@
+[project]
+name = "forge-sensei"
+version = "0.2.1"
+description = "FORGE language learning agent client"
+
+[build]
+entry = "client.forge"
+output = "forge-sensei"
+sources = [
+  "../shared/types.forge",
+]

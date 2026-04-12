@@ -1,0 +1,11 @@
+#! boundary: shared
+
+states MasteryLevel
+  novice -> apprentice when conformance_score >= 40
+  apprentice -> journeyman when conformance_score >= 70
+  journeyman -> expert when conformance_score >= 90
+  expert -> expert
+
+states SpecialistPhase
+  learning -> ready when absorbed_count >= 5
+  ready -> ready
