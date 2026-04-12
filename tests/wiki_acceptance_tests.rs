@@ -1800,7 +1800,13 @@ fn haiku_registry() -> Option<Arc<ProviderRegistry>> {
             api_key: Some(api_key),
             base_url: None,
             fallback: None,
-            capabilities: None,
+            capabilities: Some(forge::config::CapabilityOverride {
+                max_context_tokens: None,
+                quality_tier: Some(forge::llm::QualityTier::Balanced),
+                local: None,
+                cost_per_1k_input: None,
+                cost_per_1k_output: None,
+            }),
             headers: None,
             timeout_secs: None,
         },
@@ -1845,8 +1851,9 @@ async fn wiki_real_search_returns_results() {
     let resp = reqwest::get(format!("{base}/api_search?q=what+is+a+task+in+FORGE"))
         .await
         .expect("request failed");
-    assert_eq!(resp.status(), 200);
+    let status = resp.status();
     let body = resp.text().await.unwrap();
+    assert_eq!(status, 200, "real search failed: {body}");
     assert!(
         !body.is_empty(),
         "real LLM search should return non-empty results"
@@ -1867,8 +1874,9 @@ async fn wiki_real_qa_answers_question() {
     ))
     .await
     .expect("request failed");
-    assert_eq!(resp.status(), 200);
+    let status = resp.status();
     let body = resp.text().await.unwrap();
+    assert_eq!(status, 200, "real Q&A failed: {body}");
     assert!(!body.is_empty(), "real LLM Q&A should return an answer");
     // The answer should mention at least some primitives
     assert!(
@@ -1888,8 +1896,9 @@ async fn wiki_real_fact_check() {
     let resp = reqwest::get(format!("{base}/admin_fact_check?slug=getting-started"))
         .await
         .expect("request failed");
-    assert_eq!(resp.status(), 200);
+    let status = resp.status();
     let body = resp.text().await.unwrap();
+    assert_eq!(status, 200, "real fact-check failed: {body}");
     assert!(
         body.contains("Fact-Check")
             || body.contains("PASS")
