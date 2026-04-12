@@ -508,9 +508,24 @@ impl AgentProcess {
                 .eval_expr(&req.node.condition, &mut env)
                 .await?;
             if !truthy(&cond_val) {
+                if let Some(t) = self.executor.tracer() {
+                    t.handler_completed(
+                        &self.decl.name.node,
+                        event,
+                        "blocked_by_requires",
+                        0,
+                        None,
+                    );
+                }
                 return self.apply_fail_policy(&req.node.on_fail, &mut env).await;
             }
         }
+
+        // Emit HandlerStarted after requires pass (issue #255)
+        if let Some(t) = self.executor.tracer() {
+            t.handler_started(&self.decl.name.node, event);
+        }
+        let handler_started_at = std::time::Instant::now();
 
         // Execute handler body with timeout detection
         let handler_timeout = std::time::Duration::from_secs(60);
@@ -518,13 +533,33 @@ impl AgentProcess {
         let result = match tokio::time::timeout(handler_timeout, exec_future).await {
             Ok(Ok(_)) => None,
             Ok(Err(RuntimeError::GiveSignal(val, ..))) => Some(val),
-            Ok(Err(e)) => return Err(e),
+            Ok(Err(e)) => {
+                if let Some(t) = self.executor.tracer() {
+                    t.handler_completed(
+                        &self.decl.name.node,
+                        event,
+                        "error",
+                        handler_started_at.elapsed().as_millis() as u64,
+                        None,
+                    );
+                }
+                return Err(e);
+            }
             Err(_elapsed) => {
                 // Handler timed out — signal warden
                 if let Some(ref tx) = self.warden_tx {
                     let _ = tx.try_send(AgentSignal::Timeout {
                         agent_name: self.decl.name.node.clone(),
                     });
+                }
+                if let Some(t) = self.executor.tracer() {
+                    t.handler_completed(
+                        &self.decl.name.node,
+                        event,
+                        "timeout",
+                        handler_started_at.elapsed().as_millis() as u64,
+                        None,
+                    );
                 }
                 return Err(RuntimeError::Unsupported(format!(
                     "agent '{}' handler '{}' timed out after {}s",
@@ -534,6 +569,18 @@ impl AgentProcess {
                 )));
             }
         };
+
+        // Emit HandlerCompleted for success path (issue #255)
+        if let Some(t) = self.executor.tracer() {
+            let confidence = result.as_ref().map(|v| v.confidence);
+            t.handler_completed(
+                &self.decl.name.node,
+                event,
+                "success",
+                handler_started_at.elapsed().as_millis() as u64,
+                confidence,
+            );
+        }
 
         // Record turn for stuck detection
         let response_text = result
@@ -639,6 +686,11 @@ impl AgentProcess {
     /// events, dispatch to handlers, and drain emitted events back through the bus.
     /// Returns when all event channels are closed.
     pub async fn run(&mut self) -> Result<(), RuntimeError> {
+        // Emit AgentStarted lifecycle event (issue #255)
+        if let Some(t) = self.executor.tracer() {
+            t.agent_started(&self.decl.name.node, std::process::id());
+        }
+
         // Merge all receivers into a single stream via a helper channel
         let (merge_tx, mut merge_rx) = mpsc::channel::<(Option<Spanned<Expr>>, EventPayload)>(64);
 
@@ -658,6 +710,7 @@ impl AgentProcess {
         // Drop our copy so merge_rx closes when all forwarders finish
         drop(merge_tx);
 
+        let shutdown_reason: &'static str;
         loop {
             tokio::select! {
                 msg = merge_rx.recv() => {
@@ -677,21 +730,40 @@ impl AgentProcess {
 
                                 match self.dispatch(&event_name, params).await {
                                     Ok(_) => {}
-                                    Err(RuntimeError::RetireSignal) => break,
-                                    Err(e) => return Err(e),
+                                    Err(RuntimeError::RetireSignal) => {
+                                        shutdown_reason = "retire";
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        if let Some(t) = self.executor.tracer() {
+                                            t.agent_shutdown(&self.decl.name.node, "error");
+                                        }
+                                        return Err(e);
+                                    }
                                 }
                                 self.drain_event_sink().await?;
                             }
                         }
-                        None => break, // All event channels closed
+                        None => {
+                            shutdown_reason = "channel_closed";
+                            break;
+                        }
                     }
                 }
                 fired = self.timer_rx.recv() => {
                     if let Some(timer_event) = fired {
                         match self.handle_timer_fired(timer_event).await {
                             Ok(()) => {}
-                            Err(RuntimeError::RetireSignal) => break,
-                            Err(e) => return Err(e),
+                            Err(RuntimeError::RetireSignal) => {
+                                shutdown_reason = "retire";
+                                break;
+                            }
+                            Err(e) => {
+                                if let Some(t) = self.executor.tracer() {
+                                    t.agent_shutdown(&self.decl.name.node, "error");
+                                }
+                                return Err(e);
+                            }
                         }
                         self.drain_event_sink().await?;
                     }
@@ -715,6 +787,11 @@ impl AgentProcess {
         // Cleanup worktree on agent exit (issue #194)
         if let Some(ref branch) = self.worktree_branch {
             let _ = crate::runtime::sandbox::remove_worktree(branch);
+        }
+
+        // Emit AgentShutdown lifecycle event (issue #255)
+        if let Some(t) = self.executor.tracer() {
+            t.agent_shutdown(&self.decl.name.node, shutdown_reason);
         }
 
         Ok(())
