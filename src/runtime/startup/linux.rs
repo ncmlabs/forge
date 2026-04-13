@@ -81,8 +81,7 @@ impl StartupManager for Systemd {
                     .filter(|p| *p != 0);
                 Ok(ServiceStatus::Running { pid })
             }
-            "inactive" | "failed" | "deactivating" => Ok(ServiceStatus::Stopped),
-            other if other.is_empty() => Ok(ServiceStatus::Stopped),
+            "inactive" | "failed" | "deactivating" | "" => Ok(ServiceStatus::Stopped),
             other => Ok(ServiceStatus::Unknown(other.to_string())),
         }
     }
