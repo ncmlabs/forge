@@ -1,10 +1,45 @@
 // FORGE key-value storage — issue #48
 // redb-backed persistent store for agent memory and data.store/data.get.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+
+use crate::config::StorageConfig;
+
+static LEGACY_WARN: OnceLock<()> = OnceLock::new();
+
+/// Expand `~` (home dir) and `${VAR}` tokens in a path string.
+///
+/// Matches the existing conventions in `config.rs` for consistency.
+fn expand_path(raw: &str) -> PathBuf {
+    let expanded_env = if raw.starts_with("${") {
+        if let Some(end) = raw.find('}') {
+            let var_name = &raw[2..end];
+            let rest = &raw[end + 1..];
+            match std::env::var(var_name) {
+                Ok(val) => format!("{val}{rest}"),
+                Err(_) => raw.to_string(),
+            }
+        } else {
+            raw.to_string()
+        }
+    } else {
+        raw.to_string()
+    };
+
+    if let Some(stripped) = expanded_env.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(stripped);
+        }
+    } else if expanded_env == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+    }
+    PathBuf::from(expanded_env)
+}
 
 const FORGE_KV: TableDefinition<&str, &str> = TableDefinition::new("forge_kv");
 
@@ -17,6 +52,46 @@ pub struct ForgeStorage {
 pub type SharedStorage = Arc<ForgeStorage>;
 
 impl ForgeStorage {
+    /// Resolve the storage root directory using the following precedence:
+    /// 1. `FORGE_STORAGE_ROOT` env var
+    /// 2. `[storage] root` from config
+    /// 3. `knowledge_store_path` (backward compat for agents declaring `knowledge { store_path }`)
+    /// 4. `./.forge-data` (legacy default; emits a one-shot warning)
+    pub fn resolve_root(
+        config: Option<&StorageConfig>,
+        knowledge_store_path: Option<&str>,
+    ) -> PathBuf {
+        if let Ok(env_root) = std::env::var("FORGE_STORAGE_ROOT") {
+            if !env_root.is_empty() {
+                return expand_path(&env_root);
+            }
+        }
+        if let Some(root) = config.and_then(|c| c.root.as_deref()) {
+            return expand_path(root);
+        }
+        if let Some(ks) = knowledge_store_path {
+            return expand_path(ks);
+        }
+        LEGACY_WARN.get_or_init(|| {
+            eprintln!(
+                "warning: no [storage] root configured; using legacy default './.forge-data'. \
+                 Set [storage] root in forge.config.toml to silence this warning."
+            );
+        });
+        PathBuf::from(".forge-data")
+    }
+
+    /// Open `<root>/<filename>` using `resolve_root`. Creates the directory if missing.
+    pub fn open_from_config(
+        config: Option<&StorageConfig>,
+        knowledge_store_path: Option<&str>,
+        filename: &str,
+    ) -> Result<Self, StorageError> {
+        let root = Self::resolve_root(config, knowledge_store_path);
+        std::fs::create_dir_all(&root).map_err(StorageError::Io)?;
+        Self::open(&root.join(filename))
+    }
+
     /// Open (or create) a redb database at the given path.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
         let db = Database::create(path).map_err(|e| StorageError::Open(Box::new(e)))?;
@@ -143,6 +218,7 @@ pub enum StorageError {
     Commit(Box<redb::CommitError>),
     Write(Box<redb::StorageError>),
     Read(Box<redb::StorageError>),
+    Io(std::io::Error),
 }
 
 impl std::fmt::Display for StorageError {
@@ -154,6 +230,7 @@ impl std::fmt::Display for StorageError {
             StorageError::Commit(e) => write!(f, "storage commit: {e}"),
             StorageError::Write(e) => write!(f, "storage write: {e}"),
             StorageError::Read(e) => write!(f, "storage read: {e}"),
+            StorageError::Io(e) => write!(f, "storage io: {e}"),
         }
     }
 }
