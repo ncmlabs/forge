@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Agent lifecycle events on the tracer broadcast: `AgentStarted`, `HandlerStarted`, `HandlerCompleted` (status: `success` | `timeout` | `error` | `blocked_by_requires`, with `duration_ms` and `confidence`), and `AgentShutdown` (reason: `retire` | `channel_closed` | `error`). Automatically surfaces on `/__forge/events` SSE and the cost-aggregator channel so Observer and internal agents can see the runtime run itself (#255)
 - `proc.exit(code)` runtime primitive: one-shot CLI handlers can signal a non-zero exit, translated by the generated dispatch into `std::process::exit(code)` without the error-formatting path (#258)
 - forge-sensei client `check` command: reports `server ok` and exit 0 when `/api/status` is reachable, prints a clear unreachable message with start instructions and exits 1 otherwise (#258)
 - forge-sensei client handlers now exit 1 when the server is unreachable (query/review/status/ingest/etc.), so shell scripts and CI can rely on the exit code (#258)

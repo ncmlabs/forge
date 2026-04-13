@@ -70,6 +70,13 @@ impl Tracer {
         })
     }
 
+    /// Return captured (name, payload) pairs in order — for tests.
+    pub fn captured_log(&self) -> Vec<(String, serde_json::Value)> {
+        self.captured
+            .as_ref()
+            .map_or_else(Vec::new, |buf| buf.lock().unwrap().clone())
+    }
+
     fn ts_ms(&self) -> u64 {
         self.start.elapsed().as_millis() as u64
     }
@@ -542,6 +549,58 @@ impl Tracer {
                 "response": response,
                 "scope": scope,
                 "retry_count": retry_count,
+            }),
+        );
+    }
+
+    // ── Agent lifecycle tracing (issue #255) ───────────────────────────────
+
+    pub fn agent_started(&self, agent: &str, pid: u32) {
+        self.emit(
+            "AgentStarted",
+            serde_json::json!({
+                "agent": agent,
+                "pid": pid,
+            }),
+        );
+    }
+
+    pub fn handler_started(&self, agent: &str, handler: &str) {
+        self.emit(
+            "HandlerStarted",
+            serde_json::json!({
+                "agent": agent,
+                "handler": handler,
+            }),
+        );
+    }
+
+    pub fn handler_completed(
+        &self,
+        agent: &str,
+        handler: &str,
+        status: &str,
+        duration_ms: u64,
+        confidence: Option<f32>,
+    ) {
+        self.emit(
+            "HandlerCompleted",
+            serde_json::json!({
+                "agent": agent,
+                "handler": handler,
+                "status": status,
+                "duration_ms": duration_ms,
+                "confidence": confidence,
+            }),
+        );
+    }
+
+    pub fn agent_shutdown(&self, agent: &str, reason: &str) {
+        self.emit(
+            "AgentShutdown",
+            serde_json::json!({
+                "agent": agent,
+                "reason": reason,
             }),
         );
     }
