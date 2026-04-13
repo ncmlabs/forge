@@ -826,6 +826,7 @@ async fn main() -> anyhow::Result<()> {{
     let program = forge::compose::parse_and_merge_sources(SOURCES)
         .map_err(|e| anyhow::anyhow!("{{}}", e))?;
     let config = resolve_config();
+    let storage_config = config.storage.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {{}}", e))?;
 
@@ -841,33 +842,26 @@ async fn main() -> anyhow::Result<()> {{
         ));
 
     // Open persistent storage for memory across invocations.
-    // Derive storage path from knowledge store path (supports ~ expansion),
-    // falling back to .forge-data/ for agents without a knowledge store.
+    // Unified storage root via [storage] in forge.config.toml (#253);
+    // knowledge.store_path preserved as backward-compat fallback.
     let storage = {{
-        let data_dir = agent_decl.knowledge.as_ref().map(|kd| {{
-            let store_path = match &kd.node.store_path.node {{
-                forge::ast::Expr::Template(parts) => parts
+        let knowledge_store_path: Option<String> = agent_decl.knowledge.as_ref().and_then(|kd| {{
+            match &kd.node.store_path.node {{
+                forge::ast::Expr::Template(parts) => Some(parts
                     .iter()
                     .filter_map(|p| match &p.node {{
                         forge::ast::TemplatePart::Text(t) => Some(t.as_str()),
                         _ => None,
                     }})
-                    .collect::<String>(),
-                _ => ".forge-data".to_string(),
-            }};
-            // Expand ~ to home directory
-            if store_path.starts_with("~/") {{
-                dirs::home_dir()
-                    .map(|h| h.join(&store_path[2..]).to_string_lossy().to_string())
-                    .unwrap_or(store_path)
-            }} else {{
-                store_path
+                    .collect::<String>()),
+                _ => None,
             }}
-        }}).unwrap_or_else(|| ".forge-data".to_string());
-
-        let db_path = std::path::Path::new(&data_dir).join("store.redb");
-        std::fs::create_dir_all(&data_dir).ok();
-        forge::runtime::storage::ForgeStorage::open(&db_path)
+        }});
+        forge::runtime::storage::ForgeStorage::open_from_config(
+            storage_config.as_ref(),
+            knowledge_store_path.as_deref(),
+            "store.redb",
+        )
             .ok()
             .map(|s| std::sync::Arc::new(s))
     }};
@@ -1007,14 +1001,14 @@ async fn main() -> anyhow::Result<()> {{
     let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
         Arc::new(tokio::sync::RwLock::new(Vec::new()));
     let knowledge_config = agent_knowledge_config(&executor);
-    let storage_dir = knowledge_config
-        .as_ref()
-        .map(|config| config.store_path.clone())
-        .unwrap_or_else(|| ".forge-data".to_string());
-    let storage_path = std::path::Path::new(&storage_dir).join("store.redb");
-    if let Some(parent) = storage_path.parent() {{
-        std::fs::create_dir_all(parent).ok();
-    }}
+    // Unified storage root via [storage] in forge.config.toml (#253);
+    // knowledge.store_path preserved as backward-compat fallback.
+    let storage_root = forge::runtime::storage::ForgeStorage::resolve_root(
+        config.storage.as_ref(),
+        knowledge_config.as_ref().map(|c| c.store_path.as_str()),
+    );
+    std::fs::create_dir_all(&storage_root).ok();
+    let storage_path = storage_root.join("store.redb");
 
     // --reset: clear persisted state before opening storage
     if cli.reset {{
@@ -1177,6 +1171,7 @@ mod tests {
             "let knowledge_store = forge::runtime::knowledge_store::KnowledgeStore::new"
         ));
         assert!(main_rs.contains("executor = executor.with_knowledge_store(knowledge_store);"));
-        assert!(main_rs.contains("let storage_dir = knowledge_config"));
+        assert!(main_rs.contains("ForgeStorage::resolve_root"));
+        assert!(main_rs.contains("c.store_path.as_str()"));
     }
 }

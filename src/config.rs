@@ -13,6 +13,16 @@ pub struct ForgeConfig {
     pub exec: Option<ExecConfig>,
     pub skills: Option<SkillsConfig>,
     pub embeddings: Option<EmbeddingsConfig>,
+    pub storage: Option<StorageConfig>,
+}
+
+/// Configuration for the unified persistent storage root (issue #253).
+///
+/// When set, all redb databases (agent memory, server state) open under
+/// `<root>/*.redb`. Resolved via precedence in `ForgeStorage::resolve_root`.
+#[derive(Debug, Deserialize, Clone)]
+pub struct StorageConfig {
+    pub root: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -427,6 +437,7 @@ impl ForgeConfig {
             exec: None,
             skills: None,
             embeddings: None,
+            storage: None,
         }
     }
 }
@@ -482,6 +493,7 @@ mod tests {
             exec: None,
             skills: None,
             embeddings: None,
+            storage: None,
         };
         assert!(matches!(
             config.validate(),
@@ -531,6 +543,7 @@ mod tests {
             exec: None,
             skills: None,
             embeddings: None,
+            storage: None,
         };
         assert!(matches!(
             config.validate(),

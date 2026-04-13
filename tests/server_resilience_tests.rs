@@ -122,6 +122,7 @@ async fn health_check_all_with_unreachable_provider() {
         exec: None,
         skills: None,
         embeddings: None,
+        storage: None,
     };
 
     let registry = ProviderRegistry::from_config(config).expect("registry should build");

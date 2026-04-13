@@ -492,11 +492,18 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Open the FORGE persistent storage database (issue #48/#57).
-fn open_forge_storage() -> anyhow::Result<forge::runtime::storage::SharedStorage> {
-    let db_path = std::path::Path::new(".forge-data").join("store.redb");
-    std::fs::create_dir_all(".forge-data")?;
-    let storage = forge::runtime::storage::ForgeStorage::open(&db_path)
-        .map_err(|e| anyhow::anyhow!("failed to open storage: {}", e))?;
+///
+/// Uses the unified storage root configured via `[storage]` in forge.config.toml
+/// (issue #253), with env-var override and knowledge.store_path fallback.
+fn open_forge_storage(
+    config: &forge::config::ForgeConfig,
+) -> anyhow::Result<forge::runtime::storage::SharedStorage> {
+    let storage = forge::runtime::storage::ForgeStorage::open_from_config(
+        config.storage.as_ref(),
+        None,
+        "store.redb",
+    )
+    .map_err(|e| anyhow::anyhow!("failed to open storage: {}", e))?;
     Ok(Arc::new(storage))
 }
 
@@ -1153,27 +1160,21 @@ async fn serve_program(
             Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
         // Create storage for data.store/data.get/data.list/data.delete (#59)
-        let storage_path = file
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join(".forge-data/server.redb");
-        if let Some(parent) = storage_path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
+        // Unified root via [storage] in forge.config.toml (#253).
         let mut inspect_storage: Option<forge::runtime::storage::SharedStorage> = None;
-        let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
+        let executor = match forge::runtime::storage::ForgeStorage::open_from_config(
+            config.storage.as_ref(),
+            None,
+            "server.redb",
+        ) {
             Ok(storage) => {
-                // Seed content/ directory into storage (#59)
                 seed_content_dir(file, &storage);
                 let shared = std::sync::Arc::new(storage);
                 inspect_storage = Some(shared.clone());
                 executor.with_storage(shared)
             }
             Err(e) => {
-                eprintln!(
-                    "Warning: could not open storage at {}: {e}",
-                    storage_path.display()
-                );
+                eprintln!("Warning: could not open storage: {e}");
                 executor
             }
         };
@@ -1372,15 +1373,13 @@ async fn serve_with_watch(
             Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
         // Create storage for data.store/data.get/data.list/data.delete (#59)
-        let storage_path = file
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join(".forge-data/server.redb");
-        if let Some(parent) = storage_path.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
+        // Unified root via [storage] in forge.config.toml (#253).
         let mut inspect_storage: Option<forge::runtime::storage::SharedStorage> = None;
-        let executor = match forge::runtime::storage::ForgeStorage::open(&storage_path) {
+        let executor = match forge::runtime::storage::ForgeStorage::open_from_config(
+            config.storage.as_ref(),
+            None,
+            "server.redb",
+        ) {
             Ok(storage) => {
                 seed_content_dir(file, &storage);
                 let shared = std::sync::Arc::new(storage);
@@ -1388,10 +1387,7 @@ async fn serve_with_watch(
                 executor.with_storage(shared)
             }
             Err(e) => {
-                eprintln!(
-                    "Warning: could not open storage at {}: {e}",
-                    storage_path.display()
-                );
+                eprintln!("Warning: could not open storage: {e}");
                 executor
             }
         };
@@ -1571,15 +1567,13 @@ async fn run_agent(file: &Path) -> anyhow::Result<()> {
     });
 
     let config = forge::config::ForgeConfig::load_or_default();
-    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
-        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
-
-    // Open persistent storage if any agent declares memory persistent
     let storage = if agent_decl.memory_persistent {
-        Some(open_forge_storage()?)
+        Some(open_forge_storage(&config)?)
     } else {
         None
     };
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
     let agent = AgentProcess::new(
         agent_decl.clone(),
@@ -1727,12 +1721,11 @@ async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::R
     });
 
     let config = forge::config::ForgeConfig::load_or_default();
-    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
-        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
-
     // Always open storage in CLI mode — even non-persistent agents need
     // memory to survive across forge-send invocations
-    let storage = Some(open_forge_storage()?);
+    let storage = Some(open_forge_storage(&config)?);
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config)
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
 
     // Create instance registry for find/spawn support
     let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(

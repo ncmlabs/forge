@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Unified persistent storage root: new `[storage] root` key in `forge.config.toml` (with `FORGE_STORAGE_ROOT` env override and legacy `knowledge.store_path` fallback) routes CLI and server redb databases to the same file regardless of working directory. `ForgeStorage::open_from_config` / `resolve_root` replace the ad-hoc `./.forge-data` joins in main.rs and build.rs (#253)
 - Agent lifecycle events on the tracer broadcast: `AgentStarted`, `HandlerStarted`, `HandlerCompleted` (status: `success` | `timeout` | `error` | `blocked_by_requires`, with `duration_ms` and `confidence`), and `AgentShutdown` (reason: `retire` | `channel_closed` | `error`). Automatically surfaces on `/__forge/events` SSE and the cost-aggregator channel so Observer and internal agents can see the runtime run itself (#255)
 - `proc.exit(code)` runtime primitive: one-shot CLI handlers can signal a non-zero exit, translated by the generated dispatch into `std::process::exit(code)` without the error-formatting path (#258)
 - forge-sensei client `check` command: reports `server ok` and exit 0 when `/api/status` is reachable, prints a clear unreachable message with start instructions and exits 1 otherwise (#258)
