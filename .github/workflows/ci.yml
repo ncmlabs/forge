@@ -41,6 +41,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test
+      # StartupManager E2E (#254): exercise the real launchctl/systemd path
+      # on macOS and Linux. Linux needs a user systemd session; if it's not
+      # available in the runner, the test skips itself cleanly.
+      - name: StartupManager E2E (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          loginctl enable-linger "$USER" || true
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          FORGE_SERVICE_E2E=1 cargo test --test startup_manager_tests
+      - name: StartupManager E2E (macOS)
+        if: matrix.os == 'macos-latest'
+        run: FORGE_SERVICE_E2E=1 cargo test --test startup_manager_tests
 
   msrv:
     name: MSRV (1.89)

@@ -23,6 +23,7 @@ pub mod skill;
 pub mod skill_executor;
 pub mod skill_loader;
 pub mod skill_registry;
+pub mod startup;
 pub mod state_machine;
 pub mod storage;
 pub mod system;

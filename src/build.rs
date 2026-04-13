@@ -899,7 +899,7 @@ fn generate_server_main(source_entries: &[String], embed_config: Option<&str>) -
     let config_code = config_resolution_code(embed_config);
 
     format!(
-        r#"use clap::Parser;
+        r#"use clap::{{Parser, Subcommand}};
 use std::sync::Arc;
 
 const SOURCES: &[(&str, &str)] = &[
@@ -924,11 +924,100 @@ struct Cli {{
     /// Clear persisted state (storage, lifecycle) before starting.
     #[arg(long)]
     reset: bool,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}}
+
+#[derive(Subcommand)]
+enum Command {{
+    /// Install this binary as a user service (launchctl/systemd/schtasks).
+    InstallService {{
+        #[arg(long, default_value = "com.ncmlabs.forge-server")]
+        label: String,
+    }},
+    /// Manage an installed service.
+    Service {{
+        #[command(subcommand)]
+        action: ServiceAction,
+    }},
+}}
+
+#[derive(Subcommand)]
+enum ServiceAction {{
+    Start {{ #[arg(long)] label: String }},
+    Stop {{ #[arg(long)] label: String }},
+    Status {{ #[arg(long)] label: String }},
+    Uninstall {{ #[arg(long)] label: String }},
+}}
+
+fn run_service_subcommand(cli: &Cli) -> anyhow::Result<()> {{
+    use forge::runtime::startup::{{self, ServiceConfig}};
+    let mgr = startup::current();
+    match cli.command.as_ref().expect("caller checked is_some") {{
+        Command::InstallService {{ label }} => {{
+            let binary = std::env::current_exe()?;
+            let home = dirs::home_dir()
+                .ok_or_else(|| anyhow::anyhow!("cannot resolve home directory"))?;
+            let log_dir = home.join(".forge/logs");
+            std::fs::create_dir_all(&log_dir).ok();
+            let mut cfg = ServiceConfig::new(label.clone(), binary);
+            cfg.args = vec![
+                "--host".into(), cli.host.clone(),
+                "--port".into(), cli.port.to_string(),
+            ];
+            if let Some(ref c) = cli.config {{
+                cfg.env.push(("FORGE_CONFIG".into(), c.clone()));
+            }}
+            cfg.working_dir = Some(home.clone());
+            cfg.stdout_log = Some(log_dir.join(format!("{{}}.out.log", label)));
+            cfg.stderr_log = Some(log_dir.join(format!("{{}}.err.log", label)));
+            cfg.keep_alive = true;
+            mgr.install(&cfg)?;
+            println!("{{{{\"status\":\"installed\",\"label\":\"{{}}\"}}}}", label);
+            Ok(())
+        }}
+        Command::Service {{ action }} => {{
+            match action {{
+                ServiceAction::Start {{ label }} => {{
+                    mgr.start(label)?;
+                    println!("{{{{\"status\":\"started\",\"label\":\"{{}}\"}}}}", label);
+                }}
+                ServiceAction::Stop {{ label }} => {{
+                    mgr.stop(label)?;
+                    println!("{{{{\"status\":\"stopped\",\"label\":\"{{}}\"}}}}", label);
+                }}
+                ServiceAction::Status {{ label }} => {{
+                    let status = mgr.status(label)?;
+                    let pid = match &status {{
+                        forge::runtime::startup::ServiceStatus::Running {{ pid }} => {{
+                            pid.map(|n| n.to_string()).unwrap_or_else(|| "null".to_string())
+                        }}
+                        _ => "null".to_string(),
+                    }};
+                    println!(
+                        "{{{{\"label\":\"{{}}\",\"state\":\"{{}}\",\"pid\":{{}}}}}}",
+                        label, status.as_str(), pid,
+                    );
+                }}
+                ServiceAction::Uninstall {{ label }} => {{
+                    mgr.uninstall(label)?;
+                    println!("{{{{\"status\":\"uninstalled\",\"label\":\"{{}}\"}}}}", label);
+                }}
+            }}
+            Ok(())
+        }}
+    }}
 }}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {{
     let cli = Cli::parse();
+
+    // Service management subcommands short-circuit the server boot.
+    if cli.command.is_some() {{
+        return run_service_subcommand(&cli);
+    }}
 
     // --config flag overrides all other config resolution
     if let Some(ref config_path) = cli.config {{
