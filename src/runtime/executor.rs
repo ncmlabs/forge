@@ -1883,6 +1883,23 @@ impl TaskExecutor {
                         }
                     }
 
+                    // text.to_number(s) — parse a text string to a number.
+                    // Returns 0.0 if the text cannot be parsed.
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "text" && method.node == "to_number" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let s = arg_vals
+                                .first()
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_default();
+                            let n: f64 = s.trim().parse().unwrap_or(0.0);
+                            return Ok(ConfidentValue::deterministic(Value::Number(n)));
+                        }
+                    }
+
                     // proc.exit(code) — signal process exit. See issue #258.
                     // Raises RuntimeError::Exit, which the generated CLI dispatch
                     // (src/build.rs) translates to std::process::exit(code). Non-CLI

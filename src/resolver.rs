@@ -202,6 +202,15 @@ impl CapabilityRegistry {
                 output: ForgeType::Unit,
             },
         );
+        // text.to_number(s) -> Number — parse a text string to a number.
+        // Returns 0.0 if the text cannot be parsed. Allowed in all boundaries.
+        caps.insert(
+            "text.to_number".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Number,
+            },
+        );
         caps.insert(
             "data.store".into(),
             CapabilitySignature {

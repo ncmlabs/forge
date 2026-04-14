@@ -5,6 +5,7 @@ use
   llm.classify
   data.store
   data.get
+  text.to_number
 
 pure compute_mastery_score
   needs passed: Number, total: Number
@@ -114,3 +115,14 @@ task get_interaction_count
     if raw == ""
       give "0"
     give raw
+
+task increment_interactions
+  gives Text
+  do
+    raw = data.get("sensei:interactions")
+    if raw == ""
+      raw = "0"
+    current = text.to_number(raw)
+    next = current + 1
+    data.store("sensei:interactions", number_to_text(next))
+    give number_to_text(next)

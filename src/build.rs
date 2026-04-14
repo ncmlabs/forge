@@ -529,6 +529,36 @@ fn generate_agent_cli_main(
             .to_string()
     };
 
+    // Client-boundary agents never use data.store/data.get (boundary checker
+    // forbids them), so skip storage entirely — avoids the misleading
+    // "no [storage] root configured" warning on client binaries.
+    let storage_code = if agent.client_boundary {
+        "let storage = None;".to_string()
+    } else {
+        r#"let storage = {
+        let knowledge_store_path: Option<String> = agent_decl.knowledge.as_ref().and_then(|kd| {
+            match &kd.node.store_path.node {
+                forge::ast::Expr::Template(parts) => Some(parts
+                    .iter()
+                    .filter_map(|p| match &p.node {
+                        forge::ast::TemplatePart::Text(t) => Some(t.as_str()),
+                        _ => None,
+                    })
+                    .collect::<String>()),
+                _ => None,
+            }
+        });
+        forge::runtime::storage::ForgeStorage::open_from_config(
+            storage_config.as_ref(),
+            knowledge_store_path.as_deref(),
+            "store.redb",
+        )
+            .ok()
+            .map(|s| std::sync::Arc::new(s))
+    };"#
+        .to_string()
+    };
+
     // Generate subcommand variants
     let mut variants = Vec::new();
     let mut match_arms = Vec::new();
@@ -842,29 +872,8 @@ async fn main() -> anyhow::Result<()> {{
         ));
 
     // Open persistent storage for memory across invocations.
-    // Unified storage root via [storage] in forge.config.toml (#253);
-    // knowledge.store_path preserved as backward-compat fallback.
-    let storage = {{
-        let knowledge_store_path: Option<String> = agent_decl.knowledge.as_ref().and_then(|kd| {{
-            match &kd.node.store_path.node {{
-                forge::ast::Expr::Template(parts) => Some(parts
-                    .iter()
-                    .filter_map(|p| match &p.node {{
-                        forge::ast::TemplatePart::Text(t) => Some(t.as_str()),
-                        _ => None,
-                    }})
-                    .collect::<String>()),
-                _ => None,
-            }}
-        }});
-        forge::runtime::storage::ForgeStorage::open_from_config(
-            storage_config.as_ref(),
-            knowledge_store_path.as_deref(),
-            "store.redb",
-        )
-            .ok()
-            .map(|s| std::sync::Arc::new(s))
-    }};
+    // Skipped for client-boundary agents (they never use data.store/data.get).
+    {storage_code}
 
     let agent = forge::runtime::agent::AgentProcess::new(
         agent_decl.clone(),
@@ -885,6 +894,7 @@ async fn main() -> anyhow::Result<()> {{
         sources = sources_array,
         config = config_code,
         server_url_code = server_url_code,
+        storage_code = storage_code,
         agent_name = agent.name,
         agent_version = agent.version,
         variants = variants.join("\n"),

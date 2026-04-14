@@ -73,7 +73,7 @@ fn parse_sensei_full_program_ast_structure() {
         "expected 2 states (MasteryLevel, SpecialistPhase)"
     );
     assert_eq!(pures, 11, "expected 11 pure functions");
-    assert_eq!(tasks, 8, "expected 8 tasks");
+    assert_eq!(tasks, 9, "expected 9 tasks");
     assert_eq!(flows, 2, "expected 2 flows (answer_query, review_code)");
     assert_eq!(contracts, 1, "expected 1 contract (ForgeTutor)");
     assert_eq!(agents, 2, "expected 2 agents (forge_sensei, specialist)");
