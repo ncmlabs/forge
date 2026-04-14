@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install-sensei.sh — Install forge-sensei CLI + server to ~/.forge/sensei/
 #
-# Usage: bash scripts/install-sensei.sh [--skip-pretrain] [--force-config]
+# Usage: bash scripts/install-sensei.sh [--skip-pretrain] [--force-config] [--uninstall]
 set -euo pipefail
 
 FORGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,16 +9,34 @@ INSTALL_DIR="$HOME/.forge/sensei"
 BIN_DIR="$HOME/.forge/bin"
 SKIP_PRETRAIN=false
 FORCE_CONFIG=false
+UNINSTALL=false
 
 for arg in "$@"; do
   case "$arg" in
     --skip-pretrain) SKIP_PRETRAIN=true ;;
     --force-config) FORCE_CONFIG=true ;;
+    --uninstall) UNINSTALL=true ;;
     --force)
       echo "Note: --force no longer overwrites config; use --force-config for that."
       ;;
   esac
 done
+
+if [ "$UNINSTALL" = true ]; then
+  echo "=== Uninstalling forge-sensei service ==="
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  if [ -x "$HOME/.forge/bin/forge-sensei-server" ]; then
+    bash "$SCRIPT_DIR/install-sensei-server.sh" uninstall && \
+      echo "Service removed." || \
+      echo "Warning: service removal failed (may not have been installed)."
+  else
+    echo "No server binary found at ~/.forge/bin/forge-sensei-server; skipping service teardown."
+  fi
+  echo ""
+  echo "Binaries, config, and knowledge data preserved at ~/.forge/sensei/"
+  echo "To remove everything: rm -rf ~/.forge/sensei ~/.forge/bin/forge-sensei*"
+  exit 0
+fi
 
 echo "=== Installing forge-sensei ==="
 echo "  CLI:      $BIN_DIR/forge-sensei"
@@ -52,7 +70,7 @@ if [ "$1" = "status" ] && [ -f "$SENSEI_DIR/knowledge.json" ]; then
   if [ -f "$STATE_FILE" ]; then
     last_ts=$(grep -o '"last_eval":"[^"]*"' "$STATE_FILE" 2>/dev/null | cut -d'"' -f4)
     if [ -n "$last_ts" ]; then
-      last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$last_ts" +%s 2>/dev/null || echo 0)
+      last_epoch=$(python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('$last_ts').timestamp()))" 2>/dev/null || echo 0)
       now_epoch=$(date +%s)
       hours_since=$(( (now_epoch - last_epoch) / 3600 ))
       if [ "$hours_since" -gt "$STALE_HOURS" ]; then
@@ -137,6 +155,22 @@ if [ -n "$SHELL_RC" ] && ! grep -q '\.forge/bin' "$SHELL_RC" 2>/dev/null; then
   echo ""
   echo "Added ~/.forge/bin to PATH in $SHELL_RC"
 fi
+
+OS=$(uname -s)
+case "$OS" in
+  Linux)
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+      echo ""
+      echo "Detected WSL environment (using Linux service path)."
+    fi
+    if ! systemctl --user status >/dev/null 2>&1; then
+      echo ""
+      echo "Warning: systemd user session unavailable."
+      echo "  Service auto-start (install-sensei-server.sh install) requires systemd."
+      echo "  You can still run the server manually: forge-sensei-server --host 127.0.0.1 --port 3000"
+    fi
+    ;;
+esac
 
 echo ""
 echo "=== Installation complete ==="

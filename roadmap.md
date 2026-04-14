@@ -729,6 +729,7 @@ Worktree isolation for safe agent execution:
 | #167 | Toolkit agent knowledge transfer infrastructure | Open |
 | #240 | forge-sensei server/client deployment path | In Progress |
 | #256 | Split sensei into shared/server/client FORGE sources | In Progress |
+| #257 | Cross-platform install scripts (macOS, Linux, WSL) | Done ✅ |
 
 ### P2.M12: Toolkit Agents
 

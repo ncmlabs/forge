@@ -53,6 +53,18 @@ jobs:
       - name: StartupManager E2E (macOS)
         if: matrix.os == 'macos-latest'
         run: FORGE_SERVICE_E2E=1 cargo test --test startup_manager_tests
+      # Install script E2E (#257): verify cross-platform install/uninstall round-trip
+      - name: Install script E2E (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          bash scripts/install-sensei.sh --skip-pretrain
+          test -x "$HOME/.forge/bin/forge-sensei"
+          test -x "$HOME/.forge/bin/forge-sensei-server"
+          bash scripts/install-sensei-server.sh install
+          bash scripts/install-sensei-server.sh status
+          bash scripts/install-sensei-server.sh uninstall
+          bash scripts/install-sensei.sh --uninstall
 
   msrv:
     name: MSRV (1.89)
