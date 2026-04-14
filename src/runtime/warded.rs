@@ -48,6 +48,7 @@ pub struct AgentBlueprint {
     pub program: Program,
     pub registry: Arc<ProviderRegistry>,
     pub tracer: Option<Tracer>,
+    pub skill_executor: Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
 }
 
 // ── ManagedAgent ────────────────────────────────────────────────────────────
@@ -122,6 +123,7 @@ impl WardedRuntime {
                         program: program.clone(),
                         registry: registry.clone(),
                         tracer: tracer.clone(),
+                        skill_executor: None,
                     },
                 );
             }
@@ -159,6 +161,7 @@ impl WardedRuntime {
         tracer: Option<Tracer>,
         event_bus: SharedEventBus,
         instance_registry: SharedInstanceRegistry,
+        skill_executor: Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
     ) -> Self {
         // Collect agent and states declarations from the program
         let mut agent_decls: HashMap<String, AgentDecl> = HashMap::new();
@@ -194,6 +197,7 @@ impl WardedRuntime {
                         program: program.clone(),
                         registry: registry.clone(),
                         tracer: tracer.clone(),
+                        skill_executor: skill_executor.clone(),
                     },
                 );
             }
@@ -331,6 +335,11 @@ impl WardedRuntime {
             Some(self.instance_registry.clone()),
         )
         .with_warden_signal(self.signal_tx.clone());
+
+        // Attach skill executor if available (#276)
+        if let Some(ref se) = blueprint.skill_executor {
+            process = process.with_skill_executor(se.clone());
+        }
 
         process = process.with_event_bus(self.event_bus.clone()).await;
 

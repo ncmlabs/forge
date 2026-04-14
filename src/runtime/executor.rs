@@ -903,12 +903,13 @@ impl TaskExecutor {
         match system_decl {
             Some(decl) => {
                 let system_config = self.config.as_ref().and_then(|c| c.system.as_ref());
-                let runtime = crate::runtime::system::SystemRuntime::new(
+                let runtime = crate::runtime::system::SystemRuntime::new_with_skills(
                     decl,
                     &self.program,
                     self.providers.clone(),
                     self.tracer.clone(),
                     system_config,
+                    self.skill_executor.clone(),
                 )?;
                 Ok(Some(runtime))
             }

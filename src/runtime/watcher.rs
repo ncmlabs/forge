@@ -1,13 +1,16 @@
 // FORGE file watcher for hot-reload development mode. See issue #47.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use tokio::sync::broadcast;
 
 use crate::runtime::http_server::{print_endpoint_list, SwappableExecutor};
+use crate::types::CapabilitySignature;
 
 /// Action the watcher signals back to the serve loop.
 #[derive(Debug)]
@@ -19,11 +22,15 @@ pub enum WatchAction {
 /// Watch the `.forge` source file (and optionally the config file) for changes.
 /// On `.forge` changes: re-parse, re-validate, and hot-swap the executor.
 /// On config changes: return `WatchAction::RestartServer`.
+/// `skill_sigs` and `skill_exec` are pre-built at serve startup and reused across
+/// hot-reloads — skills don't change when only `.forge` files are edited (#276).
 pub async fn watch_and_reload(
     file: PathBuf,
     swappable: SwappableExecutor,
     reload_tx: Option<broadcast::Sender<()>>,
     events_tx: Option<broadcast::Sender<String>>,
+    skill_sigs: HashMap<String, CapabilitySignature>,
+    skill_exec: Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
 ) -> anyhow::Result<WatchAction> {
     let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
 
@@ -103,7 +110,8 @@ pub async fn watch_and_reload(
             return Ok(WatchAction::RestartServer);
         }
 
-        if forge_changed && attempt_reload(&file, &swappable, &events_tx) {
+        if forge_changed && attempt_reload(&file, &swappable, &events_tx, &skill_sigs, &skill_exec)
+        {
             // Notify connected browsers to reload
             if let Some(ref tx) = reload_tx {
                 let _ = tx.send(());
@@ -136,10 +144,13 @@ fn is_forge_file(path: &Path) -> bool {
 
 /// Attempt to reload the executor from the source file.
 /// Returns true on success, false on failure.
+/// Uses pre-built skill artifacts for skill-aware validation (#276).
 fn attempt_reload(
     file: &Path,
     swappable: &SwappableExecutor,
     events_tx: &Option<broadcast::Sender<String>>,
+    skill_sigs: &HashMap<String, CapabilitySignature>,
+    skill_exec: &Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
 ) -> bool {
     eprint!("File changed -- reloading... ");
 
@@ -164,13 +175,25 @@ fn attempt_reload(
         }
     };
 
-    // Validate
+    // Validate with skill-aware capability registry (#276)
     let mut diagnostics = Vec::new();
 
-    let ctx = crate::resolver::CheckContext::new(&fname);
+    let ctx = if skill_sigs.is_empty() {
+        crate::resolver::CheckContext::new(&fname)
+    } else {
+        crate::resolver::CheckContext::with_skills(&fname, skill_sigs.clone())
+    };
     if let Err(errors) = ctx.check(&program) {
-        let registry = crate::resolver::CapabilityRegistry::builtin();
-        diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+        let cap_registry = if skill_sigs.is_empty() {
+            crate::resolver::CapabilityRegistry::builtin()
+        } else {
+            crate::resolver::CapabilityRegistry::with_skills(skill_sigs.clone())
+        };
+        diagnostics.extend(
+            errors
+                .iter()
+                .map(|e| e.to_diagnostic(&fname, &cap_registry)),
+        );
     }
 
     diagnostics.extend(crate::checker::check_all(&program, &fname));
@@ -216,6 +239,11 @@ fn attempt_reload(
             .with_config(config)
             .with_command_manager(cmd_mgr)
             .with_session_manager(session_mgr);
+
+    // Attach pre-built skill executor (#276)
+    if let Some(se) = skill_exec {
+        new_executor = new_executor.with_skill_executor(se.clone());
+    }
 
     // Preserve storage handle from the old executor (#140)
     {

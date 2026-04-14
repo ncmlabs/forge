@@ -68,6 +68,36 @@ impl SystemRuntime {
         tracer: Option<Tracer>,
         config: Option<&SystemConfig>,
     ) -> Result<Self, RuntimeError> {
+        Self::new_inner(system_decl, program, providers, tracer, config, None)
+    }
+
+    /// Build with an optional skill executor for agent blueprints (#276).
+    pub fn new_with_skills(
+        system_decl: &SystemDecl,
+        program: &Program,
+        providers: Arc<ProviderRegistry>,
+        tracer: Option<Tracer>,
+        config: Option<&SystemConfig>,
+        skill_executor: Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
+    ) -> Result<Self, RuntimeError> {
+        Self::new_inner(
+            system_decl,
+            program,
+            providers,
+            tracer,
+            config,
+            skill_executor,
+        )
+    }
+
+    fn new_inner(
+        system_decl: &SystemDecl,
+        program: &Program,
+        providers: Arc<ProviderRegistry>,
+        tracer: Option<Tracer>,
+        config: Option<&SystemConfig>,
+        skill_executor: Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
+    ) -> Result<Self, RuntimeError> {
         let name = system_decl.name.node.clone();
 
         // Collect agent and states declarations from the program
@@ -122,6 +152,7 @@ impl SystemRuntime {
                     program: program.clone(),
                     registry: providers.clone(),
                     tracer: tracer.clone(),
+                    skill_executor: skill_executor.clone(),
                 },
             );
         }
@@ -165,6 +196,7 @@ impl SystemRuntime {
                     tracer.clone(),
                     event_bus.clone(),
                     instance_registry.clone(),
+                    skill_executor.clone(),
                 );
                 warded_runtimes.push(warded);
             }
@@ -338,6 +370,11 @@ impl SystemRuntime {
             self.storage.clone(),
             Some(self.instance_registry.clone()),
         );
+
+        // Attach skill executor if available (#276)
+        if let Some(ref se) = blueprint.skill_executor {
+            process = process.with_skill_executor(se.clone());
+        }
 
         process = process.with_event_bus(self.event_bus.clone()).await;
 

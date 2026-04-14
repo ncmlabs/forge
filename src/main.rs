@@ -14,6 +14,14 @@ use forge::runtime::command_manager::CommandManager;
 use forge::runtime::confidence::{ConfidentValue, Value};
 use forge::runtime::knowledge_store::KnowledgeStore;
 
+/// Result of building an executor: (executor, config, skill_sigs, skill_exec).
+type BuildResult = (
+    forge::runtime::executor::TaskExecutor,
+    forge::config::ForgeConfig,
+    HashMap<String, forge::types::CapabilitySignature>,
+    Option<Arc<forge::runtime::skill_executor::SkillExecutor>>,
+);
+
 #[derive(Parser)]
 #[command(
     name = "forge",
@@ -96,6 +104,9 @@ enum Command {
         /// Additional source files to merge (for multi-file projects)
         #[arg(long = "source", short = 's')]
         sources: Vec<PathBuf>,
+        /// Path to forge.project.toml (enables project-level skill declarations)
+        #[arg(long)]
+        manifest: Option<PathBuf>,
     },
     /// Export an agent's knowledge and config as a .forgepkg.json package
     Export {
@@ -299,8 +310,9 @@ async fn main() -> anyhow::Result<()> {
             port,
             watch,
             sources,
+            manifest,
         } => {
-            serve_program(&file, &sources, host, port, watch).await?;
+            serve_program(&file, &sources, host, port, watch, manifest.as_deref()).await?;
         }
         Command::Export {
             file,
@@ -950,19 +962,16 @@ async fn build_program(path: &Path, options: BuildProgramOptions<'_>) -> anyhow:
 
 /// Try to build executor from entry file + optional additional sources.
 /// When sources are provided, merges them before building (multi-file project support).
+/// Returns executor, config, skill signatures, and skill executor (#276).
 fn try_build_executor_multi(
     file: &Path,
     sources: &[PathBuf],
     events_tx: Option<tokio::sync::broadcast::Sender<String>>,
-) -> Result<
-    (
-        forge::runtime::executor::TaskExecutor,
-        forge::config::ForgeConfig,
-    ),
-    anyhow::Error,
-> {
+    manifest: Option<&forge::manifest::ProjectManifest>,
+    base_dir: Option<&Path>,
+) -> Result<BuildResult, anyhow::Error> {
     if sources.is_empty() {
-        return try_build_executor(file, events_tx);
+        return try_build_executor(file, events_tx, manifest, base_dir);
     }
 
     // Multi-file: parse all, merge, then build
@@ -970,7 +979,6 @@ fn try_build_executor_multi(
     all_paths.extend(sources.iter().cloned());
 
     let mut source_files = Vec::new();
-    let mut diagnostics = Vec::new();
 
     for path in &all_paths {
         let source = read_source(path)?;
@@ -987,6 +995,47 @@ fn try_build_executor_multi(
             source,
             program,
         });
+    }
+
+    // Load config, providers, and skills early — needed for skill-aware validation (#276)
+    let config = forge::config::ForgeConfig::load_or_default();
+    let trace_env = std::env::var("FORGE_TRACE")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let tracer = match (&events_tx, trace_env) {
+        (Some(tx), _) => Some(forge::tracer::Tracer::with_live(tx.clone())),
+        (None, true) => Some(forge::tracer::Tracer::new()),
+        (None, false) => None,
+    };
+
+    let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
+        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
+    let providers = Arc::new(registry);
+
+    let (skill_exec, skill_sigs) =
+        build_skill_executor(&config, &providers, tracer.as_ref(), manifest, base_dir);
+
+    // Per-file resolver validation with skill-aware checker (#276)
+    let mut diagnostics = Vec::new();
+    for sf in &source_files {
+        let ctx = if skill_sigs.is_empty() {
+            forge::resolver::CheckContext::new(&sf.path)
+        } else {
+            forge::resolver::CheckContext::with_skills(&sf.path, skill_sigs.clone())
+        };
+        if let Err(errors) = ctx.check(&sf.program) {
+            let cap_registry = if skill_sigs.is_empty() {
+                forge::resolver::CapabilityRegistry::builtin()
+            } else {
+                forge::resolver::CapabilityRegistry::with_skills(skill_sigs.clone())
+            };
+            diagnostics.extend(
+                errors
+                    .iter()
+                    .map(|e| e.to_diagnostic(&sf.path, &cap_registry)),
+            );
+        }
+        diagnostics.extend(forge::checker::check_all(&sf.program, &sf.path));
     }
 
     // Cross-file boundary check
@@ -1016,7 +1065,47 @@ fn try_build_executor_multi(
         )
     })?;
 
+    let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
+    let session_mgr =
+        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
+    let mut executor = forge::runtime::executor::TaskExecutor::new(
+        composed.program,
+        Arc::clone(&providers),
+        tracer,
+    )
+    .with_config(config.clone())
+    .with_command_manager(cmd_mgr)
+    .with_session_manager(session_mgr);
+    if let Some(ref se) = skill_exec {
+        executor = executor.with_skill_executor(se.clone());
+    }
+
+    Ok((executor, config, skill_sigs, skill_exec))
+}
+
+/// Try to parse, validate, and build an executor from a single .forge file.
+/// Returns the executor, config, skill signatures, and skill executor on success,
+/// or renders diagnostics and returns an error.
+fn try_build_executor(
+    file: &Path,
+    events_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    manifest: Option<&forge::manifest::ProjectManifest>,
+    base_dir: Option<&Path>,
+) -> Result<BuildResult, anyhow::Error> {
+    let source = read_source(file)?;
+    let fname = file.display().to_string();
+
+    let program = match forge::parser::parse(&source) {
+        Ok(p) => p,
+        Err(e) => {
+            e.to_diagnostic(&fname).render(&source);
+            return Err(anyhow::anyhow!("parse error in {}", fname));
+        }
+    };
+
+    // Load config, providers, and skills early — needed for skill-aware validation (#276)
     let config = forge::config::ForgeConfig::load_or_default();
+
     let trace_env = std::env::var("FORGE_TRACE")
         .map(|v| v == "1")
         .unwrap_or(false);
@@ -1030,55 +1119,28 @@ fn try_build_executor_multi(
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
     let providers = Arc::new(registry);
 
-    let (skill_exec, _skill_sigs) =
-        build_skill_executor(&config, &providers, tracer.as_ref(), None, None);
-    let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
-    let session_mgr =
-        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
-    let mut executor = forge::runtime::executor::TaskExecutor::new(
-        composed.program,
-        Arc::clone(&providers),
-        tracer,
-    )
-    .with_config(config.clone())
-    .with_command_manager(cmd_mgr)
-    .with_session_manager(session_mgr);
-    if let Some(se) = skill_exec {
-        executor = executor.with_skill_executor(se);
-    }
+    let (skill_exec, skill_sigs) =
+        build_skill_executor(&config, &providers, tracer.as_ref(), manifest, base_dir);
 
-    Ok((executor, config))
-}
-
-/// Try to parse, validate, and build an executor from a single .forge file.
-/// Returns the executor and config on success, or renders diagnostics and returns an error.
-fn try_build_executor(
-    file: &Path,
-    events_tx: Option<tokio::sync::broadcast::Sender<String>>,
-) -> Result<
-    (
-        forge::runtime::executor::TaskExecutor,
-        forge::config::ForgeConfig,
-    ),
-    anyhow::Error,
-> {
-    let source = read_source(file)?;
-    let fname = file.display().to_string();
-
-    let program = match forge::parser::parse(&source) {
-        Ok(p) => p,
-        Err(e) => {
-            e.to_diagnostic(&fname).render(&source);
-            return Err(anyhow::anyhow!("parse error in {}", fname));
-        }
-    };
-
+    // Validate with skill-aware capability registry (#276)
     let mut diagnostics = Vec::new();
 
-    let ctx = forge::resolver::CheckContext::new(&fname);
+    let ctx = if skill_sigs.is_empty() {
+        forge::resolver::CheckContext::new(&fname)
+    } else {
+        forge::resolver::CheckContext::with_skills(&fname, skill_sigs.clone())
+    };
     if let Err(errors) = ctx.check(&program) {
-        let registry = forge::resolver::CapabilityRegistry::builtin();
-        diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+        let cap_registry = if skill_sigs.is_empty() {
+            forge::resolver::CapabilityRegistry::builtin()
+        } else {
+            forge::resolver::CapabilityRegistry::with_skills(skill_sigs.clone())
+        };
+        diagnostics.extend(
+            errors
+                .iter()
+                .map(|e| e.to_diagnostic(&fname, &cap_registry)),
+        );
     }
 
     diagnostics.extend(forge::checker::check_all(&program, &fname));
@@ -1091,23 +1153,6 @@ fn try_build_executor(
         return Err(anyhow::anyhow!("{} diagnostic error(s)", diagnostics.len()));
     }
 
-    let config = forge::config::ForgeConfig::load_or_default();
-
-    let trace_env = std::env::var("FORGE_TRACE")
-        .map(|v| v == "1")
-        .unwrap_or(false);
-    let tracer = match (&events_tx, trace_env) {
-        (Some(tx), _) => Some(forge::tracer::Tracer::with_live(tx.clone())),
-        (None, true) => Some(forge::tracer::Tracer::new()),
-        (None, false) => None,
-    };
-
-    let registry = forge::llm::registry::ProviderRegistry::from_config(config.clone())
-        .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
-    let providers = Arc::new(registry);
-
-    let (skill_exec, _skill_sigs) =
-        build_skill_executor(&config, &providers, tracer.as_ref(), None, None);
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let session_mgr =
         forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
@@ -1116,11 +1161,11 @@ fn try_build_executor(
             .with_config(config.clone())
             .with_command_manager(cmd_mgr)
             .with_session_manager(session_mgr);
-    if let Some(se) = skill_exec {
-        executor = executor.with_skill_executor(se);
+    if let Some(ref se) = skill_exec {
+        executor = executor.with_skill_executor(se.clone());
     }
 
-    Ok((executor, config))
+    Ok((executor, config, skill_sigs, skill_exec))
 }
 
 async fn serve_program(
@@ -1129,6 +1174,7 @@ async fn serve_program(
     cli_host: Option<String>,
     cli_port: Option<u16>,
     watch: bool,
+    manifest_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     // Auto-discover forge.config.toml next to the served file when FORGE_CONFIG is not set.
     if std::env::var("FORGE_CONFIG").is_err() {
@@ -1140,16 +1186,46 @@ async fn serve_program(
         }
     }
 
+    // Resolve project manifest: explicit --manifest flag, or auto-discover next to the served file.
+    let (manifest, base_dir) = if let Some(mp) = manifest_path {
+        let m = forge::manifest::ProjectManifest::load(mp)?;
+        let bd = mp.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+        (Some(m), Some(bd))
+    } else if let Some(parent) = file.parent() {
+        let candidate = parent.join("forge.project.toml");
+        if candidate.exists() {
+            let m = forge::manifest::ProjectManifest::load(&candidate)?;
+            (Some(m), Some(parent.to_path_buf()))
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
     if watch {
-        serve_with_watch(file, sources, cli_host, cli_port).await
+        serve_with_watch(
+            file,
+            sources,
+            cli_host,
+            cli_port,
+            manifest.as_ref(),
+            base_dir.as_deref(),
+        )
+        .await
     } else {
         // Non-watch mode: build once and serve. Exits on errors.
         let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
-        let (executor, config) =
-            match try_build_executor_multi(file, sources, Some(events_tx.clone())) {
-                Ok(r) => r,
-                Err(_) => std::process::exit(1),
-            };
+        let (executor, config, _skill_sigs, _skill_exec) = match try_build_executor_multi(
+            file,
+            sources,
+            Some(events_tx.clone()),
+            manifest.as_ref(),
+            base_dir.as_deref(),
+        ) {
+            Ok(r) => r,
+            Err(_) => std::process::exit(1),
+        };
 
         // Create shared infrastructure for both HTTP server and system runtime (#140)
         let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
@@ -1351,6 +1427,8 @@ async fn serve_with_watch(
     sources: &[PathBuf],
     cli_host: Option<String>,
     cli_port: Option<u16>,
+    manifest: Option<&forge::manifest::ProjectManifest>,
+    base_dir: Option<&Path>,
 ) -> anyhow::Result<()> {
     use forge::runtime::watcher::WatchAction;
 
@@ -1358,11 +1436,16 @@ async fn serve_with_watch(
     let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
 
     loop {
-        let (executor, config) =
-            match try_build_executor_multi(file, sources, Some(events_tx.clone())) {
-                Ok(r) => r,
-                Err(_) => std::process::exit(1),
-            };
+        let (executor, config, skill_sigs, skill_exec) = match try_build_executor_multi(
+            file,
+            sources,
+            Some(events_tx.clone()),
+            manifest,
+            base_dir,
+        ) {
+            Ok(r) => r,
+            Err(_) => std::process::exit(1),
+        };
 
         // Create shared infrastructure for both HTTP server and system runtime (#140)
         let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
@@ -1518,6 +1601,8 @@ async fn serve_with_watch(
                 swappable,
                 reload_tx,
                 watcher_events_tx,
+                skill_sigs,
+                skill_exec,
             )
             .await
         });

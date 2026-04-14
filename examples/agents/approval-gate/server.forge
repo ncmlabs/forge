@@ -3,22 +3,34 @@
 # ================================================================
 # Approval Gate — live E2E server
 # ================================================================
-# Run from repo root:
-#   cargo run -- serve examples/agents/approval-gate/server.forge --port 3210
+# Run from repo root (with manifest for skill support):
+#   cargo run -- serve --manifest examples/agents/approval-gate/forge.project.toml \
+#     examples/agents/approval-gate/server.forge --port 3210
 #
 # Test flow:
-#   1. POST /trigger?context=Deploy+v2&request_id=req-001  → triggers agent
-#   2. Agent transitions to waiting_approval, emits ApprovalRequest
-#   3. POST /webhook/approval (JSON or Slack callback)      → publishes ApprovalResponse
+#   1. POST /trigger?context=Deploy+v2&request_id=req-001&callback_url=<ngrok>/webhook/approval&channel=C0AS3AQRNN9
+#      → triggers agent
+#   2. Agent transitions to waiting_approval, sends Slack message with Approve/Reject buttons
+#   3. User clicks Approve/Reject in Slack → Slack POSTs to /webhook/approval
 #   4. Agent receives response, logs decision, transitions to idle
-#   5. GET /health                                          → "ok"
+#   5. GET /health → "ok"
+#
+# Prerequisites:
+#   - SLACK_BOT_TOKEN env var set
+#   - Bot invited to approval channel
+#   - Slack app Interactivity URL set to <ngrok>/webhook/approval
 # ================================================================
+
+use
+  skill.slack
 
 # ── Events ─────────────────────────────────────────────────────
 
 event TriggerApproval
   context: Text
   request_id: Text
+  callback_url: Text
+  channel: Text
 
 event ApprovalRequest
   agent_id: Text
@@ -44,6 +56,7 @@ agent approval_gate
     request_id: Text
     context: Text
     decision: Text
+    channel: Text
   subscribe TriggerApproval
   subscribe ApprovalResponse
 
@@ -51,16 +64,21 @@ agent approval_gate
     memory.request_id = ""
     memory.context = ""
     memory.decision = "none"
+    memory.channel = ""
     say "[gate] Agent started. Waiting for trigger."
 
-  on TriggerApproval(context: Text, request_id: Text)
+  on TriggerApproval(context: Text, request_id: Text, callback_url: Text, channel: Text)
     requires lifecycle == idle on fail: give "approval already pending"
     memory.context = context
     memory.request_id = request_id
     memory.decision = "pending"
+    memory.channel = channel
     transition to waiting_approval
+    result = skill.slack.send_message(channel, "Approval required: {context} [req: {request_id}]")
+    when result.sure -> say "[gate] Approval message sent to Slack: {request_id}"
+    when result.unsure -> say "[gate] Approval notification may have failed"
+    else -> say "[gate] Failed to send approval notification"
     emit ApprovalRequest(agent_id: "approval_gate", context: context, request_id: request_id)
-    say "[gate] Approval requested: {request_id} — {context}"
     say "[gate] State: waiting_approval. Listening for ApprovalResponse..."
 
   on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
@@ -104,6 +122,6 @@ system approval_system
 endpoint health() -> Text
   give "ok"
 
-endpoint trigger(context: Text, request_id: Text) -> Text
-  emit TriggerApproval(context: context, request_id: request_id)
+endpoint trigger(context: Text, request_id: Text, callback_url: Text, channel: Text) -> Text
+  emit TriggerApproval(context: context, request_id: request_id, callback_url: callback_url, channel: channel)
   give "triggered: {request_id}"
