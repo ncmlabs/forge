@@ -1,0 +1,97 @@
+# Session worker smoke test — FORGE->Claude Code->FORGE bootstrap (issue #241)
+#
+# Delegates to Claude Code as a worker to write a code-analyzer FORGE program,
+# then validates and executes the generated program — proving the full
+# orchestration loop: delegate -> validate -> execute -> clean up.
+
+pure check_session_result
+  needs plan: Text
+  gives Bool
+  do
+    if plan.contains(".forge")
+      give true
+    if plan.contains("forge")
+      give true
+    give false
+
+pure check_passed
+  needs stdout: Text
+  gives Bool
+  do
+    if stdout.contains("OK")
+      give true
+    if stdout.contains("ok")
+      give true
+    if stdout.contains("Found")
+      give true
+    give false
+
+pure final_verdict
+  needs session_ok: Bool, check_ok: Bool, run_ok: Bool
+  gives Text
+  do
+    if session_ok and check_ok and run_ok
+      give "PASS: full cycle verified — Claude wrote valid FORGE, check passed, program ran"
+    if session_ok and check_ok
+      give "PARTIAL: Claude wrote valid FORGE (check passed) but run failed"
+    if session_ok
+      give "PARTIAL: session succeeded but generated program failed check"
+    give "FAIL: session did not produce expected output"
+
+task delegate_to_claude
+  gives AgentResult
+  do
+    result = session "forge-worker" agent "claude" prompt "You are in the FORGE repository. Write a FORGE program at .forge-data/generated_analyzer.forge that counts the number of .rs files in the src/ directory.\n\nRead examples/command/exec_success.forge and examples/basics/hello.forge for syntax reference.\n\nThe program should:\n1. Have a task that uses exec to run: find src -name \"*.rs\" | wc -l\n2. Handle the uncertain exec result with when/else\n3. Use a pure function to format the output as \"Found N Rust files in src/\"\n4. Have fn main that calls the task, formats with the pure function, and says the result\n\nWrite ONLY the .forge file. Do not create any other files." tools ["Read", "Write", "Glob", "Grep"] timeout 3m budget 0.50 gives AgentResult
+    when result.sure -> give result
+    else -> give result
+
+task verify_check
+  gives Text
+  do
+    result = command "cargo run -- check .forge-data/generated_analyzer.forge" timeout 60s
+    when result.sure -> give result.stdout
+    else -> give "CHECK_FAILED"
+
+task verify_run
+  gives Text
+  do
+    result = command "cargo run -- run .forge-data/generated_analyzer.forge" timeout 60s
+    when result.sure -> give result.stdout
+    else -> give "RUN_FAILED"
+
+task cleanup
+  gives Text
+  do
+    result = command "rm -f .forge-data/generated_analyzer.forge" timeout 5s
+    when result.sure -> give "cleaned"
+    else -> give "cleanup_failed"
+
+fn main
+  say "=== FORGE->Claude Code Worker Smoke Test (#241) ==="
+  say ""
+  say "--- Step 1: Delegate to Claude Code ---"
+  result = delegate_to_claude()
+  say "plan: {result.plan}"
+  say "confidence: {result.confidence}"
+  say "cost_usd: {result.cost_usd}"
+  say "tokens_in: {result.metadata.tokens_in}"
+  say "tokens_out: {result.metadata.tokens_out}"
+  say ""
+  say "--- Step 2: forge check generated program ---"
+  check_out = verify_check()
+  say "check: {check_out}"
+  say ""
+  say "--- Step 3: forge run generated program ---"
+  run_out = verify_run()
+  say "run: {run_out}"
+  say ""
+  say "--- Step 4: Clean up ---"
+  say cleanup()
+  say ""
+  say "--- Verdict ---"
+  session_ok = check_session_result(result.plan)
+  check_ok = check_passed(check_out)
+  run_ok = check_passed(run_out)
+  say final_verdict(session_ok, check_ok, run_ok)
+  say ""
+  say "=== Done ==="

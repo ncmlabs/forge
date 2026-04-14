@@ -161,6 +161,7 @@ check = "ok"
 [[cases]]
 name = "live session examples"
 paths = [
+  "examples/session/session_claude_e2e.forge",
   "examples/session/session_contradiction_live.forge",
   "examples/session/session_engine_codex_live.forge",
   "examples/session/session_engine_live.forge",
