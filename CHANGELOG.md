@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Session smoke test (`examples/session/session_claude_e2e.forge`): end-to-end proof that FORGE can delegate to Claude Code via the session primitive, capture a structured AgentResult, and verify output with pure checks (#241)
+- Session worker smoke test (`examples/session/session_claude_e2e.forge`): FORGE delegates to Claude Code to write a code-analyzer FORGE program, then validates it with `forge check`, executes it with `forge run`, and verifies the full cycle — proving language bootstrapping end-to-end (#241)
 - Cross-platform install scripts: `install-sensei.sh` now works on macOS, Linux, and WSL. Replaced macOS-only `date -j -f` with portable `python3` fallback, added `--uninstall` flag for service teardown, and WSL/systemd preflight warnings. CI job verifies install/uninstall round-trip on Ubuntu (#257)
 - Cross-platform `StartupManager` trait (`src/runtime/startup/`) with per-OS backends for launchctl (macOS), systemd user units (Linux/WSL), and schtasks (Windows). Generated FORGE server binaries now expose `install-service` / `service {start|stop|status|uninstall}` subcommands that emit JSON, replacing the macOS-only shell glue in `install-sensei-server.sh` (which is now a thin wrapper) (#254)
 - Unified persistent storage root: new `[storage] root` key in `forge.config.toml` (with `FORGE_STORAGE_ROOT` env override and legacy `knowledge.store_path` fallback) routes CLI and server redb databases to the same file regardless of working directory. `ForgeStorage::open_from_config` / `resolve_root` replace the ad-hoc `./.forge-data` joins in main.rs and build.rs (#253)
