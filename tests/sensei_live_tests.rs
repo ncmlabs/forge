@@ -55,14 +55,8 @@ fn haiku_registry() -> Option<Arc<ProviderRegistry>> {
 fn sensei_server_source_files() -> Vec<compose::SourceFile> {
     [
         ("types.forge", "workflows/forge-sensei/shared/types.forge"),
-        (
-            "events.forge",
-            "workflows/forge-sensei/shared/events.forge",
-        ),
-        (
-            "states.forge",
-            "workflows/forge-sensei/shared/states.forge",
-        ),
+        ("events.forge", "workflows/forge-sensei/shared/events.forge"),
+        ("states.forge", "workflows/forge-sensei/shared/states.forge"),
         ("tasks.forge", "workflows/forge-sensei/server/tasks.forge"),
         ("flows.forge", "workflows/forge-sensei/server/flows.forge"),
         ("agent.forge", "workflows/forge-sensei/server/agent.forge"),
@@ -84,9 +78,7 @@ fn sensei_server_source_files() -> Vec<compose::SourceFile> {
 
 /// Spawn a sensei server with the given registry and a temp storage.
 /// Returns (base_url, _tmp_dir) — keep _tmp_dir alive for the test duration.
-async fn spawn_sensei_server_with(
-    registry: Arc<ProviderRegistry>,
-) -> (String, tempfile::TempDir) {
+async fn spawn_sensei_server_with(registry: Arc<ProviderRegistry>) -> (String, tempfile::TempDir) {
     let source_files = sensei_server_source_files();
     let composed = compose::merge_programs(&source_files).expect("merge sensei files failed");
 
@@ -450,10 +442,7 @@ async fn sensei_server_down_returns_connection_error() {
         .build()
         .unwrap();
 
-    let result = client
-        .get("http://127.0.0.1:19999/api/status")
-        .send()
-        .await;
+    let result = client.get("http://127.0.0.1:19999/api/status").send().await;
 
     assert!(
         result.is_err(),
