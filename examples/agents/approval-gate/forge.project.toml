@@ -1,0 +1,10 @@
+[project]
+name = "approval-gate"
+version = "0.1.0"
+description = "Approval gate pattern — emit request, wait for human approval via webhook, resume or escalate on timeout"
+
+[build]
+entry = "main.forge"
+
+[skills]
+slack = { path = "../../../skills/slack" }

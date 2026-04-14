@@ -1,0 +1,109 @@
+#! boundary: server
+
+# ================================================================
+# Approval Gate — live E2E server
+# ================================================================
+# Run from repo root:
+#   cargo run -- serve examples/agents/approval-gate/server.forge --port 3210
+#
+# Test flow:
+#   1. POST /trigger?context=Deploy+v2&request_id=req-001  → triggers agent
+#   2. Agent transitions to waiting_approval, emits ApprovalRequest
+#   3. POST /webhook/approval (JSON or Slack callback)      → publishes ApprovalResponse
+#   4. Agent receives response, logs decision, transitions to idle
+#   5. GET /health                                          → "ok"
+# ================================================================
+
+# ── Events ─────────────────────────────────────────────────────
+
+event TriggerApproval
+  context: Text
+  request_id: Text
+
+event ApprovalRequest
+  agent_id: Text
+  context: Text
+  request_id: Text
+
+event ApprovalResponse
+  request_id: Text
+  approved: Bool
+  comment: Text
+
+# ── States ─────────────────────────────────────────────────────
+
+states ApprovalPhase
+  idle -> waiting_approval
+  waiting_approval -> idle
+
+# ── Agent ──────────────────────────────────────────────────────
+
+agent approval_gate
+  lifecycle: ApprovalPhase
+  memory
+    request_id: Text
+    context: Text
+    decision: Text
+  subscribe TriggerApproval
+  subscribe ApprovalResponse
+
+  on start
+    memory.request_id = ""
+    memory.context = ""
+    memory.decision = "none"
+    say "[gate] Agent started. Waiting for trigger."
+
+  on TriggerApproval(context: Text, request_id: Text)
+    requires lifecycle == idle on fail: give "approval already pending"
+    memory.context = context
+    memory.request_id = request_id
+    memory.decision = "pending"
+    transition to waiting_approval
+    emit ApprovalRequest(agent_id: "approval_gate", context: context, request_id: request_id)
+    say "[gate] Approval requested: {request_id} — {context}"
+    say "[gate] State: waiting_approval. Listening for ApprovalResponse..."
+
+  on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
+    requires lifecycle == waiting_approval on fail: give "no pending approval"
+    requires request_id == memory.request_id on fail: give "stale response"
+    if approved
+      memory.decision = "approved"
+      say "[gate] APPROVED by {comment}"
+    if not approved
+      memory.decision = "rejected"
+      say "[gate] REJECTED by {comment}"
+    transition to idle
+    say "[gate] Back to idle. Decision: {memory.decision}"
+
+  if stuck for 3 turns
+    escalate to human
+
+# ── Warden ─────────────────────────────────────────────────────
+
+warden gate_warden
+  manages [approval_gate]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: restart, self
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, self
+    after 1: escalate
+  max_retries 3 per 1h then escalate
+
+# ── System ─────────────────────────────────────────────────────
+
+system approval_system
+  use
+    gate: approval_gate
+
+# ── Endpoints ──────────────────────────────────────────────────
+
+endpoint health() -> Text
+  give "ok"
+
+endpoint trigger(context: Text, request_id: Text) -> Text
+  emit TriggerApproval(context: context, request_id: request_id)
+  give "triggered: {request_id}"

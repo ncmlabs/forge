@@ -1536,3 +1536,173 @@ async fn sensei_all_endpoints_registered() {
     );
     assert_eq!(endpoints.len(), 18);
 }
+
+// ── Approval webhook tests (issue #182) ──────────────────────────
+
+/// Spawn a server whose event bus is returned so tests can subscribe.
+async fn spawn_approval_server() -> (String, forge::runtime::event_bus::SharedEventBus) {
+    let source = "#! boundary: server\n\nendpoint noop() -> Text\n  give \"ok\"\n";
+    let program = forge::parser::parse(source).expect("parse failed");
+    let executor = TaskExecutor::new(program, mock_registry(), None);
+    let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+    let server = ForgeServer::new(executor, None).with_event_bus(event_bus.clone());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    (format!("http://127.0.0.1:{port}"), event_bus)
+}
+
+/// Spawn a server *without* an event bus.
+async fn spawn_approval_server_no_bus() -> String {
+    let source = "#! boundary: server\n\nendpoint noop() -> Text\n  give \"ok\"\n";
+    let program = forge::parser::parse(source).expect("parse failed");
+    let executor = TaskExecutor::new(program, mock_registry(), None);
+    let server = ForgeServer::new(executor, None);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    format!("http://127.0.0.1:{port}")
+}
+
+#[tokio::test]
+async fn approval_webhook_json_publishes_event() {
+    let (base, bus) = spawn_approval_server().await;
+
+    // Subscribe to ApprovalResponse before sending the webhook.
+    let mut rx = {
+        let mut guard = bus.write().await;
+        guard.subscribe("ApprovalResponse", "test-agent", None)
+    };
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/approval"))
+        .header("content-type", "application/json")
+        .body(r#"{"request_id":"req-001","approved":true,"comment":"lgtm"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("timed out waiting for event")
+        .expect("channel closed");
+
+    assert_eq!(event.event_name, "ApprovalResponse");
+    assert_eq!(event.source_agent, "webhook");
+    let req_id = event.fields.get("request_id").expect("missing request_id");
+    assert!(matches!(&req_id.value, forge::runtime::confidence::Value::Text(s) if s == "req-001"));
+    let approved = event.fields.get("approved").expect("missing approved");
+    assert!(matches!(
+        &approved.value,
+        forge::runtime::confidence::Value::Bool(true)
+    ));
+    let comment = event.fields.get("comment").expect("missing comment");
+    assert!(matches!(&comment.value, forge::runtime::confidence::Value::Text(s) if s == "lgtm"));
+}
+
+#[tokio::test]
+async fn approval_webhook_form_encoded_publishes_event() {
+    let (base, bus) = spawn_approval_server().await;
+
+    let mut rx = {
+        let mut guard = bus.write().await;
+        guard.subscribe("ApprovalResponse", "test-agent", None)
+    };
+
+    // Simulate Slack interactive payload: form-encoded with a JSON `payload` field.
+    let slack_json = r#"{"actions":[{"action_id":"approve","value":"approved:req-002"}],"user":{"id":"U123","name":"alice"}}"#;
+    let form_body = format!("payload={}", urlencoding::encode(slack_json));
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/approval"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(form_body)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("timed out waiting for event")
+        .expect("channel closed");
+
+    assert_eq!(event.event_name, "ApprovalResponse");
+    let req_id = event.fields.get("request_id").expect("missing request_id");
+    assert!(matches!(&req_id.value, forge::runtime::confidence::Value::Text(s) if s == "req-002"));
+    let approved = event.fields.get("approved").expect("missing approved");
+    assert!(matches!(
+        &approved.value,
+        forge::runtime::confidence::Value::Bool(true)
+    ));
+    let comment = event.fields.get("comment").expect("missing comment");
+    // Comment is built from Slack user info.
+    assert!(
+        matches!(&comment.value, forge::runtime::confidence::Value::Text(s) if s == "alice (U123)")
+    );
+}
+
+#[tokio::test]
+async fn approval_webhook_no_event_bus_returns_503() {
+    let base = spawn_approval_server_no_bus().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/webhook/approval"))
+        .header("content-type", "application/json")
+        .body(r#"{"request_id":"req-003","approved":false,"comment":"nope"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 503);
+}
+
+#[tokio::test]
+async fn approval_webhook_invalid_payload_returns_400() {
+    let (base, _bus) = spawn_approval_server().await;
+    let client = reqwest::Client::new();
+
+    // Invalid JSON body.
+    let resp = client
+        .post(format!("{base}/webhook/approval"))
+        .header("content-type", "application/json")
+        .body("not json")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 400);
+
+    // Unsupported content type.
+    let resp = client
+        .post(format!("{base}/webhook/approval"))
+        .header("content-type", "text/plain")
+        .body("hello")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 400);
+}
