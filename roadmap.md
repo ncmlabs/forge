@@ -78,7 +78,7 @@ Everything in this document exists to reach that moment.
 | P2.M6 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 ✅ | Done |
 | P2.M7 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research, deterministic execution | #163 ✅ #164 ✅ #165 ✅ #237 ✅ | Done |
 | P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176 ✅ #177 ✅ #178 ✅ #179 ✅ | Done |
-| P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180 ✅, #181 ✅, #182 | In Progress |
+| P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180 ✅, #181 ✅, #182 ✅ | Done |
 | P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Frozen |
 | P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer + operational readiness | #166 ✅, #167 ✅, #240, #249 ✅, #256 ✅, #257 ✅ | Near Done |
 | P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168, #169-#175 (frozen) | Frozen (except #168) |
@@ -711,7 +711,7 @@ Worktree isolation for safe agent execution:
 |-------|-------|--------|
 | #180 | Slack Monitor agent — poll channels, detect mentions | Done ✅ |
 | #181 | Inbound Triager agent — classify, route, or escalate | Done ✅ |
-| #182 | Approval gate pattern — events + Slack + webhook | Open |
+| #182 | Approval gate pattern — events + Slack + webhook | Done ✅ |
 
 ### P2.M10: Dev Orchestration System
 
@@ -786,11 +786,11 @@ Done:
 - `P2.M8` CLI Skills ✅
 
 Now:
-- `P2.M9` Orchestration — Approval gate (#182)
+- `P2.M9` Orchestration ✅
 - `P2.M11` Knowledge School — operational readiness (#240)
+- `P2.M10` Dev System — ProjectAgent, Executor, two-project proof (unblocked by M9)
 
 Blocked next by:
-- `P2.M10` Dev System — ProjectAgent, Executor, two-project proof
 
 Then:
 - `P2.M12` Toolkit Agents — Generator contract (#168) unblocks all generators

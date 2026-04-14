@@ -1,0 +1,181 @@
+# ================================================================
+# Approval Gate — human-in-the-loop approval pattern
+# ================================================================
+# Demonstrates the standard FORGE approval gate: an agent that
+# pauses execution to request human approval via Slack, waits for
+# a webhook callback, and resumes or escalates on timeout.
+#
+# Data flow:
+#   Agent emits ApprovalRequest
+#     → Notifier sends Slack message with Approve/Reject buttons
+#     → Human clicks button in Slack
+#     → Slack POSTs to /webhook/approval
+#     → Webhook handler publishes ApprovalResponse to event bus
+#     → Agent receives response, resumes execution
+#
+# Part of the orchestration pipeline (P2.M9):
+#   Executor → ApprovalGate → merge/deploy
+#
+# Prerequisites:
+#   - SLACK_BOT_TOKEN env var set (xoxb-...)
+#   - Bot invited to the approval channel
+#   - Slack app Interactivity Request URL set to:
+#     http://<forge-host>:<port>/webhook/approval
+#   - LLM provider configured
+#
+# Usage:
+#   forge run --manifest examples/agents/approval-gate/forge.project.toml
+#
+# Issue: #182 (Approval gate pattern)
+# ================================================================
+
+use
+  llm.reason
+  skill.slack
+
+# ── Events ─────────────────────────────────────────────────────
+# Standard approval event pair. Downstream agents emit
+# ApprovalRequest; the webhook handler publishes ApprovalResponse.
+
+event ApprovalRequest
+  agent_id: Text
+  context: Text
+  request_id: Text
+
+event ApprovalResponse
+  request_id: Text
+  approved: Bool
+  comment: Text
+
+# ── States ─────────────────────────────────────────────────────
+# Two states: idle (ready) and waiting_approval (blocked on human).
+# The decision (approved/rejected/escalated) is tracked in memory.
+
+states ApprovalPhase
+  idle -> waiting_approval
+  waiting_approval -> idle
+
+# ── Approval gate agent ───────────────────────────────────────
+
+agent approval_gate
+  lifecycle: ApprovalPhase
+  memory
+    request_id: Text
+    context: Text
+    decision: Text
+    notify_channel: Text
+    approval_attempts: Number
+  timer approval_timeout: 300s
+  subscribe ApprovalResponse
+
+  on start
+    memory.notify_channel = "C0123456789"
+    memory.request_id = ""
+    memory.context = ""
+    memory.decision = "none"
+    memory.approval_attempts = 0
+    say "Approval gate ready."
+
+  on request_approval(context: Text, request_id: Text)
+    requires lifecycle == idle on fail: give "approval already pending"
+    memory.context = context
+    memory.request_id = request_id
+    memory.decision = "pending"
+    memory.approval_attempts = 1
+    transition to waiting_approval
+    callback = "http://localhost:3000/webhook/approval"
+    result = skill.slack.send_approval(memory.notify_channel, context, callback, request_id)
+    when result.sure -> say "Approval request sent to Slack: {request_id}"
+    when result.unsure -> say "Approval notification may have failed"
+    else -> say "Failed to send approval notification"
+    start approval_timeout
+    emit ApprovalRequest(agent_id: "approval_gate", context: context, request_id: request_id)
+
+  on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
+    requires lifecycle == waiting_approval on fail: give "no pending approval"
+    requires request_id == memory.request_id on fail: give "stale response"
+    cancel approval_timeout
+    if approved
+      memory.decision = "approved"
+      say "Approved: {comment}"
+    if not approved
+      memory.decision = "rejected"
+      say "Rejected: {comment}"
+    transition to idle
+
+  on approval_timeout.expired
+    requires lifecycle == waiting_approval on fail: give "no pending approval"
+    memory.approval_attempts = memory.approval_attempts + 1
+    if memory.approval_attempts > 3
+      memory.decision = "escalated"
+      escalation = skill.slack.send_message(memory.notify_channel, "ESCALATED: approval {memory.request_id} timed out after 3 retries.")
+      when escalation.sure -> say "Escalation sent"
+      else -> say "Escalation notification failed"
+      say "Approval escalated after 3 retries."
+      transition to idle
+    reminder = skill.slack.send_message(memory.notify_channel, "REMINDER: approval {memory.request_id} still pending (attempt {memory.approval_attempts}).")
+    when reminder.sure -> say "Reminder sent (attempt {memory.approval_attempts})"
+    else -> say "Reminder notification failed"
+    start approval_timeout
+
+  on status
+    give "request_id={memory.request_id} decision={memory.decision} attempts={memory.approval_attempts}"
+
+  if stuck for 3 turns
+    say "Approval gate stuck. Escalating."
+    escalate to human
+
+# ── Warden ─────────────────────────────────────────────────────
+
+warden approval_warden
+  manages [approval_gate]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 2: escalate
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, self
+    after 1: escalate
+  max_retries 3 per 1h then escalate
+
+# ── System ─────────────────────────────────────────────────────
+
+system approval_system
+  use
+    gate: approval_gate
+
+# ── Entry point ────────────────────────────────────────────────
+
+task describe_pattern
+  gives Text
+  do
+    description = reason "Summarize the FORGE approval gate pattern in one sentence: emit ApprovalRequest, wait for webhook ApprovalResponse, timeout with re-notify, escalate after retries."
+    when description.sure -> give description
+    else -> give "Approval gate: emit request, wait for human response via webhook, escalate on timeout."
+
+fn main
+  say "=== Approval Gate Pattern (issue #182) ==="
+  say ""
+  say "Events:"
+  say "  ApprovalRequest  — agent_id, context, request_id"
+  say "  ApprovalResponse — request_id, approved, comment"
+  say ""
+  say "Webhook: POST /webhook/approval"
+  say "  Accepts: application/x-www-form-urlencoded (Slack)"
+  say "           application/json (direct)"
+  say ""
+  say "Flow:"
+  say "  1. Agent emits ApprovalRequest + transitions to waiting_approval"
+  say "  2. Slack message with Approve/Reject buttons sent"
+  say "  3. Human clicks button -> Slack POSTs to /webhook/approval"
+  say "  4. Webhook publishes ApprovalResponse to event bus"
+  say "  5. Agent receives response, transitions to idle"
+  say "  6. On timeout: re-notify (up to 3x), then escalate"
+  say ""
+  result = describe_pattern()
+  say "Summary: {result}"
+  say ""
+  say "=== Pattern demonstration complete ==="

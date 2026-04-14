@@ -69,7 +69,7 @@ capabilities:
     inputs: [Text, Text]
     output: Text
   - name: send_approval
-    inputs: [Text, Text, Text]
+    inputs: [Text, Text, Text, Text]
     output: Text
   - name: edit_message
     inputs: [Text, Text, Text]
@@ -340,9 +340,9 @@ Replace `BOT_USER_ID` with the value from Step 1. Store the latest `ts` from the
 
 Return the filtered messages array.
 
-### `send_approval(channel, text, callback_url)`
+### `send_approval(channel, text, callback_url, request_id)`
 
-Send a message with interactive Approve/Reject buttons. When a user clicks a button, Slack sends a POST to the `callback_url` with the action payload.
+Send a message with interactive Approve/Reject buttons. The `request_id` is encoded in each button's `value` field as `"approved:{request_id}"` or `"rejected:{request_id}"` so the receiving webhook can correlate responses to the original approval request.
 
 ```bash
 curl -s -X POST "https://slack.com/api/chat.postMessage" \
@@ -365,14 +365,14 @@ curl -s -X POST "https://slack.com/api/chat.postMessage" \
             "text": {"type": "plain_text", "text": "Approve"},
             "style": "primary",
             "action_id": "approve",
-            "value": "approved"
+            "value": "approved:REQUEST_ID"
           },
           {
             "type": "button",
             "text": {"type": "plain_text", "text": "Reject"},
             "style": "danger",
             "action_id": "reject",
-            "value": "rejected"
+            "value": "rejected:REQUEST_ID"
           }
         ]
       }
@@ -380,9 +380,11 @@ curl -s -X POST "https://slack.com/api/chat.postMessage" \
   }'
 ```
 
-To receive button clicks, configure an **Interactivity Request URL** in your Slack app settings (https://api.slack.com/apps → your app → **Interactivity & Shortcuts** → set the Request URL to your `callback_url`).
+Replace `REQUEST_ID` with the `request_id` parameter value.
 
-When a user clicks a button, Slack POSTs a JSON payload to the callback URL containing `actions[0].action_id` (`approve` or `reject`) and `user.id` (who clicked).
+To receive button clicks, configure an **Interactivity Request URL** in your Slack app settings (https://api.slack.com/apps → your app → **Interactivity & Shortcuts** → set the Request URL to your `callback_url`). The FORGE server exposes `POST /webhook/approval` as the dedicated endpoint for this purpose.
+
+When a user clicks a button, Slack POSTs a form-encoded payload to the callback URL. The FORGE `/webhook/approval` endpoint parses the `actions[0].value` field to extract the decision and `request_id`, then publishes an `ApprovalResponse` event to the event bus with fields: `request_id` (Text), `approved` (Bool), `comment` (Text with approver info).
 
 Return the `ts` on success.
 

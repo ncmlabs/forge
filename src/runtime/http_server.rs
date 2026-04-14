@@ -223,6 +223,13 @@ impl ForgeServer {
         // so new/removed endpoints are visible immediately after hot-reload.
         // Webhook route: POST /webhook/:name with Content-Type validation and optional HMAC
         let mut router = Router::new()
+            // Dedicated approval webhook: handles Slack interactive payloads
+            // (form-encoded) and direct JSON.  Must be registered before the
+            // generic /webhook/{endpoint} catch-all so axum matches it first.
+            .route(
+                "/webhook/approval",
+                axum::routing::post(handle_approval_webhook),
+            )
             .route("/webhook/{endpoint}", axum::routing::post(handle_webhook))
             .route("/api/{endpoint}", get(handle_get_api).post(handle_post_api))
             .route("/{endpoint}", get(handle_get).post(handle_post))
@@ -1149,6 +1156,132 @@ fn custom_record_payload(fields: &HashMap<String, ConfidentValue>) -> Option<&Co
         Value::Record(_) => fields.get("_value"),
         _ => None,
     }
+}
+
+// ── Approval webhook handler ────────────────────────────────────────────────
+// Dedicated endpoint for human-in-the-loop approval gates (issue #182).
+// Accepts Slack interactive payloads (form-encoded) and direct JSON, then
+// publishes an ApprovalResponse event to the bus.
+
+/// Parse a Slack interactive payload (application/x-www-form-urlencoded).
+/// Slack wraps its JSON inside a form field named `payload`.
+fn parse_slack_approval_payload(body: &[u8]) -> Result<(String, bool, String), String> {
+    let body_str = String::from_utf8(body.to_vec()).map_err(|_| "invalid UTF-8")?;
+    // Find the payload= form field and URL-decode its value.
+    let payload_json = body_str
+        .split('&')
+        .find_map(|pair| {
+            let (key, val) = pair.split_once('=')?;
+            if key == "payload" {
+                urlencoding::decode(val).ok().map(|s| s.into_owned())
+            } else {
+                None
+            }
+        })
+        .ok_or("missing payload field")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&payload_json).map_err(|_| "invalid JSON in payload")?;
+    // Extract action_id and value from actions[0].
+    let action = json
+        .pointer("/actions/0")
+        .ok_or("missing actions[0]")?;
+    let value = action
+        .get("value")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    // value format: "approved:{request_id}" or "rejected:{request_id}"
+    let (decision, request_id) = value
+        .split_once(':')
+        .ok_or("button value must be decision:request_id")?;
+    let approved = decision == "approved";
+    // Build comment from Slack user info.
+    let user_name = json
+        .pointer("/user/name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let user_id = json
+        .pointer("/user/id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let comment = format!("{} ({})", user_name, user_id);
+    Ok((request_id.to_string(), approved, comment))
+}
+
+/// Parse a direct JSON approval payload (for testing and non-Slack sources).
+fn parse_json_approval_payload(body: &[u8]) -> Result<(String, bool, String), String> {
+    let json: serde_json::Value =
+        serde_json::from_slice(body).map_err(|_| "invalid JSON")?;
+    let request_id = json
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .ok_or("missing request_id")?
+        .to_string();
+    let approved = json
+        .get("approved")
+        .and_then(|v| v.as_bool())
+        .ok_or("missing approved")?;
+    let comment = json
+        .get("comment")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok((request_id, approved, comment))
+}
+
+/// POST /webhook/approval — inject an ApprovalResponse event into the bus.
+async fn handle_approval_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let parsed = if content_type.contains("x-www-form-urlencoded") {
+        parse_slack_approval_payload(&body)
+    } else if content_type.contains("json") {
+        parse_json_approval_payload(&body)
+    } else {
+        Err("unsupported Content-Type".to_string())
+    };
+
+    let (request_id, approved, comment) = match parsed {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+
+    let Some(ref bus) = state.event_bus else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "no event bus configured").into_response();
+    };
+
+    use crate::runtime::event_bus::EventPayload;
+    let mut fields = HashMap::new();
+    fields.insert(
+        "request_id".to_string(),
+        ConfidentValue::deterministic(Value::Text(request_id)),
+    );
+    fields.insert(
+        "approved".to_string(),
+        ConfidentValue::deterministic(Value::Bool(approved)),
+    );
+    fields.insert(
+        "comment".to_string(),
+        ConfidentValue::deterministic(Value::Text(comment)),
+    );
+
+    let payload = EventPayload {
+        event_name: "ApprovalResponse".to_string(),
+        args: vec![],
+        source_agent: "webhook".to_string(),
+        fields,
+    };
+
+    let bus_guard = bus.read().await;
+    bus_guard.publish(&payload);
+
+    StatusCode::OK.into_response()
 }
 
 async fn fallback_handler() -> Response {
