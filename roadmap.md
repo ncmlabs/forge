@@ -78,7 +78,7 @@ Everything in this document exists to reach that moment.
 | P2.M6 — Sandbox | `sandbox` isolation: spawn modifier + worktree | #194 ✅ | Done |
 | P2.M7 — Skills Foundation | Pluggable skill architecture, capability types, CLI delegation research, deterministic execution | #163 ✅ #164 ✅ #165 ✅ #237 ✅ | Done |
 | P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176 ✅ #177 ✅ #178 ✅ #179 ✅ | Done |
-| P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180 ✅, #181, #182 | In Progress |
+| P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180 ✅, #181 ✅, #182 | In Progress |
 | P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Frozen |
 | P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer + operational readiness | #166 ✅, #167 ✅, #240, #249 ✅, #256 ✅, #257 ✅ | Near Done |
 | P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168, #169-#175 (frozen) | Frozen (except #168) |
@@ -710,7 +710,7 @@ Worktree isolation for safe agent execution:
 | Issue | Title | Status |
 |-------|-------|--------|
 | #180 | Slack Monitor agent — poll channels, detect mentions | Done ✅ |
-| #181 | Inbound Triager agent — classify, route, or escalate | Open |
+| #181 | Inbound Triager agent — classify, route, or escalate | Done ✅ |
 | #182 | Approval gate pattern — events + Slack + webhook | Open |
 
 ### P2.M10: Dev Orchestration System
@@ -786,7 +786,7 @@ Done:
 - `P2.M8` CLI Skills ✅
 
 Now:
-- `P2.M9` Orchestration — Triager (#181), Approval gate (#182)
+- `P2.M9` Orchestration — Approval gate (#182)
 - `P2.M11` Knowledge School — operational readiness (#240)
 
 Blocked next by:
@@ -955,7 +955,7 @@ P2.M5  Verify+Contra   ███████████████████
 P2.M6  Sandbox         ████████████████████  1/1  (100%)  DONE
 P2.M7  Skills          ████████████████████  4/4  (100%)  DONE
 P2.M8  CLI Skills      ████████████████████  4/4  (100%)  DONE
-P2.M9  Orchestration   ██████░░░░░░░░░░░░░░  1/3  ( 33%)  IN PROGRESS
+P2.M9  Orchestration   █████████████░░░░░░░  2/3  ( 67%)  IN PROGRESS
 P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)  FROZEN
 P2.M11 Knowledge       ████████████████░░░░  5/6  ( 83%)  NEAR DONE — #240 remaining
 P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)  FROZEN
