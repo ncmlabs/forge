@@ -1163,9 +1163,18 @@ fn custom_record_payload(fields: &HashMap<String, ConfidentValue>) -> Option<&Co
 // Accepts Slack interactive payloads (form-encoded) and direct JSON, then
 // publishes an ApprovalResponse event to the bus.
 
+/// Parsed Slack approval payload.
+struct SlackApproval {
+    request_id: String,
+    approved: bool,
+    comment: String,
+    /// Per-interaction URL provided by Slack for updating the original message.
+    response_url: Option<String>,
+}
+
 /// Parse a Slack interactive payload (application/x-www-form-urlencoded).
 /// Slack wraps its JSON inside a form field named `payload`.
-fn parse_slack_approval_payload(body: &[u8]) -> Result<(String, bool, String), String> {
+fn parse_slack_approval_payload(body: &[u8]) -> Result<SlackApproval, String> {
     let body_str = String::from_utf8(body.to_vec()).map_err(|_| "invalid UTF-8")?;
     // Find the payload= form field and URL-decode its value.
     let payload_json = body_str
@@ -1199,7 +1208,16 @@ fn parse_slack_approval_payload(body: &[u8]) -> Result<(String, bool, String), S
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let comment = format!("{} ({})", user_name, user_id);
-    Ok((request_id.to_string(), approved, comment))
+    let response_url = json
+        .get("response_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Ok(SlackApproval {
+        request_id: request_id.to_string(),
+        approved,
+        comment,
+        response_url,
+    })
 }
 
 /// Parse a direct JSON approval payload (for testing and non-Slack sources).
@@ -1233,17 +1251,20 @@ async fn handle_approval_webhook(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let parsed = if content_type.contains("x-www-form-urlencoded") {
-        parse_slack_approval_payload(&body)
-    } else if content_type.contains("json") {
-        parse_json_approval_payload(&body)
-    } else {
-        Err("unsupported Content-Type".to_string())
-    };
+    let is_slack = content_type.contains("x-www-form-urlencoded");
 
-    let (request_id, approved, comment) = match parsed {
-        Ok(v) => v,
-        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    let (request_id, approved, comment, response_url) = if is_slack {
+        match parse_slack_approval_payload(&body) {
+            Ok(s) => (s.request_id, s.approved, s.comment, s.response_url),
+            Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        }
+    } else if content_type.contains("json") {
+        match parse_json_approval_payload(&body) {
+            Ok((r, a, c)) => (r, a, c, None),
+            Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        }
+    } else {
+        return (StatusCode::BAD_REQUEST, "unsupported Content-Type").into_response();
     };
 
     let Some(ref bus) = state.event_bus else {
@@ -1254,7 +1275,7 @@ async fn handle_approval_webhook(
     let mut fields = HashMap::new();
     fields.insert(
         "request_id".to_string(),
-        ConfidentValue::deterministic(Value::Text(request_id)),
+        ConfidentValue::deterministic(Value::Text(request_id.clone())),
     );
     fields.insert(
         "approved".to_string(),
@@ -1262,7 +1283,7 @@ async fn handle_approval_webhook(
     );
     fields.insert(
         "comment".to_string(),
-        ConfidentValue::deterministic(Value::Text(comment)),
+        ConfidentValue::deterministic(Value::Text(comment.clone())),
     );
 
     let payload = EventPayload {
@@ -1275,7 +1296,48 @@ async fn handle_approval_webhook(
     let bus_guard = bus.read().await;
     bus_guard.publish(&payload);
 
-    StatusCode::OK.into_response()
+    // Update the Slack message via response_url (async, non-blocking).
+    if let Some(url) = response_url {
+        let (icon, verb) = if approved {
+            ("\u{2705}", "Approved")
+        } else {
+            ("\u{274c}", "Rejected")
+        };
+        let update_body = serde_json::json!({
+            "replace_original": true,
+            "text": format!("{icon} {verb} by {comment}"),
+            "blocks": [{
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": format!("{icon} *{verb}* by {comment}\nRequest: `{request_id}`")
+                }
+            }]
+        });
+        tokio::spawn(async move {
+            let _ = reqwest::Client::new()
+                .post(&url)
+                .json(&update_body)
+                .send()
+                .await;
+        });
+    }
+
+    // Return confirmation (empty for Slack, JSON for direct callers).
+    if is_slack {
+        StatusCode::OK.into_response()
+    } else {
+        let json = serde_json::json!({
+            "status": if approved { "approved" } else { "rejected" },
+            "request_id": request_id,
+        });
+        (
+            StatusCode::OK,
+            [("content-type", "application/json")],
+            json.to_string(),
+        )
+            .into_response()
+    }
 }
 
 async fn fallback_handler() -> Response {
