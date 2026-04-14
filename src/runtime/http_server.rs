@@ -1182,13 +1182,8 @@ fn parse_slack_approval_payload(body: &[u8]) -> Result<(String, bool, String), S
     let json: serde_json::Value =
         serde_json::from_str(&payload_json).map_err(|_| "invalid JSON in payload")?;
     // Extract action_id and value from actions[0].
-    let action = json
-        .pointer("/actions/0")
-        .ok_or("missing actions[0]")?;
-    let value = action
-        .get("value")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let action = json.pointer("/actions/0").ok_or("missing actions[0]")?;
+    let value = action.get("value").and_then(|v| v.as_str()).unwrap_or("");
     // value format: "approved:{request_id}" or "rejected:{request_id}"
     let (decision, request_id) = value
         .split_once(':')
@@ -1209,8 +1204,7 @@ fn parse_slack_approval_payload(body: &[u8]) -> Result<(String, bool, String), S
 
 /// Parse a direct JSON approval payload (for testing and non-Slack sources).
 fn parse_json_approval_payload(body: &[u8]) -> Result<(String, bool, String), String> {
-    let json: serde_json::Value =
-        serde_json::from_slice(body).map_err(|_| "invalid JSON")?;
+    let json: serde_json::Value = serde_json::from_slice(body).map_err(|_| "invalid JSON")?;
     let request_id = json
         .get("request_id")
         .and_then(|v| v.as_str())

@@ -1616,7 +1616,10 @@ async fn approval_webhook_json_publishes_event() {
     let req_id = event.fields.get("request_id").expect("missing request_id");
     assert!(matches!(&req_id.value, forge::runtime::confidence::Value::Text(s) if s == "req-001"));
     let approved = event.fields.get("approved").expect("missing approved");
-    assert!(matches!(&approved.value, forge::runtime::confidence::Value::Bool(true)));
+    assert!(matches!(
+        &approved.value,
+        forge::runtime::confidence::Value::Bool(true)
+    ));
     let comment = event.fields.get("comment").expect("missing comment");
     assert!(matches!(&comment.value, forge::runtime::confidence::Value::Text(s) if s == "lgtm"));
 }
@@ -1653,10 +1656,15 @@ async fn approval_webhook_form_encoded_publishes_event() {
     let req_id = event.fields.get("request_id").expect("missing request_id");
     assert!(matches!(&req_id.value, forge::runtime::confidence::Value::Text(s) if s == "req-002"));
     let approved = event.fields.get("approved").expect("missing approved");
-    assert!(matches!(&approved.value, forge::runtime::confidence::Value::Bool(true)));
+    assert!(matches!(
+        &approved.value,
+        forge::runtime::confidence::Value::Bool(true)
+    ));
     let comment = event.fields.get("comment").expect("missing comment");
     // Comment is built from Slack user info.
-    assert!(matches!(&comment.value, forge::runtime::confidence::Value::Text(s) if s == "alice (U123)"));
+    assert!(
+        matches!(&comment.value, forge::runtime::confidence::Value::Text(s) if s == "alice (U123)")
+    );
 }
 
 #[tokio::test]
