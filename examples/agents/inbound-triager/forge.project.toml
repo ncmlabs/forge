@@ -1,0 +1,11 @@
+[project]
+name = "inbound-triager"
+version = "0.1.0"
+description = "Inbound triage agent — classifies, routes, or escalates SlackMention, IssueCreated, and PRReviewNeeded events"
+
+[build]
+entry = "main.forge"
+
+[skills]
+slack = { path = "../../../skills/slack" }
+github = { path = "../../../skills/github" }

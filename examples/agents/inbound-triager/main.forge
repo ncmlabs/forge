@@ -1,0 +1,293 @@
+# ================================================================
+# Inbound Triager — classify, route, or escalate
+# ================================================================
+# Subscribes to SlackMention, IssueCreated, and PRReviewNeeded
+# events. For each inbound item: classify whether it can be
+# handled autonomously, route to the appropriate ProjectAgent,
+# or escalate to a human via Slack.
+#
+# Part of the orchestration pipeline (P2.M9):
+#   Monitors → Triager → ProjectAgents → Executors
+#
+# Prerequisites:
+#   - SLACK_BOT_TOKEN env var set (xoxb-...)
+#   - Bot invited to the notification channel
+#   - LLM provider configured (for classification)
+#
+# Usage:
+#   forge run --manifest examples/agents/inbound-triager/forge.project.toml
+#
+# Issue: #181 (Inbound Triager agent)
+# ================================================================
+
+use
+  llm.reason
+  llm.classify
+  skill.slack
+  skill.github
+
+# ── Inbound Events ─────────────────────────────────────────────
+# Re-declared here; in production these come from monitor agents.
+
+event SlackMention
+  channel: Text
+  user: Text
+  message: Text
+  thread_ts: Text
+  timestamp: Text
+  urgency: Text
+
+event IssueCreated
+  repo: Text
+  issue_number: Text
+  title: Text
+  body: Text
+  labels: Text
+  author: Text
+
+event PRReviewNeeded
+  repo: Text
+  pr_number: Text
+  title: Text
+  body: Text
+  author: Text
+  reviewers: Text
+
+# ── Outbound Events ────────────────────────────────────────────
+# Downstream ProjectAgents subscribe with:
+#   subscribe TriageRouted where project == memory.project
+
+event TriageRouted
+  project: Text
+  action: Text
+  source: Text
+  summary: Text
+  context: Text
+
+event TriageEscalated
+  cause: Text
+  source: Text
+  summary: Text
+  context: Text
+  channel: Text
+
+event TriageCompleted
+  source: Text
+  decision: Text
+  project: Text
+
+# ── Tasks ───────────────────────────────────────────────────────
+
+task detect_project
+  needs summary: Text, context: Text
+  gives Text
+  do
+    result = classify "Which project does this belong to?\n\nSummary: {summary}\nContext: {context}" into ["forge", "wiki", "unknown"]
+    when result.sure -> give result
+    when result.unsure -> give "unknown"
+    else -> give "unknown"
+
+task classify_action
+  needs summary: Text, context: Text
+  gives Text
+  do
+    result = classify "Can this request be handled automatically by a coding agent, or does it need human input?\n\nRequest: {summary}\nContext: {context}" into ["auto_route", "needs_context", "needs_human"]
+    when result.sure -> give result
+    when result.unsure -> give "needs_context"
+    else -> give "needs_human"
+
+task determine_action
+  needs source: Text, summary: Text
+  gives Text
+  do
+    result = classify "What action should a project agent take?\n\nSource: {source}\nRequest: {summary}" into ["implement_issue", "review_pr", "answer_question", "investigate"]
+    when result.sure -> give result
+    when result.unsure -> give "investigate"
+    else -> give "investigate"
+
+task build_escalation_context
+  needs source: Text, summary: Text, context: Text
+  gives Text
+  do
+    result = reason "Summarize this for a human engineer in 2-3 sentences.\nSource: {source}\nSummary: {summary}\nContext: {context}"
+    when result.sure -> give result
+    when result.unsure -> give "Source: {source} — {summary}"
+    else -> give "Triage item needs review. Source: {source}"
+
+# ── Agent ───────────────────────────────────────────────────────
+
+agent inbound_triager
+  memory persistent
+    items_triaged: Number
+    items_routed: Number
+    items_escalated: Number
+    last_source: Text
+    last_decision: Text
+    notify_channel: Text
+  knowledge store: ".forge-knowledge/triager"
+    max_entries: 5000
+    retention: 90d
+  subscribe SlackMention
+  subscribe IssueCreated
+  subscribe PRReviewNeeded
+
+  on start
+    memory.items_triaged = 0
+    memory.items_routed = 0
+    memory.items_escalated = 0
+    memory.last_source = "none"
+    memory.last_decision = "none"
+    memory.notify_channel = "C0AS3AQRNN9"
+    say "Inbound Triager active. Listening for SlackMention, IssueCreated, PRReviewNeeded."
+
+  on SlackMention(channel: Text, user: Text, message: Text, thread_ts: Text, timestamp: Text, urgency: Text)
+    memory.items_triaged = memory.items_triaged + 1
+    memory.last_source = "slack"
+    prior = recall "slack triage {message}"
+    project = detect_project(message, "Slack mention from {user}, urgency: {urgency}")
+    handleability = classify_action(message, "Slack mention, urgency: {urgency}")
+    memory.last_decision = handleability
+    if handleability == "auto_route" and project != "unknown"
+      action = determine_action("slack", message)
+      emit TriageRouted(project: project, action: action, source: "slack", summary: message, context: "channel: {channel}, user: {user}")
+      learn "routed slack mention to {project}/{action}: {message}" category: "routing"
+      memory.items_routed = memory.items_routed + 1
+      say "Routed: slack/{project}/{action} — {message}"
+    if handleability == "needs_context"
+      esc_context = build_escalation_context("slack", message, "User: {user}, Channel: {channel}")
+      notification = skill.slack.send_message(channel, "Triage: not confident about this request. Context:\n{esc_context}\nPlease advise.")
+      when notification.sure -> say "Escalation sent to channel"
+      else -> say "Escalation notification failed"
+      emit TriageEscalated(cause: "low confidence", source: "slack", summary: message, context: esc_context, channel: channel)
+      learn "escalated slack mention (needs context): {message}" category: "escalation"
+      memory.items_escalated = memory.items_escalated + 1
+    if handleability == "needs_human"
+      esc_context = build_escalation_context("slack", message, "User: {user}, Channel: {channel}")
+      notification = skill.slack.send_message(channel, "This request needs human attention:\n{esc_context}")
+      when notification.sure -> say "Human notified"
+      else -> say "Human notification failed"
+      emit TriageEscalated(cause: "needs human", source: "slack", summary: message, context: esc_context, channel: channel)
+      learn "escalated slack mention (needs human): {message}" category: "escalation"
+      memory.items_escalated = memory.items_escalated + 1
+    emit TriageCompleted(source: "slack", decision: handleability, project: project)
+
+  on IssueCreated(repo: Text, issue_number: Text, title: Text, body: Text, labels: Text, author: Text)
+    memory.items_triaged = memory.items_triaged + 1
+    memory.last_source = "github_issue"
+    prior = recall "issue triage {title}"
+    project = detect_project(title, "Repo: {repo}, Labels: {labels}")
+    handleability = classify_action(title, body)
+    memory.last_decision = handleability
+    if handleability == "auto_route" and project != "unknown"
+      action = determine_action("issue", title)
+      emit TriageRouted(project: project, action: action, source: "github_issue", summary: title, context: "repo: {repo}, issue: {issue_number}, labels: {labels}")
+      learn "routed issue to {project}/{action}: {title}" category: "routing"
+      memory.items_routed = memory.items_routed + 1
+      say "Routed: issue/{project}/{action} — {title}"
+    if handleability == "needs_context" or handleability == "needs_human" or project == "unknown"
+      esc_context = build_escalation_context("github_issue", title, body)
+      notification = skill.slack.send_message(memory.notify_channel, "Issue needs attention: {repo}#{issue_number} — {title}\n{esc_context}")
+      when notification.sure -> say "Escalation sent for issue #{issue_number}"
+      else -> say "Escalation notification failed"
+      emit TriageEscalated(cause: handleability, source: "github_issue", summary: title, context: esc_context, channel: memory.notify_channel)
+      learn "escalated issue ({handleability}): {title}" category: "escalation"
+      memory.items_escalated = memory.items_escalated + 1
+    emit TriageCompleted(source: "github_issue", decision: handleability, project: project)
+
+  on PRReviewNeeded(repo: Text, pr_number: Text, title: Text, body: Text, author: Text, reviewers: Text)
+    memory.items_triaged = memory.items_triaged + 1
+    memory.last_source = "github_pr"
+    prior = recall "pr triage {title}"
+    project = detect_project(title, "Repo: {repo}")
+    handleability = classify_action(title, body)
+    memory.last_decision = handleability
+    if handleability == "auto_route" and project != "unknown"
+      emit TriageRouted(project: project, action: "review_pr", source: "github_pr", summary: title, context: "repo: {repo}, pr: {pr_number}, author: {author}")
+      learn "routed PR review to {project}: {title}" category: "routing"
+      memory.items_routed = memory.items_routed + 1
+      say "Routed: pr/{project}/review_pr — {title}"
+    if handleability == "needs_context" or handleability == "needs_human" or project == "unknown"
+      esc_context = build_escalation_context("github_pr", title, body)
+      notification = skill.slack.send_message(memory.notify_channel, "PR needs attention: {repo}#{pr_number} — {title}\n{esc_context}")
+      when notification.sure -> say "Escalation sent for PR #{pr_number}"
+      else -> say "Escalation notification failed"
+      emit TriageEscalated(cause: handleability, source: "github_pr", summary: title, context: esc_context, channel: memory.notify_channel)
+      learn "escalated PR ({handleability}): {title}" category: "escalation"
+      memory.items_escalated = memory.items_escalated + 1
+    emit TriageCompleted(source: "github_pr", decision: handleability, project: project)
+
+  on status
+    give "Triaged: {memory.items_triaged}, Routed: {memory.items_routed}, Escalated: {memory.items_escalated}, Last: {memory.last_source}/{memory.last_decision}"
+
+  if stuck for 3 turns
+    say "Triager stuck. Escalating."
+    escalate to human
+
+# ── Warden ──────────────────────────────────────────────────────
+
+warden triage_warden
+  manages [inbound_triager]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 2: escalate
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, self
+    after 1: escalate
+  max_retries 3 per 1h then escalate
+
+# ── System ──────────────────────────────────────────────────────
+
+system triage_system
+  use
+    triager: inbound_triager
+
+# ── Entry Point ─────────────────────────────────────────────────
+
+task triage_live_test
+  needs ch: Text
+  gives Text
+  do
+    say "--- Live triage: simulating SlackMention ---"
+    test_message = "Hey @forge-bot, the parser crashes when I nest task calls inside a flow stage. Can you look into this?"
+    project = detect_project(test_message, "Slack mention from U12345, urgency: unknown")
+    say "  Project: {project}"
+    handleability = classify_action(test_message, "Slack mention, urgency: unknown")
+    say "  Handleability: {handleability}"
+    if handleability == "auto_route" and project != "unknown"
+      action = determine_action("slack", test_message)
+      say "  Action: {action}"
+      result = skill.slack.send_message(ch, "Triage result: routed to {project}/{action}\nMessage: {test_message}")
+      when result.sure -> say "  Slack notification sent (routed)"
+      else -> say "  Slack notification failed"
+      give "PASS: routed to {project}/{action}"
+    esc = build_escalation_context("slack", test_message, "User: U12345")
+    result = skill.slack.send_message(ch, "Triage escalation ({handleability}):\n{esc}")
+    when result.sure -> say "  Slack escalation sent"
+    else -> say "  Slack escalation failed"
+    give "PASS: escalated ({handleability}) — project={project}"
+
+fn main
+  say "=== Inbound Triager Agent ==="
+  say "Subscribes to: SlackMention, IssueCreated, PRReviewNeeded"
+  say ""
+  say "Testing classification tasks with sample data..."
+  say ""
+  project = detect_project("Fix parser error in task declarations", "repo: ncmlabs/forge, labels: bug")
+  say "Detected project: {project}"
+  handleability = classify_action("Fix parser error in task declarations", "The parser crashes on nested task calls")
+  say "Handleability: {handleability}"
+  action = determine_action("issue", "Fix parser error in task declarations")
+  say "Action: {action}"
+  context = build_escalation_context("github_issue", "Need production access", "User requests SSH keys to prod servers")
+  say "Escalation context: {context}"
+  say ""
+  say "=== Classification tests complete ==="
+  say ""
+  say "--- Live Slack integration test ---"
+  verdict = triage_live_test("C0AS3AQRNN9")
+  say "Verdict: {verdict}"
+  say "=== All tests complete ==="

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Inbound Triager agent (`examples/agents/inbound-triager/`): subscribes to SlackMention, IssueCreated, and PRReviewNeeded events, classifies each via LLM into route/escalate decisions, emits TriageRouted events for downstream ProjectAgents, and escalates to humans via Slack. Includes persistent memory, knowledge store for learning routing patterns, warden supervision, and live Slack integration (#181)
 - Session worker smoke test (`examples/session/session_claude_e2e.forge`): FORGE delegates to Claude Code to write a code-analyzer FORGE program, then validates it with `forge check`, executes it with `forge run`, and verifies the full cycle — proving language bootstrapping end-to-end (#241)
 - Cross-platform install scripts: `install-sensei.sh` now works on macOS, Linux, and WSL. Replaced macOS-only `date -j -f` with portable `python3` fallback, added `--uninstall` flag for service teardown, and WSL/systemd preflight warnings. CI job verifies install/uninstall round-trip on Ubuntu (#257)
 - Cross-platform `StartupManager` trait (`src/runtime/startup/`) with per-OS backends for launchctl (macOS), systemd user units (Linux/WSL), and schtasks (Windows). Generated FORGE server binaries now expose `install-service` / `service {start|stop|status|uninstall}` subcommands that emit JSON, replacing the macOS-only shell glue in `install-sensei-server.sh` (which is now a thin wrapper) (#254)
