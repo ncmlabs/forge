@@ -579,6 +579,23 @@ bin/forge-sensei status
 bin/forge-sensei repl    # interactive session
 ```
 
+#### Installing forge-sensei as a service
+
+The install script handles building, wrapper creation, config, and service registration across platforms:
+
+```bash
+bash scripts/install-sensei.sh              # full install (build + pretrain + PATH)
+bash scripts/install-sensei.sh --skip-pretrain  # skip LLM pre-training step
+bash scripts/install-sensei-server.sh install   # register as auto-start service
+bash scripts/install-sensei.sh --uninstall      # remove service registration
+```
+
+**Platform notes:**
+
+- **macOS:** The firewall may block the server's LAN access on first run. Allow incoming connections in System Settings > Privacy & Security > Firewall, or bind to localhost only with `--host 127.0.0.1`.
+- **Linux:** Service auto-start requires a systemd user session (`systemctl --user`). Works on Ubuntu 20.04+, Fedora, Arch.
+- **WSL:** Uses the Linux path. If systemd is unavailable (WSL 1 or WSL 2 without `systemd=true` in `/etc/wsl.conf`), start the server manually.
+
 Multi-file projects use a manifest:
 
 ```toml
