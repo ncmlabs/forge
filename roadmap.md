@@ -728,7 +728,8 @@ Worktree isolation for safe agent execution:
 | #166 | forge-sensei code-generation curriculum | Open |
 | #167 | Toolkit agent knowledge transfer infrastructure | Open |
 | #240 | forge-sensei server/client deployment path | In Progress |
-| #256 | Split sensei into shared/server/client FORGE sources | In Progress |
+| #249 | Epic: Foundation hardening for forge-sensei (9/9 sub-issues closed) | Done ✅ |
+| #256 | Split sensei into shared/server/client FORGE sources | Done ✅ |
 | #257 | Cross-platform install scripts (macOS, Linux, WSL) | Done ✅ |
 
 ### P2.M12: Toolkit Agents
@@ -948,7 +949,7 @@ P2.M7  Skills          ███████████████████
 P2.M8  CLI Skills      ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
 P2.M9  Orchestration   ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
 P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
-P2.M11 Knowledge       ██████████░░░░░░░░░░  1/3  ( 33%)  #166 curriculum done; #256 in progress
+P2.M11 Knowledge       ██████████████░░░░░░  3/5  ( 60%)  #249 epic done; #256 ✅ #257 ✅; #166 #167 open
 P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
 P2.M13 Polish          █████░░░░░░░░░░░░░░░  1/4  ( 25%)
 ─────────────────────────────────────────────────────────
