@@ -76,10 +76,12 @@ endpoint api_status() -> ApiStatus
   give ApiStatus(status: status_text)
 
 endpoint api_ask(question: Text) -> QueryResult
+  increment_interactions()
   result = answer_query(question)
   give result
 
 endpoint api_review(code: Text) -> ApiTextResult
+  increment_interactions()
   review_result = review_code(code)
   give ApiTextResult(result: review_result)
 
@@ -92,17 +94,20 @@ endpoint api_ingest_fact(category: Text, fact: Text) -> ApiTextResult
   give ApiTextResult(result: "Learned [{category}]")
 
 endpoint api_learn_from_session(question: Text, resolution: Text) -> ApiTextResult
+  increment_interactions()
   lesson = extract_lesson(question, resolution)
   emit LearnedInsight(category: "interactions", content: lesson, source: "api", confidence: 0.8)
   give ApiTextResult(result: "Learned from session.")
 
 endpoint api_assess_detailed(test_input: Text, expected: Text) -> AssessmentResult
+  increment_interactions()
   categories = categorize_for_recall("{test_input} expects {expected}")
   prediction = predict_outcome(test_input, categories)
   passed = check_prediction(prediction, expected)
   give AssessmentResult(passed: passed, prediction: prediction, expected: expected, gap_topic: categories)
 
 endpoint api_deep_dive(topic: Text) -> ApiTextResult
+  increment_interactions()
   emit LearnedInsight(category: topic, content: "Deep dive requested over HTTP", source: "api", confidence: 0.9)
   give ApiTextResult(result: "Deep dive requested for [{topic}]")
 
