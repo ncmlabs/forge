@@ -1,0 +1,74 @@
+# Session smoke test — prove FORGE->Claude Code delegation end-to-end (issue #241)
+#
+# Delegates a read-only question to Claude Code via the session primitive,
+# validates the structured AgentResult with pure checks, and reports fields.
+# Knowledge capture via learn deferred — requires agent context (see #241).
+
+pure check_output
+  needs plan: Text
+  gives Bool
+  do
+    if plan.contains("forge")
+      give true
+    if plan.contains("FORGE")
+      give true
+    if plan.contains(".forge")
+      give true
+    give false
+
+pure check_cost
+  needs cost: Number
+  gives Bool
+  do
+    if cost > 0
+      give true
+    give false
+
+pure verdict
+  needs plan_ok: Bool, cost_ok: Bool
+  gives Text
+  do
+    if plan_ok and cost_ok
+      give "PASS: delegation verified — plan mentions forge, cost recorded"
+    if plan_ok
+      give "PARTIAL: plan ok but cost not recorded"
+    if cost_ok
+      give "PARTIAL: cost recorded but plan lacks expected content"
+    give "FAIL: plan missing expected content and cost not recorded"
+
+task delegate_to_claude
+  gives AgentResult
+  do
+    result = session "e2e-smoke" agent "claude" prompt "Read the file Cargo.toml in this repository and tell me the package name, version, and Rust edition. Keep your answer to one sentence." tools ["Read"] timeout 2m budget 0.25 gives AgentResult
+    when result.sure -> give result
+    else -> give result
+
+fn main
+  say "=== FORGE->Claude Code E2E Smoke Test (#241) ==="
+  say ""
+  result = delegate_to_claude()
+  say "--- AgentResult Fields ---"
+  say "plan: {result.plan}"
+  say "confidence: {result.confidence}"
+  say "cost_usd: {result.cost_usd}"
+  say "files_changed: {result.files_changed}"
+  say "approval_needed: {result.approval_needed}"
+  say ""
+  say "--- Metadata ---"
+  say "tokens_in: {result.metadata.tokens_in}"
+  say "tokens_out: {result.metadata.tokens_out}"
+  say "num_turns: {result.metadata.num_turns}"
+  say ""
+  say "--- Verification Engine ---"
+  say "status: {result.metadata.verification.status}"
+  say "risk_class: {result.metadata.verification.risk_class}"
+  say "claims: {result.metadata.verification.claims}"
+  say "evidence: {result.metadata.verification.evidence}"
+  say "contradictions: {result.metadata.verification.contradictions}"
+  say ""
+  say "--- Pure Validation ---"
+  plan_ok = check_output(result.plan)
+  cost_ok = check_cost(result.cost_usd)
+  say verdict(plan_ok, cost_ok)
+  say ""
+  say "=== Done ==="
