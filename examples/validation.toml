@@ -38,6 +38,7 @@ manifest = "examples/agents/inbound-triager/forge.project.toml"
 name = "approval gate agent"
 paths = [
   "examples/agents/approval-gate/main.forge",
+  "examples/agents/approval-gate/server.forge",
 ]
 check = "ok"
 manifest = "examples/agents/approval-gate/forge.project.toml"
