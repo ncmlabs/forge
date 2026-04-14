@@ -80,7 +80,7 @@ Everything in this document exists to reach that moment.
 | P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176 ✅ #177 ✅ #178 ✅ #179 ✅ | Done |
 | P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180 ✅, #181, #182 | In Progress |
 | P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Frozen |
-| P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer + operational readiness | #166, #167, #240 | Open |
+| P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer + operational readiness | #166 ✅, #167 ✅, #240, #249 ✅, #256 ✅, #257 ✅ | Near Done |
 | P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168, #169-#175 (frozen) | Frozen (except #168) |
 | P2.M13 — Polish | CostEstimator, DocumentationAgent, reference/skill refresh, example validation | #186 (frozen), #187 (frozen), #229, #231 ✅ | In Progress |
 
@@ -671,15 +671,15 @@ Worktree isolation for safe agent execution:
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| #191 | session agent adapters — Claude, Codex, generic | Open |
-| #192 | session polling + event integration | Open |
+| #191 | session agent adapters — Claude, Codex, generic | Done ✅ |
+| #192 | session polling + event integration | Done ✅ |
 
 ### P2.M5: Verification + Contradictions
 
 | Issue | Title | Status |
 |-------|-------|--------|
 | #204 | Phase 2 reliability: verification engine for coding sessions | Done ✅ |
-| #205 | Phase 2 reliability: contradiction events and warden integration | Open |
+| #205 | Phase 2 reliability: contradiction events and warden integration | Done ✅ |
 
 ### P2.M6: Sandbox Isolation
 
@@ -700,16 +700,16 @@ Worktree isolation for safe agent execution:
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| #176 | GitHub skill — gh CLI wrapper | Open |
-| #177 | Slack skill — bidirectional Web API via curl | Open |
-| #178 | Claude Code skill — claude CLI wrapper | Open |
-| #179 | Codex + Ollama skills | Open |
+| #176 | GitHub skill — gh CLI wrapper | Done ✅ |
+| #177 | Slack skill — bidirectional Web API via curl | Done ✅ |
+| #178 | Claude Code skill — claude CLI wrapper | Done ✅ |
+| #179 | Codex + Ollama skills | Done ✅ |
 
 ### P2.M9: Orchestration Infrastructure
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| #180 | Slack Monitor agent — poll channels, detect mentions | Open |
+| #180 | Slack Monitor agent — poll channels, detect mentions | Done ✅ |
 | #181 | Inbound Triager agent — classify, route, or escalate | Open |
 | #182 | Approval gate pattern — events + Slack + webhook | Open |
 
@@ -725,8 +725,8 @@ Worktree isolation for safe agent execution:
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| #166 | forge-sensei code-generation curriculum | Open |
-| #167 | Toolkit agent knowledge transfer infrastructure | Open |
+| #166 | forge-sensei code-generation curriculum | Done ✅ |
+| #167 | Toolkit agent knowledge transfer infrastructure | Done ✅ |
 | #240 | forge-sensei server/client deployment path | In Progress |
 | #249 | Epic: Foundation hardening for forge-sensei (9/9 sub-issues closed) | Done ✅ |
 | #256 | Split sensei into shared/server/client FORGE sources | Done ✅ |
@@ -775,18 +775,26 @@ Current execution rule:
 - policy and approval gates establish actionability
 - commit / PR / merge flows must key off verification and policy, not raw confidence
 
+Done:
+- `P2.M1` Command ✅
+- `P2.M2` Session Core ✅
+- `P2.M3` AgentResult + Reliability Contract ✅
+- `P2.M4` Session Adapters + Events ✅
+- `P2.M5` Verification + Contradictions ✅
+- `P2.M6` Sandbox ✅
+- `P2.M7` Skills Foundation ✅
+- `P2.M8` CLI Skills ✅
+
 Now:
-- `P2.M2` Session Core
+- `P2.M9` Orchestration — Triager (#181), Approval gate (#182)
+- `P2.M11` Knowledge School — operational readiness (#240)
 
 Blocked next by:
-- `P2.M3` AgentResult + Reliability Contract
-- `P2.M4` Session Adapters + Events
-- `P2.M5` Verification + Contradictions
+- `P2.M10` Dev System — ProjectAgent, Executor, two-project proof
 
 Then:
-- `P2.M6` Sandbox
-- `P2.M9` Orchestration
-- `P2.M10` Dev System
+- `P2.M12` Toolkit Agents — Generator contract (#168) unblocks all generators
+- `P2.M13` Polish
 
 ---
 
@@ -941,19 +949,19 @@ command (#160-162) ✅
 ```
 P2.M1  Command         ████████████████████  3/3  (100%)  DONE
 P2.M2  Session Core    ████████████████████  2/2  (100%)  DONE
-P2.M3  Result+Contract ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
-P2.M4  Adapters+Events ░░░░░░░░░░░░░░░░░░░░  0/2  (  0%)
-P2.M5  Verify+Contra   ██████████░░░░░░░░░░  1/2  ( 50%)
-P2.M6  Sandbox         ████████████████████  1/1  (100%)
-P2.M7  Skills          ████████████████████  4/4  (100%)
-P2.M8  CLI Skills      ░░░░░░░░░░░░░░░░░░░░  0/4  (  0%)
-P2.M9  Orchestration   ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
-P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)
-P2.M11 Knowledge       ██████████████░░░░░░  3/5  ( 60%)  #249 epic done; #256 ✅ #257 ✅; #166 #167 open
-P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)
-P2.M13 Polish          █████░░░░░░░░░░░░░░░  1/4  ( 25%)
+P2.M3  Result+Contract ████████████████████  2/2  (100%)  DONE
+P2.M4  Adapters+Events ████████████████████  2/2  (100%)  DONE
+P2.M5  Verify+Contra   ████████████████████  2/2  (100%)  DONE
+P2.M6  Sandbox         ████████████████████  1/1  (100%)  DONE
+P2.M7  Skills          ████████████████████  4/4  (100%)  DONE
+P2.M8  CLI Skills      ████████████████████  4/4  (100%)  DONE
+P2.M9  Orchestration   ██████░░░░░░░░░░░░░░  1/3  ( 33%)  IN PROGRESS
+P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)  FROZEN
+P2.M11 Knowledge       ████████████████░░░░  5/6  ( 83%)  NEAR DONE — #240 remaining
+P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)  FROZEN
+P2.M13 Polish          ██████████░░░░░░░░░░  2/4  ( 50%)  IN PROGRESS
 ─────────────────────────────────────────────────────────
-Phase 2 Overall         █████░░░░░░░░░░░░░░░  11/40 ( 28%)
+Phase 2 Overall         █████████████░░░░░░░  28/44 ( 64%)
 ```
 
 ---
