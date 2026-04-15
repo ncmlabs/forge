@@ -98,11 +98,15 @@ agent pr_reviewer
     requires lifecycle == awaiting_approval on fail: give "no pending review"
     requires request_id == memory.pr_number on fail: give "stale response"
     if approved
-      ann_prompt = "Use ONLY the facts below - do not invent any details. Write a short 2-sentence merge announcement. State the actual target branch from the PR facts. Approver: {comment}. PR facts JSON: {memory.pr_facts}"
+      say "[bot] Merging PR {memory.pr_number} via gh CLI"
+      merge_result = skill.github.merge_pr(memory.repo, memory.pr_number)
+      when merge_result.sure -> say "[bot] Merge command executed"
+      else -> say "[bot] Merge command uncertain"
+      ann_prompt = "Use ONLY the facts below - do not invent any details. Write a short 2-sentence merge announcement. State the actual target branch from the PR facts and that the merge was just executed. Approver: {comment}. PR facts JSON: {memory.pr_facts} Merge command output: {merge_result}"
       summary = reason ann_prompt
       msg = "MERGED PR {memory.pr_number}: {summary}"
       followup = skill.slack.send_message(memory.channel, msg)
-      say "[bot] APPROVED PR {memory.pr_number} by {comment}"
+      say "[bot] APPROVED and merged PR {memory.pr_number} by {comment}"
     if not approved
       reject_msg = "PR {memory.pr_number} REJECTED by {comment}"
       followup = skill.slack.send_message(memory.channel, reject_msg)

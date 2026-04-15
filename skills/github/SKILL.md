@@ -34,6 +34,10 @@ capabilities:
   - name: merge_pr
     inputs: [Text, Text]
     output: Text
+    params: [repo, pr_number]
+    executor:
+      kind: command
+      argv: [gh, pr, merge, "{pr_number}", -R, "{repo}", --squash, --delete-branch]
   - name: delete_branch
     inputs: [Text, Text]
     output: Text
