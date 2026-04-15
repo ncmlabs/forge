@@ -1,0 +1,22 @@
+# Local config for pr-review-bot — anthropic only, no qwen-coder fallback.
+
+[llm]
+default = "claude-haiku"
+
+[llm.routing]
+fast     = "claude-haiku"
+balanced = "claude-haiku"
+high     = "claude-haiku"
+
+[providers.claude-haiku]
+type    = "anthropic"
+model   = "claude-haiku-4-5-20251001"
+api_key = "${ANTHROPIC_API_KEY}"
+
+# Override haiku's tier to Balanced so it satisfies `reason` capability hint
+[providers.claude-haiku.capabilities]
+quality_tier = "balanced"
+
+[skills]
+timeout_secs = 60
+max_turns    = 6

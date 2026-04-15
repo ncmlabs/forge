@@ -20,6 +20,10 @@ capabilities:
   - name: check_ci
     inputs: [Text, Text]
     output: Text
+    params: [repo, ref]
+    executor:
+      kind: command
+      argv: [gh, pr, checks, "{ref}", -R, "{repo}"]
   - name: merge_pr
     inputs: [Text, Text]
     output: Text
