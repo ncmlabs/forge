@@ -20,9 +20,24 @@ capabilities:
   - name: check_ci
     inputs: [Text, Text]
     output: Text
+    params: [repo, ref]
+    executor:
+      kind: command
+      argv: [gh, pr, checks, "{ref}", -R, "{repo}"]
+  - name: get_pr
+    inputs: [Text, Text]
+    output: Text
+    params: [repo, pr_number]
+    executor:
+      kind: command
+      argv: [gh, pr, view, "{pr_number}", -R, "{repo}", --json, "title,number,baseRefName,headRefName,author,state,url,additions,deletions,changedFiles"]
   - name: merge_pr
     inputs: [Text, Text]
     output: Text
+    params: [repo, pr_number]
+    executor:
+      kind: command
+      argv: [gh, pr, merge, "{pr_number}", -R, "{repo}", --squash, --delete-branch]
   - name: delete_branch
     inputs: [Text, Text]
     output: Text

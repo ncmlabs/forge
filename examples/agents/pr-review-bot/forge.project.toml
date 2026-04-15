@@ -1,0 +1,11 @@
+[project]
+name = "pr-review-bot"
+version = "0.1.0"
+description = "Human-in-the-loop PR review bot — fetches CI status, asks Slack approval, generates LLM merge summary"
+
+[build]
+entry = "server.forge"
+
+[skills]
+slack = { path = "../../../skills/slack" }
+github = { path = "../../../skills/github" }

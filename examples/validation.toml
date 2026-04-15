@@ -44,6 +44,12 @@ check = "ok"
 manifest = "examples/agents/approval-gate/forge.project.toml"
 
 [[cases]]
+name = "PR review bot"
+paths = ["examples/agents/pr-review-bot/server.forge"]
+check = "ok"
+manifest = "examples/agents/pr-review-bot/forge.project.toml"
+
+[[cases]]
 name = "mock-runnable quiz tutor agent"
 paths = ["examples/agents/quiz_tutor.forge"]
 check = "ok"

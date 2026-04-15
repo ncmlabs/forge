@@ -427,6 +427,15 @@ impl AgentProcess {
         self
     }
 
+    /// Attach a skill executor for LLM-mediated skill bridge (#276).
+    pub fn with_skill_executor(
+        mut self,
+        skill_exec: std::sync::Arc<crate::runtime::skill_executor::SkillExecutor>,
+    ) -> Self {
+        self.executor = self.executor.with_skill_executor(skill_exec);
+        self
+    }
+
     /// Set worktree branch name for cleanup on agent exit (issue #194).
     pub fn with_worktree_branch(mut self, branch: String) -> Self {
         self.worktree_branch = Some(branch);
