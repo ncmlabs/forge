@@ -855,6 +855,39 @@ bash scripts/install-sensei-server.sh start
 
 The install script preserves an existing `~/.forge/sensei/config.toml` by default, installs `~/.forge/bin/forge-sensei` and `~/.forge/bin/forge-sensei-server`, and writes wrappers that set `FORGE_CONFIG` to the installed sensei config. The server helper manages a macOS LaunchAgent at `~/Library/LaunchAgents/com.ncmlabs.forge-sensei.plist`.
 
+## Deployment Pattern
+
+forge-sensei is deployed as a **long-lived HTTP daemon**, not a timer-driven poller. The daemon binary is built from `workflows/forge-sensei/server/` (via `forge build`) and supervised by the host's OS service manager through the cross-platform `StartupManager` trait (#254):
+
+| Platform | Service manager | Install entry point |
+|----------|----------------|---------------------|
+| macOS    | `launchctl` (LaunchAgent) | `scripts/install-sensei-server.sh install` |
+| Linux    | `systemd` (user service)  | StartupManager-ready; packaging pending a non-macOS user |
+| Windows  | `schtasks`                | StartupManager-ready; packaging pending |
+
+The CLI (`~/.forge/bin/forge-sensei`) is a thin wrapper that sets `FORGE_SENSEI_SERVER=http://127.0.0.1:3000` so every command routes to the running daemon over HTTP (`api_status`, `api_ask`, `api_review`, `api_update_mastery`, etc., in `server/web.forge`).
+
+**Why daemon over timer-polling:**
+
+- **Single writer for persistent state.** The daemon owns `redb` and `knowledge.json`; CLI calls are stateless JSON requests. No lock contention, no divergent writes between CLI invocations, no need for `fsync` gymnastics per command.
+- **Claude Code integration.** The consult hook (`scripts/consult-sensei.sh`) and `skill.forge-sensei` talk to the daemon like any HTTP API — zero cold-start cost, memory and mastery level persist across invocations.
+- **Observability.** `/__forge/events` SSE stream carries `AgentStarted` / `HandlerStarted` / `HandlerCompleted` / `AgentShutdown` events (#255), so the Observer UI can tap the live agent.
+- **Self-assessment via timer inside the daemon.** The agent's own `timer self_assess: 6h` declaration (`workflows/forge-sensei/server/agent.forge:21`) handles periodic curriculum re-evaluation — the OS service manager only cares about restarting the process, not about scheduling work.
+
+**Mastery gates in the daemon pattern:**
+
+Handler-level gates (`on review` requires apprentice+, `on deep_dive` requires journeyman+) live in `workflows/forge-sensei/server/agent.forge` and apply to the agent dispatch path. HTTP endpoints in `web.forge` (`api_review`, `api_deep_dive`) call the underlying flows/tasks directly; they're not gated because daemon HTTP callers are expected to be first-party clients (the installed CLI wrapper, Claude Code) that treat the gate as UX guidance rather than a security boundary. If a third-party HTTP caller surface ever becomes part of the design, gate enforcement should move into the endpoints.
+
+**Reproducing a fresh install:**
+
+```bash
+rm -rf ~/.forge/sensei .forge-knowledge/pretrain-manifest.sha256
+bash scripts/install-sensei.sh                     # builds + pretrains (~554 entries across 6 phases)
+bash scripts/install-sensei-server.sh install && bash scripts/install-sensei-server.sh start
+bash scripts/sensei-assess.sh --json               # runs conformance assessment, advances mastery
+~/.forge/bin/forge-sensei status                   # expected: apprentice or higher on green corpus
+```
+
 ## How Toolkit Agents Consume Knowledge
 
 The knowledge transfer path from sensei to toolkit agents:

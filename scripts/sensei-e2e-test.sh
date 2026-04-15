@@ -358,7 +358,13 @@ check_contains "review-gate-novice" "novice|apprentice|assessment" "$SENSEI_BIN"
 check_contains "deepdive-gate-novice" "journeyman|level|assessment" "$SENSEI_BIN" deep-dive "SYNTAX"
 
 # Run assessment to advance (uses iterative update-mastery)
-run_test "mastery-assessment" bash "$HOME/.claude/skills/forge-sensei/assess.sh" --json
+ASSESS_SCRIPT_REPO="$FORGE_ROOT/scripts/sensei-assess.sh"
+ASSESS_SCRIPT_LEGACY="$HOME/.claude/skills/forge-sensei/assess.sh"
+if [ -x "$ASSESS_SCRIPT_REPO" ] || [ -f "$ASSESS_SCRIPT_REPO" ]; then
+  run_test "mastery-assessment" bash "$ASSESS_SCRIPT_REPO" --json
+else
+  run_test "mastery-assessment" bash "$ASSESS_SCRIPT_LEGACY" --json
+fi
 
 # Verify status shows advanced level (not novice)
 check_not_contains "mastery-post-assess" "novice" "$SENSEI_BIN" status

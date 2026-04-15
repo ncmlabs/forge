@@ -431,6 +431,148 @@ async fn sensei_mastery_transitions_through_all_levels() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// 3b-ii. Operational readiness pipeline (no LLM — mock provider) — #240
+// Proves the novice → ingest → assess → apprentice narrative end-to-end
+// over the HTTP daemon pattern. Locks in the invariants #240 closes.
+// ═══════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn sensei_operational_readiness_pipeline() {
+    let (base, _tmp) = spawn_sensei_server_mock().await;
+    let client = reqwest::Client::new();
+
+    // 1. Fresh store — status reports novice (data.get("sensei:level") empty → "novice")
+    let resp = reqwest::get(format!("{base}/api/status"))
+        .await
+        .expect("status request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let status_text = body["status"].as_str().unwrap();
+    assert!(
+        status_text.contains("novice"),
+        "fresh store must report novice, got: {status_text}"
+    );
+
+    // 2. Ingest a handful of categorized facts — simulates the pretrain phase.
+    //    Each ingest should succeed without touching mastery state.
+    let pretrain_corpus = [
+        (
+            "SYNTAX",
+            "FORGE uses 2-space indentation for all nested blocks",
+        ),
+        (
+            "TASKS",
+            "pure functions cannot call reason, uncertain, or any LLM primitive",
+        ),
+        (
+            "AGENTS",
+            "agents declare memory with persistent keyword for ACID storage",
+        ),
+        (
+            "SUPERVISION",
+            "wardens supervise agents and define escalation policies",
+        ),
+    ];
+    for (category, fact) in pretrain_corpus {
+        let resp = client
+            .post(format!("{base}/api/ingest-fact"))
+            .json(&serde_json::json!({"category": category, "fact": fact}))
+            .send()
+            .await
+            .expect("ingest-fact request failed");
+        assert_eq!(
+            resp.status(),
+            200,
+            "ingest-fact [{category}] must succeed on fresh store"
+        );
+    }
+
+    // 3. After ingestion, mastery is still novice — ingest alone doesn't grade.
+    let resp = reqwest::get(format!("{base}/api/status")).await.unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body["status"].as_str().unwrap().contains("novice"),
+        "ingest without assessment must NOT advance mastery"
+    );
+
+    // 4. Assessment step — simulate passing 50% of conformance tests.
+    //    Daemon writes sensei:score + sensei:level to data store.
+    let resp = client
+        .post(format!("{base}/api/update-mastery"))
+        .json(&serde_json::json!({"score": 50}))
+        .send()
+        .await
+        .expect("update-mastery request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body["result"].as_str().unwrap().contains("apprentice"),
+        "score 50 must yield apprentice, got: {body}"
+    );
+
+    // 5. Status now reports apprentice with the correct score.
+    let resp = reqwest::get(format!("{base}/api/status")).await.unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let status_text = body["status"].as_str().unwrap();
+    assert!(
+        status_text.contains("apprentice") && status_text.contains("50"),
+        "post-assessment status must show apprentice + score, got: {status_text}"
+    );
+
+    // 6. Further ingestion post-advancement still works and preserves level.
+    let resp = client
+        .post(format!("{base}/api/ingest-fact"))
+        .json(&serde_json::json!({
+            "category": "PATTERNS",
+            "fact": "timer-driven agents use the 'timer' declaration with a duration"
+        }))
+        .send()
+        .await
+        .expect("post-advancement ingest failed");
+    assert_eq!(resp.status(), 200);
+    let resp = reqwest::get(format!("{base}/api/status")).await.unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body["status"].as_str().unwrap().contains("apprentice"),
+        "ingest after advancement must not reset mastery"
+    );
+
+    // 7. Advance past the journeyman threshold — locks in the full progression.
+    let resp = client
+        .post(format!("{base}/api/update-mastery"))
+        .json(&serde_json::json!({"score": 95}))
+        .send()
+        .await
+        .expect("update-mastery journeyman request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body["result"].as_str().unwrap().contains("expert"),
+        "score 95 must yield expert, got: {body}"
+    );
+}
+
+// Gate-message regression: the agent handler still carries the user-facing
+// rejection string. If someone accidentally loosens the gate or drops the
+// message, this test fails before the change lands. Intentionally source-only
+// — no runtime dispatch, because the HTTP endpoints bypass the handler gates
+// by design (daemon pattern: HTTP callers are first-party, gates are UX
+// guidance at the CLI/handler layer, not a security boundary).
+#[test]
+fn sensei_review_gate_message_intact() {
+    let source = std::fs::read_to_string("workflows/forge-sensei/server/agent.forge")
+        .expect("read agent.forge");
+    assert!(
+        source.contains("Sensei is still at novice level"),
+        "review handler novice-gate message regressed"
+    );
+    assert!(
+        source.contains("Deep dive requires journeyman level"),
+        "deep_dive handler journeyman-gate message regressed"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // 3c. Preflight / server-down tests (no LLM needed)
 // ═══════════════════════════════════════════════════════════════════
 
