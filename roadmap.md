@@ -84,11 +84,13 @@ Everything in this document exists to reach that moment.
 | P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168, #169-#175 (frozen) | Frozen (except #168) |
 | P2.M13 — Polish | CostEstimator, DocumentationAgent, reference/skill refresh, example validation | #186 (frozen), #187 (frozen), #229, #231 ✅ | In Progress |
 
-### Future Layers
+### Layer 3 & 4
+
+Layer 3 kickoff is in progress via the **Clone Developer** initiative (#292) — a supervised FORGE agent swarm (mastermind + specialists) fronted by Slack, handling DevOps / meeting / developer-mode inputs, coordinating across multiple projects, with an outcome-driven learning loop. See the `Layer 3 — Clone Developer` milestone for the full issue set. Layer 4 remains future.
 
 | Milestone | Description | Status |
 |-----------|-------------|--------|
-| Layer 3 — Automation Factory | Spec in → running system out. No human writes code. | Future |
+| Layer 3 — Automation Factory | Spec in → running system out. No human writes code. | Kickoff — Clone Developer (#292) |
 | Layer 4 — Self-Improvement | Factory watches itself and optimizes deployed systems | Future |
 
 ## Implementation tracks
