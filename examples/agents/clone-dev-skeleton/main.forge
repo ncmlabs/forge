@@ -1,0 +1,275 @@
+#! boundary: server
+
+# ================================================================
+# Clone-dev walking skeleton — T1.1 (issue #293)
+# ================================================================
+# Proves the 3-hop topology runs end-to-end with zero new runtime
+# primitives:
+#
+#     POST /clone_dev                                    (endpoint)
+#         │ emit ClonedevTaskInbound(kind, ...)
+#         ▼
+#     mastermind                                         (agent #1)
+#         │ reason + pattern-match on kind → target_agent
+#         │ assign task_id, append to task_graph
+#         │ emit TaskRouted(task_id, target_agent, kind, ...)
+#         ▼
+#     ┌─────────────────────────────┬──────────────────────────┐
+#     │ pr_reviewer                 │ echo_specialist          │
+#     │ subscribe where             │ subscribe where          │
+#     │   target_agent=="pr_reviewer" │ target_agent=="echo"   │
+#     │ → github.get_pr/check_ci    │ → slack.send_message     │
+#     │ → reason summary            │                          │
+#     │ → slack.send_approval       │                          │
+#     └─────────────────────────────┴──────────────────────────┘
+#
+# One `org_warden` supervises all three. Observer shows the 3-hop
+# trace automatically via `event_emit`/`event_delivered` SSE.
+#
+# Fork history: forked from examples/agents/pr-review-bot/server.forge.
+# The pr_reviewer body is kept largely intact — only the subscription
+# and field-unpacking changed so it consumes TaskRouted instead of
+# ReviewPRRequested.
+#
+# Run:
+#   FORGE_CONFIG=forge.config.toml SLACK_BOT_TOKEN=xoxb-... \
+#   ANTHROPIC_API_KEY=... \
+#   cargo run -- serve \
+#     --manifest examples/agents/clone-dev-skeleton/forge.project.toml \
+#     examples/agents/clone-dev-skeleton/main.forge --port 3211
+#
+# Acceptance (see README.md):
+#   curl -X POST http://localhost:3211/clone_dev -d 'kind=pr_review' ...
+#   curl -X POST http://localhost:3211/clone_dev -d 'kind=echo' ...
+#   curl -X POST http://localhost:3211/__forge/inject/stuck \
+#        -d '{"agent":"echo_specialist"}'    # x4 → escalation
+# ================================================================
+
+use
+  llm.reason
+  skill.slack
+  skill.github
+
+# ── Events ─────────────────────────────────────────────────────
+
+# Fan-in from HTTP endpoint. All kind-specific fields travel flat;
+# specialists read only the ones they care about (see plan §event shape).
+event ClonedevTaskInbound
+  kind: Text
+  repo: Text
+  pr_number: Text
+  callback_url: Text
+  channel: Text
+  message: Text
+
+# Mastermind → specialist routing. Specialists filter with
+# `where target_agent == "<self>"`.
+event TaskRouted
+  task_id: Text
+  target_agent: Text
+  kind: Text
+  summary: Text
+  repo: Text
+  pr_number: Text
+  callback_url: Text
+  channel: Text
+  message: Text
+
+# Reused from approval-gate / pr-review-bot — emitted by the built-in
+# /webhook/approval handler when a Slack button is clicked.
+event ApprovalResponse
+  request_id: Text
+  approved: Bool
+  comment: Text
+
+# ── States ─────────────────────────────────────────────────────
+
+states ReviewPhase
+  idle -> awaiting_approval
+  awaiting_approval -> idle
+
+# ── Agent: mastermind ──────────────────────────────────────────
+# Classifies inbound tasks and routes to a specialist. Holds the
+# task_graph in memory so T4.1 can extend it with blocked_on relations.
+
+agent mastermind
+  memory persistent
+    task_counter: Number
+    task_graph: Text[]
+    last_target: Text
+    last_decision: Text
+  subscribe ClonedevTaskInbound
+
+  on start
+    memory.task_counter = 0
+    memory.last_target = "none"
+    memory.last_decision = "none"
+    say "[mastermind] ready — routing to pr_reviewer or echo_specialist"
+
+  on ClonedevTaskInbound(kind: Text, repo: Text, pr_number: Text, callback_url: Text, channel: Text, message: Text)
+    memory.task_counter = memory.task_counter + 1
+    task_id = "T{memory.task_counter}"
+    decision = reason "Classify clone-dev request. kind is {kind}. Valid targets are pr_reviewer or echo. Reply with target only."
+    memory.last_decision = decision
+    target = "echo"
+    if kind == "pr_review"
+      target = "pr_reviewer"
+    else if kind == "echo"
+      target = "echo"
+    memory.last_target = target
+    record = "{task_id}|{target}|{kind}"
+    memory.task_graph = memory.task_graph + [record]
+    summary = "kind={kind} to {target} for task {task_id}"
+    say "[mastermind] {summary} (reason-said {decision})"
+    emit TaskRouted(task_id: task_id, target_agent: target, kind: kind, summary: summary, repo: repo, pr_number: pr_number, callback_url: callback_url, channel: channel, message: message)
+
+  if stuck for 3 turns
+    escalate to human
+
+# ── Agent: pr_reviewer ─────────────────────────────────────────
+# Forked from pr-review-bot/server.forge:48–117. Body kept intact;
+# only the subscription changed (TaskRouted + where filter) and the
+# incoming task_id is stored so the Observer trace can stitch hops.
+
+agent pr_reviewer
+  lifecycle: ReviewPhase
+  memory
+    task_id: Text
+    repo: Text
+    pr_number: Text
+    channel: Text
+    callback_url: Text
+    pr_facts: Text
+    ci_status: Text
+    review_summary: Text
+  subscribe TaskRouted where target_agent == "pr_reviewer"
+  subscribe ApprovalResponse
+
+  on start
+    memory.task_id = ""
+    memory.repo = ""
+    memory.pr_number = ""
+    memory.channel = ""
+    memory.callback_url = ""
+    memory.pr_facts = ""
+    memory.ci_status = ""
+    memory.review_summary = ""
+    say "[pr_reviewer] ready"
+
+  on TaskRouted(task_id: Text, target_agent: Text, kind: Text, summary: Text, repo: Text, pr_number: Text, callback_url: Text, channel: Text, message: Text)
+    requires lifecycle == idle on fail: give "review already in progress"
+    memory.task_id = task_id
+    memory.repo = repo
+    memory.pr_number = pr_number
+    memory.channel = channel
+    memory.callback_url = callback_url
+    say "[pr_reviewer] {task_id}: Reviewing PR #{pr_number} in {repo}"
+    pr_view = skill.github.get_pr(repo, pr_number)
+    when pr_view.sure -> say "[pr_reviewer] PR metadata fetched"
+    else -> say "[pr_reviewer] PR metadata fetch uncertain"
+    memory.pr_facts = pr_view
+    ci_check = skill.github.check_ci(repo, pr_number)
+    when ci_check.sure -> say "[pr_reviewer] CI status fetched"
+    else -> say "[pr_reviewer] CI status fetch uncertain"
+    memory.ci_status = ci_check
+    review_prompt = "Use ONLY the facts below - do not invent any details. Summarize this PR in 2 sentences for a reviewer. Mention the target branch and CI state. PR facts JSON: {memory.pr_facts} CI output: {memory.ci_status}"
+    review = reason review_prompt
+    when review.sure -> say "[pr_reviewer] Review summary generated"
+    else -> say "[pr_reviewer] Review summary uncertain"
+    memory.review_summary = review
+    msg = "PR #{pr_number} in {repo} review: {memory.review_summary} - approve to merge or reject"
+    transition to awaiting_approval
+    notify = skill.slack.send_approval(channel, msg, callback_url, pr_number)
+    when notify.sure -> say "[pr_reviewer] Approval message sent to Slack"
+    else -> say "[pr_reviewer] Approval notification may have failed"
+
+  on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
+    requires lifecycle == awaiting_approval on fail: give "no pending review"
+    requires request_id == memory.pr_number on fail: give "stale response"
+    if approved
+      say "[pr_reviewer] Merging PR {memory.pr_number} via gh CLI"
+      merge_result = skill.github.merge_pr(memory.repo, memory.pr_number)
+      when merge_result.sure -> say "[pr_reviewer] Merge command executed"
+      else -> say "[pr_reviewer] Merge command uncertain"
+      ann_prompt = "Use ONLY the facts below - do not invent any details. Write a short 2-sentence merge announcement. State the actual target branch from the PR facts and that the merge was just executed. Approver: {comment}. PR facts JSON: {memory.pr_facts} Merge command output: {merge_result}"
+      summary = reason ann_prompt
+      msg = "MERGED PR {memory.pr_number}: {summary}"
+      followup = skill.slack.send_message(memory.channel, msg)
+      say "[pr_reviewer] APPROVED and merged PR {memory.pr_number} by {comment}"
+    if not approved
+      reject_msg = "PR {memory.pr_number} REJECTED by {comment}"
+      followup = skill.slack.send_message(memory.channel, reject_msg)
+      say "[pr_reviewer] REJECTED PR {memory.pr_number} by {comment}"
+    transition to idle
+
+  if stuck for 3 turns
+    escalate to human
+
+# ── Agent: echo_specialist ─────────────────────────────────────
+# Trivial second specialist — exists so the mastermind actually has
+# to choose. Posts the inbound message back to Slack with the task_id
+# prefix so the 3-hop trace is obvious in Slack too.
+
+agent echo_specialist
+  memory
+    last_task_id: Text
+    last_message: Text
+    last_channel: Text
+  subscribe TaskRouted where target_agent == "echo"
+
+  on start
+    memory.last_task_id = ""
+    memory.last_message = ""
+    memory.last_channel = ""
+    say "[echo_specialist] ready"
+
+  on TaskRouted(task_id: Text, target_agent: Text, kind: Text, summary: Text, repo: Text, pr_number: Text, callback_url: Text, channel: Text, message: Text)
+    memory.last_task_id = task_id
+    memory.last_message = message
+    memory.last_channel = channel
+    say "[echo_specialist] {task_id}: echoing to {channel}"
+    out = "[clone-dev/{task_id}] {message}"
+    result = skill.slack.send_message(channel, out)
+    when result.sure -> say "[echo_specialist] posted to {channel}"
+    else -> say "[echo_specialist] slack post uncertain"
+
+  if stuck for 3 turns
+    escalate to human
+
+# ── Warden ─────────────────────────────────────────────────────
+# Single warden supervising all three agents (per issue DoD).
+# Policy mirrors pr-review-bot/server.forge:121–133.
+
+warden org_warden
+  manages [mastermind, pr_reviewer, echo_specialist]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 2: escalate
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, self
+    after 1: escalate
+  max_retries 3 per 1h then escalate
+
+# ── System ─────────────────────────────────────────────────────
+
+system clone_dev_system
+  use
+    mm: mastermind
+    rev: pr_reviewer
+    echo: echo_specialist
+
+# ── Endpoints ──────────────────────────────────────────────────
+
+endpoint health() -> Text
+  give "ok"
+
+# Accepts the flat union of pr_review + echo payloads. Form-encoded
+# POST coercion lands via the #291 fix. Unused fields pass as empty
+# strings from the caller.
+endpoint clone_dev(kind: Text, repo: Text, pr_number: Text, callback_url: Text, channel: Text, message: Text) -> Text
+  emit ClonedevTaskInbound(kind: kind, repo: repo, pr_number: pr_number, callback_url: callback_url, channel: channel, message: message)
+  give "clone-dev task queued (kind={kind})"

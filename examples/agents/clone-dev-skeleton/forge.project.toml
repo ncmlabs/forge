@@ -1,0 +1,11 @@
+[project]
+name = "clone-dev-skeleton"
+version = "0.1.0"
+description = "Walking skeleton: mastermind routes inbound tasks to pr_reviewer or echo_specialist (T1.1, #293)"
+
+[build]
+entry = "main.forge"
+
+[skills]
+slack = { path = "../../../skills/slack" }
+github = { path = "../../../skills/github" }
