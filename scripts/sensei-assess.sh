@@ -105,9 +105,11 @@ else LEVEL="novice"
 fi
 
 # ── Update mastery in the agent ───────────────────────────────
-# Advance through mastery levels iteratively (FSM allows one step per call)
+# Advance through mastery levels iteratively (FSM allows one step per call).
+# Failures now surface — #282 previously masked a typing bug that caused
+# every call to silently report "server unreachable" against a live daemon.
 for _step in 1 2 3; do
-  "$SENSEI_BIN" update-mastery "$SCORE" 2>/dev/null || true
+  "$SENSEI_BIN" update-mastery "$SCORE"
 done
 
 # ── Trend tracking ────────────────────────────────────────────

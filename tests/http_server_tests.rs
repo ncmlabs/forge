@@ -1453,6 +1453,65 @@ async fn sensei_raw_body_update_mastery_preserves_number_param() {
     assert!(body["result"].as_str().unwrap().contains("journeyman"));
 }
 
+/// Regression for #282: a form-encoded POST from the pure-FORGE client sent
+/// `score=75` with `Content-Type: text/plain`. The server treats any body
+/// containing `=` as form-encoded, but previously forced every value to
+/// `Text`, so `api_update_mastery(score: Number)` received `Text("75")` and
+/// failed the type check — surfaced to the user as "server unreachable".
+/// The server now coerces each form-encoded value to the endpoint's declared
+/// parameter type (symmetric with the raw-body path).
+#[tokio::test]
+async fn sensei_form_encoded_update_mastery_preserves_number_param() {
+    let base = spawn_sensei_web_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/api/update-mastery"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body("score=75")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["result"].as_str().unwrap().contains("journeyman"));
+}
+
+/// Same regression but without a Content-Type header — matches exactly what
+/// `web.post` sends (`text/plain`). The form-encoded branch is selected
+/// purely on the body containing `=`, so the fix must not depend on the
+/// header either.
+#[tokio::test]
+async fn sensei_form_encoded_update_mastery_no_content_type_header() {
+    let base = spawn_sensei_web_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/api/update-mastery"))
+        .body("score=98")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["result"].as_str().unwrap().contains("expert"));
+    assert!(body["result"].as_str().unwrap().contains("98%"));
+}
+
+/// Backward-compat lock: form-encoded POST to a Text-typed endpoint must
+/// still deliver the raw string, not silently coerce to something else.
+#[tokio::test]
+async fn sensei_form_encoded_text_param_unchanged() {
+    let base = spawn_sensei_web_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{base}/api/ingest-fact"))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body("category=flows&fact=flows+use+stages+with+needs")
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+}
+
 #[tokio::test]
 async fn sensei_nonexistent_endpoint_returns_404() {
     let base = spawn_sensei_web_server().await;

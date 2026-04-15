@@ -470,6 +470,53 @@ async fn sensei_update_mastery_then_status_shows_score() {
     );
 }
 
+/// Regression for #282: the pure-FORGE CLI client sends `score={n}` as a
+/// form-encoded body via `web.post` (Content-Type: text/plain). Prior to the
+/// fix, the server's form-encoded parser flattened every value to `Text`, so
+/// `api_update_mastery(score: Number)` received `Text("75")`, the handler
+/// failed the type check, and the client interpreted the empty response as
+/// "server unreachable at http://127.0.0.1:3000". This exercises the exact
+/// wire shape the CLI produces end-to-end against a live daemon.
+#[tokio::test]
+async fn sensei_update_mastery_accepts_cli_form_body() {
+    let (base, _tmp) = spawn_sensei_server_mock().await;
+    let client = reqwest::Client::new();
+
+    // Match what `workflows/forge-sensei/client/client.forge:92` sends:
+    // `payload = "score={score}"` via `web.post(url, payload)`, which sets
+    // Content-Type: text/plain.
+    let resp = client
+        .post(format!("{base}/api/update-mastery"))
+        .header("Content-Type", "text/plain")
+        .body("score=75")
+        .send()
+        .await
+        .expect("form-encoded update-mastery request failed");
+    assert_eq!(
+        resp.status(),
+        200,
+        "CLI form-encoded update-mastery must succeed on a live daemon"
+    );
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let result = body["result"].as_str().unwrap_or("");
+    assert!(
+        result.contains("journeyman") && result.contains("75"),
+        "expected 'Mastery updated: journeyman (75%)', got: {result}"
+    );
+
+    // Confirm the update persisted end-to-end (the scenario from the issue).
+    let resp = reqwest::get(format!("{base}/api/status"))
+        .await
+        .expect("status request failed");
+    assert_eq!(resp.status(), 200);
+    let status: serde_json::Value = resp.json().await.unwrap();
+    let status_text = status["status"].as_str().unwrap();
+    assert!(
+        status_text.contains("75") && status_text.contains("journeyman"),
+        "status should reflect form-encoded update, got: {status_text}"
+    );
+}
+
 #[tokio::test]
 async fn sensei_mastery_transitions_through_all_levels() {
     let (base, _tmp) = spawn_sensei_server_mock().await;
