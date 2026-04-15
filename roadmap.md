@@ -80,7 +80,7 @@ Everything in this document exists to reach that moment.
 | P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176 ✅ #177 ✅ #178 ✅ #179 ✅ | Done |
 | P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180 ✅, #181 ✅, #182 ✅ | Done |
 | P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Frozen |
-| P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer + operational readiness | #166 ✅, #167 ✅, #240, #249 ✅, #256 ✅, #257 ✅ | Near Done |
+| P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer + operational readiness | #166 ✅, #167 ✅, #240, #249 ✅, #256 ✅, #257 ✅, #273 ✅ | Near Done |
 | P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168, #169-#175 (frozen) | Frozen (except #168) |
 | P2.M13 — Polish | CostEstimator, DocumentationAgent, reference/skill refresh, example validation | #186 (frozen), #187 (frozen), #229, #231 ✅ | In Progress |
 
