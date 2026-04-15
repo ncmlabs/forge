@@ -62,7 +62,10 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: 120_000,
       env: {
-        ...(process.env.ANTHROPIC_API_KEY
+        // Real-LLM opt-in (#288): only forward the API key when the developer
+        // has explicitly set FORGE_LLM_LIVE=1. Otherwise force mock mode even
+        // if the key is present in the parent env.
+        ...(process.env.FORGE_LLM_LIVE === '1' && process.env.ANTHROPIC_API_KEY
           ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
           : { FORGE_MOCK: '1' }),
       },
@@ -74,7 +77,10 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: 120_000,
       env: {
-        ...(process.env.ANTHROPIC_API_KEY
+        // Real-LLM opt-in (#288): only forward the API key when the developer
+        // has explicitly set FORGE_LLM_LIVE=1. Otherwise force mock mode even
+        // if the key is present in the parent env.
+        ...(process.env.FORGE_LLM_LIVE === '1' && process.env.ANTHROPIC_API_KEY
           ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
           : { FORGE_MOCK: '1' }),
       },

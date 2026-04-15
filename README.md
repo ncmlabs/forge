@@ -93,6 +93,9 @@ forge build examples/basics/hello.forge -o bin/hello
 
 # Run all tests (no API calls — uses mock provider)
 cargo test
+
+# Run real-LLM tests locally to verify end-to-end (opt-in — issue #288)
+FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test --test sensei_live_tests
 ```
 
 ---
