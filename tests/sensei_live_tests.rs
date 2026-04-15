@@ -776,6 +776,70 @@ async fn sensei_webhook_ingest_persists_to_knowledge_store() {
     );
 }
 
+// Regression for #283: `api_ingest` previously called `learn from document`
+// directly inside the endpoint body. That primitive requires agent context,
+// so the runtime rejected it with "learn outside agent" — the path-based
+// pretrain pipeline (`scripts/pretrain-sensei.sh` phases 1–3, 5–6) failed
+// silently with the CLI collapsing the error into "server unreachable".
+//
+// The fix mirrors #284's pattern: endpoint emits `IngestRequested(source:
+// "api")`, agent subscribes to it and runs `learn from document(path)`
+// inside its own context. This test writes a tempfile with a unique marker,
+// POSTs the path to `/api/ingest`, and asserts the marker (read through the
+// agent's document-chunking codepath) reaches knowledge.json.
+#[tokio::test]
+async fn sensei_api_ingest_persists_document_to_knowledge_store() {
+    let (base, tmp) = spawn_sensei_server_mock().await;
+    let client = reqwest::Client::new();
+
+    let marker = format!(
+        "UNIQUE-DOC-MARKER-{}-283-regression",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+
+    // Write a document containing the marker. `learn_from_document` chunks
+    // at 500 chars, so the marker on its own line will survive chunking.
+    let doc_path = tmp.path().join("ingest-fixture.md");
+    std::fs::write(&doc_path, format!("# Ingest fixture\n\nMarker: {marker}\n"))
+        .expect("write fixture doc failed");
+
+    let resp = client
+        .post(format!("{base}/api/ingest"))
+        .json(&serde_json::json!({
+            "document_path": doc_path.to_string_lossy(),
+        }))
+        .send()
+        .await
+        .expect("ingest request failed");
+    assert_eq!(resp.status(), 200, "ingest must return 200");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body["result"].as_str().unwrap_or("").contains("Ingested:"),
+        "ingest must return Ingested acknowledgement, got: {body}"
+    );
+
+    // The endpoint ack alone is not proof — the "learn outside agent" bug
+    // made the endpoint return 200 only when the fix was in place; before
+    // the fix the endpoint returned a runtime error. Verify the document
+    // contents actually reach disk via the agent's knowledge store.
+    let knowledge_path = tmp.path().join("sensei/knowledge.json");
+    let entries = poll_knowledge_entries(&knowledge_path, 1, 2_000).await;
+    assert!(
+        entries.iter().any(|e| e
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains(&marker)),
+        "ingested document marker [{marker}] must appear in knowledge.json; \
+         got {} entries at {}: {entries:?}",
+        entries.len(),
+        knowledge_path.display(),
+    );
+}
+
 // Gate-message regression: the agent handler still carries the user-facing
 // rejection string. If someone accidentally loosens the gate or drops the
 // message, this test fails before the change lands. Intentionally source-only

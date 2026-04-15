@@ -86,7 +86,7 @@ endpoint api_review(code: Text) -> ApiTextResult
   give ApiTextResult(result: review_result)
 
 endpoint api_ingest(document_path: Text) -> ApiTextResult
-  learn from document(document_path)
+  emit IngestRequested(document_path: document_path, source: "api")
   give ApiTextResult(result: "Ingested: {document_path}")
 
 endpoint api_ingest_fact(category: Text, fact: Text) -> ApiTextResult

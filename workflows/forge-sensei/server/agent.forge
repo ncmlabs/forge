@@ -20,6 +20,7 @@ exportable agent forge_sensei
     retention: 365d
   timer self_assess: 6h
   subscribe LearnedInsight where source == "toolkit" or source == "specialist" or source == "api" or source == "webhook"
+  subscribe IngestRequested where source == "api" or source == "webhook"
 
   on start
     if memory.current_level == ""
@@ -68,6 +69,15 @@ exportable agent forge_sensei
     learn "{content}" category: category
     memory.interaction_count = memory.interaction_count + 1
     say "Sensei absorbed insight from {source}: [{category}]"
+
+  # Path-based ingest over HTTP/webhook: endpoints run outside agent context
+  # so they cannot call `learn from document` directly (runtime rejects with
+  # "learn outside agent"). They emit `IngestRequested` instead; this handler
+  # runs the actual file read + chunk + learn inside agent context. (#283)
+  on IngestRequested(document_path: Text, source: Text)
+    learn from document(document_path)
+    memory.interaction_count = memory.interaction_count + 1
+    say "Sensei ingested document from {source}: {document_path}"
 
   # ── Deep Dive: spawn specialist for focused domain learning ──
 
