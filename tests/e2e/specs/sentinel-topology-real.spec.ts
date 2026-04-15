@@ -5,8 +5,14 @@ import { TopologyPage } from '../pages/sentinel.page';
 // They verify the full live topology experience: scan triggers LLM calls,
 // SSE events stream in real-time, nodes pulse, edges animate, and detail
 // panels populate with real agent data.
+// Explicit opt-in only (#288): both FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY
+// must be set — otherwise the tests skip cleanly so a default run never
+// makes paid calls.
 test.beforeEach(async () => {
-  test.skip(!process.env.ANTHROPIC_API_KEY, 'requires ANTHROPIC_API_KEY');
+  test.skip(
+    process.env.FORGE_LLM_LIVE !== '1' || !process.env.ANTHROPIC_API_KEY,
+    'requires FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY'
+  );
 });
 
 test.describe('Sentinel Topology — Real LLM Live Graph (issue #141)', () => {

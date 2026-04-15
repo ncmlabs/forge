@@ -1,7 +1,10 @@
 // FORGE sensei end-to-end acceptance tests — epic #249
-// Mock tests run always; real-LLM tests gated on ANTHROPIC_API_KEY.
+// Mock tests run always; real-LLM tests require explicit opt-in (#288) via
+// FORGE_LLM_LIVE=1 AND ANTHROPIC_API_KEY. Having only the API key in the
+// environment is intentionally NOT enough — a bare `cargo test` must never
+// make paid API calls.
 // Run mock tests:  cargo test --test sensei_live_tests
-// Run live tests:  ANTHROPIC_API_KEY=sk-... cargo test --test sensei_live_tests -- --nocapture
+// Run live tests:  FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test --test sensei_live_tests -- --nocapture
 
 use std::path::Path;
 use std::sync::Arc;
@@ -24,6 +27,12 @@ fn mock_registry() -> Arc<ProviderRegistry> {
 }
 
 fn haiku_registry() -> Option<Arc<ProviderRegistry>> {
+    // Real-LLM opt-in (#288): both FORGE_LLM_LIVE=1 and a non-empty API key
+    // are required. Having just the key (common on dev laptops) must not
+    // trigger paid calls during a default `cargo test` run.
+    if std::env::var("FORGE_LLM_LIVE").ok().as_deref() != Some("1") {
+        return None;
+    }
     let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
     if api_key.is_empty() {
         return None;
@@ -223,14 +232,14 @@ async fn spawn_sensei_server_with_sse() -> (String, tempfile::TempDir) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 3a. Real LLM endpoint tests (gated on ANTHROPIC_API_KEY)
-// Run with: ANTHROPIC_API_KEY=sk-... cargo test --test sensei_live_tests sensei_live_
+// 3a. Real LLM endpoint tests (explicit opt-in — #288)
+// Run with: FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test --test sensei_live_tests sensei_live_
 // ═══════════════════════════════════════════════════════════════════
 
 #[tokio::test]
 async fn sensei_live_ask_returns_intelligent_answer() {
     let Some((base, _tmp)) = spawn_sensei_server_real().await else {
-        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        eprintln!("SKIP: set FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY to run");
         return;
     };
 
@@ -257,7 +266,7 @@ async fn sensei_live_ask_returns_intelligent_answer() {
 #[tokio::test]
 async fn sensei_live_review_returns_feedback() {
     let Some((base, _tmp)) = spawn_sensei_server_real().await else {
-        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        eprintln!("SKIP: set FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY to run");
         return;
     };
 
@@ -286,7 +295,7 @@ async fn sensei_live_review_returns_feedback() {
 #[tokio::test]
 async fn sensei_live_assess_detailed_classifies_and_predicts() {
     let Some((base, _tmp)) = spawn_sensei_server_real().await else {
-        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        eprintln!("SKIP: set FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY to run");
         return;
     };
 
@@ -324,7 +333,7 @@ async fn sensei_live_assess_detailed_classifies_and_predicts() {
 #[tokio::test]
 async fn sensei_live_self_assess_completes() {
     let Some((base, _tmp)) = spawn_sensei_server_real().await else {
-        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        eprintln!("SKIP: set FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY to run");
         return;
     };
 
@@ -350,7 +359,7 @@ async fn sensei_live_self_assess_completes() {
 #[tokio::test]
 async fn sensei_live_ingest_then_ask_roundtrip() {
     let Some((base, _tmp)) = spawn_sensei_server_real().await else {
-        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        eprintln!("SKIP: set FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY to run");
         return;
     };
 
@@ -391,7 +400,7 @@ async fn sensei_live_ingest_then_ask_roundtrip() {
 #[tokio::test]
 async fn sensei_live_learn_from_session() {
     let Some((base, _tmp)) = spawn_sensei_server_real().await else {
-        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        eprintln!("SKIP: set FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY to run");
         return;
     };
 

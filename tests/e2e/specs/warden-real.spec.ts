@@ -4,9 +4,14 @@ import { DocsPage } from '../pages/docs.page';
 import { AdminPage } from '../pages/admin.page';
 
 // These tests require a real ANTHROPIC_API_KEY and hit the actual Claude API.
-// They are skipped when the key is not set.
+// Explicit opt-in only (#288): both FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY
+// must be set — otherwise the tests skip cleanly so a default run never
+// makes paid calls.
 test.beforeEach(async () => {
-  test.skip(!process.env.ANTHROPIC_API_KEY, 'requires ANTHROPIC_API_KEY');
+  test.skip(
+    process.env.FORGE_LLM_LIVE !== '1' || !process.env.ANTHROPIC_API_KEY,
+    'requires FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY'
+  );
 });
 
 test.describe('Warden Supervision — Real API (issue #64)', () => {

@@ -1,7 +1,8 @@
 // FORGE wiki end-to-end acceptance tests — issue #65
 // Comprehensive test suite for the wiki example using mock provider.
 // Zero API calls for mock tests: FORGE_MOCK=1 cargo test wiki_
-// Real-API tests gated on ANTHROPIC_API_KEY: cargo test wiki_real_
+// Real-API tests require explicit opt-in (#288):
+//   FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test wiki_real_
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -1778,12 +1779,20 @@ async fn wiki_qa_else_branch() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Real-LLM Tests (gated on ANTHROPIC_API_KEY)
+// Real-LLM Tests (require explicit opt-in — #288)
 // Uses claude-haiku-4-5-20251001 for speed.
-// Run with: ANTHROPIC_API_KEY=sk-... cargo test wiki_real_
+// Requires BOTH FORGE_LLM_LIVE=1 AND ANTHROPIC_API_KEY; a bare `cargo test`
+// (even with the API key in the environment) must never make paid calls.
+// Run with: FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test wiki_real_
 // ═══════════════════════════════════════════════════════════════════
 
 fn haiku_registry() -> Option<Arc<ProviderRegistry>> {
+    // Real-LLM opt-in (#288): both FORGE_LLM_LIVE=1 and a non-empty API key
+    // are required. Having just the key (common on dev laptops) must not
+    // trigger paid calls during a default `cargo test` run.
+    if std::env::var("FORGE_LLM_LIVE").ok().as_deref() != Some("1") {
+        return None;
+    }
     let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
     if api_key.is_empty() {
         return None;
@@ -1844,7 +1853,7 @@ async fn spawn_wiki_server_real() -> Option<(String, tempfile::TempDir)> {
 #[tokio::test]
 async fn wiki_real_search_returns_results() {
     let Some((base, _tmp)) = spawn_wiki_server_real().await else {
-        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        eprintln!("SKIP: set FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY to run");
         return;
     };
 
@@ -1865,7 +1874,7 @@ async fn wiki_real_search_returns_results() {
 #[tokio::test]
 async fn wiki_real_qa_answers_question() {
     let Some((base, _tmp)) = spawn_wiki_server_real().await else {
-        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        eprintln!("SKIP: set FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY to run");
         return;
     };
 
@@ -1889,7 +1898,7 @@ async fn wiki_real_qa_answers_question() {
 #[tokio::test]
 async fn wiki_real_fact_check() {
     let Some((base, _tmp)) = spawn_wiki_server_real().await else {
-        eprintln!("SKIP: ANTHROPIC_API_KEY not set");
+        eprintln!("SKIP: set FORGE_LLM_LIVE=1 and ANTHROPIC_API_KEY to run");
         return;
     };
 
