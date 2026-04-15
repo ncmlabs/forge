@@ -74,7 +74,7 @@ agent approval_gate
     memory.decision = "pending"
     memory.channel = channel
     transition to waiting_approval
-    result = skill.slack.send_message(channel, "Approval required: {context} [req: {request_id}]")
+    result = skill.slack.send_approval(channel, context, callback_url, request_id)
     when result.sure -> say "[gate] Approval message sent to Slack: {request_id}"
     when result.unsure -> say "[gate] Approval notification may have failed"
     else -> say "[gate] Failed to send approval notification"
