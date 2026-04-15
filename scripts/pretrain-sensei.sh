@@ -216,11 +216,15 @@ printf '%s\n' "${FILES[@]}" "${CONF_FILES[@]}" | sort | xargs shasum -a 256 2>/d
 # ── Phase 7: Mastery Assessment ──────────────────────────────
 echo ""
 echo "Phase 7: Mastery assessment..."
-ASSESS_SCRIPT="${HOME}/.claude/skills/forge-sensei/assess.sh"
-if [ -f "$ASSESS_SCRIPT" ]; then
-  bash "$ASSESS_SCRIPT" 2>&1
+ASSESS_SCRIPT_REPO="$FORGE_ROOT/scripts/sensei-assess.sh"
+ASSESS_SCRIPT_LEGACY="${HOME}/.claude/skills/forge-sensei/assess.sh"
+if [ -f "$ASSESS_SCRIPT_REPO" ]; then
+  bash "$ASSESS_SCRIPT_REPO" 2>&1
+elif [ -f "$ASSESS_SCRIPT_LEGACY" ]; then
+  echo "  (using legacy path: $ASSESS_SCRIPT_LEGACY — consider pulling latest forge repo)"
+  bash "$ASSESS_SCRIPT_LEGACY" 2>&1
 else
-  echo "  (skipping: assess.sh not found at $ASSESS_SCRIPT)"
+  echo "  (skipping: sensei-assess.sh not found at $ASSESS_SCRIPT_REPO or $ASSESS_SCRIPT_LEGACY)"
 fi
 
 echo ""

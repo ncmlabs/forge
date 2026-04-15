@@ -80,7 +80,7 @@ Everything in this document exists to reach that moment.
 | P2.M8 — CLI Skills | GitHub, Slack, Claude Code, Codex/Ollama SKILL.md files | #176 ✅ #177 ✅ #178 ✅ #179 ✅ | Done |
 | P2.M9 — Orchestration | Slack Monitor, Inbound Triager, approval gate | #180 ✅, #181 ✅, #182 ✅ | Done |
 | P2.M10 — Dev System | ProjectAgent, Executor, FORGE + forge-wiki two-project proof | #183-#185 | Frozen |
-| P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer + operational readiness | #166 ✅, #167 ✅, #240, #249 ✅, #256 ✅, #257 ✅, #273 ✅ | Near Done |
+| P2.M11 — Knowledge School | forge-sensei curriculum + toolkit knowledge transfer + operational readiness | #166 ✅, #167 ✅, #240 ✅, #249 ✅, #256 ✅, #257 ✅, #273 ✅ | Done |
 | P2.M12 — Toolkit Agents | Generator contract, Task/Flow/Agent/System generators, Repair, Test, SpecAnalyzer | #168, #169-#175 (frozen) | Frozen (except #168) |
 | P2.M13 — Polish | CostEstimator, DocumentationAgent, reference/skill refresh, example validation | #186 (frozen), #187 (frozen), #229, #231 ✅ | In Progress |
 
@@ -727,7 +727,7 @@ Worktree isolation for safe agent execution:
 |-------|-------|--------|
 | #166 | forge-sensei code-generation curriculum | Done ✅ |
 | #167 | Toolkit agent knowledge transfer infrastructure | Done ✅ |
-| #240 | forge-sensei server/client deployment path | In Progress |
+| #240 | forge-sensei operational readiness — mastery gates + daemon mode | Done ✅ |
 | #249 | Epic: Foundation hardening for forge-sensei (9/9 sub-issues closed) | Done ✅ |
 | #256 | Split sensei into shared/server/client FORGE sources | Done ✅ |
 | #257 | Cross-platform install scripts (macOS, Linux, WSL) | Done ✅ |
@@ -787,13 +787,11 @@ Done:
 
 Now:
 - `P2.M9` Orchestration ✅
-- `P2.M11` Knowledge School — operational readiness (#240)
+- `P2.M11` Knowledge School ✅ (closed 2026-04-15 with #240)
+- `P2.M12` Toolkit Agents — Generator contract (#168) is the next chokepoint to unfreeze
 - `P2.M10` Dev System — ProjectAgent, Executor, two-project proof (unblocked by M9)
 
-Blocked next by:
-
 Then:
-- `P2.M12` Toolkit Agents — Generator contract (#168) unblocks all generators
 - `P2.M13` Polish
 
 ---
@@ -955,13 +953,13 @@ P2.M5  Verify+Contra   ███████████████████
 P2.M6  Sandbox         ████████████████████  1/1  (100%)  DONE
 P2.M7  Skills          ████████████████████  4/4  (100%)  DONE
 P2.M8  CLI Skills      ████████████████████  4/4  (100%)  DONE
-P2.M9  Orchestration   █████████████░░░░░░░  2/3  ( 67%)  IN PROGRESS
+P2.M9  Orchestration   ████████████████████  3/3  (100%)  DONE
 P2.M10 Dev System      ░░░░░░░░░░░░░░░░░░░░  0/3  (  0%)  FROZEN
-P2.M11 Knowledge       ████████████████░░░░  5/6  ( 83%)  NEAR DONE — #240 remaining
+P2.M11 Knowledge       ████████████████████  6/6  (100%)  DONE
 P2.M12 Toolkit         ░░░░░░░░░░░░░░░░░░░░  0/8  (  0%)  FROZEN
 P2.M13 Polish          ██████████░░░░░░░░░░  2/4  ( 50%)  IN PROGRESS
 ─────────────────────────────────────────────────────────
-Phase 2 Overall         █████████████░░░░░░░  28/44 ( 64%)
+Phase 2 Overall         ██████████████░░░░░░  30/44 ( 68%)
 ```
 
 ---
