@@ -137,7 +137,7 @@ agent inbound_triager
     memory.items_escalated = 0
     memory.last_source = "none"
     memory.last_decision = "none"
-    memory.notify_channel = "C0AS3AQRNN9"
+    memory.notify_channel = "C0123456789"
     say "Inbound Triager active. Listening for SlackMention, IssueCreated, PRReviewNeeded."
 
   on SlackMention(channel: Text, user: Text, message: Text, thread_ts: Text, timestamp: Text, urgency: Text)
@@ -288,6 +288,6 @@ fn main
   say "=== Classification tests complete ==="
   say ""
   say "--- Live Slack integration test ---"
-  verdict = triage_live_test("C0AS3AQRNN9")
+  verdict = triage_live_test("C0123456789")
   say "Verdict: {verdict}"
   say "=== All tests complete ==="

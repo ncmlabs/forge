@@ -96,6 +96,10 @@ while IFS= read -r line; do
     VIOLATIONS="${VIOLATIONS}[API KEY] GitHub personal access token in $current_file\nLine: ${content:0:80}...\n\n"
   fi
 
+  if echo "$content" | grep -qE '(ghs_|gho_|ghu_|github_pat_)[a-zA-Z0-9_]{20,}'; then
+    VIOLATIONS="${VIOLATIONS}[API KEY] GitHub token in $current_file\nLine: ${content:0:80}...\n\n"
+  fi
+
   if echo "$content" | grep -qE 'gsk_[a-zA-Z0-9]{20,}'; then
     VIOLATIONS="${VIOLATIONS}[API KEY] Groq API key in $current_file\nLine: ${content:0:80}...\n\n"
   fi
@@ -104,14 +108,63 @@ while IFS= read -r line; do
     VIOLATIONS="${VIOLATIONS}[API KEY] AWS access key in $current_file\nLine: ${content:0:80}...\n\n"
   fi
 
+  # OpenAI keys: sk-proj-... (project keys, ~50+ chars) or sk-... (legacy, 48 chars)
+  if echo "$content" | grep -qE 'sk-proj-[a-zA-Z0-9_-]{20,}'; then
+    VIOLATIONS="${VIOLATIONS}[API KEY] OpenAI project key in $current_file\nLine: ${content:0:80}...\n\n"
+  fi
+
+  if echo "$content" | grep -qE '(^|[^a-zA-Z0-9_-])sk-[a-zA-Z0-9]{32,}'; then
+    # Exclude sk-ant- (already matched) and sk-proj- (already matched)
+    if ! echo "$content" | grep -qE 'sk-(ant|proj)-'; then
+      VIOLATIONS="${VIOLATIONS}[API KEY] OpenAI legacy key in $current_file\nLine: ${content:0:80}...\n\n"
+    fi
+  fi
+
+  # Google API keys: AIza followed by 35 chars
+  if echo "$content" | grep -qE 'AIza[0-9A-Za-z_-]{35}'; then
+    VIOLATIONS="${VIOLATIONS}[API KEY] Google API key in $current_file\nLine: ${content:0:80}...\n\n"
+  fi
+
+  # Stripe live keys (sk_live_, pk_live_, rk_live_)
+  if echo "$content" | grep -qE '(sk|pk|rk)_live_[0-9a-zA-Z]{20,}'; then
+    VIOLATIONS="${VIOLATIONS}[API KEY] Stripe live key in $current_file\nLine: ${content:0:80}...\n\n"
+  fi
+
+  # ── Slack ──────────────────────────────────────────────────────
+  # Slack tokens: bot (xoxb), user (xoxp), app-level (xapp), legacy (xoxa/xoxr/xoxs)
+  if echo "$content" | grep -qE 'xox[abprs]-[0-9]+-[0-9]+-[a-zA-Z0-9]+'; then
+    VIOLATIONS="${VIOLATIONS}[SLACK TOKEN] Slack API token in $current_file\nLine: ${content:0:80}...\n\n"
+  fi
+
+  # Slack identifier IDs: 1 prefix letter + 1 digit + 8 alphanumeric (uppercase) — matches real
+  # Slack format and avoids most all-caps Rust constants (which lack the early digit).
+  # Prefixes: C=channel, U=user, W=workspace user, T=team, G=private channel, D=DM
+  if echo "$content" | grep -qE '\b[CUWTGD][0-9][0-9A-Z]{8,9}\b'; then
+    # Allow placeholders that are clearly fake (sequential, all 0s, all 1s)
+    if ! echo "$content" | grep -qE '\b[CUWTGD]0123456789\b|\b[CUWTGD]0{8,10}\b|\b[CUWTGD]1{8,10}\b'; then
+      VIOLATIONS="${VIOLATIONS}[SLACK ID] Slack identifier (C/U/T/G/D format) in $current_file\nLine: ${content:0:80}...\n\n"
+    fi
+  fi
+
+  # ── ngrok URLs ─────────────────────────────────────────────────
+  if echo "$content" | grep -qE '[a-zA-Z0-9-]+\.ngrok(-free)?\.(app|io|dev)'; then
+    VIOLATIONS="${VIOLATIONS}[NGROK] Tunnel URL in $current_file\nLine: ${content:0:80}...\n\n"
+  fi
+
+  # ── Internal hostnames ─────────────────────────────────────────
+  # Skip .local because it's also mDNS and used widely in dev examples
+  if echo "$content" | grep -qE '\b[a-zA-Z0-9-]+\.(internal|corp|lan|intranet)\b'; then
+    VIOLATIONS="${VIOLATIONS}[HOSTNAME] Internal hostname in $current_file\nLine: ${content:0:80}...\n\n"
+  fi
+
   # ── Private IPs ────────────────────────────────────────────────
   if echo "$content" | grep -qE '192\.168\.[0-9]{1,3}\.[0-9]{1,3}'; then
     VIOLATIONS="${VIOLATIONS}[PRIVATE IP] Internal IP (192.168.x.x) in $current_file\nLine: ${content:0:80}...\n\n"
   fi
 
   if echo "$content" | grep -qE '(^|[^0-9])10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'; then
-    # Exclude common non-IP patterns like version numbers
-    if ! echo "$content" | grep -qE '10\.(0\.0\.0|255\.|x\.)'; then
+    # Exclude common non-IP patterns: docs placeholders, version strings, MSRV pins
+    if ! echo "$content" | grep -qiE '10\.(0\.0\.0|255\.|x\.)|^\s*(version|msrv|cargo|rust(c|-version)?|edition|rev|tag|crate|semver|spec)\s*[=:]|\b(version|msrv|rust(c|-version)?|cargo)\s*[=:]\s*[\"\x27]?\s*1?[0-9]'; then
       VIOLATIONS="${VIOLATIONS}[PRIVATE IP] Internal IP (10.x.x.x) in $current_file\nLine: ${content:0:80}...\n\n"
     fi
   fi

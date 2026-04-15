@@ -101,7 +101,7 @@ agent slack_responder
   timer poll: 30s
 
   on start
-    memory.channel = "C0AS3AQRNN9"
+    memory.channel = "C0123456789"
     memory.last_seen_ts = "0"
     memory.poll_count = 0
     memory.reply_count = 0
@@ -137,9 +137,9 @@ task extract_latest_ts
 task poll_once
   gives Text
   do
-    history = skill.slack.read_history("C0AS3AQRNN9", "0", "5")
+    history = skill.slack.read_history("C0123456789", "0", "5")
     ts = extract_latest_ts(history)
-    result = process_mention("C0AS3AQRNN9", ts)
+    result = process_mention("C0123456789", ts)
     give result
 
 fn main
