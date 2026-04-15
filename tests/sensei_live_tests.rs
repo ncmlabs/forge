@@ -3,14 +3,17 @@
 // Run mock tests:  cargo test --test sensei_live_tests
 // Run live tests:  ANTHROPIC_API_KEY=sk-... cargo test --test sensei_live_tests -- --nocapture
 
+use std::path::Path;
 use std::sync::Arc;
 
+use forge::ast::{Expr, Program, TemplatePart, TopLevel};
 use forge::compose;
 use forge::config::ForgeConfig;
 use forge::llm::registry::ProviderRegistry;
 use forge::runtime::event_bus::EventBus;
 use forge::runtime::executor::TaskExecutor;
 use forge::runtime::http_server::ForgeServer;
+use forge::runtime::instance_registry::InstanceRegistry;
 use forge::runtime::storage::ForgeStorage;
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -76,13 +79,44 @@ fn sensei_server_source_files() -> Vec<compose::SourceFile> {
     .collect()
 }
 
+/// Redirect every agent's knowledge store root from `~/.forge/sensei*` to a
+/// directory under `tmp_root`, so tests don't write to the developer's real
+/// `~/.forge/sensei/knowledge.json`. Operates on the parsed AST's template
+/// literals, which is where the sensei workflow declares its store path.
+fn rewrite_knowledge_paths(program: &mut Program, tmp_root: &Path) {
+    for item in program.items.iter_mut() {
+        if let TopLevel::Agent(agent_decl) = &mut item.node {
+            if let Some(knowledge) = agent_decl.knowledge.as_mut() {
+                if let Expr::Template(parts) = &mut knowledge.node.store_path.node {
+                    for part in parts.iter_mut() {
+                        if let TemplatePart::Text(text) = &mut part.node {
+                            if let Some(rest) = text.strip_prefix("~/.forge/") {
+                                *text = tmp_root.join(rest).to_string_lossy().into_owned();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Spawn a sensei server with the given registry and a temp storage.
 /// Returns (base_url, _tmp_dir) — keep _tmp_dir alive for the test duration.
+///
+/// The harness mirrors the production path in `src/main.rs::serve_program`:
+/// it builds and starts the declared `SystemRuntime` so the `forge_sensei`
+/// agent actually subscribes to the shared event bus. Without this, endpoint
+/// `emit` calls (e.g. `/api/ingest-fact` → `emit LearnedInsight`) are
+/// delivered to the bus but have no subscriber, and the bug that #284
+/// documents goes undetected.
 async fn spawn_sensei_server_with(registry: Arc<ProviderRegistry>) -> (String, tempfile::TempDir) {
     let source_files = sensei_server_source_files();
-    let composed = compose::merge_programs(&source_files).expect("merge sensei files failed");
+    let mut composed = compose::merge_programs(&source_files).expect("merge sensei files failed");
 
     let tmp = tempfile::tempdir().unwrap();
+    rewrite_knowledge_paths(&mut composed.program, tmp.path());
+
     let db_path = tmp.path().join("sensei_test.redb");
     let storage = ForgeStorage::open(&db_path).unwrap();
 
@@ -92,6 +126,17 @@ async fn spawn_sensei_server_with(registry: Arc<ProviderRegistry>) -> (String, t
         .with_config(config);
 
     let event_bus = EventBus::new_shared(None);
+    let instance_registry = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+
+    // Build the system runtime BEFORE moving the executor into the server, so
+    // both halves share the same event bus and the agent's `subscribe
+    // LearnedInsight` attaches to the bus that endpoint `emit` publishes to.
+    let system_runtime = executor
+        .build_system_runtime()
+        .ok()
+        .flatten()
+        .map(|sr| sr.with_shared_infrastructure(event_bus.clone(), instance_registry.clone()));
+
     let server = ForgeServer::new(executor, None).with_event_bus(event_bus);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -103,7 +148,15 @@ async fn spawn_sensei_server_with(registry: Arc<ProviderRegistry>) -> (String, t
         server.run_on_listener(listener).await.ok();
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if let Some(sr) = system_runtime {
+        tokio::spawn(async move {
+            let _ = sr.start().await;
+        });
+    }
+
+    // Give the server AND the agent process time to come up and subscribe.
+    // Without a subscribed agent, emit→learn is silently lost.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     (format!("http://127.0.0.1:{port}"), tmp)
 }
 
@@ -121,9 +174,11 @@ async fn spawn_sensei_server_mock() -> (String, tempfile::TempDir) {
 /// Spawn a sensei server with SSE events wired up.
 async fn spawn_sensei_server_with_sse() -> (String, tempfile::TempDir) {
     let source_files = sensei_server_source_files();
-    let composed = compose::merge_programs(&source_files).expect("merge sensei files failed");
+    let mut composed = compose::merge_programs(&source_files).expect("merge sensei files failed");
 
     let tmp = tempfile::tempdir().unwrap();
+    rewrite_knowledge_paths(&mut composed.program, tmp.path());
+
     let db_path = tmp.path().join("sensei_sse_test.redb");
     let storage = ForgeStorage::open(&db_path).unwrap();
 
@@ -136,6 +191,14 @@ async fn spawn_sensei_server_with_sse() -> (String, tempfile::TempDir) {
         .with_config(config);
 
     let event_bus = EventBus::new_shared(None);
+    let instance_registry = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+
+    let system_runtime = executor
+        .build_system_runtime()
+        .ok()
+        .flatten()
+        .map(|sr| sr.with_shared_infrastructure(event_bus.clone(), instance_registry.clone()));
+
     let server = ForgeServer::new(executor, None)
         .with_event_bus(event_bus)
         .with_events_tx(events_tx);
@@ -149,7 +212,13 @@ async fn spawn_sensei_server_with_sse() -> (String, tempfile::TempDir) {
         server.run_on_listener(listener).await.ok();
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if let Some(sr) = system_runtime {
+        tokio::spawn(async move {
+            let _ = sr.start().await;
+        });
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     (format!("http://127.0.0.1:{port}"), tmp)
 }
 
@@ -487,6 +556,30 @@ async fn sensei_operational_readiness_pipeline() {
         );
     }
 
+    // 2b. At least one pretrain fact must actually land in knowledge.json —
+    // the endpoint previously returned 200 while silently dropping the event
+    // due to a subscribe filter mismatch (issue #284). Without this
+    // assertion, a regression re-introduces the silent-failure mode.
+    //
+    // Why >= 1 and not `pretrain_corpus.len()`: the agent's stuck detector
+    // (src/runtime/agent.rs::StuckDetector) trips on the 3rd consecutive
+    // event-absorption handler dispatch because event handlers return Unit,
+    // which gives identical `response_text` across turns and a Jaccard
+    // similarity of 1.0. That trips the warden's circuit breaker and
+    // suspends further absorption. Tracked as a follow-up: stuck detection
+    // should not penalize event-subscription handlers that do bounded work.
+    let knowledge_path = _tmp.path().join("sensei/knowledge.json");
+    let entries = poll_knowledge_entries(&knowledge_path, 1, 2_000).await;
+    assert!(
+        entries.iter().any(|e| {
+            let content = e.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            pretrain_corpus
+                .iter()
+                .any(|(_, fact)| content.contains(fact))
+        }),
+        "no pretrain corpus fact reached knowledge.json; entries: {entries:?}"
+    );
+
     // 3. After ingestion, mastery is still novice — ingest alone doesn't grade.
     let resp = reqwest::get(format!("{base}/api/status")).await.unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -549,6 +642,133 @@ async fn sensei_operational_readiness_pipeline() {
     assert!(
         body["result"].as_str().unwrap().contains("expert"),
         "score 95 must yield expert, got: {body}"
+    );
+}
+
+/// Poll `{tmp}/sensei/knowledge.json` until it has at least `min_entries`
+/// entries or the timeout elapses, then return the decoded entries.
+/// Event delivery + agent dispatch + knowledge-store save happen off the
+/// request path, so this needs to tolerate a bounded async delay.
+async fn poll_knowledge_entries(
+    path: &std::path::Path,
+    min_entries: usize,
+    timeout_ms: u64,
+) -> Vec<serde_json::Value> {
+    let start = std::time::Instant::now();
+    loop {
+        if let Ok(raw) = std::fs::read_to_string(path) {
+            if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&raw) {
+                if parsed.len() >= min_entries {
+                    return parsed;
+                }
+            }
+        }
+        if start.elapsed().as_millis() as u64 >= timeout_ms {
+            // Return whatever we have so the caller's assertion produces a
+            // useful diagnostic instead of a bare timeout.
+            return std::fs::read_to_string(path)
+                .ok()
+                .and_then(|raw| serde_json::from_str(&raw).ok())
+                .unwrap_or_default();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+// Regression for #284: `api_ingest_fact` emits a `LearnedInsight` event, and
+// the `forge_sensei` agent's `on LearnedInsight` handler is the only path
+// that actually calls `learn` into the knowledge store. Previously the
+// subscription filter `where source == "toolkit" or source == "specialist"`
+// silently rejected the endpoint's `source: "api"` emit, so the endpoint
+// returned 200 but nothing was ever persisted. This test posts a unique
+// marker and asserts the marker reaches knowledge.json.
+#[tokio::test]
+async fn sensei_ingest_fact_persists_to_knowledge_store() {
+    let (base, tmp) = spawn_sensei_server_mock().await;
+    let client = reqwest::Client::new();
+
+    let marker = format!(
+        "UNIQUE-MARKER-{}-284-regression",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+
+    let resp = client
+        .post(format!("{base}/api/ingest-fact"))
+        .json(&serde_json::json!({
+            "category": "TEST-284",
+            "fact": marker,
+        }))
+        .send()
+        .await
+        .expect("ingest-fact request failed");
+    assert_eq!(resp.status(), 200, "ingest-fact must return 200");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body["result"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Learned [TEST-284]"),
+        "ingest-fact must return Learned acknowledgement, got: {body}"
+    );
+
+    // The endpoint acknowledgement alone is NOT proof of persistence — that
+    // was the whole point of #284. Verify the marker actually reaches disk.
+    let knowledge_path = tmp.path().join("sensei/knowledge.json");
+    let entries = poll_knowledge_entries(&knowledge_path, 1, 2_000).await;
+    assert!(
+        entries.iter().any(|e| e
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains(&marker)),
+        "ingested marker [{marker}] must appear in knowledge.json; \
+         got {} entries at {}: {entries:?}",
+        entries.len(),
+        knowledge_path.display(),
+    );
+}
+
+// Regression for #284: webhook-ingest shares the same subscribe-filter
+// codepath as api-ingest-fact. If someone widens the filter for "api" but
+// forgets "webhook", this test catches it.
+#[tokio::test]
+async fn sensei_webhook_ingest_persists_to_knowledge_store() {
+    let (base, tmp) = spawn_sensei_server_mock().await;
+    let client = reqwest::Client::new();
+
+    let marker = format!(
+        "WEBHOOK-MARKER-{}-284-regression",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+
+    let resp = client
+        .post(format!("{base}/webhook/webhook_ingest"))
+        .json(&serde_json::json!({
+            "category": "TEST-284-HOOK",
+            "fact": marker,
+        }))
+        .send()
+        .await
+        .expect("webhook_ingest request failed");
+    assert_eq!(resp.status(), 200, "webhook_ingest must return 200");
+
+    let knowledge_path = tmp.path().join("sensei/knowledge.json");
+    let entries = poll_knowledge_entries(&knowledge_path, 1, 2_000).await;
+    assert!(
+        entries.iter().any(|e| e
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains(&marker)),
+        "webhook-ingested marker [{marker}] must appear in knowledge.json; \
+         got {} entries: {entries:?}",
+        entries.len(),
     );
 }
 

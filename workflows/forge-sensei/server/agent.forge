@@ -19,7 +19,7 @@ exportable agent forge_sensei
     max_entries: 50000
     retention: 365d
   timer self_assess: 6h
-  subscribe LearnedInsight where source == "toolkit" or source == "specialist"
+  subscribe LearnedInsight where source == "toolkit" or source == "specialist" or source == "api" or source == "webhook"
 
   on start
     if memory.current_level == ""
