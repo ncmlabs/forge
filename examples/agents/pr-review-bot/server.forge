@@ -52,6 +52,7 @@ agent pr_reviewer
     pr_number: Text
     channel: Text
     callback_url: Text
+    pr_facts: Text
     ci_status: Text
     review_summary: Text
   subscribe ReviewPRRequested
@@ -62,6 +63,7 @@ agent pr_reviewer
     memory.pr_number = ""
     memory.channel = ""
     memory.callback_url = ""
+    memory.pr_facts = ""
     memory.ci_status = ""
     memory.review_summary = ""
     say "[bot] PR reviewer ready"
@@ -73,11 +75,16 @@ agent pr_reviewer
     memory.channel = channel
     memory.callback_url = callback_url
     say "[bot] Reviewing PR #{pr_number} in {repo}"
+    pr_view = skill.github.get_pr(repo, pr_number)
+    when pr_view.sure -> say "[bot] PR metadata fetched"
+    else -> say "[bot] PR metadata fetch uncertain"
+    memory.pr_facts = pr_view
     ci_check = skill.github.check_ci(repo, pr_number)
     when ci_check.sure -> say "[bot] CI status fetched"
     else -> say "[bot] CI status fetch uncertain"
     memory.ci_status = ci_check
-    review = reason "Summarize this CI output in 2 sentences: {memory.ci_status}"
+    review_prompt = "Use ONLY the facts below - do not invent any details. Summarize this PR in 2 sentences for a reviewer. Mention the target branch and CI state. PR facts JSON: {memory.pr_facts} CI output: {memory.ci_status}"
+    review = reason review_prompt
     when review.sure -> say "[bot] Review summary generated"
     else -> say "[bot] Review summary uncertain"
     memory.review_summary = review
@@ -91,7 +98,8 @@ agent pr_reviewer
     requires lifecycle == awaiting_approval on fail: give "no pending review"
     requires request_id == memory.pr_number on fail: give "stale response"
     if approved
-      summary = reason "Write a short merge announcement for PR {memory.pr_number} approved by {comment}"
+      ann_prompt = "Use ONLY the facts below - do not invent any details. Write a short 2-sentence merge announcement. State the actual target branch from the PR facts. Approver: {comment}. PR facts JSON: {memory.pr_facts}"
+      summary = reason ann_prompt
       msg = "MERGED PR {memory.pr_number}: {summary}"
       followup = skill.slack.send_message(memory.channel, msg)
       say "[bot] APPROVED PR {memory.pr_number} by {comment}"

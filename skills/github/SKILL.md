@@ -24,6 +24,13 @@ capabilities:
     executor:
       kind: command
       argv: [gh, pr, checks, "{ref}", -R, "{repo}"]
+  - name: get_pr
+    inputs: [Text, Text]
+    output: Text
+    params: [repo, pr_number]
+    executor:
+      kind: command
+      argv: [gh, pr, view, "{pr_number}", -R, "{repo}", --json, "title,number,baseRefName,headRefName,author,state,url,additions,deletions,changedFiles"]
   - name: merge_pr
     inputs: [Text, Text]
     output: Text
