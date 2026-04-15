@@ -406,13 +406,14 @@ async fn handle_get_endpoint(
         return (StatusCode::NOT_FOUND, "not found").into_response();
     }
     // Fill in missing params with empty strings so endpoints don't crash on undefined vars
-    if let Some(ep) = executor.endpoints().get(&endpoint_name) {
+    let endpoint = executor.endpoints().get(&endpoint_name).cloned();
+    if let Some(ep) = endpoint.as_ref() {
         for param in &ep.params {
             params.entry(param.node.name.clone()).or_default();
         }
     }
     let request = build_request_record("GET", &endpoint_name, &params, &headers, "");
-    let args = string_params_to_args(params);
+    let args = string_params_to_args(params, endpoint.as_ref());
     dispatch_endpoint(
         executor,
         &endpoint_name,
@@ -503,7 +504,7 @@ async fn handle_post_endpoint(
                     Some((decode(key), decode(value)))
                 })
                 .collect();
-            let args = string_params_to_args(params.clone());
+            let args = string_params_to_args(params.clone(), endpoint.as_ref());
             (params, args)
         };
 
@@ -893,11 +894,55 @@ fn api_endpoint_name(endpoint_name: &str) -> String {
     format!("api_{}", endpoint_name.replace('-', "_"))
 }
 
-fn string_params_to_args(params: HashMap<String, String>) -> HashMap<String, ConfidentValue> {
+/// Convert a map of string-valued parameters into `ConfidentValue` args, coercing
+/// each value to the endpoint's declared parameter type when the endpoint is
+/// known. Unknown params (not declared on the endpoint) and endpoints that
+/// aren't resolved fall through as `Value::Text`.
+///
+/// This keeps form-encoded POST bodies and GET query strings symmetric with the
+/// raw-body single-param path (see `raw_body_to_single_param_args`): typed
+/// endpoints receive `Number` / `Bool` instead of `Text("98")`.
+fn string_params_to_args(
+    params: HashMap<String, String>,
+    endpoint: Option<&crate::ast::EndpointDecl>,
+) -> HashMap<String, ConfidentValue> {
     params
         .into_iter()
-        .map(|(k, v)| (k, ConfidentValue::deterministic(Value::Text(v))))
+        .map(|(k, v)| {
+            let type_name = endpoint.and_then(|ep| {
+                ep.params
+                    .iter()
+                    .find(|p| p.node.name == k)
+                    .map(|p| &p.node.type_name.node)
+            });
+            let value = match type_name {
+                Some(ty) => coerce_to_param_type(&v, ty),
+                None => Value::Text(v),
+            };
+            (k, ConfidentValue::deterministic(value))
+        })
         .collect()
+}
+
+/// Coerce a raw string value to a FORGE `Value` matching the declared
+/// parameter type. Numbers parse via `f64`, bools accept `true`/`1`. On parse
+/// failure we fall back to `Value::Text` so the endpoint can still surface a
+/// meaningful type error instead of a silent empty response. Shared between
+/// `string_params_to_args` (form / query) and `raw_body_to_single_param_args`
+/// (raw body).
+fn coerce_to_param_type(raw: &str, type_name: &crate::ast::TypeName) -> Value {
+    match type_name {
+        crate::ast::TypeName::Number => raw
+            .trim()
+            .parse::<f64>()
+            .map(Value::Number)
+            .unwrap_or_else(|_| Value::Text(raw.to_string())),
+        crate::ast::TypeName::Bool => {
+            let normalized = raw.trim();
+            Value::Bool(normalized == "true" || normalized == "1")
+        }
+        _ => Value::Text(raw.to_string()),
+    }
 }
 
 fn json_object_to_string_params(
@@ -959,18 +1004,7 @@ fn raw_body_to_single_param_args(
     }
 
     let param = endpoint.params.first()?;
-    let value = match &param.node.type_name.node {
-        crate::ast::TypeName::Number => raw_body
-            .trim()
-            .parse::<f64>()
-            .map(Value::Number)
-            .unwrap_or_else(|_| Value::Text(raw_body.to_string())),
-        crate::ast::TypeName::Bool => {
-            let normalized = raw_body.trim();
-            Value::Bool(normalized == "true" || normalized == "1")
-        }
-        _ => Value::Text(raw_body.to_string()),
-    };
+    let value = coerce_to_param_type(raw_body, &param.node.type_name.node);
 
     Some(HashMap::from([(
         param.node.name.clone(),
