@@ -1,0 +1,40 @@
+# Session + Knowledge integration — issue #273
+#
+# Closes Phase 2 M11 (Knowledge School) by proving FORGE agents can
+# *learn from session results*. Composes three primitives:
+#   1. session       — delegate a question to Claude Code
+#   2. learn from interaction — persist the Q/A into the knowledge store
+#   3. recall        — prove the learned knowledge survives
+#
+# Builds on #241 (session smoke test — Claude Code delegation works).
+# Known caveat: result.cost_usd is 0 due to upstream bug #272 — not
+# surfaced here; we only use result.plan and result.confidence.
+
+exportable agent session_learner
+  knowledge store: ".forge-knowledge/session-learning"
+    max_entries: 1000
+    retention: 30d
+
+  on start
+    question = "What is the Rust ownership model in one sentence?"
+    say "=== session + knowledge integration (#273) ==="
+    say "--- Step 1: delegate to Claude Code ---"
+    result = session "claude-learner" agent "claude" prompt "{question}" tools ["Read"] timeout 2m budget 0.25 gives AgentResult
+    say "plan: {result.plan}"
+    say "confidence: {result.confidence}"
+    say "--- Step 2: learn from the interaction ---"
+    when result.sure -> learn from interaction(question, result.plan, result.confidence) category: "session-results"
+    when result.unsure -> learn from interaction(question, result.plan, result.confidence) category: "session-results"
+    else -> say "session failed — nothing to learn"
+    say "learned: {question}"
+    say "--- Step 3: recall what was just learned ---"
+    prior = recall "{question}"
+    when prior.sure -> say "recalled: {prior}"
+    else -> say "recall failed"
+    say "=== Done ==="
+
+  if stuck for 3 turns
+    escalate to human
+
+fn main
+  learner = spawn session_learner as "learner"

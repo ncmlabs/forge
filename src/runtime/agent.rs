@@ -700,6 +700,37 @@ impl AgentProcess {
             t.agent_started(&self.decl.name.node, std::process::id());
         }
 
+        // Auto-dispatch the `on start` handler when the agent comes up (issue #273).
+        // Closes a Composition gap: agents declaring `on start` previously needed an
+        // external event-bus trigger to fire it, leaving the handler dormant under
+        // `forge run`. Auto-firing makes start a true lifecycle event so agents can
+        // self-initialize (memory setup, banners, kicking off work).
+        let has_start_handler = self
+            .decl
+            .handlers
+            .iter()
+            .any(|h| h.node.event.node == "start");
+        if has_start_handler {
+            match self.dispatch("start", HashMap::new()).await {
+                Ok(_) => {}
+                Err(RuntimeError::RetireSignal) => {
+                    // Agent retired during start. Skip event loop, run cleanup path below.
+                    if let Some(t) = self.executor.tracer() {
+                        t.agent_shutdown(&self.decl.name.node, "retire");
+                    }
+                    return Ok(());
+                }
+                Err(e) => {
+                    if let Some(t) = self.executor.tracer() {
+                        t.agent_shutdown(&self.decl.name.node, "error");
+                    }
+                    return Err(e);
+                }
+            }
+            // Drain any events the start handler emitted into the bus.
+            self.drain_event_sink().await?;
+        }
+
         // Merge all receivers into a single stream via a helper channel
         let (merge_tx, mut merge_rx) = mpsc::channel::<(Option<Spanned<Expr>>, EventPayload)>(64);
 

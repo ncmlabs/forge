@@ -1511,10 +1511,26 @@ impl TaskExecutor {
                         None
                     };
 
-                    // 9. Spawn as tokio task
-                    tokio::spawn(async move {
-                        let _ = child_process.run().await;
-                    });
+                    // 9. Spawn child process.
+                    //
+                    // When called from inside an agent handler (self.agent_context.is_some()),
+                    // the child runs as a background tokio task — the parent agent stays alive
+                    // and continues handling its own events.
+                    //
+                    // When called from `fn main` (self.agent_context.is_none()), there is no
+                    // long-lived parent. Fire-and-forget would tear the child down as soon as
+                    // fn main returns. So in that case we run the child inline and await it,
+                    // letting fn main act as a supervisor that waits for spawned agents to
+                    // retire (issue #273 — composition of fn main + spawn + on start).
+                    if self.agent_context.is_some() {
+                        tokio::spawn(async move {
+                            let _ = child_process.run().await;
+                        });
+                    } else {
+                        // Run inline so fn main waits for the child to retire.
+                        // Errors are surfaced (unlike background spawn which discards them).
+                        child_process.run().await?;
+                    }
 
                     // 10. Bind instance UUID to variable if requested
                     if let Some(ref binding) = spawn.binding {
