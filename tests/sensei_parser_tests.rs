@@ -65,8 +65,8 @@ fn parse_sensei_full_program_ast_structure() {
 
     assert_eq!(types, 4, "expected 4 type defs");
     assert_eq!(
-        events, 3,
-        "expected 3 events (LearnedInsight, AssessmentCompleted, KnowledgeGapFound)"
+        events, 4,
+        "expected 4 events (LearnedInsight, AssessmentCompleted, KnowledgeGapFound, IngestRequested)"
     );
     assert_eq!(
         states, 2,
@@ -109,6 +109,7 @@ fn parse_sensei_agent_handlers_complete() {
         "review",
         "learn_from_session",
         "LearnedInsight",
+        "IngestRequested",
         "deep_dive",
         "assess_detailed",
         "batch_assess",

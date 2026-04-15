@@ -16,3 +16,7 @@ event AssessmentCompleted
 event KnowledgeGapFound
   category: Text
   question: Text
+
+event IngestRequested
+  document_path: Text
+  source: Text
