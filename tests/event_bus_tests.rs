@@ -384,6 +384,71 @@ async fn agent_filter_subscribe_rejects_non_matching() {
     assert!(result.is_ok());
 }
 
+#[tokio::test]
+async fn agent_filter_can_access_memory() {
+    // Regression for #286 sibling: subscribe filters like
+    // `subscribe LearnedInsight where category == memory.topic` are
+    // documented (README.md, docs/forge-reference.md, forge-sensei/specialist)
+    // and must resolve `memory.*` the same way handler bodies do. Prior to
+    // the fix, should_handle() did not bind `memory` into the filter env, so
+    // any event delivery would error out of filter eval, crash the agent
+    // task, and the warden would restart it — with 3 crashes tripping the
+    // circuit breaker after a handful of events.
+
+    // Filter: event.category == memory.topic
+    let filter = spanned(Expr::BinOp(
+        Box::new(spanned(Expr::FieldAccess(
+            Box::new(spanned(Expr::Ident("event".into()))),
+            spanned("category".into()),
+        ))),
+        spanned(BinOp::Eq),
+        Box::new(spanned(Expr::FieldAccess(
+            Box::new(spanned(Expr::Ident("memory".into()))),
+            spanned("topic".into()),
+        ))),
+    ));
+
+    let mut decl = subscribing_agent("specialist_like", "LearnedInsight", Some(filter));
+    // Give the agent a memory.topic field (defaults to empty Text).
+    decl.memory = vec![spanned(FieldDef {
+        name: "topic".into(),
+        type_name: spanned(TypeName::Text),
+    })];
+
+    let bus = EventBus::new_shared(None);
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
+
+    // Publish a non-matching event (category set, memory.topic still empty).
+    // Before the fix this would crash agent.run() because filter eval
+    // errored on the unbound `memory` identifier.
+    {
+        let bus_guard = bus.read().await;
+        bus_guard.publish(&payload_with_fields(
+            "LearnedInsight",
+            "emitter",
+            vec![("category", "SYNTAX")],
+        ));
+    }
+    bus.write().await.close();
+
+    let result = agent.run().await;
+    assert!(
+        result.is_ok(),
+        "agent.run() must not error when filter references memory.* — got {:?}",
+        result
+    );
+}
+
 // ── Multi-agent end-to-end scenario ─────────────────────────────────────────
 
 /// Simulates a tic-tac-toe room scenario:

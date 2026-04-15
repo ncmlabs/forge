@@ -591,13 +591,15 @@ impl AgentProcess {
             );
         }
 
-        // Record turn for stuck detection
-        let response_text = result
-            .as_ref()
-            .map(|v| format!("{}", v.value))
-            .unwrap_or_default();
-        let confidence = result.as_ref().map(|v| v.confidence).unwrap_or(1.0);
-        {
+        // Record turn for stuck detection — only handlers that actually
+        // produced a response (hit a `give` clause) are meaningful signal.
+        // Event-absorption handlers that return Unit would otherwise feed
+        // identical empty response_texts to StuckDetector and trivially
+        // satisfy the Jaccard "all similar" check, tripping the warden
+        // after a handful of bounded side-effect dispatches. See #286.
+        if let Some(ref v) = result {
+            let response_text = format!("{}", v.value);
+            let confidence = v.confidence;
             let mut ctx = self.context.lock().unwrap();
             let memory_hash = ctx.memory.snapshot_hash();
             ctx.stuck_detector.record_turn(TurnRecord {
@@ -897,6 +899,19 @@ impl AgentProcess {
                     "event",
                     ConfidentValue::deterministic(Value::Record(payload.fields.clone())),
                 );
+                // Bind agent memory so filters like
+                // `subscribe LearnedInsight where category == memory.topic`
+                // can resolve `memory.*` the same way handler bodies do.
+                // Without this binding the filter eval errors, the agent
+                // task crashes, and the warden restarts it — with N crashes
+                // within the retry window tripping the circuit breaker.
+                {
+                    let ctx = self.context.lock().unwrap();
+                    env.bind(
+                        "memory",
+                        ConfidentValue::deterministic(ctx.memory.to_record()),
+                    );
+                }
                 let result = self.executor.eval_expr(filter_expr, &mut env).await?;
                 Ok(truthy(&result))
             }

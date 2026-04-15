@@ -556,29 +556,24 @@ async fn sensei_operational_readiness_pipeline() {
         );
     }
 
-    // 2b. At least one pretrain fact must actually land in knowledge.json —
-    // the endpoint previously returned 200 while silently dropping the event
-    // due to a subscribe filter mismatch (issue #284). Without this
-    // assertion, a regression re-introduces the silent-failure mode.
-    //
-    // Why >= 1 and not `pretrain_corpus.len()`: the agent's stuck detector
-    // (src/runtime/agent.rs::StuckDetector) trips on the 3rd consecutive
-    // event-absorption handler dispatch because event handlers return Unit,
-    // which gives identical `response_text` across turns and a Jaccard
-    // similarity of 1.0. That trips the warden's circuit breaker and
-    // suspends further absorption. Tracked as a follow-up: stuck detection
-    // should not penalize event-subscription handlers that do bounded work.
+    // 2b. All pretrain facts must land in knowledge.json. Previously this
+    // could only assert >= 1 because the stuck detector (issue #286) tripped
+    // on the 3rd consecutive Unit-returning `on LearnedInsight` dispatch,
+    // which cascaded into a warden circuit-breaker trip. With #286 fixed,
+    // Unit-returning event-absorption handlers no longer feed the detector
+    // and the full batch persists end-to-end.
     let knowledge_path = _tmp.path().join("sensei/knowledge.json");
-    let entries = poll_knowledge_entries(&knowledge_path, 1, 2_000).await;
-    assert!(
-        entries.iter().any(|e| {
-            let content = e.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            pretrain_corpus
-                .iter()
-                .any(|(_, fact)| content.contains(fact))
-        }),
-        "no pretrain corpus fact reached knowledge.json; entries: {entries:?}"
-    );
+    let entries = poll_knowledge_entries(&knowledge_path, pretrain_corpus.len(), 10_000).await;
+    for (_, fact) in pretrain_corpus {
+        assert!(
+            entries.iter().any(|e| {
+                e.get("content")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|c| c.contains(fact))
+            }),
+            "pretrain fact missing from knowledge.json: {fact:?}; entries: {entries:?}"
+        );
+    }
 
     // 3. After ingestion, mastery is still novice — ingest alone doesn't grade.
     let resp = reqwest::get(format!("{base}/api/status")).await.unwrap();

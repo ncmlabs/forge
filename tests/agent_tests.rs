@@ -721,6 +721,57 @@ async fn stuck_detection_triggers_policy() {
     }
 }
 
+#[tokio::test]
+async fn no_give_handler_does_not_trip_stuck() {
+    // Regression for #286: a handler that runs side effects but never
+    // `give`s — typical of `on LearnedInsight` absorption handlers that
+    // call `learn`, mutate memory, and `say` a receipt — must NOT feed the
+    // stuck detector. Otherwise a handful of event-subscription dispatches
+    // trivially hit Jaccard=1.0 on empty response_texts and the warden's
+    // circuit breaker trips after bounded, healthy absorption work.
+    let handler = spanned(OnHandler {
+        event: spanned("message".into()),
+        params: vec![],
+        payload_type: None,
+        requires: vec![],
+        body: vec![spanned(Stmt::Say(spanned(Expr::Template(vec![spanned(
+            TemplatePart::Text("absorbed".into()),
+        )]))))],
+        // no Give statement
+    });
+
+    let stuck_policy = spanned(StuckPolicy {
+        turns: Some(3),
+        body: vec![spanned(Stmt::Escalate(spanned("human".into())))],
+    });
+
+    let decl = simple_agent(vec![], vec![handler], Some(stuck_policy));
+    let agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        None,
+        empty_program(),
+        None,
+        None,
+    );
+
+    // Five dispatches — well past the default stuck threshold of 3.
+    for _ in 0..5 {
+        agent.dispatch("message", HashMap::new()).await.unwrap();
+    }
+
+    let ctx = agent.context().lock().unwrap();
+    assert!(
+        ctx.event_sink.escalations.is_empty(),
+        "no-give handler must not trigger stuck escalation"
+    );
+    assert!(
+        !ctx.stuck_detector.is_stuck(),
+        "no-give handler must not feed stuck detector at all"
+    );
+}
+
 // ── Full integration: parsed FORGE agent ─────────────────────────────────────
 
 #[tokio::test]
