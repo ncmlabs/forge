@@ -1358,15 +1358,12 @@ impl TaskExecutor {
                             TopLevel::Agent(a) if a.name.node == *template_name => {
                                 agent_decl = Some(a.as_ref().clone());
                             }
-                            TopLevel::States(s) => {
+                            TopLevel::States(s) if states_decl.is_none() => {
                                 // Collect states decls for lifecycle lookup
-                                if states_decl.is_none() {
-                                    if let Some(ref ad) = agent_decl {
-                                        if ad.lifecycle.as_ref().map(|l| &l.node)
-                                            == Some(&s.name.node)
-                                        {
-                                            states_decl = Some(s.clone());
-                                        }
+                                if let Some(ref ad) = agent_decl {
+                                    if ad.lifecycle.as_ref().map(|l| &l.node) == Some(&s.name.node)
+                                    {
+                                        states_decl = Some(s.clone());
                                     }
                                 }
                             }

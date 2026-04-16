@@ -115,7 +115,7 @@ pub fn build_package(
         }
     }
     let mut domains: Vec<(String, usize)> = domain_counts.into_iter().collect();
-    domains.sort_by(|a, b| b.1.cmp(&a.1));
+    domains.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     let top_domains: Vec<String> = domains.into_iter().take(5).map(|(d, _)| d).collect();
 
     let expertise = ExpertiseMetrics {
