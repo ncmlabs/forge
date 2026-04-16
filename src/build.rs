@@ -883,6 +883,7 @@ async fn main() -> anyhow::Result<()> {{
         program,
         storage,
         Some(instance_registry),
+        None,
     );
 
     match cli.command {{
@@ -1129,7 +1130,8 @@ async fn main() -> anyhow::Result<()> {{
             config.max_entries,
             config.retention_days,
         );
-        executor = executor.with_knowledge_store(knowledge_store);
+        let shared_ks = std::sync::Arc::new(std::sync::Mutex::new(knowledge_store));
+        executor = executor.with_shared_knowledge_store_arc(shared_ks);
     }}
 
     let topology = executor.extract_topology();
@@ -1269,7 +1271,7 @@ mod tests {
         assert!(main_rs.contains(
             "let knowledge_store = forge::runtime::knowledge_store::KnowledgeStore::new"
         ));
-        assert!(main_rs.contains("executor = executor.with_knowledge_store(knowledge_store);"));
+        assert!(main_rs.contains("executor = executor.with_shared_knowledge_store_arc(shared_ks);"));
         assert!(main_rs.contains("ForgeStorage::resolve_root"));
         assert!(main_rs.contains("c.store_path.as_str()"));
     }

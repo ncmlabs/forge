@@ -263,6 +263,7 @@ async fn timer_expired_dispatches_handler() {
         empty_program(),
         None,
         None,
+        None,
     );
 
     // Start the timer via handler dispatch
@@ -342,6 +343,7 @@ async fn timer_expired_with_context_param() {
         empty_program(),
         None,
         None,
+        None,
     );
 
     // Start timer with context
@@ -394,6 +396,7 @@ async fn timer_cancel_in_handler_prevents_expiry() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );

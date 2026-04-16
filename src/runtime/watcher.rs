@@ -245,11 +245,14 @@ fn attempt_reload(
         new_executor = new_executor.with_skill_executor(se.clone());
     }
 
-    // Preserve storage handle from the old executor (#140)
+    // Preserve storage and knowledge store handles from the old executor (#140, #309)
     {
         let old_guard = swappable.read().unwrap();
         if let Some(storage) = old_guard.storage_handle() {
             new_executor = new_executor.with_storage(storage);
+        }
+        if let Some(ks) = old_guard.knowledge_store_handle() {
+            new_executor = new_executor.with_shared_knowledge_store_arc(ks);
         }
         if let Some(session_mgr) = old_guard.session_manager() {
             new_executor = new_executor.with_session_manager(session_mgr.clone());

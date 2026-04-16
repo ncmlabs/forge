@@ -98,6 +98,7 @@ async fn emits_agent_started_handler_pair_and_shutdown_on_success() {
         empty_program(),
         None,
         None,
+        None,
     )
     .with_event_bus(bus.clone())
     .await;
@@ -165,6 +166,7 @@ async fn blocked_by_requires_emits_handler_completed_without_started() {
         mock_registry(),
         Some(tracer.clone()),
         empty_program(),
+        None,
         None,
         None,
     );

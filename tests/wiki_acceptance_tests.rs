@@ -334,6 +334,7 @@ async fn wiki_page_create() {
         program,
         Some(storage.clone()),
         None,
+        None,
     );
 
     // Initialize agent memory
@@ -375,6 +376,7 @@ async fn wiki_page_update() {
         None,
         program,
         Some(storage.clone()),
+        None,
         None,
     );
 
@@ -421,6 +423,7 @@ async fn wiki_page_publish() {
         None,
         program,
         Some(storage.clone()),
+        None,
         None,
     );
 
@@ -483,6 +486,7 @@ async fn wiki_page_archive() {
         program,
         Some(storage.clone()),
         None,
+        None,
     );
 
     // Create → review → publish → archive
@@ -530,6 +534,7 @@ async fn wiki_page_restore() {
         None,
         program,
         Some(storage.clone()),
+        None,
         None,
     );
 
@@ -603,6 +608,7 @@ async fn wiki_page_empty_slug_rejected() {
         None,
         program,
         Some(storage.clone()),
+        None,
         None,
     );
 
@@ -758,6 +764,7 @@ async fn wiki_search_high_confidence() {
         program,
         Some(storage),
         None,
+        None,
     );
 
     // Initialize memory (start handler sets defaults)
@@ -789,6 +796,7 @@ async fn wiki_search_empty_query() {
         program,
         Some(storage),
         None,
+        None,
     );
 
     agent.dispatch("start", HashMap::new()).await.unwrap();
@@ -817,6 +825,7 @@ async fn wiki_search_query_count() {
         None,
         program,
         Some(storage),
+        None,
         None,
     );
 
@@ -856,6 +865,7 @@ async fn wiki_qa_answer() {
         program,
         Some(storage),
         None,
+        None,
     );
 
     agent.dispatch("start", HashMap::new()).await.unwrap();
@@ -885,6 +895,7 @@ async fn wiki_qa_tracks_questions() {
         None,
         program,
         Some(storage),
+        None,
         None,
     );
 
@@ -1481,6 +1492,7 @@ async fn wiki_search_reindex_on_event() {
         None,
         program,
         Some(storage),
+        None,
         None,
     );
 

@@ -19,6 +19,7 @@ use crate::runtime::agent::{AgentProcess, AgentSignal};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
 use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
+use crate::runtime::knowledge_store::SharedKnowledgeStore;
 use crate::runtime::warded::{AgentBlueprint, SharedWardenSnapshots, WardedRuntime};
 use crate::tracer::Tracer;
 
@@ -153,6 +154,7 @@ impl SystemRuntime {
                     registry: providers.clone(),
                     tracer: tracer.clone(),
                     skill_executor: skill_executor.clone(),
+                    shared_knowledge_store: None,
                 },
             );
         }
@@ -270,6 +272,22 @@ impl SystemRuntime {
         self
     }
 
+    /// Wire a shared knowledge store into all agents that declare knowledge.
+    /// Call BEFORE `.start()` so agents use the same instance as the endpoint executor.
+    pub fn with_shared_knowledge_store(mut self, ks: SharedKnowledgeStore) -> Self {
+        // Wire into unsupervised agent blueprints
+        for blueprint in self.blueprints.values_mut() {
+            if blueprint.decl.knowledge.is_some() {
+                blueprint.shared_knowledge_store = Some(ks.clone());
+            }
+        }
+        // Wire into warded runtimes (supervised agents)
+        for wr in &mut self.warded_runtimes {
+            wr.set_shared_knowledge_store(ks.clone());
+        }
+        self
+    }
+
     /// Parse wiring compose expressions into alias chains.
     /// `a >> b >> c` becomes `["a", "b", "c"]`.
     fn parse_wiring(exprs: &[Spanned<Expr>]) -> Result<Vec<Vec<String>>, RuntimeError> {
@@ -369,6 +387,7 @@ impl SystemRuntime {
             blueprint.program.clone(),
             self.storage.clone(),
             Some(self.instance_registry.clone()),
+            blueprint.shared_knowledge_store.clone(),
         );
 
         // Attach skill executor if available (#276)

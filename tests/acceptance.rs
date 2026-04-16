@@ -248,6 +248,7 @@ async fn accept_tictactoe_game() {
         combined_program,
         None,
         None,
+        None,
     );
 
     // Initialize board with "_" markers (memory default is empty strings)

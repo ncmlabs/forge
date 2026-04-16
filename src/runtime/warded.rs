@@ -20,6 +20,7 @@ use crate::runtime::agent::{AgentProcess, AgentSignal};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
 use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
+use crate::runtime::knowledge_store::SharedKnowledgeStore;
 use crate::runtime::warden::{duration_to_ms, FailureSignal, WardAction, Warden};
 use crate::tracer::Tracer;
 
@@ -49,6 +50,7 @@ pub struct AgentBlueprint {
     pub registry: Arc<ProviderRegistry>,
     pub tracer: Option<Tracer>,
     pub skill_executor: Option<Arc<crate::runtime::skill_executor::SkillExecutor>>,
+    pub shared_knowledge_store: Option<SharedKnowledgeStore>,
 }
 
 // ── ManagedAgent ────────────────────────────────────────────────────────────
@@ -124,6 +126,7 @@ impl WardedRuntime {
                         registry: registry.clone(),
                         tracer: tracer.clone(),
                         skill_executor: None,
+                        shared_knowledge_store: None,
                     },
                 );
             }
@@ -198,6 +201,7 @@ impl WardedRuntime {
                         registry: registry.clone(),
                         tracer: tracer.clone(),
                         skill_executor: skill_executor.clone(),
+                        shared_knowledge_store: None,
                     },
                 );
             }
@@ -333,6 +337,7 @@ impl WardedRuntime {
             blueprint.program.clone(),
             self.storage.clone(),
             Some(self.instance_registry.clone()),
+            blueprint.shared_knowledge_store.clone(),
         )
         .with_warden_signal(self.signal_tx.clone());
 
@@ -659,6 +664,15 @@ impl WardedRuntime {
     pub fn release(&mut self, name: &str) {
         self.warden.release(name);
         self.blueprints.remove(name);
+    }
+
+    /// Wire a shared knowledge store into all blueprints that declare knowledge.
+    pub fn set_shared_knowledge_store(&mut self, ks: SharedKnowledgeStore) {
+        for blueprint in self.blueprints.values_mut() {
+            if blueprint.decl.knowledge.is_some() {
+                blueprint.shared_knowledge_store = Some(ks.clone());
+            }
+        }
     }
 
     /// Apply scope: restart affected agents beyond the failing one.

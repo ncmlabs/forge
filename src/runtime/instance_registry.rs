@@ -88,7 +88,8 @@ impl InstanceInfo {
                 obj["escalation_count"] = serde_json::json!(ctx.event_sink.escalations.len());
 
                 // Knowledge store
-                if let Some(ref ks) = ctx.knowledge_store {
+                if let Some(ref ks_arc) = ctx.knowledge_store {
+                    let ks = ks_arc.lock().unwrap();
                     obj["knowledge_count"] = serde_json::json!(ks.entry_count());
                 }
 
