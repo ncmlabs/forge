@@ -65,6 +65,7 @@ event IssueAssigned
   body: Text
   channel: Text
   callback_url: Text
+  test_cmd: Text
 
 event PlanApproved
   issue_id: Text
@@ -74,6 +75,7 @@ event PlanApproved
   branch: Text
   channel: Text
   callback_url: Text
+  test_cmd: Text
 
 event ImplementationReady
   issue_id: Text
@@ -81,6 +83,7 @@ event ImplementationReady
   branch: Text
   channel: Text
   callback_url: Text
+  test_cmd: Text
 
 event TestsFailed
   issue_id: Text
@@ -89,6 +92,7 @@ event TestsFailed
   failures: Text
   channel: Text
   callback_url: Text
+  test_cmd: Text
 
 event AcceptanceMet
   issue_id: Text
@@ -97,6 +101,7 @@ event AcceptanceMet
   report: Text
   channel: Text
   callback_url: Text
+  test_cmd: Text
 
 event PRReady
   issue_id: Text
@@ -195,6 +200,7 @@ agent planner
     callback_url: Text
     plan_text: Text
     criteria: Text
+    test_cmd: Text
   subscribe IssueAssigned
 
   on start
@@ -204,14 +210,16 @@ agent planner
     memory.callback_url = ""
     memory.plan_text = ""
     memory.criteria = ""
+    memory.test_cmd = ""
     say "[planner] ready"
 
-  on IssueAssigned(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text)
+  on IssueAssigned(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text, test_cmd: Text)
     memory.issue_id = issue_id
     memory.repo = repo
     memory.channel = channel
     memory.callback_url = callback_url
     memory.criteria = body
+    memory.test_cmd = test_cmd
     say "[planner] Planning issue {issue_id} in {repo}"
     issue = Issue(id: issue_id, title: title, criteria: body)
     plan_text = draft_plan(issue)
@@ -221,7 +229,7 @@ agent planner
     when notify.sure -> say "[planner] Slack notification sent"
     else -> say "[planner] Slack notification may have failed"
     say "[planner] Plan drafted - handing off to implementer"
-    emit PlanApproved(issue_id: issue_id, repo: repo, plan: plan_text, criteria: body, branch: branch, channel: channel, callback_url: callback_url)
+    emit PlanApproved(issue_id: issue_id, repo: repo, plan: plan_text, criteria: body, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
   if stuck for 5 turns
     say "[planner] Stuck. Escalating."
@@ -248,6 +256,7 @@ agent implementer
     channel: Text
     callback_url: Text
     last_failures: Text
+    test_cmd: Text
   subscribe PlanApproved
   subscribe TestsFailed
 
@@ -261,9 +270,10 @@ agent implementer
     memory.channel = ""
     memory.callback_url = ""
     memory.last_failures = ""
+    memory.test_cmd = ""
     say "[implementer] ready"
 
-  on PlanApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text)
+  on PlanApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
     memory.issue_id = issue_id
     memory.repo = repo
     memory.plan = plan
@@ -271,6 +281,7 @@ agent implementer
     memory.branch = branch
     memory.channel = channel
     memory.callback_url = callback_url
+    memory.test_cmd = test_cmd
     memory.iteration = 0
     say "[implementer] Starting implementation for {issue_id} on branch {branch}"
     clone_cmd = "rm -rf /tmp/forge-workdir-{issue_id} && gh repo clone {repo} /tmp/forge-workdir-{issue_id} 2>&1 && cd /tmp/forge-workdir-{issue_id} && git checkout -b {branch} 2>&1"
@@ -290,9 +301,9 @@ agent implementer
     notify = skill.slack.send_message(channel, "Implementation pushed for {issue_id} on branch {branch}. Running tests next.")
     when notify.sure -> say "[implementer] Slack notification sent"
     else -> say "[implementer] Slack notification may have failed"
-    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url)
+    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
-  on TestsFailed(issue_id: Text, repo: Text, branch: Text, failures: Text, channel: Text, callback_url: Text)
+  on TestsFailed(issue_id: Text, repo: Text, branch: Text, failures: Text, channel: Text, callback_url: Text, test_cmd: Text)
     memory.iteration = memory.iteration + 1
     memory.last_failures = failures
     if memory.iteration >= 3
@@ -300,6 +311,7 @@ agent implementer
       escalate_msg = "ESCALATION: {issue_id} failed after 3 fix attempts.\nLast failures:\n{failures}"
       notify = skill.slack.send_message(channel, escalate_msg)
       escalate to lead
+      give "escalated"
     say "[implementer] Iteration {memory.iteration}: fixing failures for {issue_id}"
     fix_prompt = "Fix the test failures for issue {issue_id}.\n\nOriginal plan:\n{memory.plan}\n\nTest failures:\n{failures}\n\nGenerate ONLY shell commands (cat heredocs, sed, etc.) to fix the issues. No markdown, no explanations."
     fix_code = reason fix_prompt
@@ -311,8 +323,8 @@ agent implementer
     commit_result = command "cd /tmp/forge-workdir-{issue_id} && git add -A && git diff --cached --quiet || git commit -m 'fix({issue_id}): iteration {memory.iteration}' && git push origin {branch} 2>&1" timeout 60s
     when commit_result.sure -> say "[implementer] Fix committed and pushed"
     else -> say "[implementer] Fix commit/push issue"
-    notify = skill.slack.send_message(channel, "Fix iteration {memory.iteration} for {issue_id} pushed. Re-running tests.")
-    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url)
+    say "[implementer] Fix iteration {memory.iteration} for {issue_id} pushed. Re-running tests."
+    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
   if stuck for 5 turns
     say "[implementer] Stuck. Escalating."
@@ -332,6 +344,7 @@ agent tester
     channel: Text
     callback_url: Text
     acceptance_result: Text
+    test_cmd: Text
   subscribe ImplementationReady
 
   on start
@@ -341,37 +354,36 @@ agent tester
     memory.channel = ""
     memory.callback_url = ""
     memory.acceptance_result = ""
+    memory.test_cmd = ""
     say "[tester] ready"
 
-  on ImplementationReady(issue_id: Text, repo: Text, branch: Text, channel: Text, callback_url: Text)
+  on ImplementationReady(issue_id: Text, repo: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
     memory.issue_id = issue_id
     memory.repo = repo
     memory.branch = branch
     memory.channel = channel
     memory.callback_url = callback_url
+    memory.test_cmd = test_cmd
     say "[tester] Running tests on {branch} in {repo}"
     pull_result = command "cd /tmp/forge-workdir-{issue_id} && git pull origin {branch} 2>&1" timeout 30s
     when pull_result.sure -> say "[tester] Latest changes pulled"
     else -> say "[tester] Pull may have issues: {pull_result}"
-    test_output = command "cd /tmp/forge-workdir-{issue_id} && cargo test 2>&1" timeout 120s
+    test_output = command "cd /tmp/forge-workdir-{issue_id} && {memory.test_cmd} 2>&1" timeout 120s
     when test_output.sure -> say "[tester] Tests completed (exit 0)"
     else -> say "[tester] Tests completed with failures"
     report = TestReport(passed: false, failures: test_output, coverage: 0)
     issue = Issue(id: issue_id, title: branch, criteria: "all tests pass")
     acceptance = check_acceptance(issue, report)
     memory.acceptance_result = acceptance
-    if acceptance == "blocking" or acceptance == "needs_human_review"
-      say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
-      notify = skill.slack.send_message(channel, "Tests failed for {issue_id} ({acceptance}):\n{test_output}")
-      when notify.sure -> say "[tester] Failure notification sent"
-      else -> say "[tester] Failure notification may have failed"
-      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: test_output, channel: channel, callback_url: callback_url)
+    tcmd = memory.test_cmd
     if acceptance == "none" or acceptance == "minor"
       say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met"
       notify = skill.slack.send_message(channel, "Tests passed for {issue_id} on {branch}. Moving to review.")
-      when notify.sure -> say "[tester] Pass notification sent"
-      else -> say "[tester] Pass notification may have failed"
-      emit AcceptanceMet(issue_id: issue_id, repo: repo, branch: branch, report: "passed", channel: channel, callback_url: callback_url)
+      say "[tester] Pass notification: {notify}"
+      emit AcceptanceMet(issue_id: issue_id, repo: repo, branch: branch, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd)
+    if acceptance == "blocking" or acceptance == "needs_human_review" or acceptance == "inconclusive"
+      say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
+      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: test_output, channel: channel, callback_url: callback_url, test_cmd: tcmd)
 
   if stuck for 3 turns
     say "[tester] Stuck. Escalating."
@@ -394,6 +406,7 @@ agent reviewer
     changelog_entry: Text
     pr_body: Text
     pr_url: Text
+    test_cmd: Text
   subscribe AcceptanceMet
   subscribe ApprovalResponse
 
@@ -406,15 +419,17 @@ agent reviewer
     memory.changelog_entry = ""
     memory.pr_body = ""
     memory.pr_url = ""
+    memory.test_cmd = ""
     say "[reviewer] ready"
 
-  on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, report: Text, channel: Text, callback_url: Text)
+  on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text)
     requires lifecycle == idle on fail: give "review already in progress"
     memory.issue_id = issue_id
     memory.repo = repo
     memory.branch = branch
     memory.channel = channel
     memory.callback_url = callback_url
+    memory.test_cmd = test_cmd
     say "[reviewer] Drafting changelog for {issue_id}"
     issue = Issue(id: issue_id, title: "close #{issue_id}", criteria: "")
     entry = draft_changelog_entry(issue, branch)
@@ -459,7 +474,7 @@ agent reviewer
       say "[reviewer] REJECTED by {comment} — sending back to implementer"
       reject_msg = "PR for {memory.issue_id} REJECTED by {comment}. Iterating."
       notify = skill.slack.send_message(memory.channel, reject_msg)
-      emit TestsFailed(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, failures: "PR rejected: {comment}", channel: memory.channel, callback_url: memory.callback_url)
+      emit TestsFailed(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, failures: "PR rejected: {comment}", channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
       transition to idle
 
   if stuck for 3 turns
@@ -527,6 +542,6 @@ endpoint health() -> Text
 # Primary trigger: POST /dev_cycle with issue details and Slack config.
 # Emits IssueAssigned to kick off the planner → implementer → tester →
 # reviewer pipeline.
-endpoint dev_cycle(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text) -> Text
-  emit IssueAssigned(issue_id: issue_id, repo: repo, title: title, body: body, channel: channel, callback_url: callback_url)
+endpoint dev_cycle(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text, test_cmd: Text) -> Text
+  emit IssueAssigned(issue_id: issue_id, repo: repo, title: title, body: body, channel: channel, callback_url: callback_url, test_cmd: test_cmd)
   give "dev-cycle started for {issue_id} in {repo}"
