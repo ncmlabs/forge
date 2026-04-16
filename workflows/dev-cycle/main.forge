@@ -1,0 +1,532 @@
+#! boundary: server
+
+# ================================================================
+# FORGE Development Lifecycle — Issue Executor
+# ================================================================
+# Receives issue assignments and coordinates five agents through:
+#   plan → implement → test → review+approve → merge
+#
+# Each agent follows the pr-review-bot template shape:
+#   trigger → fetch context → reason → gate/decision → skill → confirm
+#
+# Target repo: ncmlabs/forge-playground (or any repo via endpoint params)
+# Trigger: POST /dev_cycle?issue_id=...&repo=...&title=...&...
+#
+# Run:
+#   FORGE_CONFIG=forge.config.toml SLACK_BOT_TOKEN=xoxb-... \
+#   ANTHROPIC_API_KEY=... \
+#   cargo run -- serve \
+#     --manifest workflows/dev-cycle/forge.project.toml \
+#     workflows/dev-cycle/main.forge --port 3212
+#
+# Acceptance (T2, issue #184):
+#   3 clone-dev issues in forge-playground → swarm opens 3 PRs →
+#   ≥2 merge cleanly after human approval via Slack.
+# ================================================================
+
+use
+  llm.reason
+  llm.classify
+  skill.slack
+  skill.github
+
+# ── Types ────────────────────────────────────────────────────────
+
+type Issue
+  id: Text
+  title: Text
+  criteria: Text
+
+type TestReport
+  passed: Bool
+  failures: Text
+  coverage: Number
+
+type ChangelogEntry
+  category: Text
+  description: Text
+  issue_id: Text
+
+type PullRequest
+  branch: Text
+  title: Text
+  body: Text
+  target: Text
+
+# ── Events ───────────────────────────────────────────────────────
+# Every pipeline event carries repo, channel, callback_url so agents
+# thread context without shared global state (flat-payload pattern
+# from clone-dev-skeleton).
+
+event IssueAssigned
+  issue_id: Text
+  repo: Text
+  title: Text
+  body: Text
+  channel: Text
+  callback_url: Text
+
+event PlanApproved
+  issue_id: Text
+  repo: Text
+  plan: Text
+  criteria: Text
+  branch: Text
+  channel: Text
+  callback_url: Text
+
+event ImplementationReady
+  issue_id: Text
+  repo: Text
+  branch: Text
+  channel: Text
+  callback_url: Text
+
+event TestsFailed
+  issue_id: Text
+  repo: Text
+  branch: Text
+  failures: Text
+  channel: Text
+  callback_url: Text
+
+event AcceptanceMet
+  issue_id: Text
+  repo: Text
+  branch: Text
+  report: Text
+  channel: Text
+  callback_url: Text
+
+event PRReady
+  issue_id: Text
+  repo: Text
+  pr_url: Text
+  channel: Text
+  callback_url: Text
+
+# Emitted by FORGE's built-in /webhook/approval handler when a
+# Slack button is clicked.
+event ApprovalResponse
+  request_id: Text
+  approved: Bool
+  comment: Text
+
+event PRMerged
+  issue_id: Text
+  repo: Text
+  branch: Text
+
+# ── State Machines ───────────────────────────────────────────────
+# IssueLifecycle is shared across planner/implementer/tester.
+# ReviewPhase is owned by the reviewer for the approval gate.
+
+states IssueLifecycle
+  open -> planning
+  planning -> in_progress
+  in_progress -> in_progress when iteration_needed
+  in_progress -> testing
+  testing -> in_progress when not tests_passed
+  testing -> review_ready when tests_passed
+  review_ready -> merged
+  merged -> open when issue_reopened
+
+states ReviewPhase
+  idle -> awaiting_approval
+  awaiting_approval -> idle
+
+# ── Tasks (LLM-augmented steps) ─────────────────────────────────
+
+task draft_plan
+  needs issue: Issue
+  gives Text
+  do
+    result = reason "You are a senior engineer planning work on a GitHub repo. Given this issue, produce a concise implementation plan with numbered steps.\n\nTitle: {issue.title}\nAcceptance criteria: {issue.criteria}"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Manual planning required."
+
+task check_acceptance
+  needs issue: Issue, report: TestReport
+  gives Text
+  do
+    failure_text = report.failures
+    result = classify failure_text into ["blocking", "minor", "none"]
+    when result.sure -> give result
+    when result.unsure -> give "needs_human_review"
+    else -> give "inconclusive"
+
+task draft_changelog_entry
+  needs issue: Issue, branch: Text
+  gives Text
+  do
+    result = reason "Write a Keep-a-Changelog entry.\n\nIssue: {issue.title}\nBranch: {branch}\nUse one of: Added, Changed, Fixed. Then a one-line description."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Changed: {issue.title}"
+
+task draft_pr_description
+  needs issue: Issue, changelog: Text
+  gives Text
+  do
+    result = reason "Write a concise PR description.\n\nIssue: {issue.title}\nAcceptance criteria: {issue.criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Test plan section."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Summary: {issue.title}"
+
+# ── Pure Functions ───────────────────────────────────────────────
+
+pure branch_name
+  needs issue_id: Text
+  gives Text
+  do
+    give "clone-dev/{issue_id}"
+
+# ── Agent: Planner ───────────────────────────────────────────────
+# Reads issue assignments, drafts implementation plans via reason,
+# notifies Slack, and emits PlanApproved to hand off to implementer.
+
+agent planner
+  lifecycle: IssueLifecycle
+  memory
+    issue_id: Text
+    repo: Text
+    channel: Text
+    callback_url: Text
+    plan_text: Text
+    criteria: Text
+  subscribe IssueAssigned
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.channel = ""
+    memory.callback_url = ""
+    memory.plan_text = ""
+    memory.criteria = ""
+    say "[planner] ready"
+
+  on IssueAssigned(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text)
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.channel = channel
+    memory.callback_url = callback_url
+    memory.criteria = body
+    say "[planner] Planning issue {issue_id} in {repo}"
+    issue = Issue(id: issue_id, title: title, criteria: body)
+    plan_text = draft_plan(issue)
+    memory.plan_text = plan_text
+    branch = branch_name(issue_id)
+    notify = skill.slack.send_message(channel, "Plan drafted for {issue_id} in {repo}:\n{plan_text}")
+    when notify.sure -> say "[planner] Slack notification sent"
+    else -> say "[planner] Slack notification may have failed"
+    say "[planner] Plan drafted - handing off to implementer"
+    emit PlanApproved(issue_id: issue_id, repo: repo, plan: plan_text, criteria: body, branch: branch, channel: channel, callback_url: callback_url)
+
+  if stuck for 5 turns
+    say "[planner] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Implementer ──────────────────────────────────────────
+# Creates feature branch, generates implementation via reason,
+# commits and pushes via command + skill.github. Handles iteration
+# loop on TestsFailed — capped at 3 attempts before escalation.
+#
+# NOTE: Code generation uses reason + command (file writes via
+# shell). For production-quality code generation, wire up the
+# session primitive (#189-192) when available.
+
+agent implementer
+  lifecycle: IssueLifecycle
+  memory
+    issue_id: Text
+    repo: Text
+    branch: Text
+    plan: Text
+    criteria: Text
+    iteration: Number
+    channel: Text
+    callback_url: Text
+    last_failures: Text
+  subscribe PlanApproved
+  subscribe TestsFailed
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.branch = ""
+    memory.plan = ""
+    memory.criteria = ""
+    memory.iteration = 0
+    memory.channel = ""
+    memory.callback_url = ""
+    memory.last_failures = ""
+    say "[implementer] ready"
+
+  on PlanApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text)
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.plan = plan
+    memory.criteria = criteria
+    memory.branch = branch
+    memory.channel = channel
+    memory.callback_url = callback_url
+    memory.iteration = 0
+    say "[implementer] Starting implementation for {issue_id} on branch {branch}"
+    clone_cmd = "rm -rf /tmp/forge-workdir-{issue_id} && gh repo clone {repo} /tmp/forge-workdir-{issue_id} 2>&1 && cd /tmp/forge-workdir-{issue_id} && git checkout -b {branch} 2>&1"
+    clone_result = command clone_cmd timeout 60s
+    when clone_result.sure -> say "[implementer] Repo cloned and branch {branch} created"
+    else -> say "[implementer] Clone/checkout issue: {clone_result}"
+    impl_prompt = "You are implementing a code change for a GitHub issue.\n\nIssue: {issue_id}\nPlan:\n{plan}\nAcceptance criteria:\n{memory.criteria}\n\nGenerate the implementation as a shell script that creates or modifies files using cat heredocs. Output ONLY the shell commands, no markdown fencing, no explanations. Keep changes minimal and focused."
+    code = reason impl_prompt
+    when code.sure -> say "[implementer] Implementation generated"
+    else -> say "[implementer] Implementation generation uncertain"
+    apply_result = command "cd /tmp/forge-workdir-{issue_id} && sh -c '{code}'" timeout 30s
+    when apply_result.sure -> say "[implementer] Changes applied"
+    else -> say "[implementer] Changes may not have applied cleanly"
+    commit_result = command "cd /tmp/forge-workdir-{issue_id} && git add -A && git diff --cached --quiet || git commit -m 'feat({issue_id}): implement per plan' && git push origin {branch} 2>&1" timeout 60s
+    when commit_result.sure -> say "[implementer] Changes committed and pushed"
+    else -> say "[implementer] Commit/push issue: {commit_result}"
+    notify = skill.slack.send_message(channel, "Implementation pushed for {issue_id} on branch {branch}. Running tests next.")
+    when notify.sure -> say "[implementer] Slack notification sent"
+    else -> say "[implementer] Slack notification may have failed"
+    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url)
+
+  on TestsFailed(issue_id: Text, repo: Text, branch: Text, failures: Text, channel: Text, callback_url: Text)
+    memory.iteration = memory.iteration + 1
+    memory.last_failures = failures
+    if memory.iteration >= 3
+      say "[implementer] Max iterations (3) reached for {issue_id}. Escalating."
+      escalate_msg = "ESCALATION: {issue_id} failed after 3 fix attempts.\nLast failures:\n{failures}"
+      notify = skill.slack.send_message(channel, escalate_msg)
+      escalate to lead
+    say "[implementer] Iteration {memory.iteration}: fixing failures for {issue_id}"
+    fix_prompt = "Fix the test failures for issue {issue_id}.\n\nOriginal plan:\n{memory.plan}\n\nTest failures:\n{failures}\n\nGenerate ONLY shell commands (cat heredocs, sed, etc.) to fix the issues. No markdown, no explanations."
+    fix_code = reason fix_prompt
+    when fix_code.sure -> say "[implementer] Fix generated"
+    else -> say "[implementer] Fix generation uncertain"
+    apply_result = command "cd /tmp/forge-workdir-{issue_id} && sh -c '{fix_code}'" timeout 30s
+    when apply_result.sure -> say "[implementer] Fix applied"
+    else -> say "[implementer] Fix may not have applied cleanly"
+    commit_result = command "cd /tmp/forge-workdir-{issue_id} && git add -A && git diff --cached --quiet || git commit -m 'fix({issue_id}): iteration {memory.iteration}' && git push origin {branch} 2>&1" timeout 60s
+    when commit_result.sure -> say "[implementer] Fix committed and pushed"
+    else -> say "[implementer] Fix commit/push issue"
+    notify = skill.slack.send_message(channel, "Fix iteration {memory.iteration} for {issue_id} pushed. Re-running tests.")
+    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url)
+
+  if stuck for 5 turns
+    say "[implementer] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Tester ────────────────────────────────────────────────
+# Pulls latest changes, runs tests via command, classifies results
+# using check_acceptance, and either loops back to implementer
+# (TestsFailed) or advances to reviewer (AcceptanceMet).
+
+agent tester
+  lifecycle: IssueLifecycle
+  memory
+    issue_id: Text
+    repo: Text
+    branch: Text
+    channel: Text
+    callback_url: Text
+    acceptance_result: Text
+  subscribe ImplementationReady
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.branch = ""
+    memory.channel = ""
+    memory.callback_url = ""
+    memory.acceptance_result = ""
+    say "[tester] ready"
+
+  on ImplementationReady(issue_id: Text, repo: Text, branch: Text, channel: Text, callback_url: Text)
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.branch = branch
+    memory.channel = channel
+    memory.callback_url = callback_url
+    say "[tester] Running tests on {branch} in {repo}"
+    pull_result = command "cd /tmp/forge-workdir-{issue_id} && git pull origin {branch} 2>&1" timeout 30s
+    when pull_result.sure -> say "[tester] Latest changes pulled"
+    else -> say "[tester] Pull may have issues: {pull_result}"
+    test_output = command "cd /tmp/forge-workdir-{issue_id} && cargo test 2>&1" timeout 120s
+    when test_output.sure -> say "[tester] Tests completed (exit 0)"
+    else -> say "[tester] Tests completed with failures"
+    report = TestReport(passed: false, failures: test_output, coverage: 0)
+    issue = Issue(id: issue_id, title: branch, criteria: "all tests pass")
+    acceptance = check_acceptance(issue, report)
+    memory.acceptance_result = acceptance
+    if acceptance == "blocking" or acceptance == "needs_human_review"
+      say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
+      notify = skill.slack.send_message(channel, "Tests failed for {issue_id} ({acceptance}):\n{test_output}")
+      when notify.sure -> say "[tester] Failure notification sent"
+      else -> say "[tester] Failure notification may have failed"
+      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: test_output, channel: channel, callback_url: callback_url)
+    if acceptance == "none" or acceptance == "minor"
+      say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met"
+      notify = skill.slack.send_message(channel, "Tests passed for {issue_id} on {branch}. Moving to review.")
+      when notify.sure -> say "[tester] Pass notification sent"
+      else -> say "[tester] Pass notification may have failed"
+      emit AcceptanceMet(issue_id: issue_id, repo: repo, branch: branch, report: "passed", channel: channel, callback_url: callback_url)
+
+  if stuck for 3 turns
+    say "[tester] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Reviewer ──────────────────────────────────────────────
+# Drafts changelog and PR description, creates the PR via
+# skill.github.create_pr, checks CI, and gates on Slack approval
+# before merging. On rejection, loops back to implementer via
+# TestsFailed.
+
+agent reviewer
+  lifecycle: ReviewPhase
+  memory
+    issue_id: Text
+    repo: Text
+    branch: Text
+    channel: Text
+    callback_url: Text
+    changelog_entry: Text
+    pr_body: Text
+    pr_url: Text
+  subscribe AcceptanceMet
+  subscribe ApprovalResponse
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.branch = ""
+    memory.channel = ""
+    memory.callback_url = ""
+    memory.changelog_entry = ""
+    memory.pr_body = ""
+    memory.pr_url = ""
+    say "[reviewer] ready"
+
+  on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, report: Text, channel: Text, callback_url: Text)
+    requires lifecycle == idle on fail: give "review already in progress"
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.branch = branch
+    memory.channel = channel
+    memory.callback_url = callback_url
+    say "[reviewer] Drafting changelog for {issue_id}"
+    issue = Issue(id: issue_id, title: "close #{issue_id}", criteria: "")
+    entry = draft_changelog_entry(issue, branch)
+    memory.changelog_entry = entry
+    say "[reviewer] Drafting PR description"
+    body = draft_pr_description(issue, entry)
+    memory.pr_body = body
+    say "[reviewer] Creating PR in {repo} from {branch}"
+    pr_url = skill.github.create_pr(repo, branch, "feat({issue_id}): automated implementation", body)
+    when pr_url.sure -> say "[reviewer] PR created: {pr_url}"
+    else -> say "[reviewer] PR creation uncertain: {pr_url}"
+    memory.pr_url = pr_url
+    ci_result = skill.github.check_ci(repo, branch)
+    when ci_result.sure -> say "[reviewer] CI status: {ci_result}"
+    else -> say "[reviewer] CI check uncertain"
+    emit PRReady(issue_id: issue_id, repo: repo, pr_url: pr_url, channel: channel, callback_url: callback_url)
+    transition to awaiting_approval
+    approval_msg = "PR for {issue_id} in {repo} ready for review.\n\nBranch: {branch}\nChangelog: {entry}\nCI: {ci_result}\n\nApprove to merge or reject to iterate."
+    approval = skill.slack.send_approval(channel, approval_msg, callback_url, issue_id)
+    when approval.sure -> say "[reviewer] Approval request sent to Slack"
+    else -> say "[reviewer] Approval request may have failed"
+
+  on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
+    requires lifecycle == awaiting_approval on fail: give "no pending review"
+    requires request_id == memory.issue_id on fail: give "stale response"
+    if approved
+      say "[reviewer] APPROVED by {comment} — merging PR for {memory.issue_id}"
+      merge_result = skill.github.merge_pr(memory.repo, memory.pr_url)
+      when merge_result.sure -> say "[reviewer] PR merged successfully"
+      else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      merge_msg = "MERGED: {memory.issue_id} in {memory.repo}. Branch {memory.branch} merged. Approved by {comment}."
+      notify = skill.slack.send_message(memory.channel, merge_msg)
+      when notify.sure -> say "[reviewer] Merge announcement sent"
+      else -> say "[reviewer] Merge announcement may have failed"
+      cleanup = skill.github.delete_branch(memory.repo, memory.branch)
+      when cleanup.sure -> say "[reviewer] Branch {memory.branch} deleted"
+      else -> say "[reviewer] Branch cleanup uncertain"
+      workdir_cleanup = command "rm -rf /tmp/forge-workdir-{memory.issue_id}" timeout 10s
+      emit PRMerged(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch)
+      transition to idle
+    if not approved
+      say "[reviewer] REJECTED by {comment} — sending back to implementer"
+      reject_msg = "PR for {memory.issue_id} REJECTED by {comment}. Iterating."
+      notify = skill.slack.send_message(memory.channel, reject_msg)
+      emit TestsFailed(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, failures: "PR rejected: {comment}", channel: memory.channel, callback_url: memory.callback_url)
+      transition to idle
+
+  if stuck for 3 turns
+    say "[reviewer] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Release Manager ───────────────────────────────────────
+# Passive counter for MVP — logs merged PRs. Full release
+# coordination (freeze/validate/tag/publish) is out of scope for
+# the initial executable dev-cycle.
+
+agent release_manager
+  memory
+    merged_count: Number
+    last_merged: Text
+  subscribe PRMerged
+
+  on start
+    memory.merged_count = 0
+    memory.last_merged = ""
+    say "[release_manager] ready"
+
+  on PRMerged(issue_id: Text, repo: Text, branch: Text)
+    memory.merged_count = memory.merged_count + 1
+    memory.last_merged = issue_id
+    say "[release_manager] PR merged for {issue_id} in {repo} (total: {memory.merged_count})"
+
+  if stuck for 3 turns
+    say "[release_manager] Stuck. Escalating."
+    escalate to lead
+
+# ── Warden: Dev Lead ─────────────────────────────────────────────
+
+warden dev_lead
+  manages [planner, implementer, tester, reviewer, release_manager]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 3: escalate
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, all
+    after 1: restart
+    after 3: escalate
+  max_retries 3 per 1h then escalate
+
+# ── System ───────────────────────────────────────────────────────
+
+system forge_dev
+  use
+    plan: planner
+    impl: implementer
+    test: tester
+    review: reviewer
+    release: release_manager
+  plan >> impl >> test >> review
+
+# ── Endpoints ────────────────────────────────────────────────────
+
+endpoint health() -> Text
+  give "ok"
+
+# Primary trigger: POST /dev_cycle with issue details and Slack config.
+# Emits IssueAssigned to kick off the planner → implementer → tester →
+# reviewer pipeline.
+endpoint dev_cycle(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text) -> Text
+  emit IssueAssigned(issue_id: issue_id, repo: repo, title: title, body: body, channel: channel, callback_url: callback_url)
+  give "dev-cycle started for {issue_id} in {repo}"
