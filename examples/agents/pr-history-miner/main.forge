@@ -72,15 +72,15 @@ task slugify_repo
   gives Text
   do
     result = command "printf '%s' '{repo}' | tr '/' '-'" timeout 5s
-    when result.sure -> give result
+    when result.sure -> give "{result.stdout}"
     else -> give "unknown-repo"
 
-task extract_pr_fields
-  needs pr_json: Text
+task extract_pr_fields_by_number
+  needs repo: Text, pr_num: Text
   gives Text
   do
-    result = command "printf '%s' '{pr_json}' | jq -r '[.number, .title, .author.login, .reviewDecision, .mergedAt, (.labels | map(.name) | join(\",\")), .headRefName, .baseRefName, .additions, .deletions, .changedFiles] | @tsv'" timeout 5s
-    when result.sure -> give result
+    result = command "gh pr view {pr_num} -R {repo} --json title,author,reviewDecision,mergedAt,labels,headRefName,baseRefName,additions,deletions,changedFiles | jq -r '[.title, .author.login, .reviewDecision, .mergedAt, (.labels | map(.name) | join(\",\")), .headRefName, .baseRefName, .additions, .deletions, .changedFiles] | @tsv'" timeout 15s
+    when result.sure -> give "{result.stdout}"
     else -> give ""
 
 task characterize_diff
@@ -89,8 +89,8 @@ task characterize_diff
   do
     prompt = "Summarize this PR diff in 2-3 sentences. Focus on: what was changed, why (infer from title and labels), and which area of the codebase is affected. Be specific about file types and modules.\n\nTitle: {title}\nLabels: {labels}\nDiff (truncated):\n{diff_text}"
     result = reason prompt
-    when result.sure -> give result
-    when result.unsure -> give result
+    when result.sure -> give "{result}"
+    when result.unsure -> give "{result}"
     else -> give "Could not characterize diff for: {title}"
 
 task summarize_reviews
@@ -99,8 +99,8 @@ task summarize_reviews
   do
     prompt = "Summarize the reviewer feedback in 1-2 sentences. Focus on: what reviewers asked to change, concerns raised, and overall sentiment. If the JSON is empty or has no substantive comments, respond with exactly: No reviewer feedback.\n\nReviews JSON:\n{reviews_json}"
     result = reason prompt
-    when result.sure -> give result
-    when result.unsure -> give result
+    when result.sure -> give "{result}"
+    when result.unsure -> give "{result}"
     else -> give "No reviewer feedback."
 
 task count_reviews
@@ -108,7 +108,7 @@ task count_reviews
   gives Text
   do
     result = command "printf '%s' '{reviews_json}' | jq 'length'" timeout 5s
-    when result.sure -> give result
+    when result.sure -> give "{result.stdout}"
     else -> give "0"
 
 task resolve_decision
@@ -126,30 +126,30 @@ task fetch_truncated_diff
   gives Text
   do
     result = command "gh pr diff {pr_num} -R {repo} 2>/dev/null | head -150" timeout 30s
-    when result.sure -> give result
+    when result.sure -> give "{result.stdout}"
     else -> give "Diff unavailable"
 
-# Process a single PR JSON line and return a formatted knowledge entry.
+# Process a single PR by number: fetch metadata, reviews, diff, characterize, compose entry.
 # Returns the entry text and the merged_at date separated by "|||".
 task process_single_pr
-  needs pr_json: Text, repo: Text, slug: Text
+  needs pr_num: Text, repo: Text, slug: Text
   gives Text
   do
-    fields_raw = extract_pr_fields(pr_json)
+    say "  Fetching PR #{pr_num} metadata..."
+    fields_raw = extract_pr_fields_by_number(repo, pr_num)
     if fields_raw == ""
       give ""
     parts = fields_raw.split("\t")
-    pr_num = parts[0]
-    title = parts[1]
-    author = parts[2]
-    review_decision = parts[3]
-    merged_at = parts[4]
-    labels = parts[5]
-    head_ref = parts[6]
-    base_ref = parts[7]
-    add_count = parts[8]
-    del_count = parts[9]
-    file_count = parts[10]
+    title = parts[0]
+    author = parts[1]
+    review_decision = parts[2]
+    merged_at = parts[3]
+    labels = parts[4]
+    head_ref = parts[5]
+    base_ref = parts[6]
+    add_count = parts[7]
+    del_count = parts[8]
+    file_count = parts[9]
     say "  PR #{pr_num}: {title}"
     reviews_json = skill.github.get_pr_reviews(repo, pr_num)
     when reviews_json.sure -> say "    reviews fetched"
@@ -172,6 +172,7 @@ agent pr_history_miner
     total_processed: Number
     last_run_processed: Number
     last_run_status: Text
+    pr_data: Text
   knowledge store: ".forge-knowledge/pr-history"
     max_entries: 10000
     retention: 365d
@@ -184,6 +185,7 @@ agent pr_history_miner
     memory.total_processed = 0
     memory.last_run_processed = 0
     memory.last_run_status = "idle"
+    memory.pr_data = ""
     say "[pr_history_miner] ready"
 
   on MineRequest(repo: Text)
@@ -193,15 +195,15 @@ agent pr_history_miner
     slug = slugify_repo(repo)
     memory.project_slug = slug
     say "[pr_history_miner] Mining {repo} (watermark: {memory.last_processed_date})"
-    pr_lines_raw = command "gh pr list -R {repo} --state merged --limit 30 --json number,title,author,state,mergedAt,createdAt,labels,reviewDecision,headRefName,baseRefName,additions,deletions,changedFiles | jq -c '.[] | select(.mergedAt > \"{memory.last_processed_date}\")'" timeout 60s
-    when pr_lines_raw.sure -> say "[pr_history_miner] Fetched PR list"
+    pr_nums_raw = command "gh pr list -R {repo} --state merged --limit 30 --json number | jq -r '[.[].number] | map(tostring) | join(\",\")'" timeout 60s
+    when pr_nums_raw.sure -> say "[pr_history_miner] Fetched PR numbers"
     else -> say "[pr_history_miner] ERROR fetching PRs"
-    pr_lines = pr_lines_raw.split("\n")
-    say "[pr_history_miner] {pr_lines.length} lines to process"
-    for pr_line in pr_lines
-      trimmed = pr_line.trim()
-      if trimmed.length > 2
-        result = process_single_pr(trimmed, repo, slug)
+    memory.pr_data = "{pr_nums_raw.stdout}"
+    pr_nums = memory.pr_data.split(",")
+    say "[pr_history_miner] {pr_nums.length} PRs to process"
+    for pr_num in pr_nums
+      if pr_num.length > 0
+        result = process_single_pr(pr_num, repo, slug)
         result_parts = result.split("|||")
         entry = result_parts[0]
         merged_at = result_parts[1]
