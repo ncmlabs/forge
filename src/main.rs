@@ -1298,16 +1298,15 @@ async fn serve_program(
         // Create shared knowledge store from agent declaration (#309).
         // The same Arc is passed to both the executor (for endpoint recall) and
         // the system runtime (for agent learn), ensuring a single source of truth.
-        let executor =
-            if let Some((store_path, max_entries, retention_days)) =
-                extract_knowledge_config(executor.program())
-            {
-                let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
-                let shared_ks = Arc::new(Mutex::new(ks));
-                executor.with_shared_knowledge_store_arc(shared_ks)
-            } else {
-                executor
-            };
+        let executor = if let Some((store_path, max_entries, retention_days)) =
+            extract_knowledge_config(executor.program())
+        {
+            let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
+            let shared_ks = Arc::new(Mutex::new(ks));
+            executor.with_shared_knowledge_store_arc(shared_ks)
+        } else {
+            executor
+        };
 
         // Build system runtime (if declared) and inject shared infrastructure (#140)
         let topology = executor.extract_topology();
@@ -1567,16 +1566,15 @@ async fn serve_with_watch(
         };
 
         // Create shared knowledge store from agent declaration (#309).
-        let executor =
-            if let Some((store_path, max_entries, retention_days)) =
-                extract_knowledge_config(executor.program())
-            {
-                let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
-                let shared_ks = Arc::new(Mutex::new(ks));
-                executor.with_shared_knowledge_store_arc(shared_ks)
-            } else {
-                executor
-            };
+        let executor = if let Some((store_path, max_entries, retention_days)) =
+            extract_knowledge_config(executor.program())
+        {
+            let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
+            let shared_ks = Arc::new(Mutex::new(ks));
+            executor.with_shared_knowledge_store_arc(shared_ks)
+        } else {
+            executor
+        };
 
         // Build system runtime (if declared) and inject shared infrastructure (#140)
         let topology = executor.extract_topology();

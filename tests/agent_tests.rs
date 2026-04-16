@@ -816,7 +816,16 @@ agent test_bot
         })
         .expect("no agent in program");
 
-    let agent = AgentProcess::new(agent_decl, None, mock_registry(), None, program, None, None, None);
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry(),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
 
     // Dispatch three pings — count should increment
     let r1 = agent.dispatch("ping", HashMap::new()).await.unwrap();

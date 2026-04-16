@@ -17,9 +17,9 @@ use crate::config::SystemConfig;
 use crate::llm::registry::ProviderRegistry;
 use crate::runtime::agent::{AgentProcess, AgentSignal};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
-use crate::runtime::knowledge_store::SharedKnowledgeStore;
 use crate::runtime::executor::RuntimeError;
 use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
+use crate::runtime::knowledge_store::SharedKnowledgeStore;
 use crate::runtime::warded::{AgentBlueprint, SharedWardenSnapshots, WardedRuntime};
 use crate::tracer::Tracer;
 

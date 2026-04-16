@@ -1463,8 +1463,7 @@ impl TaskExecutor {
                         // Get filtered entries from parent's knowledge store
                         let mut transferred_entries = Vec::new();
                         if let Some(ref ctx_arc) = self.agent_context {
-                            let ks_arc =
-                                ctx_arc.lock().unwrap().knowledge_store.clone();
+                            let ks_arc = ctx_arc.lock().unwrap().knowledge_store.clone();
                             if let Some(ref ks_arc) = ks_arc {
                                 let ks = ks_arc.lock().unwrap();
                                 transferred_entries = ks.export_by_category(cat);
@@ -1487,8 +1486,7 @@ impl TaskExecutor {
                         // Merge into child's knowledge store
                         if !transferred_entries.is_empty() {
                             let child_ctx = child_process.context();
-                            let child_ks =
-                                child_ctx.lock().unwrap().knowledge_store.clone();
+                            let child_ks = child_ctx.lock().unwrap().knowledge_store.clone();
                             if let Some(ref ks_arc) = child_ks {
                                 let mut ks = ks_arc.lock().unwrap();
                                 ks.merge_imported(transferred_entries);
@@ -1581,8 +1579,7 @@ impl TaskExecutor {
                         let export_path = format!("{}", path_val.value);
 
                         if let Some(ref ctx_arc) = self.agent_context {
-                            let ks_arc =
-                                ctx_arc.lock().unwrap().knowledge_store.clone();
+                            let ks_arc = ctx_arc.lock().unwrap().knowledge_store.clone();
                             if let Some(ref ks_arc) = ks_arc {
                                 let entries = ks_arc.lock().unwrap().export_entries();
                                 let agent_name = self
@@ -3153,8 +3150,7 @@ impl TaskExecutor {
                     let query_text = format!("{}", query_val.value);
 
                     if let Some(ref ctx_arc) = self.agent_context {
-                        let ks_arc =
-                            ctx_arc.lock().unwrap().knowledge_store.clone();
+                        let ks_arc = ctx_arc.lock().unwrap().knowledge_store.clone();
                         if let Some(ref ks_arc) = ks_arc {
                             // Default token budget for recall: 2000 tokens
                             let mut ks = ks_arc.lock().unwrap();
