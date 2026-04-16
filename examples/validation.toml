@@ -246,6 +246,11 @@ paths = ["workflows/dev-cycle.forge"]
 check = "ok"
 
 [[cases]]
+name = "executable dev-cycle (server boundary)"
+paths = ["workflows/dev-cycle/main.forge"]
+check = "error"
+
+[[cases]]
 name = "forge-sensei single-file workflow"
 paths = ["workflows/forge-sensei.forge"]
 check = "ok"

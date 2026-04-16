@@ -1,0 +1,11 @@
+[project]
+name = "dev-cycle"
+version = "0.1.0"
+description = "Full issue lifecycle: plan → implement → test → review → merge"
+
+[build]
+entry = "main.forge"
+
+[skills]
+slack = { path = "../../skills/slack" }
+github = { path = "../../skills/github" }
