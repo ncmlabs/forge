@@ -1035,26 +1035,17 @@ fn try_build_executor_multi(
                     .map(|e| e.to_diagnostic(&sf.path, &cap_registry)),
             );
         }
-        diagnostics.extend(forge::checker::check_all(&sf.program, &sf.path));
     }
 
-    // Cross-file boundary check
+    // Cross-file boundary check (pre-merge, per-file)
     let boundary_refs: Vec<_> = source_files
         .iter()
         .map(|sf| (&sf.program, sf.path.as_str()))
         .collect();
     diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
 
-    if !diagnostics.is_empty() {
-        for diag in &diagnostics {
-            if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
-                diag.render(&sf.source);
-            }
-        }
-        return Err(anyhow::anyhow!("{} diagnostic error(s)", diagnostics.len()));
-    }
-
-    // Merge programs
+    // Merge programs before semantic checks so cross-file references
+    // (e.g. lifecycle states declared in one file, used in another) resolve (#313)
     let composed = forge::compose::merge_programs(&source_files).map_err(|errs| {
         anyhow::anyhow!(
             "{}",
@@ -1064,6 +1055,24 @@ fn try_build_executor_multi(
                 .join("\n")
         )
     })?;
+
+    // Semantic checkers on merged program (states, requires, spawn, etc.)
+    let merged_fname = source_files
+        .first()
+        .map(|sf| sf.path.clone())
+        .unwrap_or_default();
+    diagnostics.extend(forge::checker::check_all(&composed.program, &merged_fname));
+
+    if !diagnostics.is_empty() {
+        for diag in &diagnostics {
+            if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
+                diag.render(&sf.source);
+            } else if let Some(sf) = source_files.first() {
+                diag.render(&sf.source);
+            }
+        }
+        return Err(anyhow::anyhow!("{} diagnostic error(s)", diagnostics.len()));
+    }
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let session_mgr =

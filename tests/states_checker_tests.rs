@@ -1,5 +1,6 @@
 // Tests for FORGE states checker (issue #17)
 
+use forge::compose::SourceFile;
 use forge::diagnostic::{Diagnostic, DiagnosticKind};
 use forge::parser::parse;
 
@@ -399,4 +400,65 @@ agent room
         "expected opaque guard warning, got: {:?}",
         warns
     );
+}
+
+// ── Cross-file lifecycle references (#313) ──────────────────
+
+fn check_merged(sources: &[(&str, &str)]) -> Vec<Diagnostic> {
+    let source_files: Vec<SourceFile> = sources
+        .iter()
+        .map(|(path, src)| SourceFile {
+            path: path.to_string(),
+            source: src.to_string(),
+            program: parse(src).unwrap(),
+        })
+        .collect();
+    let composed = forge::compose::merge_programs(&source_files).unwrap();
+    let merged_fname = source_files
+        .first()
+        .map(|sf| sf.path.clone())
+        .unwrap_or_default();
+    forge::checker::check_all(&composed.program, &merged_fname)
+}
+
+#[test]
+fn cross_file_lifecycle_resolves_after_merge() {
+    let states_src = "\
+states MasteryLevel
+  novice -> apprentice when score >= 40
+  apprentice -> expert when score >= 90
+  expert -> expert
+";
+    let agent_src = "\
+agent learner
+  lifecycle: MasteryLevel
+  on progress(msg: Text)
+    requires lifecycle == novice
+    transition to apprentice
+";
+    let diags = check_merged(&[("states.forge", states_src), ("agent.forge", agent_src)]);
+    let errs = errors(&diags);
+    assert!(
+        errs.is_empty(),
+        "cross-file lifecycle should resolve after merge, got: {:?}",
+        errs
+    );
+}
+
+#[test]
+fn truly_unknown_lifecycle_still_errors_after_merge() {
+    let states_src = "\
+states MasteryLevel
+  novice -> apprentice when score >= 40
+";
+    let agent_src = "\
+agent learner
+  lifecycle: DoesNotExist
+  on progress(msg: Text)
+    say msg
+";
+    let diags = check_merged(&[("states.forge", states_src), ("agent.forge", agent_src)]);
+    let errs = errors(&diags);
+    assert_eq!(errs.len(), 1);
+    assert!(errs[0].message.contains("DoesNotExist"));
 }
