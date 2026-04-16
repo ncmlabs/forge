@@ -837,3 +837,328 @@ agent test_bot
     let r3 = agent.dispatch("ping", HashMap::new()).await.unwrap();
     assert!(matches!(r3, Some(ref v) if matches!(&v.value, Value::Number(n) if *n == 3.0)));
 }
+
+// ── Issue #311: dev-cycle bug fixes ─────────────────────────────────────────
+
+/// Bug 1: `escalate` does NOT exit a handler — only `give` does.
+/// After `escalate to lead`, execution must NOT fall through to the
+/// emit below the if block.  The fix adds `give "escalated"` right
+/// after `escalate to lead`.
+#[tokio::test]
+async fn escalate_then_give_exits_handler_no_fallthrough() {
+    let source = r#"
+agent fixer
+  memory
+    iteration: Number
+
+  on fail(failures: Text)
+    memory.iteration = memory.iteration + 1
+    if memory.iteration >= 3
+      say "max iterations reached"
+      escalate to lead
+      give "escalated"
+    say "fixing"
+    emit FixReady(issue: "123")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry(),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let params = || {
+        let mut p = HashMap::new();
+        p.insert(
+            "failures".into(),
+            ConfidentValue::deterministic(Value::Text("test error".into())),
+        );
+        p
+    };
+
+    // Iterations 1 and 2 — should emit FixReady
+    agent.dispatch("fail", params()).await.unwrap();
+    agent.dispatch("fail", params()).await.unwrap();
+    {
+        let ctx = agent.context().lock().unwrap();
+        assert_eq!(
+            ctx.event_sink.emitted.len(),
+            2,
+            "first 2 iterations should emit FixReady"
+        );
+        assert!(
+            ctx.event_sink.escalations.is_empty(),
+            "no escalation before iteration 3"
+        );
+    }
+
+    // Iteration 3 — should escalate + give, NOT emit FixReady
+    let result = agent.dispatch("fail", params()).await.unwrap();
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated")),
+        "handler must return 'escalated' from give"
+    );
+    {
+        let ctx = agent.context().lock().unwrap();
+        assert_eq!(
+            ctx.event_sink.emitted.len(),
+            2,
+            "iteration 3 must NOT emit FixReady (give exits before emit)"
+        );
+        assert_eq!(
+            ctx.event_sink.escalations,
+            vec!["lead"],
+            "escalation must be recorded"
+        );
+    }
+
+    // Iteration 4 — also escalate, still no additional emit
+    let result = agent.dispatch("fail", params()).await.unwrap();
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated")),
+    );
+    {
+        let ctx = agent.context().lock().unwrap();
+        assert_eq!(
+            ctx.event_sink.emitted.len(),
+            2,
+            "iteration 4 must still not emit (give exits)"
+        );
+    }
+}
+
+/// Bug 1 regression: WITHOUT the `give` after `escalate`, execution
+/// falls through and emits an event on every iteration past the cap.
+#[tokio::test]
+async fn escalate_without_give_falls_through() {
+    let source = r#"
+agent fixer_broken
+  memory
+    iteration: Number
+
+  on fail(failures: Text)
+    memory.iteration = memory.iteration + 1
+    if memory.iteration >= 3
+      escalate to lead
+    emit FixReady(issue: "123")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry(),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let params = || {
+        let mut p = HashMap::new();
+        p.insert(
+            "failures".into(),
+            ConfidentValue::deterministic(Value::Text("err".into())),
+        );
+        p
+    };
+
+    // Three iterations — all three emit because escalate does NOT exit
+    for _ in 0..3 {
+        agent.dispatch("fail", params()).await.unwrap();
+    }
+    let ctx = agent.context().lock().unwrap();
+    assert_eq!(
+        ctx.event_sink.emitted.len(),
+        3,
+        "without give, escalate falls through and emits on ALL iterations"
+    );
+    assert_eq!(
+        ctx.event_sink.escalations,
+        vec!["lead"],
+        "escalation recorded on iteration 3"
+    );
+}
+
+/// Bug 2: The dev-cycle workflow file must parse with test_cmd threaded
+/// through events, handlers, and the endpoint.
+#[tokio::test]
+async fn dev_cycle_workflow_parses_with_test_cmd() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle workflow");
+    let program = forge::parser::parse(&source);
+    assert!(
+        program.is_ok(),
+        "dev-cycle/main.forge must parse: {:?}",
+        program.err()
+    );
+    let program = program.unwrap();
+
+    // Verify test_cmd field exists in the IssueAssigned event
+    let issue_assigned = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::Event(e) if e.name.node == "IssueAssigned" => Some(e.clone()),
+        _ => None,
+    });
+    assert!(issue_assigned.is_some(), "IssueAssigned event must exist");
+    let fields: Vec<&str> = issue_assigned
+        .as_ref()
+        .unwrap()
+        .fields
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    assert!(
+        fields.contains(&"test_cmd"),
+        "IssueAssigned must have test_cmd field, got: {:?}",
+        fields
+    );
+
+    // Verify test_cmd in ImplementationReady, TestsFailed, AcceptanceMet
+    for event_name in &["ImplementationReady", "TestsFailed", "AcceptanceMet"] {
+        let evt = program.items.iter().find_map(|item| match &item.node {
+            TopLevel::Event(e) if e.name.node == *event_name => Some(e.clone()),
+            _ => None,
+        });
+        assert!(evt.is_some(), "{event_name} event must exist");
+        let fields: Vec<&str> = evt
+            .as_ref()
+            .unwrap()
+            .fields
+            .iter()
+            .map(|f| f.node.name.as_str())
+            .collect();
+        assert!(
+            fields.contains(&"test_cmd"),
+            "{event_name} must have test_cmd field, got: {:?}",
+            fields
+        );
+    }
+
+    // Verify endpoint dev_cycle has test_cmd param
+    let endpoint = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::Endpoint(e) if e.name.node == "dev_cycle" => Some(e.clone()),
+        _ => None,
+    });
+    assert!(endpoint.is_some(), "dev_cycle endpoint must exist");
+    let params: Vec<&str> = endpoint
+        .as_ref()
+        .unwrap()
+        .params
+        .iter()
+        .map(|p| p.node.name.as_str())
+        .collect();
+    assert!(
+        params.contains(&"test_cmd"),
+        "dev_cycle endpoint must have test_cmd param, got: {:?}",
+        params
+    );
+}
+
+/// Bug 3 / notification throttling: in the iteration path (TestsFailed
+/// handler), the implementer should only `say` (log) the fix status, NOT
+/// emit any Slack-bound events.  The only emitted event should be
+/// ImplementationReady to re-trigger the tester.
+#[tokio::test]
+async fn iteration_path_emits_only_implementation_ready() {
+    let source = r#"
+agent impl_agent
+  memory
+    iteration: Number
+
+  on TestsFailed(issue_id: Text, failures: Text)
+    memory.iteration = memory.iteration + 1
+    if memory.iteration >= 3
+      say "escalating"
+      escalate to lead
+      give "escalated"
+    say "fixing iteration"
+    say "fix pushed — re-running tests"
+    emit ImplementationReady(issue_id: issue_id)
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry(),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let params = || {
+        let mut p = HashMap::new();
+        p.insert(
+            "issue_id".into(),
+            ConfidentValue::deterministic(Value::Text("42".into())),
+        );
+        p.insert(
+            "failures".into(),
+            ConfidentValue::deterministic(Value::Text("error".into())),
+        );
+        p
+    };
+
+    // Two iterations — each emits exactly one ImplementationReady, nothing else
+    agent.dispatch("TestsFailed", params()).await.unwrap();
+    agent.dispatch("TestsFailed", params()).await.unwrap();
+    {
+        let ctx = agent.context().lock().unwrap();
+        assert_eq!(ctx.event_sink.emitted.len(), 2);
+        for evt in &ctx.event_sink.emitted {
+            assert_eq!(
+                evt.name, "ImplementationReady",
+                "only ImplementationReady should be emitted, not Slack notifications"
+            );
+        }
+        assert!(ctx.event_sink.escalations.is_empty());
+    }
+
+    // Third iteration — escalates, no ImplementationReady emitted
+    let result = agent.dispatch("TestsFailed", params()).await.unwrap();
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated"))
+    );
+    {
+        let ctx = agent.context().lock().unwrap();
+        assert_eq!(
+            ctx.event_sink.emitted.len(),
+            2,
+            "iteration 3 must not emit (give exits before emit)"
+        );
+        assert_eq!(ctx.event_sink.escalations, vec!["lead"]);
+    }
+}
