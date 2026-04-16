@@ -881,7 +881,7 @@ agent fixer
         None,
     );
 
-    let mut params = || {
+    let params = || {
         let mut p = HashMap::new();
         p.insert(
             "failures".into(),
@@ -977,7 +977,7 @@ agent fixer_broken
         None,
     );
 
-    let mut params = || {
+    let params = || {
         let mut p = HashMap::new();
         p.insert(
             "failures".into(),
@@ -1119,7 +1119,7 @@ agent impl_agent
         None,
     );
 
-    let mut params = || {
+    let params = || {
         let mut p = HashMap::new();
         p.insert(
             "issue_id".into(),
