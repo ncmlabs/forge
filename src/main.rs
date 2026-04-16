@@ -1063,6 +1063,7 @@ fn try_build_executor_multi(
         .unwrap_or_default();
     diagnostics.extend(forge::checker::check_all(&composed.program, &merged_fname));
 
+    // Render all diagnostics, but only fail on errors (not warnings)
     if !diagnostics.is_empty() {
         for diag in &diagnostics {
             if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
@@ -1071,7 +1072,13 @@ fn try_build_executor_multi(
                 diag.render(&sf.source);
             }
         }
-        return Err(anyhow::anyhow!("{} diagnostic error(s)", diagnostics.len()));
+        let error_count = diagnostics
+            .iter()
+            .filter(|d| d.kind == forge::diagnostic::DiagnosticKind::Error)
+            .count();
+        if error_count > 0 {
+            return Err(anyhow::anyhow!("{} diagnostic error(s)", error_count));
+        }
     }
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
