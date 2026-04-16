@@ -24,6 +24,13 @@ capabilities:
     executor:
       kind: command
       argv: [gh, pr, checks, "{ref}", -R, "{repo}"]
+  - name: list_prs
+    inputs: [Text, Text, Text]
+    output: Text
+    params: [repo, state, limit]
+    executor:
+      kind: command
+      argv: [gh, pr, list, -R, "{repo}", --state, "{state}", --limit, "{limit}", --json, "number,title,author,state,mergedAt,createdAt,labels,reviewDecision,headRefName,baseRefName,additions,deletions,changedFiles"]
   - name: get_pr
     inputs: [Text, Text]
     output: Text
@@ -31,6 +38,20 @@ capabilities:
     executor:
       kind: command
       argv: [gh, pr, view, "{pr_number}", -R, "{repo}", --json, "title,number,baseRefName,headRefName,author,state,url,additions,deletions,changedFiles"]
+  - name: get_pr_reviews
+    inputs: [Text, Text]
+    output: Text
+    params: [repo, pr_number]
+    executor:
+      kind: command
+      argv: [gh, api, "repos/{repo}/pulls/{pr_number}/reviews", --paginate]
+  - name: get_pr_diff
+    inputs: [Text, Text]
+    output: Text
+    params: [repo, pr_number]
+    executor:
+      kind: command
+      argv: [gh, pr, diff, "{pr_number}", -R, "{repo}"]
   - name: merge_pr
     inputs: [Text, Text]
     output: Text
@@ -120,6 +141,41 @@ gh pr create -R "$repo" --head "$branch" --title "$title" --body "$body"
 To target a different base branch, append `--base "development"`.
 
 Return the PR URL printed by `gh` on success.
+
+### `list_prs(repo, state, limit)`
+
+List pull requests with structured JSON output.
+
+```bash
+gh pr list -R "$repo" --state "$state" --limit "$limit" \
+  --json number,title,author,state,mergedAt,createdAt,labels,reviewDecision,headRefName,baseRefName,additions,deletions,changedFiles
+```
+
+The `state` parameter accepts `open`, `closed`, `merged`, or `all`.
+
+Return the JSON array output. Each entry includes `reviewDecision` (`APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED`, or empty) and `mergedAt` (ISO-8601 timestamp, empty if not merged).
+
+To filter by merge date, append `--search "merged:>2024-01-15"` to the command.
+
+### `get_pr_reviews(repo, pr_number)`
+
+Fetch review objects for a pull request via the GitHub REST API.
+
+```bash
+gh api "repos/$repo/pulls/$pr_number/reviews" --paginate
+```
+
+Returns a JSON array of review objects, each with `state` (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`), `body`, `user.login`, and `submitted_at`.
+
+### `get_pr_diff(repo, pr_number)`
+
+Fetch the unified diff for a pull request.
+
+```bash
+gh pr diff "$pr_number" -R "$repo"
+```
+
+Returns the full unified diff text. Note: diffs can be very large — callers should truncate before sending to LLM reasoning.
 
 ### `check_ci(repo, ref)`
 
