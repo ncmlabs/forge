@@ -895,8 +895,15 @@ agent fixer
     agent.dispatch("fail", params()).await.unwrap();
     {
         let ctx = agent.context().lock().unwrap();
-        assert_eq!(ctx.event_sink.emitted.len(), 2, "first 2 iterations should emit FixReady");
-        assert!(ctx.event_sink.escalations.is_empty(), "no escalation before iteration 3");
+        assert_eq!(
+            ctx.event_sink.emitted.len(),
+            2,
+            "first 2 iterations should emit FixReady"
+        );
+        assert!(
+            ctx.event_sink.escalations.is_empty(),
+            "no escalation before iteration 3"
+        );
     }
 
     // Iteration 3 — should escalate + give, NOT emit FixReady
@@ -1003,7 +1010,11 @@ async fn dev_cycle_workflow_parses_with_test_cmd() {
     let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
         .expect("could not read dev-cycle workflow");
     let program = forge::parser::parse(&source);
-    assert!(program.is_ok(), "dev-cycle/main.forge must parse: {:?}", program.err());
+    assert!(
+        program.is_ok(),
+        "dev-cycle/main.forge must parse: {:?}",
+        program.err()
+    );
     let program = program.unwrap();
 
     // Verify test_cmd field exists in the IssueAssigned event
@@ -1138,7 +1149,9 @@ agent impl_agent
 
     // Third iteration — escalates, no ImplementationReady emitted
     let result = agent.dispatch("TestsFailed", params()).await.unwrap();
-    assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated")));
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated"))
+    );
     {
         let ctx = agent.context().lock().unwrap();
         assert_eq!(
