@@ -65,6 +65,9 @@ event MineComplete
   processed: Number
   total_stored: Number
 
+event VerifyRecall
+  query: Text
+
 # ── Tasks ──────────────────────────────────────────────────────
 
 task slugify_repo
@@ -177,6 +180,7 @@ agent pr_history_miner
     max_entries: 10000
     retention: 365d
   subscribe MineRequest
+  subscribe VerifyRecall
 
   on start
     memory.target_repo = ""
@@ -215,7 +219,7 @@ agent pr_history_miner
     say "[pr_history_miner] Done: {memory.last_run_processed} PRs (total: {memory.total_processed})"
     emit MineComplete(repo: repo, processed: memory.last_run_processed, total_stored: memory.total_processed)
 
-  on verify(query: Text)
+  on VerifyRecall(query: Text)
     say "[pr_history_miner] Recall: {query}"
     result = recall "{query}"
     when result.sure -> say "RECALL OK (sure): {result}"
@@ -260,6 +264,10 @@ endpoint health() -> Text
 endpoint mine(repo: Text) -> Text
   emit MineRequest(repo: repo)
   give "mining started for {repo}"
+
+endpoint verify(query: Text) -> Text
+  emit VerifyRecall(query: query)
+  give "recall query dispatched: {query}"
 
 # ── Entry Point (run mode) ─────────────────────────────────────
 
