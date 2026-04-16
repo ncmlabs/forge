@@ -56,6 +56,12 @@ check = "ok"
 manifest = "examples/agents/clone-dev-skeleton/forge.project.toml"
 
 [[cases]]
+name = "PR history miner agent"
+paths = ["examples/agents/pr-history-miner/main.forge"]
+check = "ok"
+manifest = "examples/agents/pr-history-miner/forge.project.toml"
+
+[[cases]]
 name = "mock-runnable quiz tutor agent"
 paths = ["examples/agents/quiz_tutor.forge"]
 check = "ok"

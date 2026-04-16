@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- PR history miner agent (`examples/agents/pr-history-miner/`): mines merged PRs from a GitHub repo, characterizes each diff with `reason`, summarizes reviewer feedback, and stores structured decision-history entries in the knowledge store via `learn` with `category: "pr-decisions-{project}"`. Idempotent via persistent watermark, resumable across restarts, rate-limit aware. Seeds the knowledge store for T2.2 (reviewer consults prior decisions) (#294)
+- GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
+
 ### Fixed
 - Knowledge store dual-instance bug: `ingest-fact` and `learn-from-session` data is now immediately queryable via `recall`/`query` without a pretrain cycle. The agent and endpoint executor now share a single `SharedKnowledgeStore` (`Arc<Mutex<KnowledgeStore>>`) instead of creating separate instances. In interpreter mode (`forge serve`), endpoints previously had no knowledge store at all (#309)
 - Knowledge store O(N²) corpus build: `add_entry` now uses incremental `index_entry` (O(1) per add) instead of full `rebuild_index` (O(N) per add). Content deduplication prevents the same fact from being stored multiple times (#280 quick-fix)

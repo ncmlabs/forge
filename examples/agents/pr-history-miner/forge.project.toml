@@ -1,0 +1,10 @@
+[project]
+name = "pr-history-miner"
+version = "0.1.0"
+description = "Mines historical PR reviews into a knowledge store for decision-clone seeding"
+
+[build]
+entry = "main.forge"
+
+[skills]
+github = { path = "../../../skills/github" }

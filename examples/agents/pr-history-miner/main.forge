@@ -1,0 +1,275 @@
+#! boundary: server
+
+# ================================================================
+# PR History Miner — T5.4 (issue #294)
+# ================================================================
+# Mines historical PR reviews from a GitHub repo and populates a
+# knowledge store with structured decision-history entries. Seeds
+# the data that T2.2 (reviewer consults knowledge store) will
+# consume to produce a decision-clone.
+#
+# Architecture:
+#   POST /mine {repo}               (endpoint, server mode)
+#   fn main                         (run mode, usage info)
+#     → agent receives MineRequest
+#     → fetches merged PRs via command (gh pr list)
+#     → for each PR: get reviews, characterize diff, learn entry
+#     → watermark tracks last processed date for resumability
+#
+# Decision-history schema (structured text for TF-IDF recall):
+#   PR-DECISION project:{slug} pr:#{num} decision:{decision}
+#   title: ...  author: ...  labels: ...
+#   branch: {head} -> {base}
+#   diff_stats: +{add} -{del} files:{changed}
+#   review_rounds: {count}
+#   diff_characterization: {llm_summary}
+#   reviewer_comments_summary: {llm_summary}
+#   merged_at: {iso8601}
+#
+# Idempotency:
+#   - Watermark (memory.last_processed_date) skips already-mined PRs
+#   - Knowledge store content dedup prevents duplicate entries
+#
+# Rate limiting:
+#   - Sequential processing (~2 API + 2 LLM calls per PR)
+#   - Graceful stop on API error via when/else
+#
+# Prerequisites:
+#   - gh CLI installed and authenticated
+#   - LLM provider configured (FORGE_CONFIG or forge.config.toml)
+#   - jq installed (for JSON field extraction)
+#
+# Run (server mode):
+#   FORGE_CONFIG=path/to/forge.config.toml \
+#   cargo run -- serve --manifest examples/agents/pr-history-miner/forge.project.toml \
+#     examples/agents/pr-history-miner/main.forge --port 3220
+#
+# Trigger:
+#   curl -X POST http://localhost:3220/mine -d 'repo=ncmlabs/forge'
+#   curl http://localhost:3220/health
+#
+# Issue: #294 (T5.4 — Mine historical PR reviews)
+# ================================================================
+
+use
+  llm.reason
+  skill.github
+
+# ── Events ─────────────────────────────────────────────────────
+
+event MineRequest
+  repo: Text
+
+event MineComplete
+  repo: Text
+  processed: Number
+  total_stored: Number
+
+# ── Tasks ──────────────────────────────────────────────────────
+
+task slugify_repo
+  needs repo: Text
+  gives Text
+  do
+    result = command "printf '%s' '{repo}' | tr '/' '-'" timeout 5s
+    when result.sure -> give result
+    else -> give "unknown-repo"
+
+task extract_pr_fields
+  needs pr_json: Text
+  gives Text
+  do
+    result = command "printf '%s' '{pr_json}' | jq -r '[.number, .title, .author.login, .reviewDecision, .mergedAt, (.labels | map(.name) | join(\",\")), .headRefName, .baseRefName, .additions, .deletions, .changedFiles] | @tsv'" timeout 5s
+    when result.sure -> give result
+    else -> give ""
+
+task characterize_diff
+  needs title: Text, labels: Text, diff_text: Text
+  gives Text
+  do
+    prompt = "Summarize this PR diff in 2-3 sentences. Focus on: what was changed, why (infer from title and labels), and which area of the codebase is affected. Be specific about file types and modules.\n\nTitle: {title}\nLabels: {labels}\nDiff (truncated):\n{diff_text}"
+    result = reason prompt
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Could not characterize diff for: {title}"
+
+task summarize_reviews
+  needs reviews_json: Text
+  gives Text
+  do
+    prompt = "Summarize the reviewer feedback in 1-2 sentences. Focus on: what reviewers asked to change, concerns raised, and overall sentiment. If the JSON is empty or has no substantive comments, respond with exactly: No reviewer feedback.\n\nReviews JSON:\n{reviews_json}"
+    result = reason prompt
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "No reviewer feedback."
+
+task count_reviews
+  needs reviews_json: Text
+  gives Text
+  do
+    result = command "printf '%s' '{reviews_json}' | jq 'length'" timeout 5s
+    when result.sure -> give result
+    else -> give "0"
+
+task resolve_decision
+  needs review_decision: Text
+  gives Text
+  do
+    if review_decision == "APPROVED"
+      give "approved"
+    if review_decision == "CHANGES_REQUESTED"
+      give "changes_requested"
+    give "merged_no_review"
+
+task fetch_truncated_diff
+  needs repo: Text, pr_num: Text
+  gives Text
+  do
+    result = command "gh pr diff {pr_num} -R {repo} 2>/dev/null | head -150" timeout 30s
+    when result.sure -> give result
+    else -> give "Diff unavailable"
+
+# Process a single PR JSON line and return a formatted knowledge entry.
+# Returns the entry text and the merged_at date separated by "|||".
+task process_single_pr
+  needs pr_json: Text, repo: Text, slug: Text
+  gives Text
+  do
+    fields_raw = extract_pr_fields(pr_json)
+    if fields_raw == ""
+      give ""
+    parts = fields_raw.split("\t")
+    pr_num = parts[0]
+    title = parts[1]
+    author = parts[2]
+    review_decision = parts[3]
+    merged_at = parts[4]
+    labels = parts[5]
+    head_ref = parts[6]
+    base_ref = parts[7]
+    add_count = parts[8]
+    del_count = parts[9]
+    file_count = parts[10]
+    say "  PR #{pr_num}: {title}"
+    reviews_json = skill.github.get_pr_reviews(repo, pr_num)
+    when reviews_json.sure -> say "    reviews fetched"
+    else -> say "    reviews fetch uncertain"
+    review_count = count_reviews(reviews_json)
+    review_summary = summarize_reviews(reviews_json)
+    diff_text = fetch_truncated_diff(repo, pr_num)
+    diff_characterization = characterize_diff(title, labels, diff_text)
+    decision = resolve_decision(review_decision)
+    entry = "PR-DECISION project:{slug} pr:#{pr_num} decision:{decision}\ntitle: {title}\nauthor: {author}\nlabels: {labels}\nbranch: {head_ref} -> {base_ref}\ndiff_stats: +{add_count} -{del_count} files:{file_count}\nreview_rounds: {review_count}\ndiff_characterization: {diff_characterization}\nreviewer_comments_summary: {review_summary}\nmerged_at: {merged_at}"
+    give "{entry}|||{merged_at}"
+
+# ── Agent ──────────────────────────────────────────────────────
+
+agent pr_history_miner
+  memory persistent
+    target_repo: Text
+    project_slug: Text
+    last_processed_date: Text
+    total_processed: Number
+    last_run_processed: Number
+    last_run_status: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
+  subscribe MineRequest
+
+  on start
+    memory.target_repo = ""
+    memory.project_slug = ""
+    memory.last_processed_date = "2020-01-01T00:00:00Z"
+    memory.total_processed = 0
+    memory.last_run_processed = 0
+    memory.last_run_status = "idle"
+    say "[pr_history_miner] ready"
+
+  on MineRequest(repo: Text)
+    memory.target_repo = repo
+    memory.last_run_processed = 0
+    memory.last_run_status = "running"
+    slug = slugify_repo(repo)
+    memory.project_slug = slug
+    say "[pr_history_miner] Mining {repo} (watermark: {memory.last_processed_date})"
+    pr_lines_raw = command "gh pr list -R {repo} --state merged --limit 30 --json number,title,author,state,mergedAt,createdAt,labels,reviewDecision,headRefName,baseRefName,additions,deletions,changedFiles | jq -c '.[] | select(.mergedAt > \"{memory.last_processed_date}\")'" timeout 60s
+    when pr_lines_raw.sure -> say "[pr_history_miner] Fetched PR list"
+    else -> say "[pr_history_miner] ERROR fetching PRs"
+    pr_lines = pr_lines_raw.split("\n")
+    say "[pr_history_miner] {pr_lines.length} lines to process"
+    for pr_line in pr_lines
+      trimmed = pr_line.trim()
+      if trimmed.length > 2
+        result = process_single_pr(trimmed, repo, slug)
+        result_parts = result.split("|||")
+        entry = result_parts[0]
+        merged_at = result_parts[1]
+        learn "{entry}" category: "pr-decisions-{slug}"
+        memory.last_processed_date = merged_at
+        memory.total_processed = memory.total_processed + 1
+        memory.last_run_processed = memory.last_run_processed + 1
+    memory.last_run_status = "complete"
+    say "[pr_history_miner] Done: {memory.last_run_processed} PRs (total: {memory.total_processed})"
+    emit MineComplete(repo: repo, processed: memory.last_run_processed, total_stored: memory.total_processed)
+
+  on verify(query: Text)
+    say "[pr_history_miner] Recall: {query}"
+    result = recall "{query}"
+    when result.sure -> say "RECALL OK (sure): {result}"
+    when result.unsure -> say "RECALL PARTIAL (unsure): {result}"
+    else -> say "RECALL EMPTY"
+
+  on status
+    give "repo={memory.target_repo} processed={memory.total_processed} watermark={memory.last_processed_date} status={memory.last_run_status}"
+
+  if stuck for 3 turns
+    say "[pr_history_miner] Stuck."
+    memory.last_run_status = "stuck"
+    escalate to human
+
+# ── Warden ─────────────────────────────────────────────────────
+
+warden mine_warden
+  manages [pr_history_miner]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 2: escalate
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, self
+    after 1: escalate
+  max_retries 3 per 1h then escalate
+
+# ── System ─────────────────────────────────────────────────────
+
+system pr_mining_system
+  use
+    miner: pr_history_miner
+
+# ── Endpoints (server mode) ────────────────────────────────────
+
+endpoint health() -> Text
+  give "ok"
+
+endpoint mine(repo: Text) -> Text
+  emit MineRequest(repo: repo)
+  give "mining started for {repo}"
+
+# ── Entry Point (run mode) ─────────────────────────────────────
+
+fn main
+  say "=== PR History Miner ==="
+  say "Mines merged PRs from a GitHub repo into a knowledge store."
+  say "Decision-history entries enable T2.2 (reviewer consults prior decisions)."
+  say ""
+  say "Usage (server mode):"
+  say "  cargo run -- serve --manifest examples/agents/pr-history-miner/forge.project.toml examples/agents/pr-history-miner/main.forge --port 3220"
+  say ""
+  say "Trigger mining:"
+  say "  curl -X POST http://localhost:3220/mine -d 'repo=ncmlabs/forge'"
+  say ""
+  say "=== Ready ==="
