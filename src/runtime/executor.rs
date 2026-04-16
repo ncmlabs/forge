@@ -412,6 +412,23 @@ impl TaskExecutor {
         self
     }
 
+    /// Attach a pre-existing shared knowledge store (already wrapped in Arc<Mutex>).
+    /// Used to share the same KS between the executor and agent context (#309).
+    pub fn with_shared_knowledge_store_arc(
+        mut self,
+        ks: crate::runtime::knowledge_store::SharedKnowledgeStore,
+    ) -> Self {
+        self.knowledge_store = Some(ks);
+        self
+    }
+
+    /// Get a clone of the shared knowledge store handle, if any.
+    pub fn knowledge_store_handle(
+        &self,
+    ) -> Option<crate::runtime::knowledge_store::SharedKnowledgeStore> {
+        self.knowledge_store.clone()
+    }
+
     async fn emit_named_args(
         &self,
         event_name: &str,
@@ -903,7 +920,7 @@ impl TaskExecutor {
         match system_decl {
             Some(decl) => {
                 let system_config = self.config.as_ref().and_then(|c| c.system.as_ref());
-                let runtime = crate::runtime::system::SystemRuntime::new_with_skills(
+                let mut runtime = crate::runtime::system::SystemRuntime::new_with_skills(
                     decl,
                     &self.program,
                     self.providers.clone(),
@@ -911,6 +928,11 @@ impl TaskExecutor {
                     system_config,
                     self.skill_executor.clone(),
                 )?;
+                // Share the executor's knowledge store with the system runtime so
+                // agents use the same instance as endpoint recall (#309).
+                if let Some(ref ks) = self.knowledge_store {
+                    runtime = runtime.with_shared_knowledge_store(ks.clone());
+                }
                 Ok(Some(runtime))
             }
             None => Ok(None),
@@ -1247,15 +1269,16 @@ impl TaskExecutor {
                 }
                 Stmt::Learn(source, category_expr) => {
                     if let Some(ref ctx_arc) = self.agent_context {
-                        // Check knowledge store exists (quick lock/unlock)
-                        {
+                        // Get shared knowledge store handle (clone Arc, release ctx lock)
+                        let ks_arc = {
                             let ctx = ctx_arc.lock().unwrap();
-                            if ctx.knowledge_store.is_none() {
-                                return Err(RuntimeError::Unsupported(
-                                    "learn requires agent with knowledge store".into(),
-                                ));
-                            }
-                        }
+                            ctx.knowledge_store.clone()
+                        };
+                        let ks_arc = ks_arc.ok_or_else(|| {
+                            RuntimeError::Unsupported(
+                                "learn requires agent with knowledge store".into(),
+                            )
+                        })?;
 
                         // Evaluate optional category expression
                         let category = if let Some(cat_expr) = category_expr {
@@ -1269,13 +1292,11 @@ impl TaskExecutor {
                             LearnSource::Direct(expr) => {
                                 let val = self.eval_expr(expr, env).await?;
                                 let text = format!("{}", val.value);
-                                let mut ctx = ctx_arc.lock().unwrap();
-                                if let Some(ref mut ks) = ctx.knowledge_store {
-                                    if let Some(ref cat) = category {
-                                        ks.learn_direct_categorized(&text, cat);
-                                    } else {
-                                        ks.learn_direct(&text);
-                                    }
+                                let mut ks = ks_arc.lock().unwrap();
+                                if let Some(ref cat) = category {
+                                    ks.learn_direct_categorized(&text, cat);
+                                } else {
+                                    ks.learn_direct(&text);
                                 }
                             }
                             LearnSource::FromInteraction(args) => {
@@ -1299,29 +1320,25 @@ impl TaskExecutor {
                                         _ => None,
                                     })
                                     .unwrap_or(0.5);
-                                let mut ctx = ctx_arc.lock().unwrap();
-                                if let Some(ref mut ks) = ctx.knowledge_store {
-                                    if let Some(ref cat) = category {
-                                        ks.learn_from_interaction_categorized(
-                                            &question, &answer, confidence, cat,
-                                        );
-                                    } else {
-                                        ks.learn_from_interaction(&question, &answer, confidence);
-                                    }
+                                let mut ks = ks_arc.lock().unwrap();
+                                if let Some(ref cat) = category {
+                                    ks.learn_from_interaction_categorized(
+                                        &question, &answer, confidence, cat,
+                                    );
+                                } else {
+                                    ks.learn_from_interaction(&question, &answer, confidence);
                                 }
                             }
                             LearnSource::FromDocument(expr) => {
                                 let val = self.eval_expr(expr, env).await?;
                                 let path = format!("{}", val.value);
-                                let mut ctx = ctx_arc.lock().unwrap();
-                                if let Some(ref mut ks) = ctx.knowledge_store {
-                                    if let Some(ref cat) = category {
-                                        ks.learn_from_document_categorized(&path, cat)
-                                            .map_err(RuntimeError::Unsupported)?;
-                                    } else {
-                                        ks.learn_from_document(&path)
-                                            .map_err(RuntimeError::Unsupported)?;
-                                    }
+                                let mut ks = ks_arc.lock().unwrap();
+                                if let Some(ref cat) = category {
+                                    ks.learn_from_document_categorized(&path, cat)
+                                        .map_err(RuntimeError::Unsupported)?;
+                                } else {
+                                    ks.learn_from_document(&path)
+                                        .map_err(RuntimeError::Unsupported)?;
                                 }
                             }
                         }
@@ -1429,7 +1446,7 @@ impl TaskExecutor {
                         }
                     }
 
-                    // 4. Create the child agent process
+                    // 4. Create the child agent process (child gets its own KS, not shared)
                     let mut child_process = crate::runtime::agent::AgentProcess::new(
                         agent_decl,
                         states_decl.as_ref(),
@@ -1438,6 +1455,7 @@ impl TaskExecutor {
                         self.program.clone(),
                         self.storage.clone(),
                         self.instance_registry.clone(),
+                        None,
                     );
 
                     // 5. Transfer knowledge from parent to child
@@ -1445,8 +1463,10 @@ impl TaskExecutor {
                         // Get filtered entries from parent's knowledge store
                         let mut transferred_entries = Vec::new();
                         if let Some(ref ctx_arc) = self.agent_context {
-                            let ctx = ctx_arc.lock().unwrap();
-                            if let Some(ref ks) = ctx.knowledge_store {
+                            let ks_arc =
+                                ctx_arc.lock().unwrap().knowledge_store.clone();
+                            if let Some(ref ks_arc) = ks_arc {
+                                let ks = ks_arc.lock().unwrap();
                                 transferred_entries = ks.export_by_category(cat);
                             }
                         }
@@ -1467,8 +1487,10 @@ impl TaskExecutor {
                         // Merge into child's knowledge store
                         if !transferred_entries.is_empty() {
                             let child_ctx = child_process.context();
-                            let mut ctx = child_ctx.lock().unwrap();
-                            if let Some(ref mut ks) = ctx.knowledge_store {
+                            let child_ks =
+                                child_ctx.lock().unwrap().knowledge_store.clone();
+                            if let Some(ref ks_arc) = child_ks {
+                                let mut ks = ks_arc.lock().unwrap();
                                 ks.merge_imported(transferred_entries);
                             }
                         }
@@ -1559,9 +1581,10 @@ impl TaskExecutor {
                         let export_path = format!("{}", path_val.value);
 
                         if let Some(ref ctx_arc) = self.agent_context {
-                            let ctx = ctx_arc.lock().unwrap();
-                            if let Some(ref ks) = ctx.knowledge_store {
-                                let entries = ks.export_entries();
+                            let ks_arc =
+                                ctx_arc.lock().unwrap().knowledge_store.clone();
+                            if let Some(ref ks_arc) = ks_arc {
+                                let entries = ks_arc.lock().unwrap().export_entries();
                                 let agent_name = self
                                     .agent_name
                                     .clone()
@@ -3130,9 +3153,11 @@ impl TaskExecutor {
                     let query_text = format!("{}", query_val.value);
 
                     if let Some(ref ctx_arc) = self.agent_context {
-                        let mut ctx = ctx_arc.lock().unwrap();
-                        if let Some(ref mut ks) = ctx.knowledge_store {
+                        let ks_arc =
+                            ctx_arc.lock().unwrap().knowledge_store.clone();
+                        if let Some(ref ks_arc) = ks_arc {
                             // Default token budget for recall: 2000 tokens
+                            let mut ks = ks_arc.lock().unwrap();
                             let result = ks.recall(&query_text, 2000);
                             Ok(result)
                         } else {

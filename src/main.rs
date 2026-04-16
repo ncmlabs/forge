@@ -1295,6 +1295,20 @@ async fn serve_program(
             executor
         };
 
+        // Create shared knowledge store from agent declaration (#309).
+        // The same Arc is passed to both the executor (for endpoint recall) and
+        // the system runtime (for agent learn), ensuring a single source of truth.
+        let executor =
+            if let Some((store_path, max_entries, retention_days)) =
+                extract_knowledge_config(executor.program())
+            {
+                let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
+                let shared_ks = Arc::new(Mutex::new(ks));
+                executor.with_shared_knowledge_store_arc(shared_ks)
+            } else {
+                executor
+            };
+
         // Build system runtime (if declared) and inject shared infrastructure (#140)
         let topology = executor.extract_topology();
         let system_runtime = match executor.build_system_runtime() {
@@ -1376,6 +1390,43 @@ async fn serve_program(
 /// Seed markdown files from `content/` directory into storage.
 /// Files are stored as `page:<slug>` keys (e.g., `content/getting-started.md` → `page:getting-started`).
 /// Subdirectories use the filename only (e.g., `content/reference/task.md` → `page:task`).
+/// Extract knowledge store config from the first agent declaration in the program.
+/// Returns (store_path, max_entries, retention_days) if found.
+fn extract_knowledge_config(
+    program: &forge::ast::Program,
+) -> Option<(String, Option<usize>, Option<u64>)> {
+    program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(agent) => agent.knowledge.as_ref(),
+            _ => None,
+        })
+        .and_then(|kd| {
+            let store_path = match &kd.node.store_path.node {
+                Expr::Template(parts) => parts
+                    .iter()
+                    .filter_map(|p| match &p.node {
+                        TemplatePart::Text(t) => Some(t.as_str()),
+                        _ => None,
+                    })
+                    .collect::<String>(),
+                _ => return None,
+            };
+            let max_entries = kd.node.max_entries.as_ref().map(|m| m.node as usize);
+            let retention_days = kd.node.retention.as_ref().map(|r| {
+                let dur = &r.node;
+                match dur.unit {
+                    forge::ast::DurationUnit::Days => dur.value,
+                    forge::ast::DurationUnit::Hours => dur.value / 24,
+                    forge::ast::DurationUnit::Minutes => dur.value / (24 * 60),
+                    forge::ast::DurationUnit::Seconds => dur.value / (24 * 60 * 60),
+                }
+            });
+            Some((store_path, max_entries, retention_days))
+        })
+}
+
 fn seed_content_dir(file: &Path, storage: &forge::runtime::storage::ForgeStorage) {
     let content_dir = file
         .parent()
@@ -1514,6 +1565,18 @@ async fn serve_with_watch(
         } else {
             executor
         };
+
+        // Create shared knowledge store from agent declaration (#309).
+        let executor =
+            if let Some((store_path, max_entries, retention_days)) =
+                extract_knowledge_config(executor.program())
+            {
+                let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
+                let shared_ks = Arc::new(Mutex::new(ks));
+                executor.with_shared_knowledge_store_arc(shared_ks)
+            } else {
+                executor
+            };
 
         // Build system runtime (if declared) and inject shared infrastructure (#140)
         let topology = executor.extract_topology();
@@ -1667,6 +1730,7 @@ async fn run_agent(file: &Path) -> anyhow::Result<()> {
         None,
         program,
         storage,
+        None,
         None,
     );
 
@@ -1825,6 +1889,7 @@ async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::R
         program,
         storage,
         Some(instance_registry),
+        None,
     );
 
     // Build params from positional args matching handler param names

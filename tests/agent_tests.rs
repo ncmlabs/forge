@@ -121,6 +121,7 @@ async fn dispatch_selects_correct_handler() {
         empty_program(),
         None,
         None,
+        None,
     );
     let result = agent.dispatch("greet", HashMap::new()).await.unwrap();
     assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "hello")));
@@ -135,6 +136,7 @@ async fn dispatch_unknown_event_errors() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );
@@ -166,6 +168,7 @@ async fn dispatch_binds_params() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );
@@ -221,6 +224,7 @@ async fn memory_update_persists_across_dispatches() {
         empty_program(),
         None,
         None,
+        None,
     );
 
     // Set topic
@@ -265,6 +269,7 @@ async fn requires_pass_executes_handler() {
         empty_program(),
         None,
         None,
+        None,
     );
     let result = agent.dispatch("action", HashMap::new()).await.unwrap();
     assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "ok")));
@@ -295,6 +300,7 @@ async fn requires_fail_silent_skips() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );
@@ -331,6 +337,7 @@ async fn requires_fail_give_returns_value() {
         empty_program(),
         None,
         None,
+        None,
     );
     let result = agent.dispatch("action", HashMap::new()).await.unwrap();
     assert!(matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "denied")));
@@ -356,6 +363,7 @@ async fn requires_fail_crash_returns_error() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );
@@ -388,6 +396,7 @@ async fn requires_fail_log_rejects() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );
@@ -436,6 +445,7 @@ async fn requires_short_circuits_on_first_failure() {
         empty_program(),
         None,
         None,
+        None,
     );
     let result = agent.dispatch("action", HashMap::new()).await.unwrap();
     // Should get "first_failed" — proves first guard ran and short-circuited
@@ -474,6 +484,7 @@ async fn state_machine_transition_via_handler() {
         empty_program(),
         None,
         None,
+        None,
     );
 
     agent.dispatch("activate", HashMap::new()).await.unwrap();
@@ -507,6 +518,7 @@ async fn state_machine_invalid_transition_errors() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );
@@ -544,6 +556,7 @@ async fn timer_start_via_handler() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );
@@ -597,6 +610,7 @@ async fn timer_cancel_via_handler() {
         empty_program(),
         None,
         None,
+        None,
     );
     agent.dispatch("begin", HashMap::new()).await.unwrap();
     agent.dispatch("stop", HashMap::new()).await.unwrap();
@@ -634,6 +648,7 @@ async fn emit_collected_in_event_sink() {
         empty_program(),
         None,
         None,
+        None,
     );
     agent.dispatch("resolve", HashMap::new()).await.unwrap();
 
@@ -661,6 +676,7 @@ async fn escalate_collected_in_event_sink() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );
@@ -701,6 +717,7 @@ async fn stuck_detection_triggers_policy() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     );
@@ -754,6 +771,7 @@ async fn no_give_handler_does_not_trip_stuck() {
         empty_program(),
         None,
         None,
+        None,
     );
 
     // Five dispatches — well past the default stuck threshold of 3.
@@ -798,7 +816,7 @@ agent test_bot
         })
         .expect("no agent in program");
 
-    let agent = AgentProcess::new(agent_decl, None, mock_registry(), None, program, None, None);
+    let agent = AgentProcess::new(agent_decl, None, mock_registry(), None, program, None, None, None);
 
     // Dispatch three pings — count should increment
     let r1 = agent.dispatch("ping", HashMap::new()).await.unwrap();

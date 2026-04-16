@@ -179,7 +179,7 @@ impl PoolExecutor {
                     let args = args.to_vec();
                     join_set.spawn(async move {
                         let process =
-                            AgentProcess::new(decl, None, providers, tracer, program, None, None);
+                            AgentProcess::new(decl, None, providers, tracer, program, None, None, None);
                         let mut params = HashMap::new();
                         for (i, arg) in args.into_iter().enumerate() {
                             params.insert(format!("arg_{}", i), arg);

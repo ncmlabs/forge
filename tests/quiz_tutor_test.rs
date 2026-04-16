@@ -75,6 +75,7 @@ async fn quiz_tutor_full_session() {
         program,
         None,
         None,
+        None,
     );
 
     // 1. Start the session — should initialize memory and ask first question
@@ -158,6 +159,7 @@ async fn quiz_tutor_requires_guard_rejects_early_answer() {
         program,
         None,
         None,
+        None,
     );
 
     // Answering before start should be rejected by requires guard
@@ -194,6 +196,7 @@ async fn quiz_tutor_stuck_detection() {
         registry,
         None,
         program,
+        None,
         None,
         None,
     );

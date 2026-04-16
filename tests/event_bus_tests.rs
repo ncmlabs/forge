@@ -217,6 +217,7 @@ async fn agent_registers_subscriptions_with_bus() {
         empty_program(),
         None,
         None,
+        None,
     )
     .with_event_bus(bus.clone())
     .await;
@@ -236,6 +237,7 @@ async fn agent_run_receives_and_dispatches_event() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     )
@@ -268,6 +270,7 @@ async fn agent_emit_drains_through_bus() {
         empty_program(),
         None,
         None,
+        None,
     )
     .with_event_bus(bus.clone())
     .await;
@@ -278,6 +281,7 @@ async fn agent_emit_drains_through_bus() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     )
@@ -317,6 +321,7 @@ async fn agent_filter_subscribe_with_matching_event() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     )
@@ -362,6 +367,7 @@ async fn agent_filter_subscribe_rejects_non_matching() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     )
@@ -422,6 +428,7 @@ async fn agent_filter_can_access_memory() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     )
@@ -528,6 +535,7 @@ async fn multi_agent_event_flow() {
         empty_program(),
         None,
         None,
+        None,
     )
     .with_event_bus(bus.clone())
     .await;
@@ -538,6 +546,7 @@ async fn multi_agent_event_flow() {
         mock_registry(),
         None,
         empty_program(),
+        None,
         None,
         None,
     )

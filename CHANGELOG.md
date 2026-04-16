@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Knowledge store dual-instance bug: `ingest-fact` and `learn-from-session` data is now immediately queryable via `recall`/`query` without a pretrain cycle. The agent and endpoint executor now share a single `SharedKnowledgeStore` (`Arc<Mutex<KnowledgeStore>>`) instead of creating separate instances. In interpreter mode (`forge serve`), endpoints previously had no knowledge store at all (#309)
+- Knowledge store O(N²) corpus build: `add_entry` now uses incremental `index_entry` (O(1) per add) instead of full `rebuild_index` (O(N) per add). Content deduplication prevents the same fact from being stored multiple times (#280 quick-fix)
+- Hot-reload now preserves the knowledge store across code changes in `forge serve --watch`, matching the existing storage and session manager preservation pattern
+
 ### Added
 - Clone-dev walking skeleton (`examples/agents/clone-dev-skeleton/`): proves the 3-hop topology `HTTP → mastermind → specialist → Slack` end-to-end using only existing runtime primitives. The mastermind classifies inbound `/clone_dev` tasks via `reason`, assigns a `task_id`, and emits `TaskRouted(task_id, target_agent, kind, ...)`; `pr_reviewer` (forked from `pr-review-bot` with the body intact) and `echo_specialist` subscribe with `where target_agent == "<self>"` filters. `org_warden` supervises all three agents. First concrete move on the Clone-developer track (#292, Layer 3 kickoff) and the gate that unfreezes #184 dev-cycle-executor rescope (#293)
 - Session + Knowledge integration (`examples/session/session_claude_knowledge_live.forge`): demonstrates the full learning loop — agent delegates a question to Claude Code via `session`, persists the answer with `learn from interaction`, and proves persistence with `recall`. Composes three primitives in one `forge run`-able program. Closes Phase 2 M11 (Knowledge School) (#273)

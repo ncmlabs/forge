@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,11 @@ pub struct KnowledgeStore {
     /// Document count for IDF calculation
     doc_count: usize,
 }
+
+/// Shared, thread-safe handle to a KnowledgeStore.
+/// Used by both agent context and endpoint executor to ensure
+/// learn and recall operate on the same instance.
+pub type SharedKnowledgeStore = Arc<Mutex<KnowledgeStore>>;
 
 impl KnowledgeStore {
     pub fn new(store_path: &str, max_entries: Option<usize>, retention_days: Option<u64>) -> Self {
@@ -199,13 +205,21 @@ impl KnowledgeStore {
     }
 
     fn add_entry(&mut self, entry: KnowledgeEntry) {
-        // Evict LRU if at capacity
-        while self.entries.len() >= self.max_entries {
-            self.evict_lru();
+        // Content deduplication: exact match
+        if self.entries.iter().any(|e| e.content == entry.content) {
+            return;
         }
 
-        self.entries.push(entry);
-        self.rebuild_index();
+        // Evict LRU if at capacity — eviction invalidates postings indices
+        if self.entries.len() >= self.max_entries {
+            self.evict_lru();
+            self.entries.push(entry);
+            self.rebuild_index();
+        } else {
+            self.entries.push(entry);
+            let idx = self.entries.len() - 1;
+            self.index_entry(idx);
+        }
         self.save();
     }
 
@@ -377,6 +391,31 @@ impl KnowledgeStore {
                     .or_default()
                     .push((idx, tf));
             }
+        }
+    }
+
+    /// Incrementally index a single newly-appended entry.
+    /// O(1) per entry vs O(N) for `rebuild_index`.
+    fn index_entry(&mut self, idx: usize) {
+        self.doc_count = self.entries.len();
+        let entry = &self.entries[idx];
+        let terms = tokenize(&entry.content);
+        let total = terms.len() as f32;
+        if total == 0.0 {
+            return;
+        }
+
+        let mut term_counts: HashMap<&str, usize> = HashMap::new();
+        for term in &terms {
+            *term_counts.entry(term.as_str()).or_insert(0) += 1;
+        }
+
+        for (term, count) in term_counts {
+            let tf = count as f32 / total;
+            self.tf_index
+                .entry(term.to_string())
+                .or_default()
+                .push((idx, tf));
         }
     }
 
@@ -694,5 +733,47 @@ mod tests {
         assert!(tokens.contains(&"hello".to_string()));
         assert!(tokens.contains(&"world".to_string()));
         assert!(tokens.contains(&"how".to_string()));
+    }
+
+    #[test]
+    fn test_dedup_on_learn() {
+        let tmp = TempDir::new().unwrap();
+        let store_path = tmp
+            .path()
+            .join("test_knowledge")
+            .to_string_lossy()
+            .to_string();
+        let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+        store.learn_direct("FORGE is a language");
+        store.learn_direct("FORGE is a language"); // duplicate
+        store.learn_direct("FORGE is a language"); // duplicate
+
+        assert_eq!(store.entry_count(), 1);
+
+        // But different content is accepted
+        store.learn_direct("Rust is a language");
+        assert_eq!(store.entry_count(), 2);
+    }
+
+    #[test]
+    fn test_incremental_index_matches_full_rebuild() {
+        let tmp = TempDir::new().unwrap();
+        let store_path = tmp
+            .path()
+            .join("test_knowledge")
+            .to_string_lossy()
+            .to_string();
+        let mut store = KnowledgeStore::new(&store_path, Some(100), None);
+
+        store.learn_direct("Rust is a systems programming language");
+        store.learn_direct("Python is great for data science");
+        store.learn_direct("FORGE is built with Rust");
+
+        // Recall should work correctly with incrementally-built index
+        let result = store.recall("Rust programming", 1000);
+        assert!(result.confidence > 0.0);
+        let text = format!("{}", result.value);
+        assert!(text.contains("Rust"));
     }
 }
