@@ -301,6 +301,7 @@ impl AgentProcess {
     /// instead of creating its own. This allows the executor and agent to
     /// share the same KnowledgeStore so that `learn` and `recall` operate
     /// on the same data (fixes #309).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         decl: AgentDecl,
         states: Option<&StatesDecl>,
