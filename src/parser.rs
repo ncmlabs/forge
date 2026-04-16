@@ -1346,11 +1346,9 @@ fn build_retire_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
 
     for child in inner {
         match child.as_rule() {
-            Rule::string_arg => {
+            Rule::string_arg if target.is_none() => {
                 // First string_arg is the target alias
-                if target.is_none() {
-                    target = Some(build_string_arg(child)?);
-                }
+                target = Some(build_string_arg(child)?);
             }
             Rule::retire_option => {
                 let opt_inner = child.into_inner().next().unwrap();
