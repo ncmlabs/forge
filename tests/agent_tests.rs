@@ -1162,3 +1162,309 @@ agent impl_agent
         assert_eq!(ctx.event_sink.escalations, vec!["lead"]);
     }
 }
+
+// ── T2.1 (#296): Implementer iteration loop tests ──────────────────────────
+
+/// T2.1: iteration_log accumulates a diagnosis entry per TestsFailed dispatch.
+#[tokio::test]
+async fn iteration_loop_tracks_diagnosis_log() {
+    let source = r#"
+agent impl_agent
+  memory
+    iteration: Number
+    iteration_log: Text
+    last_diagnosis: Text
+    plan: Text
+
+  on TestsFailed(issue_id: Text, failures: Text)
+    memory.iteration = memory.iteration + 1
+    memory.last_diagnosis = "diag for iteration"
+    memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\ndiag for iteration"
+    emit ImplementationReady(issue_id: issue_id)
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry(),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let params = || {
+        let mut p = HashMap::new();
+        p.insert(
+            "issue_id".into(),
+            ConfidentValue::deterministic(Value::Text("42".into())),
+        );
+        p.insert(
+            "failures".into(),
+            ConfidentValue::deterministic(Value::Text("test error".into())),
+        );
+        p
+    };
+
+    // Two iterations
+    agent.dispatch("TestsFailed", params()).await.unwrap();
+    agent.dispatch("TestsFailed", params()).await.unwrap();
+    {
+        let ctx = agent.context().lock().unwrap();
+        let log = ctx.memory.get("iteration_log").unwrap();
+        let log_text = match &log.value {
+            Value::Text(s) => s.clone(),
+            _ => panic!("iteration_log should be Text"),
+        };
+        assert!(
+            log_text.contains("--- Iteration 1 ---"),
+            "log must contain iteration 1 marker, got: {log_text}"
+        );
+        assert!(
+            log_text.contains("--- Iteration 2 ---"),
+            "log must contain iteration 2 marker, got: {log_text}"
+        );
+        let diagnosis = ctx.memory.get("last_diagnosis").unwrap();
+        assert!(
+            matches!(&diagnosis.value, Value::Text(s) if !s.is_empty()),
+            "last_diagnosis must be set"
+        );
+    }
+}
+
+/// T2.1: configurable max_iterations — cap at 2 instead of default 3.
+#[tokio::test]
+async fn configurable_max_iterations_cap() {
+    let source = r#"
+agent impl_agent
+  memory
+    iteration: Number
+    max_iterations: Number
+
+  on start
+    memory.max_iterations = 2
+
+  on TestsFailed(issue_id: Text, failures: Text)
+    memory.iteration = memory.iteration + 1
+    if memory.iteration >= memory.max_iterations
+      escalate to lead
+      give "escalated"
+    emit ImplementationReady(issue_id: issue_id)
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry(),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let params = || {
+        let mut p = HashMap::new();
+        p.insert(
+            "issue_id".into(),
+            ConfidentValue::deterministic(Value::Text("42".into())),
+        );
+        p.insert(
+            "failures".into(),
+            ConfidentValue::deterministic(Value::Text("error".into())),
+        );
+        p
+    };
+
+    // Fire on start to initialize max_iterations = 2
+    agent.dispatch("start", HashMap::new()).await.unwrap();
+
+    // Iteration 1 — below cap, should emit
+    agent.dispatch("TestsFailed", params()).await.unwrap();
+    {
+        let ctx = agent.context().lock().unwrap();
+        assert_eq!(ctx.event_sink.emitted.len(), 1, "iteration 1 should emit");
+        assert!(ctx.event_sink.escalations.is_empty());
+    }
+
+    // Iteration 2 — hits cap (>= 2), should escalate
+    let result = agent.dispatch("TestsFailed", params()).await.unwrap();
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated")),
+        "iteration 2 must escalate at cap of 2"
+    );
+    {
+        let ctx = agent.context().lock().unwrap();
+        assert_eq!(
+            ctx.event_sink.emitted.len(),
+            1,
+            "iteration 2 must not emit (give exits before emit)"
+        );
+        assert_eq!(ctx.event_sink.escalations, vec!["lead"]);
+    }
+}
+
+/// T2.1: on escalation, memory preserves iteration count and accumulated log
+/// for structured escalation context.
+#[tokio::test]
+async fn escalation_preserves_iteration_state() {
+    let source = r#"
+agent impl_agent
+  memory
+    iteration: Number
+    max_iterations: Number
+    iteration_log: Text
+    last_diagnosis: Text
+
+  on start
+    memory.max_iterations = 1
+
+  on TestsFailed(issue_id: Text, failures: Text)
+    memory.iteration = memory.iteration + 1
+    memory.last_diagnosis = "root cause: {failures}"
+    memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\nroot cause: {failures}"
+    if memory.iteration >= memory.max_iterations
+      escalate to lead
+      give "escalated"
+    emit ImplementationReady(issue_id: issue_id)
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry(),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let params = || {
+        let mut p = HashMap::new();
+        p.insert(
+            "issue_id".into(),
+            ConfidentValue::deterministic(Value::Text("99".into())),
+        );
+        p.insert(
+            "failures".into(),
+            ConfidentValue::deterministic(Value::Text("assertion failed".into())),
+        );
+        p
+    };
+
+    // Fire on start to initialize max_iterations = 1
+    agent.dispatch("start", HashMap::new()).await.unwrap();
+
+    // Cap at 1 — first dispatch escalates
+    let result = agent.dispatch("TestsFailed", params()).await.unwrap();
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated"))
+    );
+    {
+        let ctx = agent.context().lock().unwrap();
+        // Verify memory has the full iteration state for escalation message
+        let iteration = ctx.memory.get("iteration").unwrap();
+        assert!(
+            matches!(&iteration.value, Value::Number(n) if *n == 1.0),
+            "iteration count must be 1"
+        );
+        let log = ctx.memory.get("iteration_log").unwrap();
+        assert!(
+            matches!(&log.value, Value::Text(s) if s.contains("--- Iteration 1 ---")),
+            "iteration_log must contain the iteration marker"
+        );
+        let diag = ctx.memory.get("last_diagnosis").unwrap();
+        assert!(
+            matches!(&diag.value, Value::Text(s) if !s.is_empty()),
+            "last_diagnosis must be populated"
+        );
+        assert_eq!(ctx.event_sink.escalations, vec!["lead"]);
+    }
+}
+
+/// T2.1: enhanced main.forge parses and contains the new task + memory fields.
+#[tokio::test]
+async fn dev_cycle_main_forge_has_iteration_loop_enhancements() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle workflow");
+    let program = forge::parser::parse(&source);
+    assert!(
+        program.is_ok(),
+        "dev-cycle/main.forge must parse: {:?}",
+        program.err()
+    );
+    let program = program.unwrap();
+
+    // Verify diagnose_failures task exists
+    let diag_task = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::Task(t) if t.name.node == "diagnose_failures" => Some(t.clone()),
+        _ => None,
+    });
+    assert!(
+        diag_task.is_some(),
+        "diagnose_failures task must exist in main.forge"
+    );
+    let diag_task = diag_task.unwrap();
+    let param_names: Vec<&str> = diag_task
+        .needs
+        .iter()
+        .map(|p| p.node.name.as_str())
+        .collect();
+    assert!(
+        param_names.contains(&"failures")
+            && param_names.contains(&"plan")
+            && param_names.contains(&"iteration"),
+        "diagnose_failures must take failures, plan, iteration params, got: {:?}",
+        param_names
+    );
+
+    // Verify implementer agent has new memory fields
+    let implementer = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::Agent(a) if a.name.node == "implementer" => Some(a.clone()),
+        _ => None,
+    });
+    assert!(implementer.is_some(), "implementer agent must exist");
+    let impl_memory: Vec<&str> = implementer
+        .as_ref()
+        .unwrap()
+        .memory
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    for field in &["max_iterations", "iteration_log", "last_diagnosis"] {
+        assert!(
+            impl_memory.contains(field),
+            "implementer must have {field} memory field, got: {:?}",
+            impl_memory
+        );
+    }
+}

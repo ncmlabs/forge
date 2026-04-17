@@ -237,6 +237,9 @@ agent implementer
     branch: Text
     plan: Text
     iteration: Number
+    max_iterations: Number
+    iteration_log: Text
+    last_diagnosis: Text
   subscribe PlanApproved
   subscribe TestsFailed
 
@@ -245,6 +248,10 @@ agent implementer
     memory.issue_id = issue_id
     memory.plan = plan
     memory.branch = branch_name(issue_id, "impl")
+    memory.iteration = 0
+    memory.max_iterations = 3
+    memory.iteration_log = ""
+    memory.last_diagnosis = ""
     transition to in_progress
     say "Branch created: {memory.branch}"
     say "Implementing plan..."
@@ -253,8 +260,17 @@ agent implementer
   on fix_needed(issue_id: Text, failures: Text)
     requires lifecycle == in_progress on fail: silent
     memory.iteration = memory.iteration + 1
-    say "Iteration {memory.iteration}: fixing failures"
-    say "Failures: {failures}"
+    say "Iteration {memory.iteration}: diagnosing failures"
+    diagnosis = reason "Diagnose test failures (attempt {memory.iteration}) for issue {issue_id}.\n\nPlan:\n{memory.plan}\n\nFailures:\n{failures}\n\nProvide root cause and fix approach."
+    when diagnosis.sure -> say "Diagnosis: {diagnosis}"
+    else -> say "Diagnosis uncertain: {diagnosis}"
+    memory.last_diagnosis = diagnosis
+    memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\n{diagnosis}"
+    if memory.iteration >= memory.max_iterations
+      say "Max iterations ({memory.max_iterations}) reached. Escalating."
+      escalate to lead
+      give "escalated"
+    say "Applying fix for iteration {memory.iteration}"
     emit ImplementationReady(issue_id: issue_id, branch: memory.branch)
 
   if stuck for 5 turns
