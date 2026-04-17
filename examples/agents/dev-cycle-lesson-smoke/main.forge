@@ -1,0 +1,261 @@
+#! boundary: server
+
+# ================================================================
+# T5.1 (#302) Live Smoke Test — dev-cycle-lesson-smoke
+# ================================================================
+# Proves the outcome-driven learning loop wiring:
+#   SeedTask → each specialist populates memory.issue_id
+#   TaskCompleted → each specialist emits LessonExtracted and
+#   learns a perspective-specific lesson into the shared store.
+#
+# Strips out GitHub/Slack/git clone plumbing so the T5.1 pattern
+# runs end-to-end locally without external credentials. Mirrors
+# the production shape from workflows/dev-cycle/main.forge: same
+# event signatures, same category scheme, same knowledge store.
+#
+# Acceptance: POST /smoke → 5 new entries appear in
+# .forge-knowledge/dev-cycle-smoke/knowledge.json, one per category:
+#   lesson-planner-{slug}, lesson-implementer-{slug},
+#   lesson-tester-{slug}, lesson-reviewer-{slug},
+#   lesson-release-{slug}
+#
+# Run:
+#   ANTHROPIC_API_KEY=... cargo run -- serve \
+#     --manifest examples/agents/dev-cycle-lesson-smoke/forge.project.toml \
+#     examples/agents/dev-cycle-lesson-smoke/main.forge --port 3213
+#   curl -X POST 'http://localhost:3213/smoke?task_id=SMOKE-1&repo=ncmlabs/forge-playground'
+# ================================================================
+
+use
+  llm.reason
+
+# ── Events ───────────────────────────────────────────────────────
+
+# Seed each specialist's memory with the task identity. In the real
+# dev-cycle this population happens across five different events
+# (IssueAssigned, PlanApproved, ImplementationReady, AcceptanceMet,
+# PRMerged). For the smoke test we use one synthetic event.
+event SeedTask
+  task_id: Text
+  repo: Text
+
+event TaskCompleted
+  task_id: Text
+  repo: Text
+  outcome: Text
+  ci_passed_first_try: Bool
+  review_rounds: Number
+  time_to_merge: Number
+  reverted_within_7d: Bool
+
+event LessonExtracted
+  task_id: Text
+  agent_id: Text
+  category: Text
+  content: Text
+  confidence: Number
+
+# ── Pure: slugify_repo ───────────────────────────────────────────
+
+pure slugify_repo
+  needs repo: Text
+  gives Text
+  do
+    give "{repo}"
+
+# ── Specialists ──────────────────────────────────────────────────
+# Five agents — one per dev-cycle role. Each declares the shared
+# knowledge store (runtime wires a single instance across all
+# agents that declare a knowledge block), seeds memory.issue_id on
+# SeedTask, and emits LessonExtracted + learns on TaskCompleted.
+
+agent planner
+  memory
+    issue_id: Text
+    repo: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/dev-cycle-smoke"
+    max_entries: 1000
+    retention: 90d
+  subscribe SeedTask
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.repo_slug = ""
+    say "[planner] ready"
+
+  on SeedTask(task_id: Text, repo: Text)
+    memory.issue_id = task_id
+    memory.repo = repo
+    memory.repo_slug = slugify_repo(repo)
+    say "[planner] seeded with {task_id}"
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[planner] Extracting lesson for {task_id} (outcome={outcome})"
+    lesson = reason "Write a one-sentence planner lesson of the form 'this plan shape -> this outcome' for task {task_id} with outcome {outcome}."
+    cat = "lesson-planner-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "planner", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:planner task:{task_id} outcome:{outcome}\nlesson:\n{lesson}" category: cat
+
+agent implementer
+  memory
+    issue_id: Text
+    repo: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/dev-cycle-smoke"
+    max_entries: 1000
+    retention: 90d
+  subscribe SeedTask
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.repo_slug = ""
+    say "[implementer] ready"
+
+  on SeedTask(task_id: Text, repo: Text)
+    memory.issue_id = task_id
+    memory.repo = repo
+    memory.repo_slug = slugify_repo(repo)
+    say "[implementer] seeded with {task_id}"
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[implementer] Extracting lesson for {task_id} (outcome={outcome})"
+    lesson = reason "Write a one-sentence implementer lesson of the form 'this error pattern -> this fix' for task {task_id} with outcome {outcome}."
+    cat = "lesson-implementer-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "implementer", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:implementer task:{task_id} outcome:{outcome}\nlesson:\n{lesson}" category: cat
+
+agent tester
+  memory
+    issue_id: Text
+    repo: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/dev-cycle-smoke"
+    max_entries: 1000
+    retention: 90d
+  subscribe SeedTask
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.repo_slug = ""
+    say "[tester] ready"
+
+  on SeedTask(task_id: Text, repo: Text)
+    memory.issue_id = task_id
+    memory.repo = repo
+    memory.repo_slug = slugify_repo(repo)
+    say "[tester] seeded with {task_id}"
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[tester] Extracting lesson for {task_id} (first_try={ci_passed_first_try})"
+    lesson = reason "Write a one-sentence tester lesson of the form 'this coverage gap -> this miss' for task {task_id} (first_try={ci_passed_first_try})."
+    cat = "lesson-tester-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "tester", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:tester task:{task_id} first_try:{ci_passed_first_try}\nlesson:\n{lesson}" category: cat
+
+agent reviewer
+  memory
+    issue_id: Text
+    repo: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/dev-cycle-smoke"
+    max_entries: 1000
+    retention: 90d
+  subscribe SeedTask
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.repo_slug = ""
+    say "[reviewer] ready"
+
+  on SeedTask(task_id: Text, repo: Text)
+    memory.issue_id = task_id
+    memory.repo = repo
+    memory.repo_slug = slugify_repo(repo)
+    say "[reviewer] seeded with {task_id}"
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[reviewer] Extracting lesson for {task_id} (rounds={review_rounds})"
+    lesson = reason "Write a one-sentence reviewer lesson of the form 'this objection -> this response' for task {task_id} (rounds={review_rounds})."
+    cat = "lesson-reviewer-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "reviewer", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:reviewer task:{task_id} rounds:{review_rounds}\nlesson:\n{lesson}" category: cat
+
+agent release_manager
+  memory
+    issue_id: Text
+    repo: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/dev-cycle-smoke"
+    max_entries: 1000
+    retention: 90d
+  subscribe SeedTask
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.repo_slug = ""
+    say "[release_manager] ready"
+
+  on SeedTask(task_id: Text, repo: Text)
+    memory.issue_id = task_id
+    memory.repo = repo
+    memory.repo_slug = slugify_repo(repo)
+    say "[release_manager] seeded with {task_id}"
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[release_manager] Extracting lesson for {task_id} (outcome={outcome})"
+    lesson = reason "Write a one-sentence release_manager lesson of the form 'this PR shape -> this merge path' for task {task_id} (outcome={outcome})."
+    cat = "lesson-release-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "release_manager", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:release_manager task:{task_id} outcome:{outcome}\nlesson:\n{lesson}" category: cat
+
+# ── Warden + System ──────────────────────────────────────────────
+# Agents must be supervised/wired via warden+system to come up under
+# `forge serve`. Without these, subscriptions don't register.
+
+warden smoke_warden
+  manages [planner, implementer, tester, reviewer, release_manager]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 3: escalate
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, all
+    after 1: restart
+    after 3: escalate
+  max_retries 3 per 1h then escalate
+
+system lesson_smoke
+  use
+    plan: planner
+    impl: implementer
+    test: tester
+    review: reviewer
+    release: release_manager
+
+# ── Endpoints ────────────────────────────────────────────────────
+
+endpoint health() -> Text
+  give "ok"
+
+# Fires the smoke sequence: seed all 5 agents, then emit TaskCompleted.
+# All 5 specialists should handle TaskCompleted (filter matches
+# because SeedTask populated memory.issue_id to the same value)
+# and each should emit LessonExtracted + learn.
+endpoint smoke(task_id: Text, repo: Text) -> Text
+  emit SeedTask(task_id: task_id, repo: repo)
+  emit TaskCompleted(task_id: task_id, repo: repo, outcome: "merged", ci_passed_first_try: true, review_rounds: 1, time_to_merge: 0, reverted_within_7d: false)
+  give "dispatched"

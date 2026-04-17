@@ -1,0 +1,7 @@
+[project]
+name = "dev-cycle-lesson-smoke"
+version = "0.1.0"
+description = "T5.1 smoke test: prove 5 specialists emit LessonExtracted on TaskCompleted"
+
+[build]
+entry = "main.forge"
