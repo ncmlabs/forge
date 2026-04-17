@@ -1,0 +1,10 @@
+[project]
+name = "slack-adapter"
+version = "0.1.0"
+description = "Slack adapter agent — wraps all outbound Slack calls behind typed events with a shared template library"
+
+[build]
+entry = "main.forge"
+
+[skills]
+slack = { path = "../../../skills/slack" }

@@ -50,6 +50,16 @@ check = "ok"
 manifest = "examples/agents/pr-review-bot/forge.project.toml"
 
 [[cases]]
+name = "Slack adapter agent (+ smoke harness)"
+paths = [
+  "examples/agents/slack-adapter/main.forge",
+  "examples/agents/slack-adapter/smoke.forge",
+]
+check = "ok"
+merge = true
+manifest = "examples/agents/slack-adapter/forge.project.toml"
+
+[[cases]]
 name = "clone-dev walking skeleton"
 paths = ["examples/agents/clone-dev-skeleton/main.forge"]
 check = "ok"

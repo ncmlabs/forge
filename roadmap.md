@@ -90,7 +90,7 @@ Layer 3 kickoff is in progress via the **Clone Developer** initiative (#292) —
 
 | Milestone | Description | Status |
 |-----------|-------------|--------|
-| Layer 3 — Automation Factory | Spec in → running system out. No human writes code. | Kickoff — Clone Developer (#292): T1.1 walking skeleton (#293 ✅), T2 dev-cycle 5-agent topology (#310 ✅), T5.4 PR history miner (#294 ✅), T2.2 reviewer knowledge consultation (#297 ✅), T2.1 implementer iteration loop (#296 ✅) |
+| Layer 3 — Automation Factory | Spec in → running system out. No human writes code. | Kickoff — Clone Developer (#292): T1.1 walking skeleton (#293 ✅), T2 dev-cycle 5-agent topology (#310 ✅), T5.4 PR history miner (#294 ✅), T2.2 reviewer knowledge consultation (#297 ✅), T2.1 implementer iteration loop (#296 ✅), T3.1 Slack adapter (#298 ✅) |
 | Layer 4 — Self-Improvement | Factory watches itself and optimizes deployed systems | Future |
 
 ## Implementation tracks

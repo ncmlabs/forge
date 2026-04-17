@@ -31,7 +31,6 @@
 
 use
   llm.reason
-  skill.slack
 
 # ── Events ─────────────────────────────────────────────────────
 # Standard approval event pair. Downstream agents emit
@@ -46,6 +45,26 @@ event ApprovalResponse
   request_id: Text
   approved: Bool
   comment: Text
+
+# Slack-adapter outbound events (shapes must match slack-adapter/main.forge).
+event PostApproval
+  channel: Text
+  title: Text
+  context: Text
+  callback_url: Text
+  request_id: Text
+  thread_ts: Text
+
+event PostMessage
+  channel: Text
+  text: Text
+  thread_ts: Text
+
+event WardenEscalation
+  agent_id: Text
+  cause: Text
+  detail: Text
+  channel: Text
 
 # ── States ─────────────────────────────────────────────────────
 # Two states: idle (ready) and waiting_approval (blocked on human).
@@ -84,10 +103,8 @@ agent approval_gate
     memory.approval_attempts = 1
     transition to waiting_approval
     callback = "http://localhost:3000/webhook/approval"
-    result = skill.slack.send_approval(memory.notify_channel, context, callback, request_id)
-    when result.sure -> say "Approval request sent to Slack: {request_id}"
-    when result.unsure -> say "Approval notification may have failed"
-    else -> say "Failed to send approval notification"
+    emit PostApproval(channel: memory.notify_channel, title: "Approval needed", context: context, callback_url: callback, request_id: request_id, thread_ts: "")
+    say "Approval request emitted for {request_id}"
     start approval_timeout
     emit ApprovalRequest(agent_id: "approval_gate", context: context, request_id: request_id)
 
@@ -108,14 +125,11 @@ agent approval_gate
     memory.approval_attempts = memory.approval_attempts + 1
     if memory.approval_attempts > 3
       memory.decision = "escalated"
-      escalation = skill.slack.send_message(memory.notify_channel, "ESCALATED: approval {memory.request_id} timed out after 3 retries.")
-      when escalation.sure -> say "Escalation sent"
-      else -> say "Escalation notification failed"
+      emit WardenEscalation(agent_id: "approval_gate", cause: "timeout", detail: "approval {memory.request_id} timed out after 3 retries", channel: memory.notify_channel)
       say "Approval escalated after 3 retries."
       transition to idle
-    reminder = skill.slack.send_message(memory.notify_channel, "REMINDER: approval {memory.request_id} still pending (attempt {memory.approval_attempts}).")
-    when reminder.sure -> say "Reminder sent (attempt {memory.approval_attempts})"
-    else -> say "Reminder notification failed"
+    emit PostMessage(channel: memory.notify_channel, text: "REMINDER: approval {memory.request_id} still pending (attempt {memory.approval_attempts}).", thread_ts: "")
+    say "Reminder emitted (attempt {memory.approval_attempts})"
     start approval_timeout
 
   on status

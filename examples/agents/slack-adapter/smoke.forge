@@ -1,0 +1,46 @@
+#! boundary: server
+
+# ================================================================
+# Slack Adapter — live smoke-test harness (NOT for production)
+# ================================================================
+# Exposes one HTTP endpoint per adapter event so a human can POST
+# each shape and eyeball the resulting Slack message. Compose with
+# the adapter:
+#
+#   SLACK_BOT_TOKEN=xoxb-... cargo run -- serve \
+#     --manifest examples/agents/slack-adapter/forge.project.toml \
+#     examples/agents/slack-adapter/main.forge \
+#     --source examples/agents/slack-adapter/smoke.forge \
+#     --port 3312
+#
+# Then for each endpoint:
+#   curl -X POST "http://localhost:3312/smoke_post_message?channel=C...&text=hi&thread_ts="
+# ================================================================
+
+endpoint smoke_post_approval(channel: Text, title: Text, context: Text, callback_url: Text, request_id: Text, thread_ts: Text) -> Text
+  emit PostApproval(channel: channel, title: title, context: context, callback_url: callback_url, request_id: request_id, thread_ts: thread_ts)
+  give "emitted PostApproval for {request_id}"
+
+endpoint smoke_post_approval_result(channel: Text, request_id: Text, approved: Bool, approver: Text, summary: Text, thread_ts: Text) -> Text
+  emit PostApprovalResult(channel: channel, request_id: request_id, approved: approved, approver: approver, summary: summary, thread_ts: thread_ts)
+  give "emitted PostApprovalResult for {request_id}"
+
+endpoint smoke_post_message(channel: Text, text: Text, thread_ts: Text) -> Text
+  emit PostMessage(channel: channel, text: text, thread_ts: thread_ts)
+  give "emitted PostMessage"
+
+endpoint smoke_post_thread_reply(channel: Text, thread_ts: Text, text: Text) -> Text
+  emit PostThreadReply(channel: channel, thread_ts: thread_ts, text: text)
+  give "emitted PostThreadReply"
+
+endpoint smoke_add_reaction(channel: Text, timestamp: Text, emoji: Text) -> Text
+  emit AddReaction(channel: channel, timestamp: timestamp, emoji: emoji)
+  give "emitted AddReaction"
+
+endpoint smoke_request_human(channel: Text, context: Text, urgency: Text, thread_ts: Text) -> Text
+  emit RequestHuman(channel: channel, context: context, urgency: urgency, thread_ts: thread_ts)
+  give "emitted RequestHuman"
+
+endpoint smoke_warden_escalation(agent_id: Text, cause: Text, detail: Text, channel: Text) -> Text
+  emit WardenEscalation(agent_id: agent_id, cause: cause, detail: detail, channel: channel)
+  give "emitted WardenEscalation"

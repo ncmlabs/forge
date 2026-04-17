@@ -71,6 +71,27 @@ capabilities:
   - name: send_approval
     inputs: [Text, Text, Text, Text]
     output: Text
+    params: [channel, text, callback_url, request_id]
+    executor:
+      kind: command
+      argv:
+        - curl
+        - -s
+        - -X
+        - POST
+        - "https://slack.com/api/chat.postMessage"
+        - -H
+        - "Authorization: Bearer {env:SLACK_BOT_TOKEN}"
+        - --data-urlencode
+        - "channel={channel}"
+        - --data-urlencode
+        - "text={text}"
+        - --data-urlencode
+        - 'blocks=[{{"type":"section","text":{{"type":"mrkdwn","text":"{text}"}}}},{{"type":"actions","block_id":"approval_actions","elements":[{{"type":"button","text":{{"type":"plain_text","text":"Approve"}},"style":"primary","action_id":"approve","value":"approved:{request_id}"}},{{"type":"button","text":{{"type":"plain_text","text":"Reject"}},"style":"danger","action_id":"reject","value":"rejected:{request_id}"}}]}}]'
+      result:
+        success_path: ok
+        error_path: error
+        json_path: ts
   - name: edit_message
     inputs: [Text, Text, Text]
     output: Text

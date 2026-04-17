@@ -7,4 +7,3 @@ description = "Approval gate pattern — emit request, wait for human approval v
 entry = "main.forge"
 
 [skills]
-slack = { path = "../../../skills/slack" }
