@@ -7,5 +7,4 @@ description = "Human-in-the-loop PR review bot — fetches CI status, asks Slack
 entry = "server.forge"
 
 [skills]
-slack = { path = "../../../skills/slack" }
 github = { path = "../../../skills/github" }

@@ -1782,3 +1782,202 @@ async fn dev_cycle_swarm_mastery_agents_subscribe_correctly() {
         "swarm_mastery_tuple must use SwarmMastery lifecycle"
     );
 }
+
+// ── Slack adapter (#298 T3.1) ────────────────────────────────────────────────
+
+/// The slack-adapter agent declares the seven typed outbound events, the five
+/// template tasks, the `slack_adapter` agent with matching handlers, a pool of
+/// 1 worker, and its warden. Parses from source.
+#[tokio::test]
+async fn slack_adapter_main_forge_has_seven_events_and_handlers() {
+    let source = std::fs::read_to_string("examples/agents/slack-adapter/main.forge")
+        .expect("could not read slack-adapter main.forge");
+    let program =
+        forge::parser::parse(&source).expect("slack-adapter main.forge must parse cleanly");
+
+    let event_names: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Event(e) => Some(e.name.node.as_str()),
+            _ => None,
+        })
+        .collect();
+    for event in &[
+        "PostApproval",
+        "PostApprovalResult",
+        "PostMessage",
+        "PostThreadReply",
+        "AddReaction",
+        "RequestHuman",
+        "WardenEscalation",
+    ] {
+        assert!(
+            event_names.contains(event),
+            "slack-adapter must declare {event} event, got: {:?}",
+            event_names
+        );
+    }
+
+    let adapter = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) if a.name.node == "slack_adapter" => Some(a.clone()),
+            _ => None,
+        })
+        .expect("slack_adapter agent must exist");
+
+    let handler_events: Vec<&str> = adapter
+        .handlers
+        .iter()
+        .map(|h| h.node.event.node.as_str())
+        .collect();
+    for event in &[
+        "start",
+        "PostApproval",
+        "PostApprovalResult",
+        "PostMessage",
+        "PostThreadReply",
+        "AddReaction",
+        "RequestHuman",
+        "WardenEscalation",
+        "status",
+    ] {
+        assert!(
+            handler_events.contains(event),
+            "slack_adapter must have `on {event}` handler, got: {:?}",
+            handler_events
+        );
+    }
+
+    let memory: Vec<&str> = adapter
+        .memory
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    for field in &[
+        "sent_count",
+        "failed_count",
+        "default_escalation_channel",
+        "last_error",
+    ] {
+        assert!(
+            memory.contains(field),
+            "slack_adapter must have {field} memory field, got: {:?}",
+            memory
+        );
+    }
+}
+
+/// The slack-adapter declares a pool of 1 worker with `strategy: fastest`
+/// — the rate-limit-backpressure shape called for in #298.
+#[tokio::test]
+async fn slack_adapter_declares_single_worker_pool() {
+    let source = std::fs::read_to_string("examples/agents/slack-adapter/main.forge")
+        .expect("could not read slack-adapter main.forge");
+    let program = forge::parser::parse(&source).expect("slack-adapter must parse");
+
+    let pool = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Pool(p) if p.name.node == "slack_adapter_pool" => Some(p.clone()),
+            _ => None,
+        })
+        .expect("slack_adapter_pool must exist");
+    assert_eq!(
+        pool.worker_count.node, 1.0,
+        "slack_adapter_pool must declare exactly 1 worker for serialized Slack posting"
+    );
+}
+
+/// The template tasks exist and render Text; they are the shared Block Kit
+/// template library the issue calls for.
+#[tokio::test]
+async fn slack_adapter_has_five_template_tasks() {
+    let source = std::fs::read_to_string("examples/agents/slack-adapter/main.forge")
+        .expect("could not read slack-adapter main.forge");
+    let program = forge::parser::parse(&source).expect("slack-adapter must parse");
+
+    let task_names: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Task(t) => Some(t.name.node.as_str()),
+            _ => None,
+        })
+        .collect();
+    for task in &[
+        "build_approval_block",
+        "build_progress_block",
+        "build_error_block",
+        "build_merge_confirmation_block",
+        "build_rejection_block",
+        "build_escalation_block",
+    ] {
+        assert!(
+            task_names.contains(task),
+            "slack-adapter must declare `{task}` template task, got: {:?}",
+            task_names
+        );
+    }
+}
+
+/// After migration, pr-review-bot no longer calls `skill.slack.*`; it emits
+/// `PostApproval` and `PostMessage` events for the adapter to handle.
+#[tokio::test]
+async fn pr_review_bot_emits_events_instead_of_calling_slack_skill() {
+    let source = std::fs::read_to_string("examples/agents/pr-review-bot/server.forge")
+        .expect("could not read pr-review-bot server.forge");
+    assert!(
+        !source.contains("skill.slack"),
+        "pr-review-bot must not reference skill.slack after migration"
+    );
+
+    let program = forge::parser::parse(&source).expect("pr-review-bot must parse");
+    let event_names: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Event(e) => Some(e.name.node.as_str()),
+            _ => None,
+        })
+        .collect();
+    for event in &["PostApproval", "PostMessage"] {
+        assert!(
+            event_names.contains(event),
+            "pr-review-bot must declare {event} locally to emit it, got: {:?}",
+            event_names
+        );
+    }
+}
+
+/// After migration, approval-gate no longer calls `skill.slack.*`; it emits
+/// `PostApproval`, `PostMessage`, and `WardenEscalation`.
+#[tokio::test]
+async fn approval_gate_emits_events_instead_of_calling_slack_skill() {
+    let source = std::fs::read_to_string("examples/agents/approval-gate/main.forge")
+        .expect("could not read approval-gate main.forge");
+    assert!(
+        !source.contains("skill.slack"),
+        "approval-gate must not reference skill.slack after migration"
+    );
+
+    let program = forge::parser::parse(&source).expect("approval-gate must parse");
+    let event_names: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Event(e) => Some(e.name.node.as_str()),
+            _ => None,
+        })
+        .collect();
+    for event in &["PostApproval", "PostMessage", "WardenEscalation"] {
+        assert!(
+            event_names.contains(event),
+            "approval-gate must declare {event} locally to emit it, got: {:?}",
+            event_names
+        );
+    }
+}

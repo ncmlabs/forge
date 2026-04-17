@@ -7,10 +7,10 @@
 #   1. POST /review_pr?repo=ncmlabs/forge&pr_number=277&channel=...&callback_url=...
 #   2. Agent fetches CI status via skill.github.check_ci
 #   3. LLM (reason) writes a brief review summary
-#   4. skill.slack.send_approval posts message with Approve/Reject buttons
+#   4. emit PostApproval → slack-adapter posts message with Approve/Reject buttons
 #   5. User clicks Approve in Slack → /webhook/approval
 #   6. LLM (reason) generates a merge summary
-#   7. skill.slack.send_message posts the merge summary as confirmation
+#   7. emit PostMessage → slack-adapter posts the merge summary as confirmation
 #
 # Run from repo root:
 #   FORGE_CONFIG=forge.config.toml SLACK_BOT_TOKEN=xoxb-... \
@@ -21,7 +21,6 @@
 
 use
   llm.reason
-  skill.slack
   skill.github
 
 # ── Events ─────────────────────────────────────────────────────
@@ -36,6 +35,21 @@ event ApprovalResponse
   request_id: Text
   approved: Bool
   comment: Text
+
+# Slack-adapter outbound events (declared locally so this agent can
+# emit them in standalone mode; shapes must match slack-adapter/main.forge).
+event PostApproval
+  channel: Text
+  title: Text
+  context: Text
+  callback_url: Text
+  request_id: Text
+  thread_ts: Text
+
+event PostMessage
+  channel: Text
+  text: Text
+  thread_ts: Text
 
 # ── States ─────────────────────────────────────────────────────
 
@@ -90,9 +104,8 @@ agent pr_reviewer
     memory.review_summary = review
     msg = "PR #{pr_number} in {repo} review: {memory.review_summary} - approve to merge or reject"
     transition to awaiting_approval
-    notify = skill.slack.send_approval(channel, msg, callback_url, pr_number)
-    when notify.sure -> say "[bot] Approval message sent to Slack"
-    else -> say "[bot] Approval notification may have failed"
+    emit PostApproval(channel: channel, title: "PR #{pr_number} review", context: msg, callback_url: callback_url, request_id: pr_number, thread_ts: "")
+    say "[bot] Approval request emitted to slack-adapter"
 
   on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
     requires lifecycle == awaiting_approval on fail: give "no pending review"
@@ -104,12 +117,12 @@ agent pr_reviewer
       else -> say "[bot] Merge command uncertain"
       ann_prompt = "Use ONLY the facts below - do not invent any details. Write a short 2-sentence merge announcement. State the actual target branch from the PR facts and that the merge was just executed. Approver: {comment}. PR facts JSON: {memory.pr_facts} Merge command output: {merge_result}"
       summary = reason ann_prompt
-      msg = "MERGED PR {memory.pr_number}: {summary}"
-      followup = skill.slack.send_message(memory.channel, msg)
+      merge_msg = "MERGED PR {memory.pr_number}: {summary}"
+      emit PostMessage(channel: memory.channel, text: merge_msg, thread_ts: "")
       say "[bot] APPROVED and merged PR {memory.pr_number} by {comment}"
     if not approved
       reject_msg = "PR {memory.pr_number} REJECTED by {comment}"
-      followup = skill.slack.send_message(memory.channel, reject_msg)
+      emit PostMessage(channel: memory.channel, text: reject_msg, thread_ts: "")
       say "[bot] REJECTED PR {memory.pr_number} by {comment}"
     transition to idle
 
