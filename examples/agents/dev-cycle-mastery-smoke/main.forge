@@ -1,0 +1,256 @@
+#! boundary: server
+
+# ================================================================
+# T5.2 (#303) Live Smoke Test — dev-cycle-mastery-smoke
+# ================================================================
+# Proves the SwarmMastery FSM wiring: on each TaskCompleted, the
+# coordinator attributes per-specialist signals, fans out
+# MasterySignal, and each tuple child advances or regresses through
+# the novice→apprentice→journeyman→expert lifecycle with clean/regress
+# accounting.
+#
+# Mirrors the production agents in workflows/dev-cycle/main.forge:
+# same schemas (SwarmMastery states, MasterySignal + MasteryUpdated
+# events, compute_swarm_score / determine_swarm_level helpers), same
+# attribution rules (planner→merged, implementer/tester→first_try,
+# reviewer→review_rounds, release_manager→merged). Strips only the
+# real dev-cycle event producers so TaskCompleted can be fired
+# directly from an endpoint.
+#
+# Acceptance: fire 3+ clean TaskCompleted events → observe each of
+# the 5 specialist tuples transition novice → apprentice → journeyman
+# → expert. Knowledge store entries under `mastery-{agent}-{slug}`
+# record each level change.
+#
+# Run:
+#   ANTHROPIC_API_KEY=... cargo run -- serve \
+#     --manifest examples/agents/dev-cycle-mastery-smoke/forge.project.toml \
+#     examples/agents/dev-cycle-mastery-smoke/main.forge --port 3214
+#   curl -X POST 'http://localhost:3214/complete' -H 'Content-Type: ...' \
+#     -d 'task_id=SMOKE-1&repo=ncmlabs/forge-playground&clean=true'
+#   (repeat 3x; observe level advancement via /__forge/events or the
+#    knowledge store JSON)
+# ================================================================
+
+# ── Events ───────────────────────────────────────────────────────
+
+event TaskCompleted
+  task_id: Text
+  repo: Text
+  outcome: Text
+  ci_passed_first_try: Bool
+  review_rounds: Number
+  time_to_merge: Number
+  reverted_within_7d: Bool
+
+event MasterySignal
+  specialist: Text
+  project: Text
+  task_id: Text
+  clean: Bool
+  regress: Bool
+
+event MasteryUpdated
+  specialist: Text
+  project: Text
+  level: Text
+  score: Number
+  clean_count: Number
+  regress_count: Number
+  total: Number
+
+# ── States ───────────────────────────────────────────────────────
+
+states SwarmMastery
+  novice -> apprentice when score >= 40
+  apprentice -> journeyman when score >= 70
+  journeyman -> expert when score >= 90
+  apprentice -> novice when score < 40
+  journeyman -> apprentice when score < 70
+  expert -> journeyman when score < 90
+
+# ── Pure Functions ───────────────────────────────────────────────
+
+pure slugify_repo
+  needs repo: Text
+  gives Text
+  do
+    give "{repo}"
+
+pure compute_swarm_score
+  needs clean: Number, regress: Number, total: Number
+  gives Number
+  do
+    if total == 0
+      give 0
+    raw = (clean - regress) / total
+    give raw * 50 + 50
+
+pure determine_swarm_level
+  needs score: Number
+  gives Text
+  do
+    if score >= 90
+      give "expert"
+    if score >= 70
+      give "journeyman"
+    if score >= 40
+      give "apprentice"
+    give "novice"
+
+pure reviewer_clean_signal
+  needs merged: Bool, light_review: Bool
+  gives Bool
+  do
+    if merged and light_review
+      give true
+    give false
+
+pure reviewer_regress_signal
+  needs heavy_review: Bool, reverted: Bool
+  gives Bool
+  do
+    if heavy_review
+      give true
+    if reverted
+      give true
+    give false
+
+# ── Agents ───────────────────────────────────────────────────────
+
+agent swarm_mastery_coordinator
+  memory
+    last_task_id: Text
+    spawned_for_project: Text
+  knowledge store: ".forge-knowledge/mastery-smoke"
+    max_entries: 1000
+    retention: 90d
+  subscribe TaskCompleted
+
+  on start
+    memory.last_task_id = ""
+    memory.spawned_for_project = ""
+    say "[coordinator] ready"
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    memory.last_task_id = task_id
+    slug = slugify_repo(repo)
+    say "[coordinator] task={task_id} project={slug} outcome={outcome} first_try={ci_passed_first_try} rounds={review_rounds} reverted={reverted_within_7d}"
+    is_merged = outcome == "merged"
+    is_reverted = reverted_within_7d
+    is_light_review = review_rounds <= 1
+    is_heavy_review = review_rounds >= 3
+    reviewer_clean = reviewer_clean_signal(is_merged, is_light_review)
+    reviewer_regress = reviewer_regress_signal(is_heavy_review, is_reverted)
+    if memory.spawned_for_project != slug
+      say "[coordinator] first task for project {slug} — spawning 5 tuples"
+      spawn swarm_mastery_tuple as "mastery_planner_{slug}"
+        with memory specialist: "planner"
+        with memory project: slug
+      spawn swarm_mastery_tuple as "mastery_implementer_{slug}"
+        with memory specialist: "implementer"
+        with memory project: slug
+      spawn swarm_mastery_tuple as "mastery_tester_{slug}"
+        with memory specialist: "tester"
+        with memory project: slug
+      spawn swarm_mastery_tuple as "mastery_reviewer_{slug}"
+        with memory specialist: "reviewer"
+        with memory project: slug
+      spawn swarm_mastery_tuple as "mastery_release_manager_{slug}"
+        with memory specialist: "release_manager"
+        with memory project: slug
+      memory.spawned_for_project = slug
+    emit MasterySignal(specialist: "planner", project: slug, task_id: task_id, clean: is_merged, regress: is_reverted)
+    emit MasterySignal(specialist: "implementer", project: slug, task_id: task_id, clean: ci_passed_first_try, regress: is_reverted)
+    emit MasterySignal(specialist: "tester", project: slug, task_id: task_id, clean: ci_passed_first_try, regress: is_reverted)
+    emit MasterySignal(specialist: "reviewer", project: slug, task_id: task_id, clean: reviewer_clean, regress: reviewer_regress)
+    emit MasterySignal(specialist: "release_manager", project: slug, task_id: task_id, clean: is_merged, regress: is_reverted)
+
+  if stuck for 3 turns
+    say "[coordinator] Stuck. Escalating."
+    escalate to lead
+
+agent swarm_mastery_tuple
+  lifecycle: SwarmMastery
+  memory
+    specialist: Text
+    project: Text
+    clean_count: Number
+    regress_count: Number
+    total: Number
+    current_level: Text
+  knowledge store: ".forge-knowledge/mastery-smoke"
+    max_entries: 1000
+    retention: 90d
+  subscribe MasterySignal where specialist == memory.specialist and project == memory.project
+
+  on start
+    memory.clean_count = 0
+    memory.regress_count = 0
+    memory.total = 0
+    memory.current_level = "novice"
+    say "[mastery_{memory.specialist}_{memory.project}] ready at novice"
+
+  on MasterySignal(specialist: Text, project: Text, task_id: Text, clean: Bool, regress: Bool)
+    requires lifecycle == novice or lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: silent
+    if clean
+      memory.clean_count = memory.clean_count + 1
+    if regress
+      memory.regress_count = memory.regress_count + 1
+    memory.total = memory.total + 1
+    score = compute_swarm_score(memory.clean_count, memory.regress_count, memory.total)
+    new_level = determine_swarm_level(score)
+    say "[mastery_{memory.specialist}_{memory.project}] task={task_id} clean={clean} regress={regress} total={memory.total} score={score} level={new_level}"
+    if score >= 90 and lifecycle == journeyman
+      transition to expert
+    if score >= 70 and lifecycle == apprentice
+      transition to journeyman
+    if score < 90 and lifecycle == expert
+      transition to journeyman
+    if score >= 40 and lifecycle == novice
+      transition to apprentice
+    if score < 70 and lifecycle == journeyman
+      transition to apprentice
+    if score < 40 and lifecycle == apprentice
+      transition to novice
+    if new_level != memory.current_level
+      memory.current_level = new_level
+      emit MasteryUpdated(specialist: specialist, project: project, level: new_level, score: score, clean_count: memory.clean_count, regress_count: memory.regress_count, total: memory.total)
+      learn "SWARM-MASTERY specialist:{specialist} project:{project} level:{new_level} score:{score}\nclean:{memory.clean_count} regress:{memory.regress_count} total:{memory.total}\nlast_task:{task_id}" category: "mastery-{specialist}-{project}"
+
+  if stuck for 3 turns
+    say "[mastery_{memory.specialist}_{memory.project}] Stuck. Escalating."
+    escalate to lead
+
+# ── Warden + System ──────────────────────────────────────────────
+
+warden mastery_warden
+  manages [swarm_mastery_coordinator, swarm_mastery_tuple]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 3: escalate
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, all
+    after 1: restart
+    after 3: escalate
+  max_retries 3 per 1h then escalate
+
+system mastery_smoke
+  use
+    coord: swarm_mastery_coordinator
+
+# ── Endpoints ────────────────────────────────────────────────────
+
+endpoint health() -> Text
+  give "ok"
+
+# Fire a synthetic TaskCompleted. Call this multiple times with
+# outcome="merged", ci_passed_first_try=true, review_rounds=1 to
+# watch tuples climb novice→apprentice→journeyman→expert.
+endpoint complete(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, reverted_within_7d: Bool) -> Text
+  emit TaskCompleted(task_id: task_id, repo: repo, outcome: outcome, ci_passed_first_try: ci_passed_first_try, review_rounds: review_rounds, time_to_merge: 0, reverted_within_7d: reverted_within_7d)
+  give "dispatched"

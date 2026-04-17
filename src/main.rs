@@ -1164,9 +1164,18 @@ fn try_build_executor(
     let boundary_refs = vec![(&program, fname.as_str())];
     diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
 
+    // Render all diagnostics, but only fail on errors (not warnings).
+    // Matches try_build_executor_multi behavior — warnings should never
+    // block `forge serve` from starting.
     if !diagnostics.is_empty() {
         forge::diagnostic::render_diagnostics(&source, &diagnostics);
-        return Err(anyhow::anyhow!("{} diagnostic error(s)", diagnostics.len()));
+        let error_count = diagnostics
+            .iter()
+            .filter(|d| d.kind == forge::diagnostic::DiagnosticKind::Error)
+            .count();
+        if error_count > 0 {
+            return Err(anyhow::anyhow!("{} diagnostic error(s)", error_count));
+        }
     }
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));

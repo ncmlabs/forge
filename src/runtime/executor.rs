@@ -1443,7 +1443,32 @@ impl TaskExecutor {
                         }
                     }
 
-                    // 4. Create the child agent process (child gets its own KS, not shared)
+                    // 4. Create the child agent process.
+                    //
+                    // When the child declares `knowledge` AND no filter-transfer
+                    // (`with knowledge where category == X`) is requested, the
+                    // child inherits the program's shared knowledge store — so
+                    // `learn` calls across spawned children land in the same
+                    // store instead of each child overwriting a separate file
+                    // at the same declared path.
+                    //
+                    // When a filter-transfer clause IS present (toolkit_demo
+                    // pattern), fall back to a fresh per-child store so the
+                    // filtered subset can be imported into it. This preserves
+                    // the Agent Toolkit knowledge-transfer semantics (#167).
+                    let inherited_ks =
+                        if agent_decl.knowledge.is_some() && knowledge_category.is_none() {
+                            // Prefer the current agent context's store (when spawning
+                            // from inside a handler); otherwise fall back to the
+                            // executor-level shared store (when spawning from an
+                            // endpoint or pre-agent context).
+                            self.agent_context
+                                .as_ref()
+                                .and_then(|ctx| ctx.lock().unwrap().knowledge_store.clone())
+                                .or_else(|| self.knowledge_store.clone())
+                        } else {
+                            None
+                        };
                     let mut child_process = crate::runtime::agent::AgentProcess::new(
                         agent_decl,
                         states_decl.as_ref(),
@@ -1452,7 +1477,7 @@ impl TaskExecutor {
                         self.program.clone(),
                         self.storage.clone(),
                         self.instance_registry.clone(),
-                        None,
+                        inherited_ks,
                     );
 
                     // 5. Transfer knowledge from parent to child

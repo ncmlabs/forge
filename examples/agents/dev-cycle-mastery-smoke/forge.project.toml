@@ -1,0 +1,7 @@
+[project]
+name = "dev-cycle-mastery-smoke"
+version = "0.1.0"
+description = "T5.2 smoke test: prove SwarmMastery FSM advances on per-specialist TaskCompleted signals"
+
+[build]
+entry = "main.forge"
