@@ -1,36 +1,36 @@
 # ── FORGE Claude Config ───────────────────────────────────────────────────────
-# Uses Claude Haiku for fast, high-quality documentation generation
-# Fallback to Ollama on GPU server if needed
+# All-Claude provider stack: Haiku (fast), Sonnet (balanced), Opus (high)
+# No external fallbacks — Claude only
 
 [llm]
 default = "claude-haiku"
 
 [llm.routing]
 fast     = "claude-haiku"
-balanced = "claude-haiku"
-high     = "claude-sonnet"
+balanced = "claude-sonnet"
+high     = "claude-opus"
 
 [llm.budget]
-max_cost_usd     = 5.00
-max_total_tokens = 500000
+max_cost_usd     = 10.00
+max_total_tokens = 1000000
 
-# ── Claude Haiku (fast, cheap, good quality) ─────────────────────────────────
+# ── Claude Haiku 4.5 (fastest, $1/$5 per MTok) ──────────────────────────────
 [providers.claude-haiku]
-type     = "anthropic"
-model    = "claude-haiku-4-5-20251001"
-api_key  = "${ANTHROPIC_API_KEY}"
-fallback = "qwen-coder"
-
-# ── Claude Sonnet (higher quality for complex sections) ──────────────────────
-[providers.claude-sonnet]
 type    = "anthropic"
-model   = "claude-sonnet-4-5-20250514"
+model   = "claude-haiku-4-5-20251001"
 api_key = "${ANTHROPIC_API_KEY}"
 
-# ── Ollama fallback ──────────────────────────────────────────────────────────
-[providers.qwen-coder]
-type         = "openai-compat"
-model        = "qwen3-coder:latest"
-base_url     = "http://GPU_SERVER_IP:11434/v1"
-api_key      = "not-required"
-timeout_secs = 120
+[providers.claude-haiku.capabilities]
+quality_tier = "balanced"
+
+# ── Claude Sonnet 4.6 (fast + intelligent, $3/$15 per MTok) ─────────────────
+[providers.claude-sonnet]
+type    = "anthropic"
+model   = "claude-sonnet-4-6"
+api_key = "${ANTHROPIC_API_KEY}"
+
+# ── Claude Opus 4.7 (most capable, $5/$25 per MTok) ─────────────────────────
+[providers.claude-opus]
+type    = "anthropic"
+model   = "claude-opus-4-7"
+api_key = "${ANTHROPIC_API_KEY}"
