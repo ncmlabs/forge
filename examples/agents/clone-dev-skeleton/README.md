@@ -107,9 +107,13 @@ keep serving).
 
 The skeleton intentionally leaves the following for downstream tracks:
 
-- **task_graph close-out.** `task_graph: Text[]` appends records as
-  `"{task_id}|{target}|{kind}"` but does not remove on completion. T4.1 will
-  extend this into a richer graph with `blocked_on` relations.
+- **task_graph completion clean-up.** T4.1 (#299) lifted `task_graph`
+  from `Text[]` of pipe-strings to `TaskNode[]` records with explicit
+  `blocked_on` lists, 1-hop cycle refusal (`CycleDetected` + escalate),
+  and `UnblockTask` fanout on `TaskCompleted`. Smoke endpoints
+  `/task_blocked` and `/task_completed` drive the flows; real producers
+  (specialist-emitted `TaskBlocked`, release-manager `TaskCompleted`
+  from PR merge) land with T4.2 / T5.x.
 - **Classification via `classify`.** Per issue spec we use `reason`. Once the
   pattern settles, `classify ... into [...]` is a cleaner idiom (see
   `examples/agents/inbound-triager/main.forge:85`). Follow-up.
