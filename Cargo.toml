@@ -41,6 +41,7 @@ notify = { version = "8", default-features = false, features = ["macos_kqueue"] 
 tokio-stream = { version = "0.1", features = ["sync"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 urlencoding = "2.1.3"
+croner = "3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

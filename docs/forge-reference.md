@@ -1484,6 +1484,99 @@ Timers can be controlled with statements:
 | `cancel <timer> for <expr>` | Cancels the timer for a specific context |
 | `reset <timer>` | Cancels and re-starts the timer from its full declared duration |
 
+### Schedules
+
+Schedules are durable, cross-session wall-clock triggers. Where a `timer` is agent-local, cancellable, and protocol-scoped (a countdown the agent arms inside a flow), a `schedule` is declarative and persistent: it fires on its own cadence, independently of any particular session.
+
+```forge
+agent forge_sensei
+  memory persistent
+    current_level: Text
+  schedule mastery_review
+    when: daily at "09:00"
+    mode: spawn
+    prompt: "Reassess specialist mastery from last 24h TaskCompleted signals."
+  schedule drift_check
+    when: every 6h
+    mode: wake
+    emit: DriftCheckDue
+
+  on DriftCheckDue
+    say "drift check fired"
+```
+
+> **Status:** The grammar, AST, and compile-time checker ship today. Runtime dispatch (`WakeService`) lands in a follow-up issue — a `schedule` block that passes `forge check` is declared but not yet dispatched.
+
+A schedule block must declare `when:` and `mode:`. Extra options depend on the mode.
+
+#### The `when:` clause — three forms
+
+| Form | Example | Meaning |
+|------|---------|---------|
+| `daily at "HH:MM"` | `when: daily at "09:00"` | Fire once per day at the given 24-hour clock time. Hour must be 0–23, minute 0–59. |
+| `every <duration>` | `when: every 6h` | Fire at a fixed interval. Uses the same duration suffixes as `timer` (`s`, `m`, `min`, `h`, `d`). Duration must be positive. |
+| `cron "..."` | `when: cron "0 9 * * *"` | Fire on a standard 5-field Unix cron expression (`m h dom mon dow`). |
+
+FORGE cron is strict 5-field. Seconds-first (6-field) cron strings are a compile error.
+
+#### The `mode:` clause — two modes
+
+| Mode | Requires | Effect |
+|------|----------|--------|
+| `mode: spawn` | `prompt: "..."` | Starts a **stateless turn**. The prompt text is the agent's only input for that turn — no prior memory state, no conversation history. Use when the work is a self-contained reassessment. |
+| `mode: wake` | `emit: EventName` **or** an `on <schedule_name>.tick` handler | **Rehydrates** the agent's `memory persistent` state and publishes an event. Use when the scheduled work must consult or update long-lived memory. |
+
+The pairing requirement for `mode: wake` is compile-time enforced:
+
+- Provide `emit: SomeEvent` and a matching `on SomeEvent` handler in the same agent, **or**
+- Provide no `emit:` and a handler named `on <schedule_name>.tick` (default sink).
+
+Either satisfies the compiler; declaring both an `emit:` and a default tick handler is fine.
+
+#### Optional: `precision: high`
+
+By default the dispatcher evaluates schedules at minute granularity. `precision: high` enables per-second firing for this schedule (e.g. `when: every 30s`).
+
+```forge
+schedule heartbeat
+  when: every 30s
+  mode: wake
+  emit: Heartbeat
+  precision: high
+```
+
+#### The `prompt:` template
+
+For `mode: spawn`, `prompt:` uses FORGE's standard template string, so `{expr}` interpolation against agent memory is available at fire time:
+
+```forge
+schedule review
+  when: daily at "09:00"
+  mode: spawn
+  prompt: "Review the last 24h, compare against {memory.current_level} targets."
+```
+
+#### Compile-time guarantees
+
+The schedule checker catches all of the following at `forge check` time:
+
+- Missing `when:` or `mode:`
+- `mode: spawn` without `prompt:`; `mode: wake` without an `emit:` or matching `.tick` handler
+- Duplicate schedule names inside one agent
+- Duplicate option lines (e.g. two `when:` lines) inside one block
+- Malformed cron strings (5-field Unix)
+- Time literals outside `00:00`–`23:59`
+- `every 0s` / `every 0m` / `every 0h`
+- Schedule name colliding with a timer name or handler event name in the same agent
+
+Extraneous options — `emit:` under `mode: spawn`, or `prompt:` under `mode: wake` — produce warnings rather than errors.
+
+#### When to reach for `schedule` vs `timer`
+
+Use `timer` when the countdown is **inside a flow**: "if the user doesn't respond in 30 seconds, escalate." The agent arms, cancels, and resets the timer explicitly; the lifetime is the session.
+
+Use `schedule` when the cadence is **orthogonal to any session**: "every morning at 09:00, reassess mastery," or "every 6 hours, publish a drift check." The dispatcher owns the cadence; the agent only declares it.
+
 ### Handlers
 
 Handlers are the core of agent behavior. Each handler responds to a named event and may declare parameters and a return type.

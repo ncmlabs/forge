@@ -44,6 +44,7 @@ fn simple_agent(
         memory_persistent: false,
         knowledge: None,
         timers: vec![],
+        schedules: vec![],
         subscriptions: vec![],
         warden_override: Vec::new(),
         handlers,
