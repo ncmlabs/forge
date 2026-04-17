@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Implementer iteration loop: on test failure the implementer now diagnoses failures via a dedicated `diagnose_failures` task before generating fixes, tracks per-iteration diagnosis history in `memory.iteration_log`, and escalates with structured context (issue ID, iteration count, diagnosis history, last failure output) when the configurable `memory.max_iterations` cap is reached. Warden `dev_lead` serves as backstop. Both `dev-cycle/main.forge` and dogfooding `dev-cycle.forge` updated (#296)
 - PR history miner agent (`examples/agents/pr-history-miner/`): mines merged PRs from a GitHub repo, characterizes each diff with `reason`, summarizes reviewer feedback, and stores structured decision-history entries in the knowledge store via `learn` with `category: "pr-decisions-{project}"`. Idempotent via persistent watermark, resumable across restarts, rate-limit aware. Seeds the knowledge store for T2.2 (reviewer consults prior decisions) (#294)
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
