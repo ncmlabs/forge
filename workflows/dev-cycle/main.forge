@@ -122,6 +122,11 @@ event PRMerged
   repo: Text
   branch: Text
 
+event ReviewDecision
+  issue_id: Text
+  repo: Text
+  decision: Text
+
 # ── State Machines ───────────────────────────────────────────────
 # IssueLifecycle is shared across planner/implementer/tester.
 # ReviewPhase is owned by the reviewer for the approval gate.
@@ -178,6 +183,44 @@ task draft_pr_description
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Summary: {issue.title}"
+
+task slugify_repo
+  needs repo: Text
+  gives Text
+  do
+    result = command "printf '%s' '{repo}' | tr '/' '-'" timeout 5s
+    when result.sure -> give "{result.stdout}"
+    else -> give "unknown-repo"
+
+task characterize_pr_diff
+  needs diff_text: Text, title: Text
+  gives Text
+  do
+    prompt = "Summarize this PR diff in 2-3 sentences. Focus on: what was changed, why (infer from title), and which area of the codebase is affected. Be specific about file types and modules.\n\nTitle: {title}\nDiff (truncated):\n{diff_text}"
+    result = reason prompt
+    when result.sure -> give "{result}"
+    when result.unsure -> give "{result}"
+    else -> give "Diff characterization unavailable"
+
+task fetch_pr_diff
+  needs branch: Text, repo: Text
+  gives Text
+  do
+    result = command "gh pr diff {branch} -R {repo} 2>/dev/null | head -150" timeout 30s
+    when result.sure -> give "{result.stdout}"
+    else -> give "Diff unavailable"
+
+task assess_with_history
+  needs characterization: Text, prior_decisions: Text, branch: Text
+  gives Text
+  do
+    if prior_decisions == ""
+      give "needs_human"
+    analysis_prompt = "You are a code reviewer deciding whether a PR should be approved based on historical patterns from this repository.\n\nCurrent PR:\n- Branch: {branch}\n- Diff characterization: {characterization}\n\nSimilar prior PR decisions from this repository:\n{prior_decisions}\n\nRules:\n- auto_approve: Current PR closely matches >=2 prior PRs that were approved, with similar scope, area, and patterns\n- auto_reject: Current PR matches >=2 prior PRs that were rejected for the same structural reason\n- needs_human: Not enough similar history, mixed signals, novel pattern, or insufficient confidence\n\nAnalyze the evidence and classify."
+    result = classify analysis_prompt into ["auto_approve", "needs_human", "auto_reject"]
+    when result.sure -> give "{result}"
+    when result.unsure -> give "needs_human"
+    else -> give "needs_human"
 
 # ── Pure Functions ───────────────────────────────────────────────
 
@@ -391,9 +434,13 @@ agent tester
 
 # ── Agent: Reviewer ──────────────────────────────────────────────
 # Drafts changelog and PR description, creates the PR via
-# skill.github.create_pr, checks CI, and gates on Slack approval
-# before merging. On rejection, loops back to implementer via
-# TestsFailed.
+# skill.github.create_pr, checks CI, then consults the PR-review
+# knowledge store (T2.2 #297). Recall + classify produces a
+# three-way verdict (auto_approve / needs_human / auto_reject).
+# When auto_decision is enabled, low-uncertainty cases skip Slack.
+# Default: needs_human everywhere (auto gated by config flag).
+# On rejection, loops back to implementer via TestsFailed.
+# Learns from every human decision to grow the knowledge store.
 
 agent reviewer
   lifecycle: ReviewPhase
@@ -407,6 +454,13 @@ agent reviewer
     pr_body: Text
     pr_url: Text
     test_cmd: Text
+    review_verdict: Text
+    diff_characterization: Text
+    repo_slug: Text
+    auto_decision: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
   subscribe AcceptanceMet
   subscribe ApprovalResponse
 
@@ -420,6 +474,10 @@ agent reviewer
     memory.pr_body = ""
     memory.pr_url = ""
     memory.test_cmd = ""
+    memory.review_verdict = ""
+    memory.diff_characterization = ""
+    memory.repo_slug = ""
+    memory.auto_decision = "disabled"
     say "[reviewer] ready"
 
   on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text)
@@ -430,6 +488,7 @@ agent reviewer
     memory.channel = channel
     memory.callback_url = callback_url
     memory.test_cmd = test_cmd
+    memory.repo_slug = slugify_repo(repo)
     say "[reviewer] Drafting changelog for {issue_id}"
     issue = Issue(id: issue_id, title: "close #{issue_id}", criteria: "")
     entry = draft_changelog_entry(issue, branch)
@@ -445,9 +504,42 @@ agent reviewer
     ci_result = skill.github.check_ci(repo, branch)
     when ci_result.sure -> say "[reviewer] CI status: {ci_result}"
     else -> say "[reviewer] CI check uncertain"
+    say "[reviewer] Consulting PR history for {issue_id}"
+    pr_title = "feat({issue_id}): automated implementation"
+    diff_text = fetch_pr_diff(branch, repo)
+    characterization = characterize_pr_diff(diff_text, pr_title)
+    memory.diff_characterization = characterization
+    say "[reviewer] Diff characterized — recalling similar decisions"
+    prior = recall "{characterization}"
+    when prior.sure -> say "[reviewer] Strong matches found in PR history"
+    when prior.unsure -> say "[reviewer] Partial matches in PR history"
+    else -> say "[reviewer] No relevant PR history found"
+    verdict = assess_with_history(characterization, prior, branch)
+    memory.review_verdict = verdict
+    say "[reviewer] Knowledge verdict: {verdict}"
+    emit ReviewDecision(issue_id: issue_id, repo: repo, decision: verdict)
+    if verdict == "auto_approve" and memory.auto_decision == "enabled"
+      say "[reviewer] AUTO-APPROVED by knowledge store — merging PR for {issue_id}"
+      merge_result = skill.github.merge_pr(repo, pr_url)
+      when merge_result.sure -> say "[reviewer] PR merged successfully"
+      else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      merge_msg = "AUTO-MERGED: {issue_id} in {repo}. Branch {branch} merged. Approved by knowledge-store."
+      notify = skill.slack.send_message(channel, merge_msg)
+      cleanup = skill.github.delete_branch(repo, branch)
+      workdir_cleanup = command "rm -rf /tmp/forge-workdir-{issue_id}" timeout 10s
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{pr_url} decision:auto_approved\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
+      emit PRMerged(issue_id: issue_id, repo: repo, branch: branch)
+      give "auto-approved"
+    if verdict == "auto_reject" and memory.auto_decision == "enabled"
+      say "[reviewer] AUTO-REJECTED by knowledge store — sending back to implementer"
+      reject_msg = "AUTO-REJECTED: PR for {issue_id} in {repo}. Knowledge store found prior rejection patterns. Iterating."
+      notify = skill.slack.send_message(channel, reject_msg)
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{pr_url} decision:auto_rejected\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
+      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: "Auto-rejected by knowledge store: prior rejection patterns", channel: channel, callback_url: callback_url, test_cmd: test_cmd)
+      give "auto-rejected"
     emit PRReady(issue_id: issue_id, repo: repo, pr_url: pr_url, channel: channel, callback_url: callback_url)
     transition to awaiting_approval
-    approval_msg = "PR for {issue_id} in {repo} ready for review.\n\nBranch: {branch}\nChangelog: {entry}\nCI: {ci_result}\n\nApprove to merge or reject to iterate."
+    approval_msg = "PR for {issue_id} in {repo} ready for review.\n\nBranch: {branch}\nChangelog: {entry}\nCI: {ci_result}\n\nKnowledge verdict: {verdict}\nDiff summary: {characterization}\n\nApprove to merge or reject to iterate."
     approval = skill.slack.send_approval(channel, approval_msg, callback_url, issue_id)
     when approval.sure -> say "[reviewer] Approval request sent to Slack"
     else -> say "[reviewer] Approval request may have failed"
@@ -468,12 +560,14 @@ agent reviewer
       when cleanup.sure -> say "[reviewer] Branch {memory.branch} deleted"
       else -> say "[reviewer] Branch cleanup uncertain"
       workdir_cleanup = command "rm -rf /tmp/forge-workdir-{memory.issue_id}" timeout 10s
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:human_approved\nbranch: {memory.branch}\ndiff_characterization: {memory.diff_characterization}\nverdict_was: {memory.review_verdict}\nhuman_action: approved by {comment}" category: "pr-decisions-{memory.repo_slug}"
       emit PRMerged(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch)
       transition to idle
     if not approved
       say "[reviewer] REJECTED by {comment} — sending back to implementer"
       reject_msg = "PR for {memory.issue_id} REJECTED by {comment}. Iterating."
       notify = skill.slack.send_message(memory.channel, reject_msg)
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:human_rejected\nbranch: {memory.branch}\ndiff_characterization: {memory.diff_characterization}\nverdict_was: {memory.review_verdict}\nhuman_action: rejected by {comment}" category: "pr-decisions-{memory.repo_slug}"
       emit TestsFailed(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, failures: "PR rejected: {comment}", channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
       transition to idle
 
