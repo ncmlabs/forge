@@ -30,6 +30,7 @@ var ForgeObserver = (function () {
     tabs = [
       document.getElementById('tab-tree'),
       document.getElementById('tab-topology'),
+      document.getElementById('tab-taskdag'),
       document.getElementById('tab-costs'),
       document.getElementById('tab-timeline')
     ];
@@ -37,6 +38,7 @@ var ForgeObserver = (function () {
     views = {
       tree: document.getElementById('view-tree'),
       topology: document.getElementById('view-topology'),
+      taskdag: document.getElementById('view-taskdag'),
       costs: document.getElementById('view-costs'),
       timeline: document.getElementById('view-timeline')
     };
@@ -161,6 +163,11 @@ var ForgeObserver = (function () {
       ForgeTopology.init();
     }
 
+    // Initialize Task DAG view (#299 T4.1)
+    if (typeof ForgeTaskDag !== 'undefined' && ForgeTaskDag.init) {
+      ForgeTaskDag.init();
+    }
+
     // Initialize costs view
     if (typeof ForgeCosts !== 'undefined' && ForgeCosts.init) {
       ForgeCosts.init();
@@ -181,6 +188,9 @@ var ForgeObserver = (function () {
     }
     if (typeof ForgeTopology !== 'undefined' && ForgeTopology.destroy) {
       ForgeTopology.destroy();
+    }
+    if (typeof ForgeTaskDag !== 'undefined' && ForgeTaskDag.destroy) {
+      ForgeTaskDag.destroy();
     }
     if (typeof ForgeCosts !== 'undefined' && ForgeCosts.destroy) {
       ForgeCosts.destroy();
@@ -219,6 +229,9 @@ var ForgeObserver = (function () {
     // Trigger resize for D3 views that need dimension recalculation
     if (name === 'topology' && typeof ForgeTopology !== 'undefined' && ForgeTopology.resize) {
       setTimeout(function () { ForgeTopology.resize(); }, 50);
+    }
+    if (name === 'taskdag' && typeof ForgeTaskDag !== 'undefined' && ForgeTaskDag.resize) {
+      setTimeout(function () { ForgeTaskDag.resize(); }, 50);
     }
     if (name === 'timeline' && typeof ForgeTimeline !== 'undefined' && ForgeTimeline.resize) {
       setTimeout(function () { ForgeTimeline.resize(); }, 50);

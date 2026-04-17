@@ -1981,3 +1981,235 @@ async fn approval_gate_emits_events_instead_of_calling_slack_skill() {
         );
     }
 }
+
+// ── Clone-dev task graph (#299 T4.1) ────────────────────────────────────────
+
+/// T4.1 (#299): the clone-dev skeleton declares `type TaskNode` with the
+/// five fields the DoD specifies — the mastermind's `task_graph` DAG node.
+#[tokio::test]
+async fn clone_dev_skeleton_declares_task_node_type() {
+    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+        .expect("could not read clone-dev-skeleton main.forge");
+    let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
+
+    let task_node = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::TypeDef(t) if t.name.node == "TaskNode" => Some(t.clone()),
+            _ => None,
+        })
+        .expect("type TaskNode must exist (T4.1)");
+
+    let field_names: Vec<&str> = task_node
+        .fields
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    for field in &["task_id", "status", "blocked_on", "specialist", "project"] {
+        assert!(
+            field_names.contains(field),
+            "TaskNode must declare {field} field, got: {:?}",
+            field_names
+        );
+    }
+
+    let blocked_on_ty = &task_node
+        .fields
+        .iter()
+        .find(|f| f.node.name == "blocked_on")
+        .expect("blocked_on field")
+        .node
+        .type_name
+        .node;
+    assert!(
+        matches!(blocked_on_ty, TypeName::Array(inner, None) if matches!(**inner, TypeName::Text)),
+        "TaskNode.blocked_on must be Text[], got {:?}",
+        blocked_on_ty
+    );
+}
+
+/// T4.1 (#299): the skeleton declares the four graph events the mastermind
+/// consumes and emits.
+#[tokio::test]
+async fn clone_dev_skeleton_declares_task_graph_events() {
+    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+        .expect("could not read clone-dev-skeleton main.forge");
+    let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
+
+    let events: HashMap<String, EventDecl> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Event(e) => Some((e.name.node.clone(), e.clone())),
+            _ => None,
+        })
+        .collect();
+
+    for event in &[
+        "TaskBlocked",
+        "TaskCompleted",
+        "UnblockTask",
+        "CycleDetected",
+    ] {
+        assert!(
+            events.contains_key(*event),
+            "event {event} must exist (T4.1)"
+        );
+    }
+
+    let blocked_fields: Vec<&str> = events["TaskBlocked"]
+        .fields
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    assert!(blocked_fields.contains(&"task_id"));
+    assert!(blocked_fields.contains(&"blocked_on"));
+
+    let unblock_fields: Vec<&str> = events["UnblockTask"]
+        .fields
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    assert!(unblock_fields.contains(&"task_id"));
+    assert!(unblock_fields.contains(&"unblocked_by"));
+
+    let cycle_fields: Vec<&str> = events["CycleDetected"]
+        .fields
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    assert!(cycle_fields.contains(&"task_id"));
+    assert!(cycle_fields.contains(&"blocker_id"));
+}
+
+/// T4.1 (#299): the graph-manipulation pure functions exist. They're
+/// fragmented (one per op) to stay within FORGE's i3→i4 nesting limit —
+/// the test enforces the full set so future refactors don't silently
+/// drop one.
+#[tokio::test]
+async fn clone_dev_skeleton_declares_task_graph_pure_functions() {
+    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+        .expect("could not read clone-dev-skeleton main.forge");
+    let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
+
+    let pure_names: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Pure(p) => Some(p.name.node.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    for fn_name in &[
+        "text_in_list",
+        "get_task_blockers",
+        "would_create_cycle",
+        "first_cycling_blocker",
+        "find_newly_unblocked",
+        "update_task_node",
+        "apply_completion",
+    ] {
+        assert!(
+            pure_names.contains(fn_name),
+            "pure function `{fn_name}` must exist (T4.1), got: {:?}",
+            pure_names
+        );
+    }
+}
+
+/// T4.1 (#299): mastermind's `task_graph` is typed as `TaskNode[]` (not
+/// the pre-T4.1 pipe-delimited `Text[]`), and the agent subscribes to
+/// both graph-affecting events.
+#[tokio::test]
+async fn clone_dev_mastermind_has_typed_graph_and_handlers() {
+    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+        .expect("could not read clone-dev-skeleton main.forge");
+    let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
+
+    let mastermind = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) if a.name.node == "mastermind" => Some(a.clone()),
+            _ => None,
+        })
+        .expect("mastermind agent must exist");
+
+    assert!(
+        mastermind.memory_persistent,
+        "mastermind.memory must be persistent (leverages #57)"
+    );
+
+    let task_graph = mastermind
+        .memory
+        .iter()
+        .find(|f| f.node.name == "task_graph")
+        .expect("mastermind.memory.task_graph must exist");
+    assert!(
+        matches!(&task_graph.node.type_name.node,
+            TypeName::Array(inner, None) if matches!(&**inner, TypeName::Custom(name) if name == "TaskNode")
+        ),
+        "mastermind.memory.task_graph must be TaskNode[] (T4.1), got {:?}",
+        task_graph.node.type_name.node
+    );
+
+    let sub_events: Vec<&str> = mastermind
+        .subscriptions
+        .iter()
+        .map(|s| s.node.event_name.node.as_str())
+        .collect();
+    for evt in &["ClonedevTaskInbound", "TaskBlocked", "TaskCompleted"] {
+        assert!(
+            sub_events.contains(evt),
+            "mastermind must subscribe to {evt}, got: {:?}",
+            sub_events
+        );
+    }
+
+    let handler_events: Vec<&str> = mastermind
+        .handlers
+        .iter()
+        .map(|h| h.node.event.node.as_str())
+        .collect();
+    for evt in &[
+        "start",
+        "ClonedevTaskInbound",
+        "TaskBlocked",
+        "TaskCompleted",
+    ] {
+        assert!(
+            handler_events.contains(evt),
+            "mastermind must have `on {evt}` handler, got: {:?}",
+            handler_events
+        );
+    }
+}
+
+/// T4.1 (#299): smoke endpoints exist so a live server can drive the
+/// task-graph flows end-to-end (see skeleton README /task_blocked and
+/// /task_completed). These also give integration harnesses a stable
+/// contract to hit without plumbing real producers.
+#[tokio::test]
+async fn clone_dev_skeleton_exposes_graph_smoke_endpoints() {
+    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+        .expect("could not read clone-dev-skeleton main.forge");
+    let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
+
+    let endpoints: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Endpoint(e) => Some(e.name.node.as_str()),
+            _ => None,
+        })
+        .collect();
+    for ep in &["task_blocked", "task_completed"] {
+        assert!(
+            endpoints.contains(ep),
+            "endpoint /{ep} must exist (T4.1), got: {:?}",
+            endpoints
+        );
+    }
+}

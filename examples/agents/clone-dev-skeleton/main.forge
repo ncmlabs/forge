@@ -50,6 +50,17 @@ use
   skill.slack
   skill.github
 
+# ── Types ──────────────────────────────────────────────────────
+# T4.1 (#299): record type for task-graph nodes. Replaces the flat
+# pipe-delimited `Text[]` with a typed DAG node so mastermind can
+# reason about `blocked_on` relations and detect cycles.
+type TaskNode
+  task_id: Text
+  status: Text
+  blocked_on: Text[]
+  specialist: Text
+  project: Text
+
 # ── Events ─────────────────────────────────────────────────────
 
 # Fan-in from HTTP endpoint. All kind-specific fields travel flat;
@@ -82,11 +93,176 @@ event ApprovalResponse
   approved: Bool
   comment: Text
 
+# ── T4.1 (#299): task-graph events ─────────────────────────────
+# TaskBlocked: posted by a specialist, a cross-project router, or
+# the /task_blocked smoke endpoint. mastermind cycle-checks, then
+# either records the relation or emits CycleDetected and escalates.
+event TaskBlocked
+  task_id: Text
+  blocked_on: Text[]
+
+# Terminal signal for a task. T4.2 / release_manager will emit on
+# PR merge. /task_completed drives it in smoke tests. Field name
+# matches workflows/dev-cycle/main.forge:131 for future parity.
+event TaskCompleted
+  task_id: Text
+
+# Fanout: a completion freed a dependent.
+event UnblockTask
+  task_id: Text
+  unblocked_by: Text
+
+# Refusal: proposed blocker would close a loop in the graph.
+event CycleDetected
+  task_id: Text
+  blocker_id: Text
+  note: Text
+
 # ── States ─────────────────────────────────────────────────────
 
 states ReviewPhase
   idle -> awaiting_approval
   awaiting_approval -> idle
+
+# ── Pure tasks ─────────────────────────────────────────────────
+# T4.1 (#299): task-graph helpers. Each function stays within
+# FORGE's i3-to-i4 nesting limit by fanning out to narrow helpers,
+# mirroring the SwarmMastery pattern (dev-cycle/main.forge:305-342).
+# Cycle detection is intentionally shallow (1-hop) per the DoD's
+# "simple cycle detection"; deeper wedges are caught by the
+# warden's escalate-after-3 policy.
+
+pure text_in_list
+  needs items: Text[], target: Text
+  gives Bool
+  do
+    for item in items
+      if item == target
+        give true
+    give false
+
+pure get_task_blockers
+  needs graph: TaskNode[], task_id: Text
+  gives Text[]
+  do
+    for node in graph
+      if node.task_id == task_id
+        give node.blocked_on
+    give []
+
+# Returns true iff adding `dependent_id --blocked_on--> blocker_id`
+# closes a 1-hop cycle, i.e. blocker_id already blocks on dependent_id.
+pure would_create_cycle
+  needs graph: TaskNode[], dependent_id: Text, blocker_id: Text
+  gives Bool
+  do
+    blocker_blockers = get_task_blockers(graph, blocker_id)
+    give text_in_list(blocker_blockers, dependent_id)
+
+# Walks the proposed blockers; returns the first one that would
+# cycle, or empty string if none.
+pure first_cycling_blocker
+  needs graph: TaskNode[], dependent_id: Text, candidates: Text[]
+  gives Text
+  do
+    for candidate in candidates
+      would_loop = would_create_cycle(graph, dependent_id, candidate)
+      if would_loop
+        give candidate
+    give ""
+
+pure keep_unless_match
+  needs id: Text, target: Text
+  gives Text[]
+  do
+    if id == target
+      give []
+    give [id]
+
+pure remove_id
+  needs ids: Text[], target: Text
+  gives Text[]
+  do
+    result = []
+    for id in ids
+      kept = keep_unless_match(id, target)
+      result = result + kept
+    give result
+
+pure status_for_blockers
+  needs blockers: Text[]
+  gives Text
+  do
+    if blockers.length == 0
+      give "in_flight"
+    give "blocked"
+
+# Returns true iff completing completed_id would fully unblock this
+# node (was a blocker, and it was the last remaining one).
+pure becomes_unblocked
+  needs node: TaskNode, completed_id: Text
+  gives Bool
+  do
+    had_blocker = text_in_list(node.blocked_on, completed_id)
+    if had_blocker
+      new_blockers = remove_id(node.blocked_on, completed_id)
+      give new_blockers.length == 0
+    give false
+
+pure find_newly_unblocked
+  needs graph: TaskNode[], completed_id: Text
+  gives Text[]
+  do
+    result = []
+    for node in graph
+      freed = becomes_unblocked(node, completed_id)
+      if freed
+        result = result + [node.task_id]
+    give result
+
+pure maybe_patch_node
+  needs node: TaskNode, target_id: Text, new_status: Text, new_blocked_on: Text[]
+  gives TaskNode
+  do
+    if node.task_id == target_id
+      give TaskNode(task_id: node.task_id, status: new_status, blocked_on: new_blocked_on, specialist: node.specialist, project: node.project)
+    give node
+
+pure update_task_node
+  needs graph: TaskNode[], task_id: Text, new_status: Text, new_blocked_on: Text[]
+  gives TaskNode[]
+  do
+    result = []
+    for node in graph
+      patched = maybe_patch_node(node, task_id, new_status, new_blocked_on)
+      result = result + [patched]
+    give result
+
+# For the completed_id node: flip status to "done".
+# For each other node that was blocked_on completed_id: drop the
+# blocker and recompute status ("in_flight" if free, else "blocked").
+pure propagate_completion
+  needs node: TaskNode, completed_id: Text
+  gives TaskNode
+  do
+    if node.task_id == completed_id
+      give TaskNode(task_id: node.task_id, status: "done", blocked_on: node.blocked_on, specialist: node.specialist, project: node.project)
+    had_blocker = text_in_list(node.blocked_on, completed_id)
+    if had_blocker
+      new_blockers = remove_id(node.blocked_on, completed_id)
+      new_status = status_for_blockers(new_blockers)
+      give TaskNode(task_id: node.task_id, status: new_status, blocked_on: new_blockers, specialist: node.specialist, project: node.project)
+    give node
+
+pure apply_completion
+  needs graph: TaskNode[], completed_id: Text
+  gives TaskNode[]
+  do
+    result = []
+    for node in graph
+      patched = propagate_completion(node, completed_id)
+      result = result + [patched]
+    give result
 
 # ── Agent: mastermind ──────────────────────────────────────────
 # Classifies inbound tasks and routes to a specialist. Holds the
@@ -95,10 +271,13 @@ states ReviewPhase
 agent mastermind
   memory persistent
     task_counter: Number
-    task_graph: Text[]
+    task_graph: TaskNode[]
     last_target: Text
     last_decision: Text
   subscribe ClonedevTaskInbound
+  subscribe SeedTask
+  subscribe TaskBlocked
+  subscribe TaskCompleted
 
   on start
     memory.task_counter = 0
@@ -117,11 +296,41 @@ agent mastermind
     else if kind == "echo"
       target = "echo"
     memory.last_target = target
-    record = "{task_id}|{target}|{kind}"
-    memory.task_graph = memory.task_graph + [record]
+    node = TaskNode(task_id: task_id, status: "in_flight", blocked_on: [], specialist: target, project: "")
+    memory.task_graph = memory.task_graph + [node]
     summary = "kind={kind} to {target} for task {task_id}"
     say "[mastermind] {summary} (reason-said {decision})"
     emit TaskRouted(task_id: task_id, target_agent: target, kind: kind, summary: summary, repo: repo, pr_number: pr_number, callback_url: callback_url, channel: channel, message: message)
+
+  # T4.1 (#299): seed a node without going through LLM classification.
+  # Used by the /seed_task smoke endpoint and by T4.2's cross-project
+  # router, which already knows the target specialist.
+  on SeedTask(task_id: Text, specialist: Text, project: Text)
+    node = TaskNode(task_id: task_id, status: "in_flight", blocked_on: [], specialist: specialist, project: project)
+    memory.task_graph = memory.task_graph + [node]
+    say "[mastermind] seeded {task_id} specialist={specialist} project={project}"
+
+  # T4.1 (#299): record blocker relations with 1-hop cycle refusal.
+  # Cycle-check all proposed blockers up front so we commit once.
+  on TaskBlocked(task_id: Text, blocked_on: Text[])
+    cycle_blocker = first_cycling_blocker(memory.task_graph, task_id, blocked_on)
+    if cycle_blocker != ""
+      emit CycleDetected(task_id: task_id, blocker_id: cycle_blocker, note: "adding {cycle_blocker} as blocker of {task_id} would close a 1-hop cycle")
+      say "[mastermind] CYCLE REJECTED: {task_id} cannot be blocked on {cycle_blocker}"
+      memory.task_graph = update_task_node(memory.task_graph, task_id, "cycle_rejected", [])
+      escalate to human
+    else
+      memory.task_graph = update_task_node(memory.task_graph, task_id, "blocked", blocked_on)
+      say "[mastermind] {task_id} marked blocked"
+
+  # T4.1 (#299): terminal signal; fan out UnblockTask to any
+  # dependents that become fully free.
+  on TaskCompleted(task_id: Text)
+    newly_free = find_newly_unblocked(memory.task_graph, task_id)
+    memory.task_graph = apply_completion(memory.task_graph, task_id)
+    say "[mastermind] {task_id} done"
+    for dep in newly_free
+      emit UnblockTask(task_id: dep, unblocked_by: task_id)
 
   if stuck for 3 turns
     escalate to human
@@ -273,3 +482,29 @@ endpoint health() -> Text
 endpoint clone_dev(kind: Text, repo: Text, pr_number: Text, callback_url: Text, channel: Text, message: Text) -> Text
   emit ClonedevTaskInbound(kind: kind, repo: repo, pr_number: pr_number, callback_url: callback_url, channel: channel, message: message)
   give "clone-dev task queued (kind={kind})"
+
+# T4.1 (#299): smoke endpoints that drive the task-graph flows.
+# /task_blocked emits TaskBlocked with a single blocker per call
+# (repeat the call for multi-blocker chains). /task_completed
+# emits TaskCompleted. Both are form-encoded POST.
+endpoint task_blocked(task_id: Text, blocker_id: Text) -> Text
+  emit TaskBlocked(task_id: task_id, blocked_on: [blocker_id])
+  give "TaskBlocked queued (task={task_id} blocker={blocker_id})"
+
+endpoint task_completed(task_id: Text) -> Text
+  emit TaskCompleted(task_id: task_id)
+  give "TaskCompleted queued (task={task_id})"
+
+# T4.1 (#299): seed a task into the graph without going through the LLM
+# classification path in `on ClonedevTaskInbound`. Mastermind subscribes
+# and appends the node directly — useful for smoke-testing the graph
+# flows (and for T4.2's cross-project router, which knows the target
+# specialist up front).
+event SeedTask
+  task_id: Text
+  specialist: Text
+  project: Text
+
+endpoint seed_task(task_id: Text, specialist: Text, project: Text) -> Text
+  emit SeedTask(task_id: task_id, specialist: specialist, project: project)
+  give "SeedTask queued (task={task_id} specialist={specialist})"
