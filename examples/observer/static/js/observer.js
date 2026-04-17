@@ -32,6 +32,7 @@ var ForgeObserver = (function () {
       document.getElementById('tab-topology'),
       document.getElementById('tab-taskdag'),
       document.getElementById('tab-costs'),
+      document.getElementById('tab-mastery'),
       document.getElementById('tab-timeline')
     ];
 
@@ -40,6 +41,7 @@ var ForgeObserver = (function () {
       topology: document.getElementById('view-topology'),
       taskdag: document.getElementById('view-taskdag'),
       costs: document.getElementById('view-costs'),
+      mastery: document.getElementById('view-mastery'),
       timeline: document.getElementById('view-timeline')
     };
 
@@ -173,6 +175,11 @@ var ForgeObserver = (function () {
       ForgeCosts.init();
     }
 
+    // Initialize mastery view (#304 T5.3)
+    if (typeof ForgeMastery !== 'undefined' && ForgeMastery.init) {
+      ForgeMastery.init();
+    }
+
     // Initialize timeline view
     if (typeof ForgeTimeline !== 'undefined' && ForgeTimeline.init) {
       ForgeTimeline.init();
@@ -194,6 +201,9 @@ var ForgeObserver = (function () {
     }
     if (typeof ForgeCosts !== 'undefined' && ForgeCosts.destroy) {
       ForgeCosts.destroy();
+    }
+    if (typeof ForgeMastery !== 'undefined' && ForgeMastery.destroy) {
+      ForgeMastery.destroy();
     }
     if (typeof ForgeTimeline !== 'undefined' && ForgeTimeline.destroy) {
       ForgeTimeline.destroy();

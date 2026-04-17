@@ -375,3 +375,125 @@ async fn inspect_storage_with_prefix_filter() {
         assert!(entry["key"].as_str().unwrap().starts_with("agent:"));
     }
 }
+
+// ── /inspect/mastery (#304 T5.3) ───────────────────────────────
+
+#[tokio::test]
+async fn inspect_mastery_empty_when_not_wired() {
+    let base = spawn_inspect_server(None, None, None, None, None).await;
+    let resp = reqwest::get(format!("{base}/__forge/inspect/mastery"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["specialists"].as_array().unwrap().len() == 5);
+    assert!(body["projects"].as_array().unwrap().is_empty());
+    assert!(body["mastery"].as_object().unwrap().is_empty());
+    assert_eq!(body["tasks"]["total_tasks"].as_u64(), Some(0));
+}
+
+#[tokio::test]
+async fn inspect_mastery_surfaces_aggregator_and_knowledge() {
+    use forge::runtime::knowledge_store::KnowledgeStore;
+    use forge::runtime::task_history_aggregator::TaskHistoryAggregator;
+
+    // Seed a knowledge store with two SWARM-MASTERY snapshots for the same
+    // (specialist, project): a novice->apprentice transition and the
+    // baseline novice entry.
+    let kdir = tempfile::tempdir().unwrap();
+    let kpath = kdir.path().join("knowledge.json");
+    let mut ks = KnowledgeStore::new(kpath.to_str().unwrap(), Some(100), None);
+    ks.learn_direct_categorized(
+        "SWARM-MASTERY specialist:planner project:forge-playground level:novice score:50 clean:1 regress:0 total:1 last_task:T1",
+        "mastery-planner-forge-playground",
+    );
+    ks.learn_direct_categorized(
+        "SWARM-MASTERY specialist:planner project:forge-playground level:apprentice score:55 clean:2 regress:0 total:2 last_task:T2",
+        "mastery-planner-forge-playground",
+    );
+    let shared_ks: forge::runtime::knowledge_store::SharedKnowledgeStore = Arc::new(Mutex::new(ks));
+
+    // Seed the aggregator with two completed tasks whose review_rounds are
+    // decreasing — i.e. the proof-point shape (10th task < 1st).
+    let aggregator = Arc::new(tokio::sync::RwLock::new(TaskHistoryAggregator::new(100)));
+    {
+        let mut a = aggregator.write().await;
+        a.record_from_payload(&mk_task_completed("forge-playground", "T1", 3.0));
+        a.record_from_payload(&mk_task_completed("forge-playground", "T2", 1.0));
+    }
+
+    let executor = parse_and_build(MINIMAL_SOURCE);
+    let mut server = ForgeServer::new(executor, None);
+    server = server
+        .with_mastery_knowledge_store(shared_ks)
+        .with_task_history_aggregator(aggregator);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        server.run_on_listener(listener).await.unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let base = format!("http://127.0.0.1:{port}");
+
+    let resp = reqwest::get(format!("{base}/__forge/inspect/mastery"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    // Specialists are the canonical 5.
+    assert_eq!(body["specialists"].as_array().unwrap().len(), 5);
+    // Projects merge: knowledge store contributes "forge-playground", aggregator too.
+    let projects: Vec<String> = body["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(projects.contains(&"forge-playground".to_string()));
+
+    // Mastery tuple reflects the latest (apprentice) snapshot.
+    let tuple = &body["mastery"]["planner::forge-playground"];
+    assert_eq!(tuple["current_level"].as_str(), Some("apprentice"));
+    assert_eq!(tuple["current_score"].as_f64(), Some(55.0));
+    assert_eq!(tuple["total"].as_u64(), Some(2));
+    assert_eq!(tuple["transitions"].as_array().unwrap().len(), 2);
+
+    // Tasks series carries the review_rounds trend.
+    let tasks = &body["tasks"]["tasks_by_project"]["forge-playground"];
+    assert_eq!(tasks.as_array().unwrap().len(), 2);
+    assert_eq!(tasks[0]["task_id"].as_str(), Some("T1"));
+    assert_eq!(tasks[0]["review_rounds"].as_u64(), Some(3));
+    assert_eq!(tasks[1]["task_id"].as_str(), Some("T2"));
+    assert_eq!(tasks[1]["review_rounds"].as_u64(), Some(1));
+    assert_eq!(body["tasks"]["total_tasks"].as_u64(), Some(2));
+}
+
+fn mk_task_completed(
+    repo: &str,
+    task_id: &str,
+    review_rounds: f64,
+) -> forge::runtime::event_bus::EventPayload {
+    let det = |v: Value| ConfidentValue::deterministic(v);
+    let mut fields = HashMap::new();
+    fields.insert("task_id".to_string(), det(Value::Text(task_id.to_string())));
+    fields.insert("repo".to_string(), det(Value::Text(repo.to_string())));
+    fields.insert(
+        "outcome".to_string(),
+        det(Value::Text("merged".to_string())),
+    );
+    fields.insert("ci_passed_first_try".to_string(), det(Value::Bool(true)));
+    fields.insert(
+        "review_rounds".to_string(),
+        det(Value::Number(review_rounds)),
+    );
+    fields.insert("time_to_merge".to_string(), det(Value::Number(1800.0)));
+    fields.insert("reverted_within_7d".to_string(), det(Value::Bool(false)));
+    forge::runtime::event_bus::EventPayload {
+        event_name: "TaskCompleted".to_string(),
+        args: vec![],
+        source_agent: "release_manager".to_string(),
+        fields,
+    }
+}

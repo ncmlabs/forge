@@ -1163,12 +1163,27 @@ async fn main() -> anyhow::Result<()> {{
         cost_aggregator.clone(),
     );
 
+    // Task-history aggregator (issue #304) — mirrors `main.rs` wire-up.
+    let mastery_knowledge_store = executor.knowledge_store_handle();
+    let task_history_aggregator = Arc::new(tokio::sync::RwLock::new(
+        forge::runtime::task_history_aggregator::TaskHistoryAggregator::default(),
+    ));
+    forge::runtime::task_history_aggregator::spawn_task_listener(
+        event_bus.clone(),
+        task_history_aggregator.clone(),
+    )
+    .await;
+
     let mut server = forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
         .with_event_bus(event_bus)
         .with_events_tx(events_tx)
         .with_instance_registry(instance_registry)
         .with_warden_snapshots(warden_snapshots)
-        .with_cost_aggregator(cost_aggregator);
+        .with_cost_aggregator(cost_aggregator)
+        .with_task_history_aggregator(task_history_aggregator);
+    if let Some(ks) = mastery_knowledge_store {{
+        server = server.with_mastery_knowledge_store(ks);
+    }}
     if let Some(senders) = signal_senders {{
         server = server.with_signal_senders(senders);
     }}

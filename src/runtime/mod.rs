@@ -27,6 +27,7 @@ pub mod startup;
 pub mod state_machine;
 pub mod storage;
 pub mod system;
+pub mod task_history_aggregator;
 pub mod timer_engine;
 pub mod vector_index;
 pub mod verification;
