@@ -1662,3 +1662,123 @@ async fn dev_cycle_tester_and_reviewer_track_signal_counters() {
         reviewer_memory
     );
 }
+
+/// T5.2 (#303): SwarmMastery states, MasterySignal + MasteryUpdated events,
+/// and scoring helpers exist in the dev-cycle program.
+#[tokio::test]
+async fn dev_cycle_has_swarm_mastery_schema() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle workflow");
+    let program = forge::parser::parse(&source).expect("dev-cycle must parse");
+
+    let swarm_states = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::States(s) if s.name.node == "SwarmMastery" => Some(s.clone()),
+        _ => None,
+    });
+    assert!(
+        swarm_states.is_some(),
+        "SwarmMastery states block must exist (T5.2)"
+    );
+    let state_names: Vec<&str> = swarm_states
+        .as_ref()
+        .unwrap()
+        .transitions
+        .iter()
+        .flat_map(|t| vec![t.node.from.node.as_str(), t.node.to.node.as_str()])
+        .collect();
+    for state in &["novice", "apprentice", "journeyman", "expert"] {
+        assert!(
+            state_names.contains(state),
+            "SwarmMastery must reach state `{state}`, got transitions involving: {:?}",
+            state_names
+        );
+    }
+
+    for event_name in &["MasterySignal", "MasteryUpdated"] {
+        let found = program.items.iter().any(|item| match &item.node {
+            TopLevel::Event(e) => e.name.node == *event_name,
+            _ => false,
+        });
+        assert!(found, "event `{event_name}` must exist (T5.2)");
+    }
+
+    for fn_name in &[
+        "compute_swarm_score",
+        "determine_swarm_level",
+        "reviewer_clean_signal",
+        "reviewer_regress_signal",
+    ] {
+        let found = program.items.iter().any(|item| match &item.node {
+            TopLevel::Pure(p) => p.name.node == *fn_name,
+            _ => false,
+        });
+        assert!(found, "pure function `{fn_name}` must exist (T5.2)");
+    }
+}
+
+/// T5.2 (#303): swarm_mastery_coordinator subscribes to TaskCompleted, and
+/// swarm_mastery_tuple subscribes to MasterySignal with a per-tuple filter.
+#[tokio::test]
+async fn dev_cycle_swarm_mastery_agents_subscribe_correctly() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle workflow");
+    let program = forge::parser::parse(&source).expect("dev-cycle must parse");
+
+    let coordinator = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) if a.name.node == "swarm_mastery_coordinator" => Some(a.clone()),
+            _ => None,
+        })
+        .expect("swarm_mastery_coordinator agent must exist");
+    let coord_events: Vec<&str> = coordinator
+        .subscriptions
+        .iter()
+        .map(|s| s.node.event_name.node.as_str())
+        .collect();
+    assert!(
+        coord_events.contains(&"TaskCompleted"),
+        "swarm_mastery_coordinator must subscribe to TaskCompleted, got: {:?}",
+        coord_events
+    );
+
+    let tuple = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) if a.name.node == "swarm_mastery_tuple" => Some(a.clone()),
+            _ => None,
+        })
+        .expect("swarm_mastery_tuple agent must exist");
+    let tuple_events: Vec<&str> = tuple
+        .subscriptions
+        .iter()
+        .map(|s| s.node.event_name.node.as_str())
+        .collect();
+    assert!(
+        tuple_events.contains(&"MasterySignal"),
+        "swarm_mastery_tuple must subscribe to MasterySignal, got: {:?}",
+        tuple_events
+    );
+    // Tuple must have a filter — it's per-(specialist, project), not global.
+    let has_filter = tuple
+        .subscriptions
+        .iter()
+        .any(|s| s.node.event_name.node == "MasterySignal" && s.node.filter.is_some());
+    assert!(
+        has_filter,
+        "swarm_mastery_tuple's MasterySignal subscription must have a where-filter"
+    );
+
+    // Tuple must declare the SwarmMastery lifecycle.
+    let lifecycle = tuple
+        .lifecycle
+        .as_ref()
+        .map(|l| l.node.as_str())
+        .unwrap_or("");
+    assert_eq!(
+        lifecycle, "SwarmMastery",
+        "swarm_mastery_tuple must use SwarmMastery lifecycle"
+    );
+}
