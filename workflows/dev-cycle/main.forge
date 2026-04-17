@@ -102,6 +102,7 @@ event AcceptanceMet
   channel: Text
   callback_url: Text
   test_cmd: Text
+  ci_passed_first_try: Bool
 
 event PRReady
   issue_id: Text
@@ -121,11 +122,36 @@ event PRMerged
   issue_id: Text
   repo: Text
   branch: Text
+  ci_passed_first_try: Bool
+  review_rounds: Number
 
 event ReviewDecision
   issue_id: Text
   repo: Text
   decision: Text
+
+# T5.1 (#302): outcome-driven learning loop.
+# release_manager emits TaskCompleted when a task reaches a terminal
+# state (merged MVP; rejected/abandoned are future). Each specialist
+# subscribes to its own task's completion and emits LessonExtracted
+# with a perspective-specific category written into the shared
+# knowledge store. reverted_within_7d is always false at emit time;
+# a future watcher can update associated entries.
+event TaskCompleted
+  task_id: Text
+  repo: Text
+  outcome: Text
+  ci_passed_first_try: Bool
+  review_rounds: Number
+  time_to_merge: Number
+  reverted_within_7d: Bool
+
+event LessonExtracted
+  task_id: Text
+  agent_id: Text
+  category: Text
+  content: Text
+  confidence: Number
 
 # ── State Machines ───────────────────────────────────────────────
 # IssueLifecycle is shared across planner/implementer/tester.
@@ -253,7 +279,12 @@ agent planner
     plan_text: Text
     criteria: Text
     test_cmd: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
   subscribe IssueAssigned
+  subscribe TaskCompleted where task_id == memory.issue_id
 
   on start
     memory.issue_id = ""
@@ -263,6 +294,7 @@ agent planner
     memory.plan_text = ""
     memory.criteria = ""
     memory.test_cmd = ""
+    memory.repo_slug = ""
     say "[planner] ready"
 
   on IssueAssigned(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text, test_cmd: Text)
@@ -272,6 +304,7 @@ agent planner
     memory.callback_url = callback_url
     memory.criteria = body
     memory.test_cmd = test_cmd
+    memory.repo_slug = slugify_repo(repo)
     say "[planner] Planning issue {issue_id} in {repo}"
     issue = Issue(id: issue_id, title: title, criteria: body)
     plan_text = draft_plan(issue)
@@ -282,6 +315,16 @@ agent planner
     else -> say "[planner] Slack notification may have failed"
     say "[planner] Plan drafted - handing off to implementer"
     emit PlanApproved(issue_id: issue_id, repo: repo, plan: plan_text, criteria: body, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[planner] Extracting lesson for {task_id} (outcome={outcome})"
+    lesson_prompt = "You are the planner for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nOriginal acceptance criteria:\n{memory.criteria}\n\nThe plan you produced:\n{memory.plan_text}\n\nWrite a one- to three-sentence lesson of the form 'this plan shape -> this outcome'. Focus on what a future planner should repeat or avoid for similar issues. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[planner] Lesson: {lesson}"
+    else -> say "[planner] Lesson uncertain: {lesson}"
+    cat = "lesson-planner-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "planner", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:planner task:{task_id} outcome:{outcome} first_try:{ci_passed_first_try} rounds:{review_rounds}\ncriteria:{memory.criteria}\nplan:\n{memory.plan_text}\nlesson:\n{lesson}" category: cat
 
   if stuck for 5 turns
     say "[planner] Stuck. Escalating."
@@ -312,8 +355,13 @@ agent implementer
     max_iterations: Number
     iteration_log: Text
     last_diagnosis: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
   subscribe PlanApproved
   subscribe TestsFailed
+  subscribe TaskCompleted where task_id == memory.issue_id
 
   on start
     memory.issue_id = ""
@@ -329,6 +377,7 @@ agent implementer
     memory.max_iterations = 3
     memory.iteration_log = ""
     memory.last_diagnosis = ""
+    memory.repo_slug = ""
     say "[implementer] ready"
 
   on PlanApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
@@ -340,6 +389,7 @@ agent implementer
     memory.channel = channel
     memory.callback_url = callback_url
     memory.test_cmd = test_cmd
+    memory.repo_slug = slugify_repo(repo)
     memory.iteration = 0
     memory.iteration_log = ""
     memory.last_diagnosis = ""
@@ -390,6 +440,16 @@ agent implementer
     say "[implementer] Fix iteration {memory.iteration} for {issue_id} pushed. Re-running tests."
     emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[implementer] Extracting lesson for {task_id} (outcome={outcome}, iterations={memory.iteration})"
+    lesson_prompt = "You are the implementer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nFix iterations used: {memory.iteration}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nPlan executed:\n{memory.plan}\n\nIteration log (diagnoses across fix attempts):\n{memory.iteration_log}\n\nWrite a one- to three-sentence lesson of the form 'this error pattern -> this fix' (or 'this pattern -> first-try pass'). Focus on what a future implementer should reuse or avoid. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[implementer] Lesson: {lesson}"
+    else -> say "[implementer] Lesson uncertain: {lesson}"
+    cat = "lesson-implementer-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "implementer", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:implementer task:{task_id} outcome:{outcome} iterations:{memory.iteration} first_try:{ci_passed_first_try}\nplan:\n{memory.plan}\niteration_log:\n{memory.iteration_log}\nlesson:\n{lesson}" category: cat
+
   if stuck for 5 turns
     say "[implementer] Stuck. Escalating."
     escalate to lead
@@ -409,7 +469,14 @@ agent tester
     callback_url: Text
     acceptance_result: Text
     test_cmd: Text
+    test_runs: Number
+    last_test_output: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
   subscribe ImplementationReady
+  subscribe TaskCompleted where task_id == memory.issue_id
 
   on start
     memory.issue_id = ""
@@ -419,35 +486,54 @@ agent tester
     memory.callback_url = ""
     memory.acceptance_result = ""
     memory.test_cmd = ""
+    memory.test_runs = 0
+    memory.last_test_output = ""
+    memory.repo_slug = ""
     say "[tester] ready"
 
   on ImplementationReady(issue_id: Text, repo: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
+    if memory.issue_id != issue_id
+      memory.test_runs = 0
     memory.issue_id = issue_id
     memory.repo = repo
     memory.branch = branch
     memory.channel = channel
     memory.callback_url = callback_url
     memory.test_cmd = test_cmd
-    say "[tester] Running tests on {branch} in {repo}"
+    memory.repo_slug = slugify_repo(repo)
+    memory.test_runs = memory.test_runs + 1
+    say "[tester] Running tests on {branch} in {repo} (run #{memory.test_runs})"
     pull_result = command "cd /tmp/forge-workdir-{issue_id} && git pull origin {branch} 2>&1" timeout 30s
     when pull_result.sure -> say "[tester] Latest changes pulled"
     else -> say "[tester] Pull may have issues: {pull_result}"
     test_output = command "cd /tmp/forge-workdir-{issue_id} && {memory.test_cmd} 2>&1" timeout 120s
     when test_output.sure -> say "[tester] Tests completed (exit 0)"
     else -> say "[tester] Tests completed with failures"
+    memory.last_test_output = test_output
     report = TestReport(passed: false, failures: test_output, coverage: 0)
     issue = Issue(id: issue_id, title: branch, criteria: "all tests pass")
     acceptance = check_acceptance(issue, report)
     memory.acceptance_result = acceptance
     tcmd = memory.test_cmd
+    first_try = memory.test_runs == 1
     if acceptance == "none" or acceptance == "minor"
-      say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met"
+      say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met (first_try: {first_try})"
       notify = skill.slack.send_message(channel, "Tests passed for {issue_id} on {branch}. Moving to review.")
       say "[tester] Pass notification: {notify}"
-      emit AcceptanceMet(issue_id: issue_id, repo: repo, branch: branch, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd)
+      emit AcceptanceMet(issue_id: issue_id, repo: repo, branch: branch, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd, ci_passed_first_try: first_try)
     if acceptance == "blocking" or acceptance == "needs_human_review" or acceptance == "inconclusive"
       say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
       emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: test_output, channel: channel, callback_url: callback_url, test_cmd: tcmd)
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[tester] Extracting lesson for {task_id} (outcome={outcome}, first_try={ci_passed_first_try})"
+    lesson_prompt = "You are the tester for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nTest runs on this task: {memory.test_runs}\nci_passed_first_try: {ci_passed_first_try}\nFinal acceptance result: {memory.acceptance_result}\nLast test output (truncated):\n{memory.last_test_output}\n\nWrite a one- to three-sentence lesson of the form 'this coverage gap -> this miss' (or 'this coverage pattern -> this pass'). Focus on what the test signal revealed that future tasks can reuse. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[tester] Lesson: {lesson}"
+    else -> say "[tester] Lesson uncertain: {lesson}"
+    cat = "lesson-tester-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "tester", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:tester task:{task_id} outcome:{outcome} first_try:{ci_passed_first_try}\ntest_runs:{memory.test_runs}\nacceptance:{memory.acceptance_result}\nlesson:\n{lesson}" category: cat
 
   if stuck for 3 turns
     say "[tester] Stuck. Escalating."
@@ -479,11 +565,14 @@ agent reviewer
     diff_characterization: Text
     repo_slug: Text
     auto_decision: Text
+    review_rounds: Number
+    ci_passed_first_try: Bool
   knowledge store: ".forge-knowledge/pr-history"
     max_entries: 10000
     retention: 365d
   subscribe AcceptanceMet
   subscribe ApprovalResponse
+  subscribe TaskCompleted where task_id == memory.issue_id
 
   on start
     memory.issue_id = ""
@@ -499,10 +588,14 @@ agent reviewer
     memory.diff_characterization = ""
     memory.repo_slug = ""
     memory.auto_decision = "disabled"
+    memory.review_rounds = 0
+    memory.ci_passed_first_try = false
     say "[reviewer] ready"
 
-  on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text)
+  on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text, ci_passed_first_try: Bool)
     requires lifecycle == idle on fail: give "review already in progress"
+    if memory.issue_id != issue_id
+      memory.review_rounds = 0
     memory.issue_id = issue_id
     memory.repo = repo
     memory.branch = branch
@@ -510,6 +603,8 @@ agent reviewer
     memory.callback_url = callback_url
     memory.test_cmd = test_cmd
     memory.repo_slug = slugify_repo(repo)
+    memory.review_rounds = memory.review_rounds + 1
+    memory.ci_passed_first_try = ci_passed_first_try
     say "[reviewer] Drafting changelog for {issue_id}"
     issue = Issue(id: issue_id, title: "close #{issue_id}", criteria: "")
     entry = draft_changelog_entry(issue, branch)
@@ -549,7 +644,7 @@ agent reviewer
       cleanup = skill.github.delete_branch(repo, branch)
       workdir_cleanup = command "rm -rf /tmp/forge-workdir-{issue_id}" timeout 10s
       learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{pr_url} decision:auto_approved\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
-      emit PRMerged(issue_id: issue_id, repo: repo, branch: branch)
+      emit PRMerged(issue_id: issue_id, repo: repo, branch: branch, ci_passed_first_try: memory.ci_passed_first_try, review_rounds: memory.review_rounds)
       give "auto-approved"
     if verdict == "auto_reject" and memory.auto_decision == "enabled"
       say "[reviewer] AUTO-REJECTED by knowledge store — sending back to implementer"
@@ -582,7 +677,7 @@ agent reviewer
       else -> say "[reviewer] Branch cleanup uncertain"
       workdir_cleanup = command "rm -rf /tmp/forge-workdir-{memory.issue_id}" timeout 10s
       learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:human_approved\nbranch: {memory.branch}\ndiff_characterization: {memory.diff_characterization}\nverdict_was: {memory.review_verdict}\nhuman_action: approved by {comment}" category: "pr-decisions-{memory.repo_slug}"
-      emit PRMerged(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch)
+      emit PRMerged(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, ci_passed_first_try: memory.ci_passed_first_try, review_rounds: memory.review_rounds)
       transition to idle
     if not approved
       say "[reviewer] REJECTED by {comment} — sending back to implementer"
@@ -592,30 +687,76 @@ agent reviewer
       emit TestsFailed(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, failures: "PR rejected: {comment}", channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
       transition to idle
 
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[reviewer] Extracting lesson for {task_id} (outcome={outcome}, rounds={review_rounds})"
+    lesson_prompt = "You are the reviewer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nReview rounds: {review_rounds}\nKnowledge-store verdict: {memory.review_verdict}\nDiff characterization:\n{memory.diff_characterization}\n\nWrite a one- to three-sentence lesson of the form 'this objection -> this response' (or 'this diff shape -> this verdict path'). Focus on what review pattern future tasks should expect. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[reviewer] Lesson: {lesson}"
+    else -> say "[reviewer] Lesson uncertain: {lesson}"
+    cat = "lesson-reviewer-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "reviewer", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:reviewer task:{task_id} outcome:{outcome} rounds:{review_rounds}\nverdict:{memory.review_verdict}\ndiff_characterization:{memory.diff_characterization}\nlesson:\n{lesson}" category: cat
+
   if stuck for 3 turns
     say "[reviewer] Stuck. Escalating."
     escalate to lead
 
 # ── Agent: Release Manager ───────────────────────────────────────
-# Passive counter for MVP — logs merged PRs. Full release
-# coordination (freeze/validate/tag/publish) is out of scope for
-# the initial executable dev-cycle.
+# Logs merged PRs and emits TaskCompleted — the terminal signal that
+# drives the outcome-driven learning loop (T5.1 #302). Each specialist
+# subscribes to TaskCompleted and extracts a perspective-specific
+# lesson into the shared knowledge store.
+#
+# MVP: only the merged path emits TaskCompleted. Rejected/abandoned
+# outcomes will be wired in a follow-up (rejection currently loops
+# via TestsFailed; abandonment goes through `escalate to lead`).
 
 agent release_manager
   memory
     merged_count: Number
     last_merged: Text
+    issue_id: Text
+    repo: Text
+    branch: Text
+    repo_slug: Text
+    last_outcome: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
   subscribe PRMerged
+  subscribe TaskCompleted where task_id == memory.issue_id
 
   on start
     memory.merged_count = 0
     memory.last_merged = ""
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.branch = ""
+    memory.repo_slug = ""
+    memory.last_outcome = ""
     say "[release_manager] ready"
 
-  on PRMerged(issue_id: Text, repo: Text, branch: Text)
+  on PRMerged(issue_id: Text, repo: Text, branch: Text, ci_passed_first_try: Bool, review_rounds: Number)
     memory.merged_count = memory.merged_count + 1
     memory.last_merged = issue_id
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.branch = branch
+    memory.repo_slug = slugify_repo(repo)
+    memory.last_outcome = "merged"
     say "[release_manager] PR merged for {issue_id} in {repo} (total: {memory.merged_count})"
+    say "[release_manager] Emitting TaskCompleted for {issue_id}"
+    emit TaskCompleted(task_id: issue_id, repo: repo, outcome: "merged", ci_passed_first_try: ci_passed_first_try, review_rounds: review_rounds, time_to_merge: 0, reverted_within_7d: false)
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[release_manager] Extracting lesson for {task_id} (outcome={outcome})"
+    lesson_prompt = "You are the release manager for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nBranch: {memory.branch}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nWrite a one- to three-sentence lesson of the form 'this PR shape -> this merge path'. Focus on what the release signal says about how this kind of change should be shipped next time. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[release_manager] Lesson: {lesson}"
+    else -> say "[release_manager] Lesson uncertain: {lesson}"
+    cat = "lesson-release-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "release_manager", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:release_manager task:{task_id} outcome:{outcome} first_try:{ci_passed_first_try} rounds:{review_rounds}\nbranch:{memory.branch}\nlesson:\n{lesson}" category: cat
 
   if stuck for 3 turns
     say "[release_manager] Stuck. Escalating."
