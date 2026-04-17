@@ -66,6 +66,12 @@ check = "ok"
 manifest = "examples/agents/clone-dev-skeleton/forge.project.toml"
 
 [[cases]]
+name = "mastermind-pattern reference example (T1.2)"
+paths = ["examples/agents/mastermind-pattern/main.forge"]
+check = "ok"
+manifest = "examples/agents/mastermind-pattern/forge.project.toml"
+
+[[cases]]
 name = "PR history miner agent"
 paths = ["examples/agents/pr-history-miner/main.forge"]
 check = "ok"
