@@ -615,3 +615,173 @@ async fn multi_agent_event_flow() {
     let observer_result = observer.run().await;
     assert!(observer_result.is_ok());
 }
+
+/// Regression for #325: an `emit` from inside an agent handler must produce an
+/// `event_emit` trace. Before the fix, `forge serve` built the shared bus with
+/// a `None` tracer, so `EventBus::publish` — invoked by the agent's drain path —
+/// silently skipped tracing while `say` / `HandlerCompleted` continued to work
+/// via the executor's own tracer. That made agent-originated fan-out invisible
+/// in the SSE event log.
+#[tokio::test]
+async fn agent_handler_emit_produces_event_emit_trace() {
+    use forge::tracer::Tracer;
+
+    // Agent: subscribes to Ping; handler body emits Pong and gives "ok".
+    let decl = AgentDecl {
+        exportable: false,
+        name: spanned("pinger".into()),
+        lifecycle: None,
+        memory: vec![],
+        memory_persistent: false,
+        knowledge: None,
+        timers: vec![],
+        subscriptions: vec![spanned(SubscribeDecl {
+            event_name: spanned("Ping".into()),
+            filter: None,
+        })],
+        handlers: vec![spanned(OnHandler {
+            event: spanned("Ping".into()),
+            params: vec![],
+            payload_type: None,
+            requires: vec![],
+            body: vec![
+                spanned(Stmt::Emit(spanned("Pong".into()), vec![])),
+                spanned(Stmt::Give(
+                    spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                        "ok".into(),
+                    ))])),
+                    vec![],
+                )),
+            ],
+        })],
+        warden_override: Vec::new(),
+        stuck_policy: None,
+    };
+
+    let tracer = Tracer::with_capture();
+    let bus = EventBus::new_shared(Some(tracer.clone()));
+
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        Some(tracer.clone()),
+        empty_program(),
+        None,
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
+
+    // Publish Ping to the bus → agent handler runs → emits Pong → drain publishes
+    // Pong through the bus (tracing event_emit, the path the #325 fix restores).
+    {
+        let bus_guard = bus.read().await;
+        bus_guard.publish(&payload("Ping", "external"));
+    }
+    bus.write().await.close();
+
+    agent.run().await.expect("agent run");
+
+    let log = tracer.captured_log();
+    let pong_emit = log
+        .iter()
+        .find(|(name, payload)| {
+            name == "event_emit"
+                && payload["source_agent"] == "pinger"
+                && payload["event"] == "Pong"
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "event_emit trace for agent-originated Pong emit missing; log = {:?}",
+                log.iter().map(|(n, _)| n).collect::<Vec<_>>()
+            )
+        });
+    // No Pong subscribers registered → subscribers count is 0.
+    assert_eq!(pong_emit.1["subscribers"], 0);
+}
+
+/// Regression for #325: reproduces the buggy pre-fix wiring by constructing
+/// the bus with a `None` tracer (as `forge serve` used to do) while the agent
+/// itself has a capturing tracer. The executor's tracer still captures
+/// `HandlerStarted`/`HandlerCompleted`/`AgentShutdown`, but — by design of the
+/// drain path — the agent-originated `event_emit` trace is absent because it
+/// fires via the bus's own tracer. This test locks in *why* the main.rs fix is
+/// required: without passing the tracer into the bus, agent emits stay invisible.
+#[tokio::test]
+async fn agent_handler_emit_is_invisible_when_bus_has_no_tracer() {
+    use forge::tracer::Tracer;
+
+    let decl = AgentDecl {
+        exportable: false,
+        name: spanned("pinger".into()),
+        lifecycle: None,
+        memory: vec![],
+        memory_persistent: false,
+        knowledge: None,
+        timers: vec![],
+        subscriptions: vec![spanned(SubscribeDecl {
+            event_name: spanned("Ping".into()),
+            filter: None,
+        })],
+        handlers: vec![spanned(OnHandler {
+            event: spanned("Ping".into()),
+            params: vec![],
+            payload_type: None,
+            requires: vec![],
+            body: vec![
+                spanned(Stmt::Emit(spanned("Pong".into()), vec![])),
+                spanned(Stmt::Give(
+                    spanned(Expr::Template(vec![spanned(TemplatePart::Text(
+                        "ok".into(),
+                    ))])),
+                    vec![],
+                )),
+            ],
+        })],
+        warden_override: Vec::new(),
+        stuck_policy: None,
+    };
+
+    let tracer = Tracer::with_capture();
+    // Buggy pre-fix shape: bus built without a tracer even though the executor has one.
+    let bus = EventBus::new_shared(None);
+
+    let mut agent = AgentProcess::new(
+        decl,
+        None,
+        mock_registry(),
+        Some(tracer.clone()),
+        empty_program(),
+        None,
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
+
+    {
+        let bus_guard = bus.read().await;
+        bus_guard.publish(&payload("Ping", "external"));
+    }
+    bus.write().await.close();
+
+    agent.run().await.expect("agent run");
+
+    let log = tracer.captured_log();
+    let handler_completed_seen = log.iter().any(|(n, _)| n == "HandlerCompleted");
+    let event_emit_seen = log.iter().any(|(n, p)| {
+        n == "event_emit" && p["source_agent"] == "pinger" && p["event"] == "Pong"
+    });
+    assert!(
+        handler_completed_seen,
+        "executor-side lifecycle traces should still fire even when bus tracer is None"
+    );
+    assert!(
+        !event_emit_seen,
+        "without a tracer on the bus, the agent-originated event_emit is silently dropped \
+         — this is the #325 symptom that the main.rs fix eliminates by passing the \
+         executor's tracer into EventBus::new_shared"
+    );
+}
