@@ -1256,8 +1256,7 @@ async fn serve_program(
         // Inject the executor's tracer so agent-originated emits reach SSE (#325):
         // without this, EventBus::publish has no tracer and the agent-handler emit
         // path never produces event_emit/event_delivered frames.
-        let event_bus =
-            forge::runtime::event_bus::EventBus::new_shared(executor.tracer().cloned());
+        let event_bus = forge::runtime::event_bus::EventBus::new_shared(executor.tracer().cloned());
         let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
             tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
         );
@@ -1530,8 +1529,7 @@ async fn serve_with_watch(
         // Inject the executor's tracer so agent-originated emits reach SSE (#325):
         // without this, EventBus::publish has no tracer and the agent-handler emit
         // path never produces event_emit/event_delivered frames.
-        let event_bus =
-            forge::runtime::event_bus::EventBus::new_shared(executor.tracer().cloned());
+        let event_bus = forge::runtime::event_bus::EventBus::new_shared(executor.tracer().cloned());
         let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
             tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
         );

@@ -771,9 +771,9 @@ async fn agent_handler_emit_is_invisible_when_bus_has_no_tracer() {
 
     let log = tracer.captured_log();
     let handler_completed_seen = log.iter().any(|(n, _)| n == "HandlerCompleted");
-    let event_emit_seen = log.iter().any(|(n, p)| {
-        n == "event_emit" && p["source_agent"] == "pinger" && p["event"] == "Pong"
-    });
+    let event_emit_seen = log
+        .iter()
+        .any(|(n, p)| n == "event_emit" && p["source_agent"] == "pinger" && p["event"] == "Pong");
     assert!(
         handler_completed_seen,
         "executor-side lifecycle traces should still fire even when bus tracer is None"

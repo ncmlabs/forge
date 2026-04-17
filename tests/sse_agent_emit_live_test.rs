@@ -151,9 +151,9 @@ async fn agent_emit_reaches_sse_broadcast_like_forge_serve() {
         .collect();
 
     let find_emit = |source: &str, name: &str| {
-        parsed.iter().find(|v| {
-            v["event"] == name && v["source_agent"] == source
-        })
+        parsed
+            .iter()
+            .find(|v| v["event"] == name && v["source_agent"] == source)
     };
 
     let ping = find_emit("endpoint", "Ping").unwrap_or_else(|| {
