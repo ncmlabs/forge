@@ -1,0 +1,189 @@
+#! boundary: server
+
+# ================================================================
+# mastermind-pattern — Reusable classify-and-dispatch topology
+# ================================================================
+# T1.2 (#295) — extracts the reusable mastermind pattern first
+# proven end-to-end by T1.1 (#293) in `examples/agents/clone-dev-skeleton/`.
+#
+# Kept deliberately minimal. See `clone-dev-skeleton/main.forge`
+# for the full shape with T4.1 extensions (blocked_on relations,
+# 1-hop cycle detection, UnblockTask fanout, cross-project seed
+# nodes). This file is the pattern *as named*, not the pattern
+# *as extended*.
+#
+#     POST /ticket {kind, channel, message}
+#         │ emit TicketInbound
+#         ▼
+#     mastermind                        (classify via `reason`,
+#         │                              assign task_id = T{n},
+#         │                              append to task_graph)
+#         │ emit TaskRouted(task_id, target_agent, kind, ...)
+#         ▼
+#     ┌─────────────────────────┬──────────────────────────────┐
+#     │ support_specialist      │ billing_specialist            │
+#     │ subscribe where         │ subscribe where               │
+#     │   target_agent=="support"│   target_agent=="billing"    │
+#     │ → say [handled]         │ → say [handled]               │
+#     └─────────────────────────┴──────────────────────────────┘
+#
+# Single `org_warden` supervises all three. See README.md for the
+# four invariants, the recipe for adding a specialist, correlation-
+# id conventions, and the reference list of adopters.
+#
+# Run:
+#   FORGE_CONFIG=examples/agents/mastermind-pattern/forge.config.toml \
+#   ANTHROPIC_API_KEY=... \
+#   cargo run -- serve \
+#     --manifest examples/agents/mastermind-pattern/forge.project.toml \
+#     examples/agents/mastermind-pattern/main.forge --port 3311
+# ================================================================
+
+use
+  llm.reason
+
+# ── Types ──────────────────────────────────────────────────────
+# Slim form: `blocked_on` / `project` live in clone-dev-skeleton
+# because T4.1 needs them. Base pattern does not.
+
+type TaskNode
+  task_id: Text
+  status: Text
+  specialist: Text
+
+# ── Events ─────────────────────────────────────────────────────
+# Invariant 2 (routing): TaskRouted carries `target_agent` so
+# specialists filter with `subscribe TaskRouted where target_agent == "<self>"`.
+
+event TicketInbound
+  kind: Text
+  channel: Text
+  message: Text
+
+event TaskRouted
+  task_id: Text
+  target_agent: Text
+  kind: Text
+  channel: Text
+  message: Text
+
+# ── Agent: mastermind ──────────────────────────────────────────
+# Invariant 1 (classification): `reason` suggests, code decides.
+#   The defensive `if kind ==` branching is load-bearing — do not
+#   let raw LLM output drive routing.
+# Invariant 3 (correlation): task_id = T{counter} threads through
+#   every downstream event; task_graph records specialist ownership.
+
+agent mastermind
+  memory persistent
+    task_counter: Number
+    task_graph: TaskNode[]
+    last_decision: Text
+  subscribe TicketInbound
+
+  on start
+    memory.task_counter = 0
+    memory.last_decision = "none"
+    say "[mastermind] ready — routing to support_specialist or billing_specialist"
+
+  on TicketInbound(kind: Text, channel: Text, message: Text)
+    memory.task_counter = memory.task_counter + 1
+    task_id = "T{memory.task_counter}"
+    decision = reason "Classify this ticket. kind is {kind}. Valid targets are support or billing. Reply with the target only."
+    memory.last_decision = decision
+    target = "support"
+    if kind == "billing"
+      target = "billing"
+    node = TaskNode(task_id: task_id, status: "in_flight", specialist: target)
+    memory.task_graph = memory.task_graph + [node]
+    say "[mastermind] {task_id} kind={kind} -> {target} (reason-said {decision})"
+    emit TaskRouted(task_id: task_id, target_agent: target, kind: kind, channel: channel, message: message)
+
+  if stuck for 3 turns
+    escalate to human
+
+# ── Agent: support_specialist ──────────────────────────────────
+# Minimal specialist: no external skills, no nested `reason`.
+# The pattern demo's job is to show the shape, not re-prove skill
+# integration (clone-dev-skeleton already does that realistically).
+
+agent support_specialist
+  memory
+    last_task_id: Text
+    last_message: Text
+    last_channel: Text
+  subscribe TaskRouted where target_agent == "support"
+
+  on start
+    memory.last_task_id = ""
+    memory.last_message = ""
+    memory.last_channel = ""
+    say "[support_specialist] ready"
+
+  on TaskRouted(task_id: Text, target_agent: Text, kind: Text, channel: Text, message: Text)
+    memory.last_task_id = task_id
+    memory.last_message = message
+    memory.last_channel = channel
+    say "[support_specialist] {task_id}: handling support ticket in {channel} — {message}"
+
+  if stuck for 3 turns
+    escalate to human
+
+# ── Agent: billing_specialist ──────────────────────────────────
+
+agent billing_specialist
+  memory
+    last_task_id: Text
+    last_message: Text
+    last_channel: Text
+  subscribe TaskRouted where target_agent == "billing"
+
+  on start
+    memory.last_task_id = ""
+    memory.last_message = ""
+    memory.last_channel = ""
+    say "[billing_specialist] ready"
+
+  on TaskRouted(task_id: Text, target_agent: Text, kind: Text, channel: Text, message: Text)
+    memory.last_task_id = task_id
+    memory.last_message = message
+    memory.last_channel = channel
+    say "[billing_specialist] {task_id}: handling billing ticket in {channel} — {message}"
+
+  if stuck for 3 turns
+    escalate to human
+
+# ── Warden ─────────────────────────────────────────────────────
+# Invariant 4: one warden over mastermind + every specialist.
+# Policies mirror clone-dev-skeleton l.452–464 (T1.1).
+
+warden org_warden
+  manages [mastermind, support_specialist, billing_specialist]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 2: escalate
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, self
+    after 1: escalate
+  max_retries 3 per 1h then escalate
+
+# ── System ─────────────────────────────────────────────────────
+
+system ticket_router
+  use
+    mm: mastermind
+    sup: support_specialist
+    bil: billing_specialist
+
+# ── Endpoints ──────────────────────────────────────────────────
+
+endpoint health() -> Text
+  give "ok"
+
+endpoint ticket(kind: Text, channel: Text, message: Text) -> Text
+  emit TicketInbound(kind: kind, channel: channel, message: message)
+  give "ticket queued (kind={kind})"
