@@ -1,0 +1,12 @@
+[project]
+name = "mastermind-pattern"
+version = "0.1.0"
+description = "Reusable mastermind pattern: classify + route + correlate + supervise (T1.2, #295)"
+
+[build]
+entry = "main.forge"
+
+[skills]
+# Intentionally empty — the pattern demo needs zero external skills.
+# See examples/agents/clone-dev-skeleton/forge.project.toml for the
+# realistic variant wired to the Slack + GitHub skills.

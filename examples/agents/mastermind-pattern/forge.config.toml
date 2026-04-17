@@ -1,0 +1,24 @@
+# Local config for mastermind-pattern — anthropic haiku only.
+# Haiku's quality_tier is overridden to "balanced" so it satisfies
+# the `reason` capability without tripping the warden's budget
+# policy on the first curl (mirrors clone-dev-skeleton/forge.config.toml).
+
+[llm]
+default = "claude-haiku"
+
+[llm.routing]
+fast     = "claude-haiku"
+balanced = "claude-haiku"
+high     = "claude-haiku"
+
+[providers.claude-haiku]
+type    = "anthropic"
+model   = "claude-haiku-4-5-20251001"
+api_key = "${ANTHROPIC_API_KEY}"
+
+[providers.claude-haiku.capabilities]
+quality_tier = "balanced"
+
+[skills]
+timeout_secs = 60
+max_turns    = 6
