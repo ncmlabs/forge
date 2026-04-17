@@ -1117,17 +1117,53 @@ impl SessionManager {
     }
 
     fn inject_cost(&self, result: ConfidentValue, session_id: &str) -> ConfidentValue {
-        let cost_usd = self
-            .session_state(session_id)
-            .map(|state| state.cost_usd)
-            .unwrap_or(0.0);
-
         match result.value {
             Value::Record(mut fields) => {
+                // The adapter's parse_final() writes total_cost_usd into
+                // fields["cost_usd"] via result_mapping. Take that as the
+                // authoritative final total when it exceeds the session
+                // accumulator — adapters like Claude CLI (stream-json) only
+                // report cost at completion, so streaming deltas stay at 0.
+                let adapter_cost = fields
+                    .get("cost_usd")
+                    .and_then(|cv| match &cv.value {
+                        Value::Number(n) => Some(*n),
+                        _ => None,
+                    })
+                    .unwrap_or(0.0);
+
+                let snapshot = {
+                    let mut inner = self.inner.lock().unwrap();
+                    if let Some(entry) = inner.sessions.get_mut(session_id) {
+                        let resolved = adapter_cost.max(entry.state.cost_usd as f64);
+                        if (resolved - entry.state.cost_usd as f64).abs() > f64::EPSILON {
+                            entry.state.cost_usd = resolved as f32;
+                            entry.state.updated_at = Utc::now();
+                        }
+                        Some(entry.state.clone())
+                    } else {
+                        None
+                    }
+                };
+
+                let resolved_cost = snapshot
+                    .as_ref()
+                    .map(|s| s.cost_usd as f64)
+                    .unwrap_or(adapter_cost);
+
+                if let Some(ref snap) = snapshot {
+                    let _ = self.persist_state(snap);
+                    self.dispatch_event(SessionEvent::BudgetUpdated {
+                        session_id: session_id.to_string(),
+                        total_cost_usd: snap.cost_usd,
+                    });
+                    self.trace_budget_updated(session_id, snap.cost_usd);
+                }
+
                 if fields.contains_key("cost_usd") {
                     fields.insert(
                         "cost_usd".to_string(),
-                        ConfidentValue::deterministic(Value::Number(cost_usd as f64)),
+                        ConfidentValue::deterministic(Value::Number(resolved_cost)),
                     );
                     ConfidentValue::from_agent_result(fields)
                 } else {
@@ -1591,6 +1627,122 @@ mod tests {
             events: rx,
             controller,
         }
+    }
+
+    // Builds a Record ConfidentValue shaped like an AgentResult the adapter's
+    // parse_final() would produce — with `cost_usd` already populated from
+    // `total_cost_usd` in the raw CLI output.
+    fn agent_result_with_cost(cost: f64) -> ConfidentValue {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "cost_usd".to_string(),
+            ConfidentValue::from_skill(Value::Number(cost), 0.85),
+        );
+        fields.insert(
+            "plan".to_string(),
+            ConfidentValue::from_skill(Value::Text("done".to_string()), 0.85),
+        );
+        ConfidentValue::from_agent_result(fields)
+    }
+
+    // Regression for #272: the Claude CLI (stream-json) only reports cost at
+    // completion via total_cost_usd — no per-event cost deltas. inject_cost()
+    // must use the adapter-reported total instead of clobbering with the
+    // (unfed) session accumulator.
+    #[tokio::test]
+    async fn completion_cost_usd_from_adapter_overrides_empty_accumulator() {
+        let (_dir, manager) = temp_manager();
+        manager.register_driver(
+            "fake",
+            Arc::new(ScriptedDriver {
+                factory: Arc::new(|| {
+                    runtime_with_events(
+                        Arc::new(TestController::default()),
+                        vec![
+                            // Streaming progress without any cost delta —
+                            // matches Claude's assistant events.
+                            SessionDriverEvent::Progress {
+                                payload: text("thinking"),
+                                cost_delta_usd: 0.0,
+                            },
+                            SessionDriverEvent::Completing,
+                            SessionDriverEvent::Completed {
+                                result: agent_result_with_cost(0.12),
+                            },
+                        ],
+                    )
+                }),
+                resume_factory: None,
+            }),
+        );
+
+        let state = manager
+            .run_to_completion(SessionConfig::new("review", "fake"), Vec::new())
+            .await
+            .unwrap();
+
+        assert_eq!(state.status, SessionStatus::Done);
+        // Session state must reflect the adapter's authoritative total.
+        assert!(
+            (state.cost_usd - 0.12).abs() < 1e-4,
+            "state.cost_usd = {}",
+            state.cost_usd
+        );
+
+        // The returned AgentResult must carry the same value.
+        let output = manager.output(&state.id).unwrap();
+        let Value::Record(fields) = &output.value else {
+            panic!("expected Record output, got {:?}", output.value);
+        };
+        let Value::Number(cost) = &fields["cost_usd"].value else {
+            panic!(
+                "expected Number cost_usd, got {:?}",
+                fields["cost_usd"].value
+            );
+        };
+        // f32 round-trip tolerance — cost_usd is stored as f32 in SessionState.
+        assert!((cost - 0.12).abs() < 1e-4, "output cost_usd = {cost}");
+    }
+
+    // Inverse direction: when streaming deltas already exceed the adapter's
+    // final number (e.g. an adapter that over-reports mid-flight), we keep the
+    // accumulator. inject_cost takes the max of the two.
+    #[tokio::test]
+    async fn completion_cost_usd_preserves_larger_accumulator() {
+        let (_dir, manager) = temp_manager();
+        manager.register_driver(
+            "fake",
+            Arc::new(ScriptedDriver {
+                factory: Arc::new(|| {
+                    runtime_with_events(
+                        Arc::new(TestController::default()),
+                        vec![
+                            SessionDriverEvent::Progress {
+                                payload: text("step"),
+                                cost_delta_usd: 0.30,
+                            },
+                            SessionDriverEvent::Completing,
+                            SessionDriverEvent::Completed {
+                                result: agent_result_with_cost(0.10),
+                            },
+                        ],
+                    )
+                }),
+                resume_factory: None,
+            }),
+        );
+
+        let state = manager
+            .run_to_completion(SessionConfig::new("review", "fake"), Vec::new())
+            .await
+            .unwrap();
+
+        assert_eq!(state.status, SessionStatus::Done);
+        assert!(
+            (state.cost_usd - 0.30).abs() < 1e-4,
+            "state.cost_usd = {}",
+            state.cost_usd
+        );
     }
 
     #[tokio::test]
