@@ -27,8 +27,12 @@ var ForgeTaskDag = (function () {
   var graph = [];
 
   var POLL_INTERVAL_MS = 3000;
-  var REFRESH_EVENTS = [
-    'TaskRouted', 'TaskBlocked', 'TaskCompleted', 'UnblockTask', 'CycleDetected'
+  // We listen for `HandlerCompleted` frames from the mastermind rather than
+  // raw `event_emit` cues. HandlerCompleted fires AFTER the handler returns
+  // and the agent's memory is persisted — polling on event_emit races the
+  // handler and reads stale state. (Race observed in real-time smoke.)
+  var REFRESH_HANDLERS = [
+    'ClonedevTaskInbound', 'SeedTask', 'TaskBlocked', 'TaskCompleted'
   ];
 
   var STATUS_COLOR = {
@@ -63,12 +67,7 @@ var ForgeTaskDag = (function () {
       })
       .then(function (info) {
         inFlight = false;
-        if (!info || !info.memory) {
-          graph = [];
-        } else {
-          var tg = info.memory.task_graph;
-          graph = Array.isArray(tg) ? tg : [];
-        }
+        graph = extractGraph(info);
         render();
         setStatus(graph.length === 0 ? 'Connected · no tasks yet' : 'Connected · ' + graph.length + ' tasks');
       })
@@ -87,10 +86,10 @@ var ForgeTaskDag = (function () {
   // ── Event plumbing ────────────────────────────────────────────
 
   function onSse(evt) {
-    // event_emit frames carry the FORGE event name in `evt.event`
-    // (tracer.rs overwrites the outer "event_emit" with the FORGE name).
-    if (!evt || typeof evt.event !== 'string') return;
-    if (REFRESH_EVENTS.indexOf(evt.event) === -1) return;
+    // HandlerCompleted frames: { event: "HandlerCompleted", agent, handler, ... }
+    if (!evt || evt.event !== 'HandlerCompleted') return;
+    if (evt.agent !== 'mastermind') return;
+    if (REFRESH_HANDLERS.indexOf(evt.handler) === -1) return;
     refresh();
   }
 
@@ -110,11 +109,44 @@ var ForgeTaskDag = (function () {
     renderSvg();
   }
 
+  // ConfidentValue-aware unwrap. The inspect endpoint wraps every memory
+  // value in `{ confidence, source, value: { TypeTag: rawValue } }`, and
+  // custom-type records add an extra `_type`/`_value` layer (see memory.to_json
+  // in src/runtime/memory.rs). Arrays come through as `{ value: { Array: [...] }}`,
+  // primitives as `{ value: { Text: "s" | Number: 1.0 | Bool: true } }`.
+  function unwrap(v) {
+    if (v === null || v === undefined) return v;
+    if (typeof v !== 'object') return v;
+    if ('_value' in v) return unwrap(v._value);
+    if ('value' in v && ('confidence' in v || 'source' in v)) {
+      return unwrap(v.value);
+    }
+    if ('Text' in v) return v.Text;
+    if ('Number' in v) return v.Number;
+    if ('Bool' in v) return v.Bool;
+    if ('Array' in v) return v.Array.map(unwrap);
+    if ('Record' in v) {
+      // Custom types serialize as `Record { _type, _value }` where _value
+      // is itself a ConfidentValue wrapping the real record.
+      if (v.Record._value !== undefined) return unwrap(v.Record._value);
+      var out = {};
+      Object.keys(v.Record).forEach(function (k) {
+        out[k] = unwrap(v.Record[k]);
+      });
+      return out;
+    }
+    return v;
+  }
+
+  function extractGraph(info) {
+    if (!info || !info.memory || !info.memory.task_graph) return [];
+    var tg = unwrap(info.memory.task_graph);
+    if (!Array.isArray(tg)) return [];
+    return tg.filter(function (n) { return n && typeof n === 'object'; });
+  }
+
   function normalizeNode(raw) {
-    // memory.to_json() serializes TaskNode records as objects — field names
-    // match the .forge declaration. Text[] arrays become JS arrays; Text
-    // primitives become strings. Defensive coercion guards against future
-    // shape drift.
+    // After `unwrap`, raw is a plain JS object with string/array fields.
     return {
       task_id: String(raw.task_id || ''),
       status: String(raw.status || 'in_flight'),
