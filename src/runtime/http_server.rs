@@ -26,8 +26,10 @@ use crate::runtime::cost_aggregator::SharedCostAggregator;
 use crate::runtime::event_bus::SharedEventBus;
 use crate::runtime::executor::{EndpointResult, TaskExecutor};
 use crate::runtime::instance_registry::SharedInstanceRegistry;
+use crate::runtime::knowledge_store::SharedKnowledgeStore;
 use crate::runtime::storage::SharedStorage;
 use crate::runtime::system::{SharedSignalSenders, TopologySnapshot};
+use crate::runtime::task_history_aggregator::SharedTaskHistoryAggregator;
 use crate::runtime::warded::SharedWardenSnapshots;
 
 // ── Swappable executor for hot-reload ───────────────────────────────────────
@@ -58,6 +60,10 @@ pub struct AppState {
     pub topology: Option<TopologySnapshot>,
     /// Shared cost aggregator for token economy visibility (issue #142).
     pub cost_aggregator: Option<SharedCostAggregator>,
+    /// Shared task history aggregator for the mastery tile (issue #304).
+    pub task_history_aggregator: Option<SharedTaskHistoryAggregator>,
+    /// Shared knowledge store handle for mastery-level readback (issue #304).
+    pub mastery_knowledge_store: Option<SharedKnowledgeStore>,
     /// Signal senders for failure injection (issue #143).
     pub signal_senders: Option<SharedSignalSenders>,
 }
@@ -110,6 +116,8 @@ impl ForgeServer {
                 warden_snapshots: None,
                 topology: None,
                 cost_aggregator: None,
+                task_history_aggregator: None,
+                mastery_knowledge_store: None,
                 signal_senders: None,
             },
             host,
@@ -206,6 +214,19 @@ impl ForgeServer {
         self
     }
 
+    /// Attach the task-history aggregator for the mastery tile (issue #304).
+    pub fn with_task_history_aggregator(mut self, agg: SharedTaskHistoryAggregator) -> Self {
+        self.state.task_history_aggregator = Some(agg);
+        self
+    }
+
+    /// Attach a knowledge store handle so the mastery endpoint can read
+    /// `mastery-{specialist}-{project}` entries (issue #304).
+    pub fn with_mastery_knowledge_store(mut self, ks: SharedKnowledgeStore) -> Self {
+        self.state.mastery_knowledge_store = Some(ks);
+        self
+    }
+
     /// Attach signal senders for failure injection (issue #143).
     pub fn with_signal_senders(mut self, senders: SharedSignalSenders) -> Self {
         self.state.signal_senders = Some(senders);
@@ -255,7 +276,8 @@ impl ForgeServer {
             .route("/__forge/inspect/topology", get(handle_inspect_topology))
             .route("/__forge/inspect/wardens", get(handle_inspect_wardens))
             .route("/__forge/inspect/storage", get(handle_inspect_storage))
-            .route("/__forge/inspect/costs", get(handle_inspect_costs));
+            .route("/__forge/inspect/costs", get(handle_inspect_costs))
+            .route("/__forge/inspect/mastery", get(handle_inspect_mastery));
 
         // Failure injection endpoint (issue #143)
         router = router.route(
@@ -662,6 +684,224 @@ async fn handle_inspect_storage(
             serde_json::json!({"error": format!("{}", e)}),
         ),
     }
+}
+
+/// GET /__forge/inspect/mastery — per-(specialist, project) mastery progression
+/// plus per-task `review_rounds` trend (issue #304). The response combines:
+/// - knowledge-store entries under `mastery-{specialist}-{project}` (level
+///   transitions, sparse — one entry per FSM level change)
+/// - `TaskHistoryAggregator` snapshot (per-task `review_rounds` trend, dense)
+async fn handle_inspect_mastery(State(state): State<AppState>) -> Response {
+    let tasks_snapshot = match state.task_history_aggregator.as_ref() {
+        Some(agg) => agg.read().await.snapshot(),
+        None => serde_json::json!({
+            "total_tasks": 0,
+            "projects": [],
+            "tasks_by_project": {},
+            "uptime_secs": 0.0,
+        }),
+    };
+
+    let (mastery_map, projects_from_knowledge) =
+        collect_mastery_snapshots(state.mastery_knowledge_store.as_ref());
+
+    // Merge projects discovered from both sources.
+    let mut projects: std::collections::BTreeSet<String> = tasks_snapshot["projects"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    projects.extend(projects_from_knowledge);
+    let projects: Vec<String> = projects.into_iter().collect();
+
+    json_response(
+        StatusCode::OK,
+        serde_json::json!({
+            "specialists": ["planner", "implementer", "tester", "reviewer", "release_manager"],
+            "projects": projects,
+            "mastery": mastery_map,
+            "tasks": tasks_snapshot,
+        }),
+    )
+}
+
+/// Read `mastery-{specialist}-{project}` knowledge entries and assemble per-tuple
+/// transition timelines. Returns the JSON map keyed `"{specialist}::{project}"`
+/// plus the set of projects discovered along the way.
+fn collect_mastery_snapshots(
+    store: Option<&SharedKnowledgeStore>,
+) -> (serde_json::Value, Vec<String>) {
+    let mut out = serde_json::Map::new();
+    let mut projects = Vec::new();
+    let Some(store) = store else {
+        return (serde_json::Value::Object(out), projects);
+    };
+    let Ok(guard) = store.lock() else {
+        return (serde_json::Value::Object(out), projects);
+    };
+    let all = guard.export_entries();
+    drop(guard);
+
+    // Group entries by (specialist, project).
+    let mut by_key: HashMap<(String, String), Vec<SwarmMasteryEntry>> = HashMap::new();
+    for entry in all {
+        let Some(category) = entry.category.as_deref() else {
+            continue;
+        };
+        let Some(rest) = category.strip_prefix("mastery-") else {
+            continue;
+        };
+        // Parse the compact snapshot lines that `swarm_mastery_tuple` writes.
+        let Some(parsed) = parse_swarm_mastery_snapshot(&entry.content) else {
+            continue;
+        };
+        // Prefer the parsed (specialist, project) — they're authoritative —
+        // but fall back to the category if parsing a field is missing.
+        let (specialist, project) = if let Some((s, p)) = split_specialist_project(rest) {
+            (
+                parsed.specialist.clone().unwrap_or_else(|| s.to_string()),
+                parsed.project.clone().unwrap_or_else(|| p.to_string()),
+            )
+        } else {
+            (
+                parsed.specialist.clone().unwrap_or_default(),
+                parsed.project.clone().unwrap_or_default(),
+            )
+        };
+        if specialist.is_empty() || project.is_empty() {
+            continue;
+        }
+        by_key
+            .entry((specialist, project))
+            .or_default()
+            .push(SwarmMasteryEntry {
+                at: entry.created_at,
+                level: parsed.level,
+                score: parsed.score,
+                clean_count: parsed.clean_count,
+                regress_count: parsed.regress_count,
+                total: parsed.total,
+                last_task: parsed.last_task,
+            });
+    }
+
+    for ((specialist, project), mut entries) in by_key {
+        entries.sort_by_key(|e| e.at);
+        let latest = entries.last().cloned();
+        let transitions: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "at": e.at.to_rfc3339(),
+                    "level": e.level,
+                    "score": e.score,
+                    "clean_count": e.clean_count,
+                    "regress_count": e.regress_count,
+                    "total": e.total,
+                    "last_task": e.last_task,
+                })
+            })
+            .collect();
+        let key = format!("{}::{}", specialist, project);
+        out.insert(
+            key,
+            serde_json::json!({
+                "specialist": specialist,
+                "project": project,
+                "current_level": latest.as_ref().map(|e| e.level.clone()).unwrap_or_else(|| "novice".to_string()),
+                "current_score": latest.as_ref().map(|e| e.score).unwrap_or(0.0),
+                "clean_count": latest.as_ref().map(|e| e.clean_count).unwrap_or(0),
+                "regress_count": latest.as_ref().map(|e| e.regress_count).unwrap_or(0),
+                "total": latest.as_ref().map(|e| e.total).unwrap_or(0),
+                "transitions": transitions,
+            }),
+        );
+        projects.push(project);
+    }
+
+    projects.sort();
+    projects.dedup();
+    (serde_json::Value::Object(out), projects)
+}
+
+#[derive(Clone)]
+struct SwarmMasteryEntry {
+    at: chrono::DateTime<chrono::Utc>,
+    level: String,
+    score: f64,
+    clean_count: u64,
+    regress_count: u64,
+    total: u64,
+    last_task: String,
+}
+
+#[derive(Default)]
+struct ParsedSwarmMastery {
+    specialist: Option<String>,
+    project: Option<String>,
+    level: String,
+    score: f64,
+    clean_count: u64,
+    regress_count: u64,
+    total: u64,
+    last_task: String,
+}
+
+/// Parse the free-text snapshot written by `swarm_mastery_tuple.learn(...)`:
+///
+/// ```text
+/// SWARM-MASTERY specialist:{s} project:{p} level:{l} score:{n}
+/// clean:{c} regress:{r} total:{t}
+/// last_task:{task_id}
+/// ```
+///
+/// Returns `None` if the expected `SWARM-MASTERY` marker is absent — this
+/// keeps us robust to unrelated entries that share the `mastery-*` category
+/// namespace.
+fn parse_swarm_mastery_snapshot(content: &str) -> Option<ParsedSwarmMastery> {
+    if !content.contains("SWARM-MASTERY") {
+        return None;
+    }
+    let mut parsed = ParsedSwarmMastery::default();
+    for token in content.split_whitespace() {
+        let Some((key, value)) = token.split_once(':') else {
+            continue;
+        };
+        match key {
+            "specialist" => parsed.specialist = Some(value.to_string()),
+            "project" => parsed.project = Some(value.to_string()),
+            "level" => parsed.level = value.to_string(),
+            "score" => parsed.score = value.parse::<f64>().unwrap_or(0.0),
+            "clean" => parsed.clean_count = value.parse::<u64>().unwrap_or(0),
+            "regress" => parsed.regress_count = value.parse::<u64>().unwrap_or(0),
+            "total" => parsed.total = value.parse::<u64>().unwrap_or(0),
+            "last_task" => parsed.last_task = value.to_string(),
+            _ => {}
+        }
+    }
+    Some(parsed)
+}
+
+/// Split a category suffix like `planner-ncmlabs-forge-playground` into
+/// (specialist, project). Specialists are a closed set, so we match the
+/// prefix and treat the remainder as the project slug.
+fn split_specialist_project(suffix: &str) -> Option<(&str, &str)> {
+    const SPECIALISTS: &[&str] = &[
+        "planner",
+        "implementer",
+        "tester",
+        "reviewer",
+        "release_manager",
+    ];
+    for s in SPECIALISTS {
+        if let Some(rest) = suffix.strip_prefix(&format!("{}-", s)) {
+            return Some((s, rest));
+        }
+    }
+    None
 }
 
 /// GET /__forge/inspect/costs — aggregated token/cost/confidence metrics (issue #142).

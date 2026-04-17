@@ -12,6 +12,7 @@ export class ObserverPage {
   readonly tabTree: Locator;
   readonly tabTopology: Locator;
   readonly tabCosts: Locator;
+  readonly tabMastery: Locator;
   readonly tabTimeline: Locator;
   // Tree view
   readonly treeRoot: Locator;
@@ -26,6 +27,15 @@ export class ObserverPage {
   readonly costTotals: Locator;
   readonly costUsd: Locator;
   readonly costCalls: Locator;
+  // Mastery view (#304 T5.3)
+  readonly masteryTotalTasks: Locator;
+  readonly masteryProjectCount: Locator;
+  readonly masteryAvgAsks: Locator;
+  readonly masteryTopSpecialist: Locator;
+  readonly masteryProjectFilter: Locator;
+  readonly masteryScoreChart: Locator;
+  readonly masteryAsksChart: Locator;
+  readonly masteryTbody: Locator;
   // Timeline view
   readonly timelineContainer: Locator;
   readonly timelineFilters: Locator;
@@ -42,6 +52,7 @@ export class ObserverPage {
     this.tabTree = page.locator('#tab-tree');
     this.tabTopology = page.locator('#tab-topology');
     this.tabCosts = page.locator('#tab-costs');
+    this.tabMastery = page.locator('#tab-mastery');
     this.tabTimeline = page.locator('#tab-timeline');
     // Tree view
     this.treeRoot = page.locator('#tree-root');
@@ -56,6 +67,15 @@ export class ObserverPage {
     this.costTotals = page.locator('#cost-totals');
     this.costUsd = page.locator('#cost-usd');
     this.costCalls = page.locator('#cost-calls');
+    // Mastery view (#304 T5.3)
+    this.masteryTotalTasks = page.locator('#mastery-total-tasks');
+    this.masteryProjectCount = page.locator('#mastery-project-count');
+    this.masteryAvgAsks = page.locator('#mastery-avg-asks');
+    this.masteryTopSpecialist = page.locator('#mastery-top-specialist');
+    this.masteryProjectFilter = page.locator('#mastery-project-filter');
+    this.masteryScoreChart = page.locator('#mastery-score-chart');
+    this.masteryAsksChart = page.locator('#mastery-asks-chart');
+    this.masteryTbody = page.locator('#mastery-tbody');
     // Timeline view
     this.timelineContainer = page.locator('#timeline-container');
     this.timelineFilters = page.locator('#timeline-filters');
@@ -84,11 +104,12 @@ export class ObserverPage {
     await expect(this.connectionStatus).toContainText('Disconnected');
   }
 
-  async switchTab(name: 'tree' | 'topology' | 'costs' | 'timeline') {
+  async switchTab(name: 'tree' | 'topology' | 'costs' | 'mastery' | 'timeline') {
     const tabMap: Record<string, Locator> = {
       tree: this.tabTree,
       topology: this.tabTopology,
       costs: this.tabCosts,
+      mastery: this.tabMastery,
       timeline: this.tabTimeline,
     };
     await tabMap[name].click();

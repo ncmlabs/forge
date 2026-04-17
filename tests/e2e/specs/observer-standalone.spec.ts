@@ -35,6 +35,38 @@ const MOCK_COSTS = {
   tokens_per_sec: 13.3,
 };
 
+const MOCK_MASTERY = {
+  specialists: ['planner', 'implementer', 'tester', 'reviewer', 'release_manager'],
+  projects: ['forge-playground'],
+  mastery: {
+    'planner::forge-playground': {
+      specialist: 'planner',
+      project: 'forge-playground',
+      current_level: 'apprentice',
+      current_score: 55,
+      clean_count: 2,
+      regress_count: 0,
+      total: 2,
+      transitions: [
+        { at: '2026-04-15T10:00:00Z', level: 'novice', score: 50, clean_count: 1, regress_count: 0, total: 1, last_task: 'T1' },
+        { at: '2026-04-16T10:00:00Z', level: 'apprentice', score: 55, clean_count: 2, regress_count: 0, total: 2, last_task: 'T2' },
+      ],
+    },
+  },
+  tasks: {
+    total_tasks: 3,
+    projects: ['forge-playground'],
+    uptime_secs: 42,
+    tasks_by_project: {
+      'forge-playground': [
+        { task_id: 'T1', repo: 'forge-playground', outcome: 'merged', review_rounds: 3, ci_passed_first_try: false, time_to_merge: 3600, reverted_within_7d: false, completed_at: '2026-04-15T10:00:00Z' },
+        { task_id: 'T2', repo: 'forge-playground', outcome: 'merged', review_rounds: 2, ci_passed_first_try: true,  time_to_merge: 1800, reverted_within_7d: false, completed_at: '2026-04-16T10:00:00Z' },
+        { task_id: 'T3', repo: 'forge-playground', outcome: 'merged', review_rounds: 1, ci_passed_first_try: true,  time_to_merge: 900,  reverted_within_7d: false, completed_at: '2026-04-17T10:00:00Z' },
+      ],
+    },
+  },
+};
+
 async function setupMocks(page: Page) {
   // Mock all /__forge/* endpoints regardless of the server URL prefix
   await page.route('**/__forge/inspect/topology', route =>
@@ -51,6 +83,9 @@ async function setupMocks(page: Page) {
   );
   await page.route('**/__forge/inspect/costs', route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_COSTS) })
+  );
+  await page.route('**/__forge/inspect/mastery', route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_MASTERY) })
   );
   // SSE events endpoint — fulfill with empty stream that stays open
   await page.route('**/__forge/events', route =>
@@ -132,6 +167,35 @@ test.describe('Standalone Observer (issue #144)', () => {
 
     // Wait for cost data to load
     await expect(obs.costUsd).not.toHaveText('$0.0000', { timeout: 5000 });
+  });
+
+  test('mastery view shows proof-point panels', async ({ page }) => {
+    await setupMocks(page);
+    const obs = new ObserverPage(page);
+    await obs.gotoWithServer('http://localhost:3001');
+    await obs.expectConnected();
+    await obs.switchTab('mastery');
+
+    // Summary banner populated from snapshot
+    await expect(obs.masteryTotalTasks).toHaveText('3', { timeout: 5000 });
+    await expect(obs.masteryProjectCount).toHaveText('1');
+    // Avg review_rounds = (3 + 2 + 1) / 3 = 2.00
+    await expect(obs.masteryAvgAsks).toHaveText('2.00');
+    await expect(obs.masteryTopSpecialist).toContainText('planner');
+
+    // Project filter populated with the mocked project
+    await expect(obs.masteryProjectFilter.locator('option[value="forge-playground"]')).toHaveCount(1);
+
+    // Summary table row for planner::forge-playground
+    const plannerRow = obs.masteryTbody.locator('tr', { hasText: 'planner' }).first();
+    await expect(plannerRow).toContainText('apprentice');
+    await expect(plannerRow).toContainText('forge-playground');
+
+    // Both charts rendered
+    await expect(obs.masteryScoreChart.locator('svg')).toBeVisible();
+    await expect(obs.masteryAsksChart.locator('svg')).toBeVisible();
+    // Three approval-ask bars (one per task)
+    await expect(obs.masteryAsksChart.locator('rect.ask-bar')).toHaveCount(3);
   });
 
   test('topology view renders SVG', async ({ page }) => {
