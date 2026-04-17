@@ -1468,3 +1468,197 @@ async fn dev_cycle_main_forge_has_iteration_loop_enhancements() {
         );
     }
 }
+
+/// T5.1 (#302): dev-cycle declares TaskCompleted and LessonExtracted events
+/// with the signal schema from the issue's definition of done.
+#[tokio::test]
+async fn dev_cycle_has_task_completed_and_lesson_extracted_events() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle workflow");
+    let program = forge::parser::parse(&source).expect("dev-cycle must parse");
+
+    let task_completed = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::Event(e) if e.name.node == "TaskCompleted" => Some(e.clone()),
+        _ => None,
+    });
+    assert!(
+        task_completed.is_some(),
+        "TaskCompleted event must exist (T5.1)"
+    );
+    let tc_fields: Vec<&str> = task_completed
+        .as_ref()
+        .unwrap()
+        .fields
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    for field in &[
+        "task_id",
+        "outcome",
+        "ci_passed_first_try",
+        "review_rounds",
+        "time_to_merge",
+        "reverted_within_7d",
+    ] {
+        assert!(
+            tc_fields.contains(field),
+            "TaskCompleted must have {field} field, got: {:?}",
+            tc_fields
+        );
+    }
+
+    let lesson = program.items.iter().find_map(|item| match &item.node {
+        TopLevel::Event(e) if e.name.node == "LessonExtracted" => Some(e.clone()),
+        _ => None,
+    });
+    assert!(lesson.is_some(), "LessonExtracted event must exist (T5.1)");
+    let le_fields: Vec<&str> = lesson
+        .as_ref()
+        .unwrap()
+        .fields
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    for field in &["task_id", "agent_id", "category", "content", "confidence"] {
+        assert!(
+            le_fields.contains(field),
+            "LessonExtracted must have {field} field, got: {:?}",
+            le_fields
+        );
+    }
+}
+
+/// T5.1 (#302): each of the five specialists has an `on TaskCompleted` handler
+/// — the subscription point where LessonExtracted is emitted and lessons are
+/// written to the knowledge store.
+#[tokio::test]
+async fn dev_cycle_five_specialists_handle_task_completed() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle workflow");
+    let program = forge::parser::parse(&source).expect("dev-cycle must parse");
+
+    for agent_name in &[
+        "planner",
+        "implementer",
+        "tester",
+        "reviewer",
+        "release_manager",
+    ] {
+        let agent = program
+            .items
+            .iter()
+            .find_map(|item| match &item.node {
+                TopLevel::Agent(a) if a.name.node == *agent_name => Some(a.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{agent_name} agent must exist"));
+
+        let has_handler = agent
+            .handlers
+            .iter()
+            .any(|h| h.node.event.node == "TaskCompleted");
+        assert!(
+            has_handler,
+            "{agent_name} must have `on TaskCompleted` handler (T5.1)"
+        );
+
+        // Each specialist must declare a knowledge store so the runtime
+        // wires the shared instance and `learn` is usable in the handler.
+        assert!(
+            agent.knowledge.is_some(),
+            "{agent_name} must declare a knowledge store for lesson persistence"
+        );
+    }
+}
+
+/// T5.1 (#302): signals flow through events so release_manager's TaskCompleted
+/// payload is populated from real pipeline state, not hardcoded values.
+#[tokio::test]
+async fn dev_cycle_threads_signals_through_acceptance_and_prmerged() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle workflow");
+    let program = forge::parser::parse(&source).expect("dev-cycle must parse");
+
+    let acceptance_met = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Event(e) if e.name.node == "AcceptanceMet" => Some(e.clone()),
+            _ => None,
+        })
+        .expect("AcceptanceMet event must exist");
+    let am_fields: Vec<&str> = acceptance_met
+        .fields
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    assert!(
+        am_fields.contains(&"ci_passed_first_try"),
+        "AcceptanceMet must carry ci_passed_first_try for T5.1, got: {:?}",
+        am_fields
+    );
+
+    let pr_merged = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Event(e) if e.name.node == "PRMerged" => Some(e.clone()),
+            _ => None,
+        })
+        .expect("PRMerged event must exist");
+    let pm_fields: Vec<&str> = pr_merged
+        .fields
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    for field in &["ci_passed_first_try", "review_rounds"] {
+        assert!(
+            pm_fields.contains(field),
+            "PRMerged must carry {field} for T5.1, got: {:?}",
+            pm_fields
+        );
+    }
+}
+
+/// T5.1 (#302): tester tracks `test_runs` and reviewer tracks `review_rounds`
+/// in memory so `ci_passed_first_try` and review_rounds signals are real.
+#[tokio::test]
+async fn dev_cycle_tester_and_reviewer_track_signal_counters() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle workflow");
+    let program = forge::parser::parse(&source).expect("dev-cycle must parse");
+
+    let tester = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) if a.name.node == "tester" => Some(a.clone()),
+            _ => None,
+        })
+        .expect("tester agent must exist");
+    let tester_memory: Vec<&str> = tester.memory.iter().map(|f| f.node.name.as_str()).collect();
+    assert!(
+        tester_memory.contains(&"test_runs"),
+        "tester must track test_runs for ci_passed_first_try signal, got: {:?}",
+        tester_memory
+    );
+
+    let reviewer = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) if a.name.node == "reviewer" => Some(a.clone()),
+            _ => None,
+        })
+        .expect("reviewer agent must exist");
+    let reviewer_memory: Vec<&str> = reviewer
+        .memory
+        .iter()
+        .map(|f| f.node.name.as_str())
+        .collect();
+    assert!(
+        reviewer_memory.contains(&"review_rounds"),
+        "reviewer must track review_rounds for review_rounds signal, got: {:?}",
+        reviewer_memory
+    );
+}

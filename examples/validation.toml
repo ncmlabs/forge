@@ -62,6 +62,12 @@ check = "ok"
 manifest = "examples/agents/pr-history-miner/forge.project.toml"
 
 [[cases]]
+name = "dev-cycle lesson smoke test (T5.1)"
+paths = ["examples/agents/dev-cycle-lesson-smoke/main.forge"]
+check = "ok"
+manifest = "examples/agents/dev-cycle-lesson-smoke/forge.project.toml"
+
+[[cases]]
 name = "mock-runnable quiz tutor agent"
 paths = ["examples/agents/quiz_tutor.forge"]
 check = "ok"
