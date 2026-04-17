@@ -472,13 +472,11 @@ impl TaskExecutor {
             let payload = crate::runtime::event_bus::EventPayload {
                 event_name: event_name.to_string(),
                 args: arg_vals,
-                source_agent: source.clone(),
+                source_agent: source,
                 fields,
             };
-            let delivered = bus.read().await.publish(&payload);
-            if let Some(ref t) = self.tracer {
-                t.event_emit(&source, event_name, delivered);
-            }
+            // EventBus::publish traces event_emit internally (#325); don't double-trace here.
+            bus.read().await.publish(&payload);
         } else {
             return Err(RuntimeError::Unsupported("emit outside agent".into()));
         }
