@@ -858,10 +858,15 @@ agent release_manager
 agent swarm_mastery_coordinator
   memory
     last_task_id: Text
+    spawned_for_project: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
   subscribe TaskCompleted
 
   on start
     memory.last_task_id = ""
+    memory.spawned_for_project = ""
     say "[swarm_mastery_coordinator] ready"
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
@@ -872,37 +877,30 @@ agent swarm_mastery_coordinator
     is_reverted = reverted_within_7d
     is_light_review = review_rounds <= 1
     is_heavy_review = review_rounds >= 3
-    planner_existing = find "mastery_planner_{slug}"
-    if not planner_existing
+    reviewer_clean = reviewer_clean_signal(is_merged, is_light_review)
+    reviewer_regress = reviewer_regress_signal(is_heavy_review, is_reverted)
+    if memory.spawned_for_project != slug
+      say "[swarm_mastery_coordinator] First task for project {slug} — spawning 5 tuples"
       spawn swarm_mastery_tuple as "mastery_planner_{slug}"
         with memory specialist: "planner"
         with memory project: slug
-    emit MasterySignal(specialist: "planner", project: slug, task_id: task_id, clean: is_merged, regress: is_reverted)
-    impl_existing = find "mastery_implementer_{slug}"
-    if not impl_existing
       spawn swarm_mastery_tuple as "mastery_implementer_{slug}"
         with memory specialist: "implementer"
         with memory project: slug
-    emit MasterySignal(specialist: "implementer", project: slug, task_id: task_id, clean: ci_passed_first_try, regress: is_reverted)
-    tester_existing = find "mastery_tester_{slug}"
-    if not tester_existing
       spawn swarm_mastery_tuple as "mastery_tester_{slug}"
         with memory specialist: "tester"
         with memory project: slug
-    emit MasterySignal(specialist: "tester", project: slug, task_id: task_id, clean: ci_passed_first_try, regress: is_reverted)
-    reviewer_clean = reviewer_clean_signal(is_merged, is_light_review)
-    reviewer_regress = reviewer_regress_signal(is_heavy_review, is_reverted)
-    reviewer_existing = find "mastery_reviewer_{slug}"
-    if not reviewer_existing
       spawn swarm_mastery_tuple as "mastery_reviewer_{slug}"
         with memory specialist: "reviewer"
         with memory project: slug
-    emit MasterySignal(specialist: "reviewer", project: slug, task_id: task_id, clean: reviewer_clean, regress: reviewer_regress)
-    release_existing = find "mastery_release_manager_{slug}"
-    if not release_existing
       spawn swarm_mastery_tuple as "mastery_release_manager_{slug}"
         with memory specialist: "release_manager"
         with memory project: slug
+      memory.spawned_for_project = slug
+    emit MasterySignal(specialist: "planner", project: slug, task_id: task_id, clean: is_merged, regress: is_reverted)
+    emit MasterySignal(specialist: "implementer", project: slug, task_id: task_id, clean: ci_passed_first_try, regress: is_reverted)
+    emit MasterySignal(specialist: "tester", project: slug, task_id: task_id, clean: ci_passed_first_try, regress: is_reverted)
+    emit MasterySignal(specialist: "reviewer", project: slug, task_id: task_id, clean: reviewer_clean, regress: reviewer_regress)
     emit MasterySignal(specialist: "release_manager", project: slug, task_id: task_id, clean: is_merged, regress: is_reverted)
 
   if stuck for 3 turns
