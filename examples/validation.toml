@@ -102,6 +102,12 @@ check = "ok"
 run = "mock"
 
 [[cases]]
+name = "schedule block demo (#331)"
+paths = ["examples/basics/schedule.forge"]
+check = "ok"
+run = "mock"
+
+[[cases]]
 name = "command examples"
 paths = [
   "examples/command/command_argv.forge",
