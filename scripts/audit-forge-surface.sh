@@ -121,6 +121,17 @@ trap 'rm -f "$REPORT_FILE" "$PR_BODY_FILE"' EXIT
   echo "Closes part of #229 (ongoing — this PR does not close the issue)."
 } > "$PR_BODY_FILE"
 
+# Ensure labels exist — gh pr create --label errors if a label is missing.
+# Idempotent: --force would bump existing labels, so only create when absent.
+for label in surface-audit docs; do
+  if ! gh label list --limit 200 --json name --jq '.[].name' | grep -Fxq "$label"; then
+    case "$label" in
+      surface-audit) gh label create surface-audit --color ededed --description "Automated derived-surface drift audit (issue #229)" ;;
+      docs)          gh label create docs --color 0075ca --description "Documentation" ;;
+    esac
+  fi
+done
+
 gh pr create \
   --base development \
   --head "$BRANCH" \
