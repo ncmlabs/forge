@@ -1,0 +1,29 @@
+# Minimal demonstration of the `schedule` block added in #331.
+# Declares a durable wall-clock trigger alongside ordinary handlers,
+# then runs an LLM call from `fn main` to prove the new grammar
+# coexists with the rest of the runtime without crashing.
+#
+# Runtime dispatch (WakeService) lands in #332 — today the schedule
+# block is parsed, checked, and declared but not yet fired.
+#
+# Run:
+#   forge check examples/basics/schedule.forge   # exit 0
+#   forge run   examples/basics/schedule.forge   # prints an LLM greeting
+
+agent schedule_demo
+  memory
+    greeting: Text
+  schedule heartbeat
+    when: every 6h
+    mode: wake
+    emit: Heartbeat
+
+  on start
+    say "schedule_demo agent is up"
+  on Heartbeat
+    say "heartbeat fired"
+
+fn main
+  say "### schedule-block demo (#331) ###"
+  say reason "Say a short friendly hello in under 8 words."
+  say "schedule declared; runtime did not panic"

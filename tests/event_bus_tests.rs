@@ -65,6 +65,7 @@ fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>
         memory_persistent: false,
         knowledge: None,
         timers: vec![],
+        schedules: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
             event_name: spanned(event_name.into()),
             filter,
@@ -96,6 +97,7 @@ fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDec
         memory_persistent: false,
         knowledge: None,
         timers: vec![],
+        schedules: vec![],
         subscriptions: vec![],
         handlers: vec![spanned(OnHandler {
             event: spanned(trigger_event.into()),
@@ -478,6 +480,7 @@ async fn multi_agent_event_flow() {
         memory_persistent: false,
         knowledge: None,
         timers: vec![],
+        schedules: vec![],
         subscriptions: vec![],
         handlers: vec![spanned(OnHandler {
             event: spanned("join".into()),
@@ -635,6 +638,7 @@ async fn agent_handler_emit_produces_event_emit_trace() {
         memory_persistent: false,
         knowledge: None,
         timers: vec![],
+        schedules: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
             event_name: spanned("Ping".into()),
             filter: None,
@@ -721,6 +725,7 @@ async fn agent_handler_emit_is_invisible_when_bus_has_no_tracer() {
         memory_persistent: false,
         knowledge: None,
         timers: vec![],
+        schedules: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
             event_name: spanned("Ping".into()),
             filter: None,

@@ -212,6 +212,183 @@ fn build_duration(pair: Pair) -> anyhow::Result<Spanned<Duration>> {
     Ok(Spanned::new(Duration { value, unit }, span))
 }
 
+// Strip the surrounding double-quotes from an atomic `"..."` rule's text.
+fn strip_quotes(s: &str) -> &str {
+    s.strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(s)
+}
+
+fn build_time_literal(pair: Pair) -> anyhow::Result<Spanned<TimeOfDay>> {
+    let span = to_span(&pair);
+    let inner = strip_quotes(pair.as_str());
+    let (h, m) = inner
+        .split_once(':')
+        .ok_or_else(|| parse_error(&pair, "expected HH:MM time literal"))?;
+    // Pest atomic rule guarantees ASCII_DIGIT{1,2}:ASCII_DIGIT{2}, so these parses succeed;
+    // range validation (0-23, 0-59) happens in the schedule_checker.
+    let hour: u8 = h.parse()?;
+    let minute: u8 = m.parse()?;
+    Ok(Spanned::new(TimeOfDay { hour, minute }, span))
+}
+
+fn build_cron_string(pair: Pair) -> Spanned<String> {
+    let span = to_span(&pair);
+    let inner = strip_quotes(pair.as_str()).to_string();
+    Spanned::new(inner, span)
+}
+
+fn build_schedule_block(pair: Pair) -> anyhow::Result<Spanned<ScheduleField>> {
+    let block_span = to_span(&pair);
+    let mut inner = pair.into_inner();
+
+    let name_pair = inner
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("schedule block missing name"))?;
+    let name = spanned(name_pair.as_str().to_string(), &name_pair);
+
+    let mut when: Option<Spanned<WhenExpr>> = None;
+    let mut mode: Option<Spanned<ScheduleMode>> = None;
+    let mut prompt: Option<Spanned<Expr>> = None;
+    let mut emit: Option<Spanned<String>> = None;
+    let mut precision: Option<Spanned<Precision>> = None;
+    let mut duplicates: Vec<Spanned<String>> = Vec::new();
+
+    for option_pair in inner {
+        if option_pair.as_rule() != Rule::schedule_option {
+            continue;
+        }
+        let opt_inner = option_pair
+            .into_inner()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("empty schedule option"))?;
+        let opt_span = to_span(&opt_inner);
+        match opt_inner.as_rule() {
+            Rule::schedule_when => {
+                let when_child = opt_inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("empty schedule_when"))?;
+                let when_span = to_span(&when_child);
+                let when_expr = match when_child.as_rule() {
+                    Rule::schedule_when_daily => {
+                        let time_pair = when_child
+                            .into_inner()
+                            .next()
+                            .ok_or_else(|| anyhow::anyhow!("daily at: missing time literal"))?;
+                        let tod = build_time_literal(time_pair)?;
+                        WhenExpr::DailyAt(tod.node)
+                    }
+                    Rule::schedule_when_every => {
+                        let dur_pair = when_child
+                            .into_inner()
+                            .next()
+                            .ok_or_else(|| anyhow::anyhow!("every: missing duration"))?;
+                        let dur = build_duration(dur_pair)?;
+                        WhenExpr::Every(dur.node)
+                    }
+                    Rule::schedule_when_cron => {
+                        let cron_pair = when_child
+                            .into_inner()
+                            .next()
+                            .ok_or_else(|| anyhow::anyhow!("cron: missing string"))?;
+                        let cs = build_cron_string(cron_pair);
+                        WhenExpr::Cron(cs.node)
+                    }
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "unexpected schedule_when child: {:?}",
+                            other
+                        ));
+                    }
+                };
+                if when.is_some() {
+                    duplicates.push(Spanned::new("when".to_string(), when_span));
+                } else {
+                    when = Some(Spanned::new(when_expr, when_span));
+                }
+            }
+            Rule::schedule_mode => {
+                let mode_val = opt_inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("mode: missing value"))?;
+                let mode_text = mode_val.as_str();
+                let m = match mode_text {
+                    "spawn" => ScheduleMode::Spawn,
+                    "wake" => ScheduleMode::Wake,
+                    other => return Err(anyhow::anyhow!("unexpected mode value: {}", other)),
+                };
+                if mode.is_some() {
+                    duplicates.push(Spanned::new("mode".to_string(), opt_span));
+                } else {
+                    mode = Some(Spanned::new(m, opt_span));
+                }
+            }
+            Rule::schedule_prompt => {
+                let ts_pair = opt_inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("prompt: missing string"))?;
+                let parts = build_template_string(ts_pair)?;
+                let expr = Spanned::new(Expr::Template(parts), opt_span);
+                if prompt.is_some() {
+                    duplicates.push(Spanned::new("prompt".to_string(), opt_span));
+                } else {
+                    prompt = Some(expr);
+                }
+            }
+            Rule::schedule_emit => {
+                let id_pair = opt_inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("emit: missing ident"))?;
+                let id_span = to_span(&id_pair);
+                let id_text = id_pair.as_str().to_string();
+                if emit.is_some() {
+                    duplicates.push(Spanned::new("emit".to_string(), opt_span));
+                } else {
+                    emit = Some(Spanned::new(id_text, id_span));
+                }
+            }
+            Rule::schedule_precision => {
+                let val = opt_inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("precision: missing value"))?;
+                let p = match val.as_str() {
+                    "high" => Precision::High,
+                    other => return Err(anyhow::anyhow!("unexpected precision value: {}", other)),
+                };
+                if precision.is_some() {
+                    duplicates.push(Spanned::new("precision".to_string(), opt_span));
+                } else {
+                    precision = Some(Spanned::new(p, opt_span));
+                }
+            }
+            other => {
+                return Err(anyhow::anyhow!(
+                    "unexpected schedule_option variant: {:?}",
+                    other
+                ));
+            }
+        }
+    }
+
+    Ok(Spanned::new(
+        ScheduleField {
+            name,
+            when,
+            mode,
+            prompt,
+            emit,
+            precision,
+            duplicates,
+        },
+        block_span,
+    ))
+}
+
 fn build_field_def(ident_pair: Pair, type_pair: Pair) -> anyhow::Result<Spanned<FieldDef>> {
     let start = ident_pair.as_span().start();
     let end = type_pair.as_span().end();
@@ -2028,6 +2205,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     let mut memory_persistent = false;
     let mut knowledge = None;
     let mut timers = Vec::new();
+    let mut schedules = Vec::new();
     let mut subscriptions = Vec::new();
     let mut warden_override = Vec::new();
     let mut handlers = Vec::new();
@@ -2080,6 +2258,9 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
                     tf_span,
                 ));
             }
+            Rule::schedule_block => {
+                schedules.push(build_schedule_block(child)?);
+            }
             Rule::subscribe_line => {
                 let sl_span = to_span(&child);
                 let mut sl_inner = child.into_inner();
@@ -2130,6 +2311,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             memory_persistent,
             knowledge,
             timers,
+            schedules,
             subscriptions,
             warden_override,
             handlers,

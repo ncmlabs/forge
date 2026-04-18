@@ -56,7 +56,7 @@ keyword = @{
     | "start" | "cancel" | "reset" | "for" | "in" | "not" | "and"
     | "match" | "recall" | "learn" | "spawn" | "find" | "retire"
     | "exec" | "exportable" | "import" | "from" | "as" | "command" | "background"
-    | "session" )
+    | "session" | "schedule" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
 
@@ -188,6 +188,7 @@ agent_decl = {
     (i1 ~ memory_block)? ~
     (i1 ~ knowledge_block)? ~
     (i1 ~ timer_field ~ nl)* ~
+    (i1 ~ schedule_block)* ~
     (i1 ~ subscribe_line ~ nl)* ~
     (i1 ~ warden_override_block)? ~
     (blank_line | on_handler)+ ~
@@ -212,6 +213,40 @@ knowledge_option = {
 }
 
 timer_field = { "timer" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ duration }
+
+// --- Schedule block ---
+// Durable, cross-session wall-clock triggers (distinct from agent-local `timer`).
+// Declared under an agent; runtime wiring lands in #332.
+schedule_block = {
+    "schedule" ~ _s ~ ident ~ nl ~
+    (i2 ~ schedule_option ~ nl)+
+}
+schedule_option = {
+      schedule_when
+    | schedule_mode
+    | schedule_prompt
+    | schedule_emit
+    | schedule_precision
+}
+schedule_when = {
+    "when" ~ _s_opt ~ ":" ~ _s_opt ~
+    ( schedule_when_daily
+    | schedule_when_every
+    | schedule_when_cron )
+}
+schedule_when_daily = { "daily" ~ _s ~ "at" ~ _s ~ time_literal }
+schedule_when_every = { "every" ~ _s ~ duration }
+schedule_when_cron  = { "cron" ~ _s ~ cron_string }
+
+schedule_mode      = { "mode" ~ _s_opt ~ ":" ~ _s_opt ~ schedule_mode_value }
+schedule_mode_value = @{ ("spawn" | "wake") ~ !(ASCII_ALPHANUMERIC | "_") }
+schedule_prompt    = { "prompt" ~ _s_opt ~ ":" ~ _s_opt ~ template_string }
+schedule_emit      = { "emit" ~ _s_opt ~ ":" ~ _s_opt ~ ident }
+schedule_precision = { "precision" ~ _s_opt ~ ":" ~ _s_opt ~ schedule_precision_value }
+schedule_precision_value = @{ "high" ~ !(ASCII_ALPHANUMERIC | "_") }
+
+time_literal = @{ "\"" ~ ASCII_DIGIT{1,2} ~ ":" ~ ASCII_DIGIT{2} ~ "\"" }
+cron_string  = @{ "\"" ~ (!("\"" | NEWLINE) ~ ANY)+ ~ "\"" }
 
 subscribe_line = { "subscribe" ~ _s ~ ident ~ (_s ~ "where" ~ _s ~ expr)? }
 

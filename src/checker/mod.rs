@@ -4,6 +4,7 @@
 pub mod boundary_checker;
 pub mod pure_checker;
 pub mod requires_checker;
+pub mod schedule_checker;
 pub mod spawn_checker;
 pub mod states_checker;
 pub mod uncertain_checker;
@@ -33,6 +34,9 @@ pub fn check_all(program: &Program, file: &str) -> Vec<Diagnostic> {
 
     // Pass 6: spawn statement validation (Principle VII — Accountability)
     diagnostics.extend(spawn_checker::check(program, file));
+
+    // Pass 7: schedule block validation (Principle I/III — honesty + token economy)
+    diagnostics.extend(schedule_checker::check(program, file));
 
     // boundary_checker::check() is called separately from main.rs (multi-program signature)
     diagnostics

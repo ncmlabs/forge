@@ -420,6 +420,7 @@ fn ast_agent() {
         memory_persistent: false,
         knowledge: None,
         timers: vec![],
+        schedules: vec![],
         subscriptions: vec![],
         handlers: vec![
             sp(OnHandler {
@@ -995,6 +996,7 @@ fn ast_agent_v3() {
                 unit: DurationUnit::Seconds,
             }),
         })],
+        schedules: vec![],
         subscriptions: vec![sp(SubscribeDecl {
             event_name: sp("MoveEvent".into()),
             filter: None,

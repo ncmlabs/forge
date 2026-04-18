@@ -196,6 +196,7 @@ pub struct AgentDecl {
     pub memory_persistent: bool,
     pub knowledge: Option<Spanned<KnowledgeDecl>>,
     pub timers: Vec<Spanned<TimerField>>,
+    pub schedules: Vec<Spanned<ScheduleField>>,
     pub subscriptions: Vec<Spanned<SubscribeDecl>>,
     pub warden_override: Vec<Spanned<WardPolicy>>,
     pub handlers: Vec<Spanned<OnHandler>>,
@@ -244,6 +245,46 @@ pub enum LearnSource {
 pub struct TimerField {
     pub name: Spanned<String>,
     pub duration: Spanned<Duration>,
+}
+
+/// Schedule declaration inside an agent — durable, cross-session wall-clock trigger.
+/// All option fields are `Option` so the checker can report missing required options
+/// with span-annotated errors (the parser is deliberately liberal).
+#[derive(Debug, Clone)]
+pub struct ScheduleField {
+    pub name: Spanned<String>,
+    pub when: Option<Spanned<WhenExpr>>,
+    pub mode: Option<Spanned<ScheduleMode>>,
+    pub prompt: Option<Spanned<Expr>>,
+    pub emit: Option<Spanned<String>>,
+    pub precision: Option<Spanned<Precision>>,
+    /// Option names that were specified more than once inside this block.
+    /// Populated by the parser; the checker consumes to emit duplicate-option errors.
+    pub duplicates: Vec<Spanned<String>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum WhenExpr {
+    DailyAt(TimeOfDay),
+    Every(Duration),
+    Cron(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeOfDay {
+    pub hour: u8,
+    pub minute: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleMode {
+    Spawn,
+    Wake,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Precision {
+    High,
 }
 
 /// Event subscription inside an agent.
