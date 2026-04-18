@@ -55,6 +55,7 @@ Current FORGE surfaces to account for include:
 - `AgentResult` fields and `metadata.verification`
 - `knowledge store`, `recall`, `learn`
 - `spawn`, `find`, `retire`, `exportable agent`
+- `schedule` blocks: durable cross-session triggers with `when:` (`daily at "HH:MM"`, `every <duration>`, `cron "m h dom mon dow"`), `mode: spawn` (requires `prompt:`), `mode: wake` (requires `emit:` or `on <name>.tick`), optional `precision: high`; `WakeService` dispatches at runtime
 - project skills via `forge.project.toml` and `skill.<namespace>.<capability>(...)`
 - server-only `search`, boundary directives, and raw Html interpolation with `{!expr}`
 

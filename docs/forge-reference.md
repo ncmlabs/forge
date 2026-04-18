@@ -43,7 +43,7 @@ task calculate_total
 
 FORGE has reserved keywords that define control flow, task definitions, and logic. These cannot be used as identifiers.
 
-Reserved keywords: `task`, `pure`, `flow`, `stage`, `fn`, `needs`, `gives`, `do`, `is`, `give`, `say`, `use`, `when`, `else`, `if`, `match`, `for`, `in`, `try`, `or`, `with`, `above`, `reason`, `classify`, `search`, `into`, `not`, `and`, `true`, `false`, `agent`, `pool`, `warden`, `contract`, `system`, `event`, `states`, `type`, `endpoint`, `timer`, `emit`, `transition`, `escalate`, `forward`, `subscribe`, `start`, `cancel`, `reset`, `requires`
+Reserved keywords: `task`, `pure`, `flow`, `stage`, `fn`, `needs`, `gives`, `do`, `is`, `give`, `say`, `use`, `when`, `else`, `if`, `match`, `for`, `in`, `try`, `or`, `with`, `above`, `reason`, `classify`, `into`, `not`, `and`, `true`, `false`, `agent`, `pool`, `warden`, `contract`, `system`, `event`, `states`, `type`, `endpoint`, `timer`, `emit`, `transition`, `escalate`, `downgrade`, `to`, `forward`, `subscribe`, `start`, `cancel`, `reset`, `requires`, `recall`, `learn`, `spawn`, `find`, `retire`, `exec`, `exportable`, `import`, `from`, `as`, `command`, `background`, `session`, `schedule`
 
 Additional contextual keywords (reserved in specific contexts): `memory`, `lifecycle`, `manages`, `can`, `workers`, `strategy`, `on`, `fail`, `where`, `stuck`, `crash`, `hallucination`, `budget`, `timeout`, `nudge`, `restart`, `replace`, `self`, `downstream`, `all`, `after`, `max_retries`, `per`, `then`
 
@@ -1394,6 +1394,9 @@ agent <name>
   memory
     <field>: <Type>
   timer <name>: <duration>
+  schedule <name>
+    when: <form>
+    mode: <spawn|wake>
   subscribe <EventName> where <expr>
   warden_override
     on <failure>: <response>, <scope>
@@ -1416,6 +1419,7 @@ All clauses are optional except for at least one `on` handler.
 | `lifecycle: <Name>` | Binds the agent to a `states` block for lifecycle management |
 | `memory` | Declares persistent fields that survive across handler invocations |
 | `timer <name>: <duration>` | Declares a named timer with a duration (e.g., `10m`, `30s`, `1h`) |
+| `schedule <name>` | Declares a durable, cross-session wall-clock trigger (see Schedules below) |
 | `subscribe <Event>` | Subscribes to events from the event bus |
 | `warden_override` | Overrides warden policies for this specific agent |
 | `on <event>` | Declares a handler that runs when the named event occurs |
@@ -1505,7 +1509,6 @@ agent forge_sensei
     say "drift check fired"
 ```
 
-> **Status:** The grammar, AST, and compile-time checker ship today. Runtime dispatch (`WakeService`) lands in a follow-up issue — a `schedule` block that passes `forge check` is declared but not yet dispatched.
 
 A schedule block must declare `when:` and `mode:`. Extra options depend on the mode.
 
@@ -1959,6 +1962,7 @@ warden <name>
 | `stuck` | Agent cannot make progress |
 | `crash` | Agent encountered an unrecoverable error |
 | `hallucination` | Agent produced output that failed validation |
+| `contradiction` | Agent produced output that contradicts verified facts |
 | `budget` | Agent exceeded its token or cost budget |
 | `timeout` | Agent did not respond within the allowed time |
 
@@ -1969,9 +1973,10 @@ Responses are ordered by severity. Escalation ladders must increase in severity:
 | Response | Severity | Description |
 |----------|----------|-------------|
 | `nudge` | 1 (lowest) | Send a hint to the agent to retry |
-| `restart` | 2 | Restart the agent from its initial state |
-| `replace` | 3 | Replace the agent with a fresh instance |
-| `escalate` | 4 (highest) | Escalate to a higher-level supervisor or human |
+| `downgrade` | 2 | Downgrade the agent to a less capable model |
+| `restart` | 3 | Restart the agent from its initial state |
+| `replace` | 4 | Replace the agent with a fresh instance |
+| `escalate` | 5 (highest) | Escalate to a higher-level supervisor or human |
 
 ### Scopes
 
@@ -2007,7 +2012,7 @@ The warden checker produces **warnings** for:
 
 | Warning | Description |
 |---------|-------------|
-| Incomplete failure coverage | The warden does not define policies for all five failure types |
+| Incomplete failure coverage | The warden does not define policies for all six failure types |
 
 ### Agent-Level Overrides
 
@@ -2056,7 +2061,7 @@ warden supervisor
 
 ### Best Practices
 
-1. **Cover all five failure types** -- the compiler warns about incomplete coverage for a reason
+1. **Cover all six failure types** -- the compiler warns about incomplete coverage for a reason
 2. **Start with `nudge`** -- give agents a chance to self-correct before restarting or replacing
 3. **Use `after` for progressive escalation** -- a single severe response on first failure is usually too aggressive
 4. **Scope responses narrowly** -- prefer `self` over `all` unless the failure genuinely affects the entire group

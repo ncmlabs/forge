@@ -3,8 +3,8 @@
 # then runs an LLM call from `fn main` to prove the new grammar
 # coexists with the rest of the runtime without crashing.
 #
-# Runtime dispatch (WakeService) lands in #332 — today the schedule
-# block is parsed, checked, and declared but not yet fired.
+# Runtime dispatch (WakeService) ships in #332. Under `forge serve`
+# the schedule fires on its declared cadence via the WakeService.
 #
 # Run:
 #   forge check examples/basics/schedule.forge   # exit 0
