@@ -1,5 +1,6 @@
 // FORGE AST node definitions (v3)
 // All types derive Debug, Clone. Every node carries Span info via Spanned<T>.
+// (touch: layer-1 smoke test for #229 surface hint workflow — revert before merge)
 
 // ── Span ──────────────────────────────────────────────────────
 
