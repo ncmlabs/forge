@@ -329,6 +329,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rehydrated_agent_subscribes_to_wake_schedule_emit_event() {
+        use crate::ast::{ScheduleField, ScheduleMode, WhenExpr};
+        // Regression: for `mode: wake` schedules, the rehydrated agent must
+        // subscribe to the `emit:` event name (or `{name}.tick` fallback),
+        // not the schedule name itself, because that's what WakeService
+        // publishes. Live serve caught `subscribers: 0` on DriftCheckDue
+        // before this was fixed in `with_event_bus` (#333).
+        let schedule = ScheduleField {
+            name: sp("drift_check".to_string()),
+            when: Some(sp(WhenExpr::Every(crate::ast::Duration {
+                value: 30,
+                unit: crate::ast::DurationUnit::Seconds,
+            }))),
+            mode: Some(sp(ScheduleMode::Wake)),
+            prompt: None,
+            emit: Some(sp("DriftCheckDue".to_string())),
+            precision: None,
+            duplicates: Vec::new(),
+        };
+        let mut decl = minimal_decl("drift_watcher");
+        decl.schedules = vec![sp(schedule)];
+
+        let mut bps = HashMap::new();
+        bps.insert("drift_watcher".to_string(), blueprint_for(decl));
+        let reg = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+        let bus = Arc::new(tokio::sync::RwLock::new(EventBus::new(None)));
+        let lifecycle = AgentLifecycle::new(Arc::new(bps), reg, bus.clone(), None, None);
+
+        let _ = lifecycle.rehydrate_or_spawn("drift_watcher").await.unwrap();
+
+        let bus_guard = bus.read().await;
+        assert_eq!(
+            bus_guard.subscriber_count("DriftCheckDue"),
+            1,
+            "agent must subscribe to the schedule's emit event, not its name"
+        );
+        assert_eq!(
+            bus_guard.subscriber_count("drift_check"),
+            0,
+            "agent must NOT subscribe to the schedule name under mode: wake"
+        );
+    }
+
+    #[tokio::test]
+    async fn rehydrated_agent_subscribes_to_tick_fallback_without_emit() {
+        use crate::ast::{ScheduleField, ScheduleMode, WhenExpr};
+        let schedule = ScheduleField {
+            name: sp("heartbeat".to_string()),
+            when: Some(sp(WhenExpr::Every(crate::ast::Duration {
+                value: 30,
+                unit: crate::ast::DurationUnit::Seconds,
+            }))),
+            mode: Some(sp(ScheduleMode::Wake)),
+            prompt: None,
+            emit: None,
+            precision: None,
+            duplicates: Vec::new(),
+        };
+        let mut decl = minimal_decl("beat_watcher");
+        decl.schedules = vec![sp(schedule)];
+
+        let mut bps = HashMap::new();
+        bps.insert("beat_watcher".to_string(), blueprint_for(decl));
+        let reg = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+        let bus = Arc::new(tokio::sync::RwLock::new(EventBus::new(None)));
+        let lifecycle = AgentLifecycle::new(Arc::new(bps), reg, bus.clone(), None, None);
+
+        let _ = lifecycle.rehydrate_or_spawn("beat_watcher").await.unwrap();
+
+        let bus_guard = bus.read().await;
+        assert_eq!(bus_guard.subscriber_count("heartbeat.tick"), 1);
+    }
+
+    #[tokio::test]
     async fn peek_restored_keys_returns_intersection_with_declared_fields() {
         use crate::ast::{FieldDef, TypeName};
         let (_guard, storage) = temp_storage();

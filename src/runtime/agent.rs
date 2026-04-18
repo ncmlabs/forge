@@ -711,7 +711,21 @@ impl AgentProcess {
                 receivers.push((sub.node.filter.clone(), rx));
             }
             for schedule in &self.decl.schedules {
-                let rx = bus_guard.subscribe(&schedule.node.name.node, &self.decl.name.node, None);
+                // For `mode: wake`, WakeService publishes the schedule's
+                // `emit:` event (or `{name}.tick` fallback) — not the
+                // schedule name itself (#333). Subscribe to the actual
+                // event the dispatcher will publish so the agent's handler
+                // receives it.
+                let event_name = match schedule.node.mode.as_ref().map(|m| m.node) {
+                    Some(crate::ast::ScheduleMode::Wake) => schedule
+                        .node
+                        .emit
+                        .as_ref()
+                        .map(|e| e.node.clone())
+                        .unwrap_or_else(|| format!("{}.tick", schedule.node.name.node)),
+                    _ => schedule.node.name.node.clone(),
+                };
+                let rx = bus_guard.subscribe(&event_name, &self.decl.name.node, None);
                 receivers.push((None, rx));
             }
         }
