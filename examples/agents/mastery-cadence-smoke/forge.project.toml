@@ -1,0 +1,7 @@
+[project]
+name = "mastery-cadence-smoke"
+version = "0.1.0"
+description = "T5 scheduler MVP smoke (#332): prove schedule mastery_review fires under WakeService and the handler sees the prompt."
+
+[build]
+entry = "main.forge"

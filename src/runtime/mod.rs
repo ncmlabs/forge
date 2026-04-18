@@ -3,6 +3,7 @@
 
 pub mod adapter_loader;
 pub mod agent;
+pub mod clock;
 pub mod command_manager;
 pub mod confidence;
 pub mod cost_aggregator;
@@ -32,6 +33,7 @@ pub mod timer_engine;
 pub mod vector_index;
 pub mod verification;
 pub mod verification_engine;
+pub mod wake_service;
 pub mod warded;
 pub mod warden;
 pub mod watcher;

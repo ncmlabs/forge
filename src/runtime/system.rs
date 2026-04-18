@@ -16,10 +16,14 @@ use crate::ast::*;
 use crate::config::SystemConfig;
 use crate::llm::registry::ProviderRegistry;
 use crate::runtime::agent::{AgentProcess, AgentSignal};
+use crate::runtime::clock::{Clock, SharedClock, SystemClock};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
 use crate::runtime::instance_registry::{InstanceRegistry, SharedInstanceRegistry};
 use crate::runtime::knowledge_store::SharedKnowledgeStore;
+use crate::runtime::wake_service::{
+    BudgetQuery, ScheduleRegistration, WakeService, WakeServiceConfig,
+};
 use crate::runtime::warded::{AgentBlueprint, SharedWardenSnapshots, WardedRuntime};
 use crate::tracer::Tracer;
 
@@ -58,6 +62,9 @@ pub struct SystemRuntime {
     unsupervised_blueprints: Vec<String>, // aliases not covered by any warden
     unsupervised_agents: HashMap<String, UnsupervisedAgent>,
     max_agents: Option<usize>,
+    tracer: Option<Tracer>,
+    clock: Option<SharedClock>,
+    budget_query: Option<BudgetQuery>,
 }
 
 impl SystemRuntime {
@@ -225,7 +232,26 @@ impl SystemRuntime {
             unsupervised_blueprints,
             unsupervised_agents: HashMap::new(),
             max_agents,
+            tracer,
+            clock: None,
+            budget_query: None,
         })
+    }
+
+    /// Override the wall-clock source used by WakeService. Defaults to
+    /// `SystemClock`. Tests and replay harnesses inject `MockClock` /
+    /// `RecordedClock` to control firing cadence deterministically.
+    pub fn with_clock(mut self, clock: SharedClock) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
+    /// Inject a budget gate hook. Returns `Some(reason)` to skip a schedule
+    /// fire (emitting `schedule_skipped_budget`), `None` to proceed. Defaults
+    /// to no-op (all fires proceed).
+    pub fn with_budget_query(mut self, q: BudgetQuery) -> Self {
+        self.budget_query = Some(q);
+        self
     }
 
     /// Build a static topology snapshot (call before start()).
@@ -443,6 +469,19 @@ impl SystemRuntime {
             self.warded_runtimes.len()
         );
 
+        // Spawn the WakeService if any declared schedule exists and storage is
+        // wired — schedules are durable and require the redb-backed ledger.
+        // Must happen after agent spawn so subscribers are registered before
+        // any fire lands on the bus.
+        let wake_handle = Self::spawn_wake_service(
+            &self.blueprints,
+            self.event_bus.clone(),
+            self.storage.clone(),
+            self.clock.clone(),
+            self.tracer.clone(),
+            self.budget_query.clone(),
+        );
+
         // Run all warded runtimes concurrently with unsupervised agent monitoring
         let mut warded_handles: Vec<JoinHandle<Result<(), RuntimeError>>> = Vec::new();
         for mut warded in self.warded_runtimes {
@@ -493,8 +532,80 @@ impl SystemRuntime {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
 
+        // Drain the WakeService cleanly so its claim release lands on disk
+        // before the monitor returns (test harnesses and replay rely on this).
+        if let Some(handle) = wake_handle {
+            handle.shutdown();
+            match handle.join.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => eprintln!("system '{}': wake_service error: {e}", self.name),
+                Err(e) => eprintln!("system '{}': wake_service panicked: {e}", self.name),
+            }
+        }
+
         eprintln!("system '{}': all agents exited", self.name);
         Ok(())
+    }
+
+    /// Gather declared schedules from the blueprints map and spawn a
+    /// `WakeService` owning them. Returns `None` when there are no schedules
+    /// declared or when no persistent storage is configured (schedules are
+    /// required to be durable — in-memory schedules are rejected by design).
+    fn spawn_wake_service(
+        blueprints: &HashMap<String, AgentBlueprint>,
+        event_bus: SharedEventBus,
+        storage: Option<crate::runtime::storage::SharedStorage>,
+        clock: Option<SharedClock>,
+        tracer: Option<Tracer>,
+        budget_query: Option<BudgetQuery>,
+    ) -> Option<crate::runtime::wake_service::WakeServiceHandle> {
+        let mut regs: Vec<ScheduleRegistration> = Vec::new();
+        for (alias, bp) in blueprints {
+            for spanned in &bp.decl.schedules {
+                regs.push(ScheduleRegistration {
+                    agent: alias.clone(),
+                    schedule: spanned.node.clone(),
+                });
+            }
+        }
+        if regs.is_empty() {
+            return None;
+        }
+        let Some(storage) = storage else {
+            eprintln!(
+                "wake_service: {} schedule(s) declared but no storage is configured — skipping",
+                regs.len()
+            );
+            return None;
+        };
+
+        let clock: SharedClock = clock.unwrap_or_else(|| Arc::new(SystemClock) as Arc<dyn Clock>);
+        let tracer = tracer.unwrap_or_default();
+        let budget_query: BudgetQuery = budget_query.unwrap_or_else(|| Arc::new(|_| None));
+
+        // Tick interval: 1s if any schedule requests precision: high, else 60s.
+        let wants_high = regs.iter().any(|r| {
+            r.schedule
+                .precision
+                .as_ref()
+                .map(|p| matches!(p.node, crate::ast::Precision::High))
+                .unwrap_or(false)
+        });
+        let mut config = WakeServiceConfig::default();
+        if wants_high {
+            config = config.with_tick_interval(std::time::Duration::from_secs(1));
+        }
+
+        let service = WakeService::new(
+            regs,
+            event_bus,
+            storage,
+            clock,
+            tracer,
+            budget_query,
+            config,
+        );
+        Some(service.spawn())
     }
 
     /// Get a reference to the shared event bus.
