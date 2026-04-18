@@ -690,6 +690,14 @@ impl AgentProcess {
     // ── EventBus integration (issue #19) ──────────────────────────────────
 
     /// Attach an event bus and register all declared subscriptions.
+    ///
+    /// Each declared `schedule` also gets an implicit bus subscription on its
+    /// own name — `WakeService` publishes scheduled fires as regular events,
+    /// and the agent's `on <schedule_name>` handler consumes them through the
+    /// same event loop that handles ordinary subscribes. This keeps the
+    /// "schedules arrive as normal bus events" contract honest without
+    /// forcing every agent author to write an explicit `subscribe` line
+    /// alongside each `schedule` block (issue #332).
     pub async fn with_event_bus(mut self, bus: SharedEventBus) -> Self {
         let mut receivers = Vec::new();
         {
@@ -701,6 +709,14 @@ impl AgentProcess {
                     sub.node.filter.clone(),
                 );
                 receivers.push((sub.node.filter.clone(), rx));
+            }
+            for schedule in &self.decl.schedules {
+                let rx = bus_guard.subscribe(
+                    &schedule.node.name.node,
+                    &self.decl.name.node,
+                    None,
+                );
+                receivers.push((None, rx));
             }
         }
         self.event_bus = Some(bus.clone());
