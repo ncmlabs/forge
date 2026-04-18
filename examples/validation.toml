@@ -90,6 +90,12 @@ check = "ok"
 manifest = "examples/agents/dev-cycle-mastery-smoke/forge.project.toml"
 
 [[cases]]
+name = "mastery-cadence-smoke (T5 scheduler MVP, #332)"
+paths = ["examples/agents/mastery-cadence-smoke/main.forge"]
+check = "ok"
+manifest = "examples/agents/mastery-cadence-smoke/forge.project.toml"
+
+[[cases]]
 name = "mock-runnable quiz tutor agent"
 paths = ["examples/agents/quiz_tutor.forge"]
 check = "ok"

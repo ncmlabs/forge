@@ -1,0 +1,71 @@
+#! boundary: server
+
+# ================================================================
+# T5 Scheduler MVP Live Smoke — mastery-cadence-smoke (#332)
+# ================================================================
+# Proves the WakeService end-to-end:
+#   - `schedule mastery_review` fires on a wall-clock cadence,
+#   - `mode: spawn` delivers the schedule's prompt as a bus event,
+#   - the agent's handler sees the prompt and advances its state,
+#   - state persists across restarts (redb-backed ledger) so a mid-
+#     run kill + restart still fires exactly once under catchup.
+#
+# Unlike the full forge-sensei composition, this example is one file
+# with no LLM dependency in the hot path — the handler only records
+# a counter and emits a tracer-visible event. That keeps CI fast and
+# gives the scheduler a deterministic asset to exercise.
+#
+# Run:
+#   cargo run -- serve \
+#     --manifest examples/agents/mastery-cadence-smoke/forge.project.toml \
+#     examples/agents/mastery-cadence-smoke/main.forge --port 3232
+#   # Watch 5–6 firings over ~3 minutes:
+#   curl -sN http://localhost:3232/__forge/events | grep schedule_fired
+#   # Then:  curl http://localhost:3232/status
+# ================================================================
+
+event CadenceTick
+  tick_number: Number
+  prompt_received: Text
+
+agent cadence_probe
+  memory persistent
+    tick_count: Number
+    last_prompt: Text
+  knowledge store: ".forge-knowledge/mastery-cadence-smoke"
+    max_entries: 200
+    retention: 7d
+  schedule mastery_review
+    when: every 30s
+    mode: spawn
+    prompt: "Record this scheduled cadence tick and advance the counter."
+
+  on start
+    if memory.tick_count == 0
+      say "[cadence_probe] up — waiting for mastery_review fires"
+    if memory.tick_count > 0
+      say "[cadence_probe] resumed at tick {memory.tick_count}"
+
+  # WakeService publishes this event. `prompt` is injected from the
+  # schedule's `prompt:` option; the agent reacts exactly as it would
+  # to any other bus event — no runtime-specific hook.
+  on mastery_review(prompt: Text)
+    memory.tick_count = memory.tick_count + 1
+    memory.last_prompt = prompt
+    say "[cadence_probe] tick {memory.tick_count}"
+    emit CadenceTick(tick_number: memory.tick_count, prompt_received: prompt)
+    learn "cadence tick {memory.tick_count} — {prompt}" category: "cadence"
+
+  if stuck for 3 turns
+    say "[cadence_probe] stuck. Escalating."
+    escalate to lead
+
+system cadence_smoke
+  use
+    probe: cadence_probe
+
+endpoint health() -> Text
+  give "ok"
+
+endpoint status() -> Text
+  give "tick_count: active (see memory store)"

@@ -320,6 +320,78 @@ impl Tracer {
         );
     }
 
+    // ── Schedule tracing (issue #332) ───────────────────────────────────────
+    //
+    // Schedules are the WakeService-owned counterpart to timers. Each fire,
+    // skip, error, and claim contention emits a discrete event so the observer
+    // (and replay harness) can reconstruct the cadence deterministically
+    // — per Principle II, wall-clock is an oracle on the determinism boundary.
+
+    pub fn schedule_fired(
+        &self,
+        agent: &str,
+        schedule: &str,
+        mode: &str,
+        scheduled_at_ms: u64,
+        wall_time_ms: u64,
+    ) {
+        self.emit(
+            "schedule_fired",
+            serde_json::json!({
+                "agent": agent,
+                "schedule": schedule,
+                "mode": mode,
+                "scheduled_at_ms": scheduled_at_ms,
+                "wall_time_ms": wall_time_ms,
+            }),
+        );
+    }
+
+    pub fn schedule_skipped_concurrent(&self, agent: &str, schedule: &str, held_by: &str) {
+        self.emit(
+            "schedule_skipped_concurrent",
+            serde_json::json!({
+                "agent": agent,
+                "schedule": schedule,
+                "held_by": held_by,
+            }),
+        );
+    }
+
+    pub fn schedule_skipped_budget(&self, agent: &str, schedule: &str, budget_state: &str) {
+        self.emit(
+            "schedule_skipped_budget",
+            serde_json::json!({
+                "agent": agent,
+                "schedule": schedule,
+                "budget_state": budget_state,
+            }),
+        );
+    }
+
+    pub fn schedule_errored(&self, agent: &str, schedule: &str, error: &str, retry_count: u32) {
+        self.emit(
+            "schedule_errored",
+            serde_json::json!({
+                "agent": agent,
+                "schedule": schedule,
+                "error": error,
+                "retry_count": retry_count,
+            }),
+        );
+    }
+
+    pub fn schedule_claim_lost(&self, agent: &str, schedule: &str, winner: &str) {
+        self.emit(
+            "schedule_claim_lost",
+            serde_json::json!({
+                "agent": agent,
+                "schedule": schedule,
+                "winner": winner,
+            }),
+        );
+    }
+
     // ── HTTP server tracing (issue #43) ─────────────────────────────────────
 
     pub fn http_request(&self, endpoint: &str, method: &str, path: &str) {
