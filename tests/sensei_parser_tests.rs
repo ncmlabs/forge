@@ -116,6 +116,7 @@ fn parse_sensei_agent_handlers_complete() {
         "update_mastery",
         "status",
         "self_assess.expired",
+        "mastery_review",
     ];
 
     for name in &expected {
