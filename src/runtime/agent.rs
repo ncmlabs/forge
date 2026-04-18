@@ -711,11 +711,7 @@ impl AgentProcess {
                 receivers.push((sub.node.filter.clone(), rx));
             }
             for schedule in &self.decl.schedules {
-                let rx = bus_guard.subscribe(
-                    &schedule.node.name.node,
-                    &self.decl.name.node,
-                    None,
-                );
+                let rx = bus_guard.subscribe(&schedule.node.name.node, &self.decl.name.node, None);
                 receivers.push((None, rx));
             }
         }
