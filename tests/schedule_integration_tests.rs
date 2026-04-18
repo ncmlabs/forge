@@ -403,3 +403,461 @@ async fn wake_service_run_loop_drains_on_shutdown() {
     let res = tokio::time::timeout(StdDuration::from_secs(2), handle.join).await;
     assert!(res.is_ok(), "WakeService should drain after shutdown()");
 }
+
+// ── `mode: wake` dispatch (#333) ────────────────────────────────────────────
+//
+// These tests exercise the rehydrate-before-publish contract: WakeService
+// must drive `AgentLifecycle::rehydrate_or_spawn` to restore `memory
+// persistent` and re-subscribe the agent to the bus BEFORE it publishes the
+// wake event. The tracer order is `schedule_fired → schedule_rehydrated →
+// event_delivered` — load-bearing for replay (Principle II).
+
+use forge::ast::{AgentDecl, FieldDef, Program, TypeName};
+use forge::llm::registry::ProviderRegistry;
+use forge::runtime::agent_lifecycle::AgentLifecycle;
+use forge::runtime::instance_registry::InstanceRegistry;
+use forge::runtime::warded::AgentBlueprint;
+
+fn wake_schedule(name: &str, secs: u64, emit: Option<&str>) -> ScheduleField {
+    ScheduleField {
+        name: sp(name.to_string()),
+        when: Some(sp(WhenExpr::Every(AstDuration {
+            value: secs,
+            unit: DurationUnit::Seconds,
+        }))),
+        mode: Some(sp(ScheduleMode::Wake)),
+        prompt: None,
+        emit: emit.map(|e| sp(e.to_string())),
+        precision: None,
+        duplicates: Vec::new(),
+    }
+}
+
+fn decl_with_schedule(name: &str, schedule: ScheduleField) -> AgentDecl {
+    AgentDecl {
+        exportable: false,
+        name: sp(name.to_string()),
+        lifecycle: None,
+        memory: vec![
+            sp(FieldDef {
+                name: "last_level".to_string(),
+                type_name: sp(TypeName::Text),
+            }),
+            sp(FieldDef {
+                name: "review_count".to_string(),
+                type_name: sp(TypeName::Number),
+            }),
+        ],
+        memory_persistent: true,
+        knowledge: None,
+        timers: Vec::new(),
+        schedules: vec![sp(schedule)],
+        subscriptions: Vec::new(),
+        warden_override: Vec::new(),
+        handlers: Vec::new(),
+        stuck_policy: None,
+    }
+}
+
+fn blueprint_for(decl: AgentDecl) -> AgentBlueprint {
+    AgentBlueprint {
+        decl,
+        states: None,
+        program: Program {
+            boundary: None,
+            items: Vec::new(),
+        },
+        registry: Arc::new(ProviderRegistry::new("test")),
+        tracer: None,
+        skill_executor: None,
+        shared_knowledge_store: None,
+    }
+}
+
+// Persist a memory JSON blob the way the executor's persistent-write path
+// does it, so `AgentProcess::new` will restore it via `restore_from_json`.
+fn persist_memory(storage: &SharedStorage, agent_name: &str, review_count: f64, last_level: &str) {
+    let blob = serde_json::json!({
+        "review_count": {
+            "value": { "Number": review_count },
+            "confidence": 1.0,
+            "provenance": [],
+        },
+        "last_level": {
+            "value": { "Text": last_level },
+            "confidence": 1.0,
+            "provenance": [],
+        },
+    });
+    storage
+        .store(&format!("agent:{}:memory", agent_name), &blob.to_string())
+        .unwrap();
+}
+
+#[tokio::test]
+async fn wake_fires_rehydrated_before_published_with_memory_keys_in_tracer() {
+    let clock = MockClock::new(0);
+    let tracer = Tracer::with_capture();
+    let bus = EventBus::new_shared(Some(tracer.clone()));
+    let (_dir, storage) = temp_storage();
+
+    // Persist memory from a previous "run" so rehydration observably restores it.
+    persist_memory(&storage, "drift_watcher", 5.0, "journeyman");
+
+    // Wire the lifecycle with a blueprint keyed by alias. WakeService's
+    // `agent` field is the alias, so we match that here.
+    let mut bps = std::collections::HashMap::new();
+    bps.insert(
+        "drift_watcher".to_string(),
+        blueprint_for(decl_with_schedule(
+            "drift_watcher",
+            wake_schedule("drift_check", 6 * 3600, Some("DriftCheckDue")),
+        )),
+    );
+    let registry = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+    let lifecycle = Arc::new(AgentLifecycle::new(
+        Arc::new(bps),
+        registry.clone(),
+        bus.clone(),
+        Some(storage.clone()),
+        None,
+    ));
+
+    // Subscribe a listener to the emit event so we see it arrive AFTER
+    // rehydration. If publish happened first, the subscriber would receive
+    // it before we see `schedule_rehydrated` in the tracer log.
+    let mut rx = subscribe(&bus, "DriftCheckDue", "listener").await;
+
+    let regs = vec![ScheduleRegistration {
+        agent: "drift_watcher".into(),
+        schedule: wake_schedule("drift_check", 6 * 3600, Some("DriftCheckDue")),
+    }];
+    let service = WakeService::new(
+        regs.clone(),
+        bus.clone(),
+        storage.clone(),
+        Arc::new(clock.clone()) as SharedClock,
+        tracer.clone(),
+        noop_budget(),
+        fast_config(),
+    )
+    .with_lifecycle(lifecycle.clone());
+
+    service.reconcile().unwrap();
+    clock.set(6 * 3600 * 1000);
+    let outcome = service.fire_once(&regs[0]).await.unwrap();
+    assert!(matches!(outcome, FireOutcome::Delivered { .. }));
+
+    // Wake event delivered.
+    let payload = rx.try_recv().expect("DriftCheckDue must be delivered");
+    assert_eq!(payload.event_name, "DriftCheckDue");
+
+    // Tracer ordering: fired → rehydrated → event_delivered/event_emit.
+    let log = tracer.captured_log();
+    let names: Vec<&str> = log.iter().map(|(n, _)| n.as_str()).collect();
+    let fired_idx = names
+        .iter()
+        .position(|n| *n == "schedule_fired")
+        .expect("schedule_fired must be emitted");
+    let rehydrated_idx = names
+        .iter()
+        .position(|n| *n == "schedule_rehydrated")
+        .expect("schedule_rehydrated must be emitted");
+    let delivered_idx = names
+        .iter()
+        .position(|n| *n == "event_delivered" || *n == "event_emit")
+        .expect("bus must trace delivery");
+    assert!(
+        fired_idx < rehydrated_idx,
+        "expected schedule_fired before schedule_rehydrated, got names={:?}",
+        names
+    );
+    assert!(
+        rehydrated_idx < delivered_idx,
+        "expected schedule_rehydrated before event delivery, got names={:?}",
+        names
+    );
+
+    // `memory_keys_restored` payload reports the declared fields that were
+    // present in redb (alphabetical order per the helper).
+    let rehydrated_payload = &log[rehydrated_idx].1;
+    let restored = rehydrated_payload["memory_keys_restored"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(restored, vec!["last_level", "review_count"]);
+
+    // The rehydrated agent is now live in the registry under its decl name.
+    let live = registry.read().await.find_by_name("drift_watcher");
+    assert_eq!(live.len(), 1);
+}
+
+#[tokio::test]
+async fn wake_without_emit_falls_back_to_schedule_tick_event() {
+    let clock = MockClock::new(0);
+    let tracer = Tracer::with_capture();
+    let bus = EventBus::new_shared(Some(tracer.clone()));
+    let (_dir, storage) = temp_storage();
+
+    let mut bps = std::collections::HashMap::new();
+    bps.insert(
+        "beat_watcher".to_string(),
+        blueprint_for(decl_with_schedule(
+            "beat_watcher",
+            wake_schedule("heartbeat", 30, None),
+        )),
+    );
+    let registry = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+    let lifecycle = Arc::new(AgentLifecycle::new(
+        Arc::new(bps),
+        registry,
+        bus.clone(),
+        Some(storage.clone()),
+        None,
+    ));
+
+    let mut rx = subscribe(&bus, "heartbeat.tick", "listener").await;
+
+    let regs = vec![ScheduleRegistration {
+        agent: "beat_watcher".into(),
+        schedule: wake_schedule("heartbeat", 30, None),
+    }];
+    let service = WakeService::new(
+        regs.clone(),
+        bus.clone(),
+        storage.clone(),
+        Arc::new(clock.clone()) as SharedClock,
+        tracer.clone(),
+        noop_budget(),
+        fast_config(),
+    )
+    .with_lifecycle(lifecycle);
+
+    service.reconcile().unwrap();
+    clock.set(60_000);
+    let outcome = service.fire_once(&regs[0]).await.unwrap();
+    assert!(matches!(outcome, FireOutcome::Delivered { .. }));
+
+    let payload = rx.try_recv().expect("heartbeat.tick must be delivered");
+    assert_eq!(payload.event_name, "heartbeat.tick");
+}
+
+#[tokio::test]
+async fn wake_without_lifecycle_traces_rehydrate_failure_and_counts_as_error() {
+    let clock = MockClock::new(0);
+    let tracer = Tracer::with_capture();
+    let bus = EventBus::new_shared(Some(tracer.clone()));
+    let (_dir, storage) = temp_storage();
+
+    let regs = vec![ScheduleRegistration {
+        agent: "orphan".into(),
+        schedule: wake_schedule("check", 30, Some("CheckDue")),
+    }];
+    // Intentionally NO `with_lifecycle`.
+    let service = WakeService::new(
+        regs.clone(),
+        bus.clone(),
+        storage.clone(),
+        Arc::new(clock.clone()) as SharedClock,
+        tracer.clone(),
+        noop_budget(),
+        fast_config(),
+    );
+
+    service.reconcile().unwrap();
+    clock.set(60_000);
+    let outcome = service.fire_once(&regs[0]).await.unwrap();
+    assert_eq!(outcome, FireOutcome::NoSubscribers);
+
+    let names: Vec<String> = tracer.captured_log().into_iter().map(|(n, _)| n).collect();
+    assert!(
+        names.iter().any(|n| n == "session_rehydrate_failed"),
+        "expected session_rehydrate_failed, got {:?}",
+        names
+    );
+    // `schedule_fired` is still emitted (the schedule fired; delivery just
+    // failed because there's no lifecycle to rehydrate through).
+    assert!(names.iter().any(|n| n == "schedule_fired"));
+}
+
+#[tokio::test]
+async fn wake_fires_twice_reuses_same_rehydrated_instance() {
+    let clock = MockClock::new(0);
+    let tracer = Tracer::with_capture();
+    let bus = EventBus::new_shared(Some(tracer.clone()));
+    let (_dir, storage) = temp_storage();
+
+    let mut bps = std::collections::HashMap::new();
+    bps.insert(
+        "probe".to_string(),
+        blueprint_for(decl_with_schedule(
+            "probe",
+            wake_schedule("tick", 30, Some("Tick")),
+        )),
+    );
+    let registry = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+    let lifecycle = Arc::new(AgentLifecycle::new(
+        Arc::new(bps),
+        registry.clone(),
+        bus.clone(),
+        Some(storage.clone()),
+        None,
+    ));
+
+    let _rx = subscribe(&bus, "Tick", "listener").await;
+
+    let regs = vec![ScheduleRegistration {
+        agent: "probe".into(),
+        schedule: wake_schedule("tick", 30, Some("Tick")),
+    }];
+    let service = WakeService::new(
+        regs.clone(),
+        bus.clone(),
+        storage.clone(),
+        Arc::new(clock.clone()) as SharedClock,
+        tracer.clone(),
+        noop_budget(),
+        fast_config(),
+    )
+    .with_lifecycle(lifecycle);
+
+    service.reconcile().unwrap();
+    for tick in 1..=2u64 {
+        clock.set(tick * 60_000);
+        let _ = service.fire_once(&regs[0]).await.unwrap();
+    }
+
+    // Only ONE live instance after two fires — the second fire reuses the
+    // first rehydrated agent (Principle I: no duplicate sessions).
+    assert_eq!(registry.read().await.find_by_name("probe").len(), 1);
+
+    // `schedule_rehydrated` fires on each wake dispatch. The second should
+    // carry an empty `memory_keys_restored` because the agent was already
+    // live (no new restore happened).
+    let rehydrated_payloads: Vec<_> = tracer
+        .captured_log()
+        .into_iter()
+        .filter(|(n, _)| n == "schedule_rehydrated")
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(rehydrated_payloads.len(), 2);
+    let second_keys = rehydrated_payloads[1]["memory_keys_restored"]
+        .as_array()
+        .unwrap();
+    assert!(
+        second_keys.is_empty(),
+        "second rehydrate should report no keys since agent was already live"
+    );
+}
+
+#[tokio::test]
+async fn wake_replay_with_recorded_clock_is_deterministic() {
+    use forge::runtime::clock::Clock as ClockTrait;
+
+    // Writer pass — MockClock + CapturingClock.
+    let mock = MockClock::new(0);
+    let capturing = Arc::new(CapturingClock::new(
+        Arc::new(mock.clone()) as Arc<dyn ClockTrait>
+    ));
+    let tracer_w = Tracer::with_capture();
+    let bus_w = EventBus::new_shared(Some(tracer_w.clone()));
+    let (_dw, storage_w) = temp_storage();
+    persist_memory(&storage_w, "probe", 7.0, "expert");
+    let mut bps_w = std::collections::HashMap::new();
+    bps_w.insert(
+        "probe".to_string(),
+        blueprint_for(decl_with_schedule(
+            "probe",
+            wake_schedule("tick", 60, Some("Tick")),
+        )),
+    );
+    let registry_w = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+    let lifecycle_w = Arc::new(AgentLifecycle::new(
+        Arc::new(bps_w),
+        registry_w,
+        bus_w.clone(),
+        Some(storage_w.clone()),
+        None,
+    ));
+    let _rx_w = subscribe(&bus_w, "Tick", "listener").await;
+    let regs = vec![ScheduleRegistration {
+        agent: "probe".into(),
+        schedule: wake_schedule("tick", 60, Some("Tick")),
+    }];
+    let service_w = WakeService::new(
+        regs.clone(),
+        bus_w.clone(),
+        storage_w.clone(),
+        capturing.clone() as SharedClock,
+        tracer_w.clone(),
+        noop_budget(),
+        fast_config(),
+    )
+    .with_lifecycle(lifecycle_w);
+    service_w.reconcile().unwrap();
+    for i in 1..=3u64 {
+        mock.set(i * 60_000);
+        service_w.fire_once(&regs[0]).await.unwrap();
+    }
+
+    let writer_sequence: Vec<String> = tracer_w
+        .captured_log()
+        .into_iter()
+        .map(|(n, _)| n)
+        .filter(|n| n == "schedule_fired" || n == "schedule_rehydrated" || n == "event_emit")
+        .collect();
+    let samples = capturing.snapshot();
+    assert!(!samples.is_empty());
+
+    // Replay pass — RecordedClock.
+    let clock_r: SharedClock = Arc::new(RecordedClock::new(samples));
+    let tracer_r = Tracer::with_capture();
+    let bus_r = EventBus::new_shared(Some(tracer_r.clone()));
+    let (_dr, storage_r) = temp_storage();
+    persist_memory(&storage_r, "probe", 7.0, "expert");
+    let mut bps_r = std::collections::HashMap::new();
+    bps_r.insert(
+        "probe".to_string(),
+        blueprint_for(decl_with_schedule(
+            "probe",
+            wake_schedule("tick", 60, Some("Tick")),
+        )),
+    );
+    let registry_r = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
+    let lifecycle_r = Arc::new(AgentLifecycle::new(
+        Arc::new(bps_r),
+        registry_r,
+        bus_r.clone(),
+        Some(storage_r.clone()),
+        None,
+    ));
+    let _rx_r = subscribe(&bus_r, "Tick", "listener").await;
+    let service_r = WakeService::new(
+        regs.clone(),
+        bus_r.clone(),
+        storage_r.clone(),
+        clock_r,
+        tracer_r.clone(),
+        noop_budget(),
+        fast_config(),
+    )
+    .with_lifecycle(lifecycle_r);
+    service_r.reconcile().unwrap();
+    for _ in 0..3 {
+        service_r.fire_once(&regs[0]).await.unwrap();
+    }
+
+    let replay_sequence: Vec<String> = tracer_r
+        .captured_log()
+        .into_iter()
+        .map(|(n, _)| n)
+        .filter(|n| n == "schedule_fired" || n == "schedule_rehydrated" || n == "event_emit")
+        .collect();
+
+    assert_eq!(
+        writer_sequence, replay_sequence,
+        "wake-mode replay must produce identical tracer sequence"
+    );
+}

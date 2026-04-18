@@ -1,0 +1,7 @@
+[project]
+name = "wake-rehydration-smoke"
+version = "0.1.0"
+description = "Wake-mode rehydration smoke (#333): prove schedule drift_check fires mode: wake, rehydrates the agent (restoring memory persistent), and the DriftCheckDue handler observes the last-persisted state."
+
+[build]
+entry = "main.forge"

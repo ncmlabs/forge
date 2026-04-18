@@ -15,12 +15,13 @@ var ForgeTimeline = (function () {
   var MARGIN = { top: 30, right: 20, bottom: 40, left: 80 };
 
   var CATEGORIES = [
-    { key: 'llm',     label: 'LLM',    color: 'oklch(0.65 0.15 280)', events: ['llm_request', 'llm_response'] },
-    { key: 'exec',    label: 'Exec',   color: 'oklch(0.6 0.12 200)',  events: ['exec_call', 'exec_return', 'task_call', 'task_return', 'skill_call', 'skill_return'] },
-    { key: 'flow',    label: 'Flow',   color: 'oklch(0.6 0.15 170)',  events: ['flow_start', 'flow_complete', 'stage_start', 'stage_complete', 'wave_start', 'wave_complete', 'pool_send', 'pool_resolved'] },
-    { key: 'event',   label: 'Events', color: 'oklch(0.65 0.15 145)', events: ['event_emit', 'event_delivered'] },
-    { key: 'warden',  label: 'Warden', color: 'oklch(0.7 0.15 25)',   events: ['ward_action'] },
-    { key: 'http',    label: 'HTTP',   color: 'oklch(0.55 0.1 220)',  events: ['http_request', 'http_response'] }
+    { key: 'llm',       label: 'LLM',      color: 'oklch(0.65 0.15 280)', events: ['llm_request', 'llm_response'] },
+    { key: 'exec',      label: 'Exec',     color: 'oklch(0.6 0.12 200)',  events: ['exec_call', 'exec_return', 'task_call', 'task_return', 'skill_call', 'skill_return'] },
+    { key: 'flow',      label: 'Flow',     color: 'oklch(0.6 0.15 170)',  events: ['flow_start', 'flow_complete', 'stage_start', 'stage_complete', 'wave_start', 'wave_complete', 'pool_send', 'pool_resolved'] },
+    { key: 'event',     label: 'Events',   color: 'oklch(0.65 0.15 145)', events: ['event_emit', 'event_delivered'] },
+    { key: 'schedule',  label: 'Schedule', color: 'oklch(0.72 0.17 95)',  events: ['schedule_fired', 'schedule_rehydrated', 'schedule_skipped_concurrent', 'schedule_skipped_budget', 'schedule_errored', 'schedule_claim_lost', 'session_rehydrate_failed'] },
+    { key: 'warden',    label: 'Warden',   color: 'oklch(0.7 0.15 25)',   events: ['ward_action'] },
+    { key: 'http',      label: 'HTTP',     color: 'oklch(0.55 0.1 220)',  events: ['http_request', 'http_response'] }
   ];
 
   // Build event -> category lookup

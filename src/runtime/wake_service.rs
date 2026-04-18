@@ -36,6 +36,7 @@ use crate::ast::{
     Duration as AstDuration, DurationUnit, Precision, ScheduleField, ScheduleMode, TimeOfDay,
     WhenExpr,
 };
+use crate::runtime::agent_lifecycle::AgentLifecycle;
 use crate::runtime::clock::SharedClock;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::event_bus::{EventPayload, SharedEventBus};
@@ -185,6 +186,10 @@ pub struct WakeService {
     tracer: Tracer,
     budget_query: BudgetQuery,
     config: WakeServiceConfig,
+    /// Agent-lifecycle helper used by `mode: wake` to rehydrate dormant
+    /// agents before publishing the wake event (#333). Optional so existing
+    /// callers that only use `mode: spawn` need not construct one.
+    lifecycle: Option<Arc<AgentLifecycle>>,
 }
 
 impl WakeService {
@@ -205,7 +210,17 @@ impl WakeService {
             tracer,
             budget_query,
             config,
+            lifecycle: None,
         }
+    }
+
+    /// Attach an `AgentLifecycle` so `mode: wake` schedules can rehydrate
+    /// dormant agents before publishing their wake event (#333). Without a
+    /// lifecycle, `mode: wake` degrades to the `mode: spawn` event-publish
+    /// path and traces `session_rehydrate_failed`.
+    pub fn with_lifecycle(mut self, lifecycle: Arc<AgentLifecycle>) -> Self {
+        self.lifecycle = Some(lifecycle);
+        self
     }
 
     /// True if any registered schedule requests `precision: high`. Callers
@@ -362,9 +377,23 @@ impl WakeService {
             return Ok(FireOutcome::SkippedBudget { reason });
         }
 
-        // 3. Dispatch.
+        // 3. Dispatch. Tracer ordering is load-bearing (#333):
+        //    `schedule_fired` → (for wake) `schedule_rehydrated` → bus deliver.
+        //    We emit `schedule_fired` BEFORE dispatch so the rehydration event
+        //    (emitted inside `dispatch_wake`) lands AFTER it, and the bus
+        //    delivery events land last. Replay consumers depend on this.
         let scheduled_at_ms = state.next_run_at_ms;
         let mode = mode_of(&reg.schedule).unwrap_or(ScheduleMode::Spawn);
+        self.tracer.schedule_fired(
+            &reg.agent,
+            &reg.schedule.name.node,
+            match mode {
+                ScheduleMode::Spawn => "spawn",
+                ScheduleMode::Wake => "wake",
+            },
+            scheduled_at_ms,
+            now_ms,
+        );
         let delivered = self.dispatch(reg, mode).await;
 
         // 4. Update state based on delivery outcome.
@@ -385,16 +414,6 @@ impl WakeService {
             state.consecutive_errors = 0;
             state.last_status = ScheduleStatus::Success;
             state.last_run_at_ms = Some(now_ms);
-            self.tracer.schedule_fired(
-                &reg.agent,
-                &reg.schedule.name.node,
-                match mode {
-                    ScheduleMode::Spawn => "spawn",
-                    ScheduleMode::Wake => "wake",
-                },
-                scheduled_at_ms,
-                now_ms,
-            );
             FireOutcome::Delivered {
                 subscribers: delivered,
             }
@@ -424,13 +443,16 @@ impl WakeService {
         Ok(())
     }
 
-    async fn dispatch(&self, reg: &ScheduleRegistration, _mode: ScheduleMode) -> usize {
-        // v1: `mode: spawn` and (future) `mode: wake` both publish a bus event.
-        // The delivery contract is identical — a bus event named after the
-        // schedule, carrying the prompt (if any) in fields["prompt"]. Agent
-        // subscribes via `on {schedule_name}`. When #333 lands, `mode: wake`
-        // will route to an already-running agent's context; for MVP the
-        // semantics collapse.
+    async fn dispatch(&self, reg: &ScheduleRegistration, mode: ScheduleMode) -> usize {
+        match mode {
+            ScheduleMode::Spawn => self.dispatch_spawn(reg).await,
+            ScheduleMode::Wake => self.dispatch_wake(reg).await,
+        }
+    }
+
+    /// `mode: spawn` dispatch: publish a bus event named after the schedule,
+    /// carrying the prompt (if any). Handlers run as stateless one-shot turns.
+    async fn dispatch_spawn(&self, reg: &ScheduleRegistration) -> usize {
         let event_name = reg.schedule.name.node.clone();
         let mut fields = std::collections::HashMap::new();
         if let Some(prompt_text) = extract_prompt_text(reg.schedule.prompt.as_ref()) {
@@ -444,6 +466,63 @@ impl WakeService {
             args: Vec::new(),
             source_agent: reg.agent.clone(),
             fields,
+        };
+        let bus = self.event_bus.read().await;
+        bus.publish(&payload)
+    }
+
+    /// `mode: wake` dispatch: ensure the agent is live (restoring `memory
+    /// persistent` and re-subscribing it to the bus if not) before publishing
+    /// the wake event. Handlers observe the last persisted memory value —
+    /// Principle I (honesty).
+    ///
+    /// Event name is `schedule.emit` if declared, otherwise the default
+    /// paired handler name `{schedule_name}.tick` (the checker enforces that
+    /// at least one of these exists for `mode: wake`).
+    async fn dispatch_wake(&self, reg: &ScheduleRegistration) -> usize {
+        // Without a lifecycle helper we cannot rehydrate a dormant agent.
+        // Trace the failure and decline to publish (delivery == 0 → the fire
+        // is counted as an error by the caller).
+        let Some(lifecycle) = self.lifecycle.as_ref() else {
+            self.tracer.session_rehydrate_failed(
+                &reg.agent,
+                &reg.schedule.name.node,
+                "wake dispatcher has no AgentLifecycle wired",
+            );
+            return 0;
+        };
+
+        let handle = match lifecycle.rehydrate_or_spawn(&reg.agent).await {
+            Ok(h) => h,
+            Err(e) => {
+                self.tracer.session_rehydrate_failed(
+                    &reg.agent,
+                    &reg.schedule.name.node,
+                    &e.to_string(),
+                );
+                return 0;
+            }
+        };
+
+        // Emit the rehydration event BEFORE publishing. Order:
+        //   schedule_fired → schedule_rehydrated → event_delivered (from bus).
+        self.tracer.schedule_rehydrated(
+            &reg.agent,
+            &reg.schedule.name.node,
+            &handle.memory_keys_restored,
+        );
+
+        let event_name = reg
+            .schedule
+            .emit
+            .as_ref()
+            .map(|e| e.node.clone())
+            .unwrap_or_else(|| format!("{}.tick", reg.schedule.name.node));
+        let payload = EventPayload {
+            event_name,
+            args: Vec::new(),
+            source_agent: reg.agent.clone(),
+            fields: std::collections::HashMap::new(),
         };
         let bus = self.event_bus.read().await;
         bus.publish(&payload)

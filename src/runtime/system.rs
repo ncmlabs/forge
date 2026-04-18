@@ -16,6 +16,7 @@ use crate::ast::*;
 use crate::config::SystemConfig;
 use crate::llm::registry::ProviderRegistry;
 use crate::runtime::agent::{AgentProcess, AgentSignal};
+use crate::runtime::agent_lifecycle::AgentLifecycle;
 use crate::runtime::clock::{Clock, SharedClock, SystemClock};
 use crate::runtime::event_bus::{EventBus, SharedEventBus};
 use crate::runtime::executor::RuntimeError;
@@ -469,6 +470,18 @@ impl SystemRuntime {
             self.warded_runtimes.len()
         );
 
+        // Build the AgentLifecycle helper so `mode: wake` schedules (and
+        // future #334/#335 drivers) can rehydrate dormant agents on demand.
+        // Blueprints are snapshotted into an Arc because the lifecycle is
+        // cloneable across dispatchers.
+        let lifecycle = Arc::new(AgentLifecycle::new(
+            Arc::new(self.blueprints.clone()),
+            self.instance_registry.clone(),
+            self.event_bus.clone(),
+            self.storage.clone(),
+            self.max_agents,
+        ));
+
         // Spawn the WakeService if any declared schedule exists and storage is
         // wired — schedules are durable and require the redb-backed ledger.
         // Must happen after agent spawn so subscribers are registered before
@@ -480,6 +493,7 @@ impl SystemRuntime {
             self.clock.clone(),
             self.tracer.clone(),
             self.budget_query.clone(),
+            lifecycle,
         );
 
         // Run all warded runtimes concurrently with unsupervised agent monitoring
@@ -558,6 +572,7 @@ impl SystemRuntime {
         clock: Option<SharedClock>,
         tracer: Option<Tracer>,
         budget_query: Option<BudgetQuery>,
+        lifecycle: Arc<AgentLifecycle>,
     ) -> Option<crate::runtime::wake_service::WakeServiceHandle> {
         let mut regs: Vec<ScheduleRegistration> = Vec::new();
         for (alias, bp) in blueprints {
@@ -604,7 +619,8 @@ impl SystemRuntime {
             tracer,
             budget_query,
             config,
-        );
+        )
+        .with_lifecycle(lifecycle);
         Some(service.spawn())
     }
 
