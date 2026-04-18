@@ -19,6 +19,10 @@ exportable agent forge_sensei
     max_entries: 50000
     retention: 365d
   timer self_assess: 6h
+  schedule mastery_review
+    when: daily at "09:00"
+    mode: spawn
+    prompt: "Review the last 24 hours of interactions and knowledge. Compute a mastery score in [0,100] from recent task outcomes. Then call update_mastery with that score. Be honest — unanswered or failed tasks lower the score."
   subscribe LearnedInsight where source == "toolkit" or source == "specialist" or source == "api" or source == "webhook"
   subscribe IngestRequested where source == "api" or source == "webhook"
 
@@ -159,6 +163,19 @@ exportable agent forge_sensei
   on self_assess.expired
     say "Self-assess timer fired. Run 'assess.sh' for full mastery evaluation."
     reset self_assess
+
+  # ── Schedule fire: daily mastery review (#332) ──────────────
+  # WakeService fires this handler once per day at 09:00 UTC with the
+  # prompt from the `schedule mastery_review` block above. The handler
+  # computes a mastery score from recent interactions and calls
+  # `update_mastery` — replacing the old external CLI trigger.
+
+  on mastery_review(prompt: Text)
+    memory.interaction_count = memory.interaction_count + 1
+    recent = recall "interactions"
+    score = reason "{prompt}\n\nRecent interactions: {recent}\n\nReturn ONLY a number in [0,100]."
+    update_mastery(score)
+    say "mastery_review fired (scheduled)"
 
   if stuck for 3 turns
     say "forge-sensei is stuck. Escalating for human guidance."
