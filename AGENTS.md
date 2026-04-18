@@ -150,6 +150,19 @@ Run a principles audit after implementation and before commit. Treat principle v
 - If CI fails, inspect the failed logs, fix the issue, push again, and re-check CI.
 - After merge, close the GitHub issue manually because PRs targeting `development` do not auto-close issues reliably.
 
+## Derived Surface Sync
+
+Compiler/runtime source truth and user-facing derived surfaces (reference, SKILL preamble, examples) drift over time. Two automated layers guard against this (issue #229):
+
+- **Per-PR hint** (`.github/workflows/forge-surface-hint.yml`): any PR touching `grammar/**`, `src/ast.rs`, `src/parser.rs`, `src/resolver.rs`, `src/checker/**`, `src/runtime/**`, `src/main.rs`, or `src/build.rs` gets a single checklist comment reminding the author to update `docs/forge-reference.md`, the SKILL FORGE preamble, affected `.forge` examples, and `CHANGELOG.md`. Zero LLM cost. Non-blocking.
+- **Weekly audit** (`.github/workflows/forge-surface-audit.yml`, Mondays 07:00 UTC + `workflow_dispatch`): invokes `claude -p` with `scripts/audit-forge-surface.prompt.md`, scoped by a path-guard to edit only `docs/`, `skills/`, `examples/`, `workflows/`, `CHANGELOG.md`. On non-empty diff with green gates, opens a draft PR labeled `surface-audit` against `development`.
+
+When you touch language surface:
+
+1. Treat the Layer-1 checklist as advisory, not enforcement — close the boxes in the same PR when possible.
+2. If you intentionally defer a derived-surface update, note that deferral in the PR body so the Monday audit surfaces it as an explicit drift item rather than a silent gap.
+3. Do not edit the audit workflow or prompt to "make the audit quieter" — adjust the actual derived surfaces.
+
 ## Collaboration Style
 
 - Naming new constructs may require multiple rounds. Favor precise, forge-era naming and present honest trade-offs.

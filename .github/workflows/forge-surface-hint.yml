@@ -1,0 +1,123 @@
+name: FORGE Surface Hint
+
+# Layer 1 of the derived-surface drift mechanism (issue #229).
+# Fires on PRs that touch language-surface source. Posts — and keeps updating
+# — a single checklist comment nudging the author to confirm that the
+# user-facing derived surfaces (reference, SKILL preamble, examples,
+# changelog) have been updated. Zero LLM cost; purely a hygiene reminder.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "grammar/**"
+      - "src/ast.rs"
+      - "src/parser.rs"
+      - "src/resolver.rs"
+      - "src/checker/**"
+      - "src/runtime/**"
+      - "src/main.rs"
+      - "src/build.rs"
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  hint:
+    name: Post surface-drift hint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed paths
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
+          CHANGED="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" || true)"
+          {
+            echo "grammar=$(echo "$CHANGED" | grep -E '^grammar/' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+            echo "ast=$(echo "$CHANGED" | grep -E '^src/ast\.rs$' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+            echo "parser=$(echo "$CHANGED" | grep -E '^src/parser\.rs$' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+            echo "checker=$(echo "$CHANGED" | grep -E '^src/checker/' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+            echo "runtime=$(echo "$CHANGED" | grep -E '^src/runtime/' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+            echo "cli=$(echo "$CHANGED" | grep -E '^src/(main|build)\.rs$' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+            echo "reference_touched=$(echo "$CHANGED" | grep -E '^docs/forge-reference\.md$' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+            echo "skill_touched=$(echo "$CHANGED" | grep -E '^skills/claude-code/SKILL\.md$' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+            echo "changelog_touched=$(echo "$CHANGED" | grep -E '^CHANGELOG\.md$' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+            echo "examples_touched=$(echo "$CHANGED" | grep -E '^examples/' | head -c 1 | wc -c | awk '{print ($1>0)?"true":"false"}')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build hint body
+        id: body
+        run: |
+          set -euo pipefail
+          hint=$(mktemp)
+          {
+            echo "<!-- forge-surface-hint -->"
+            echo "### FORGE derived-surface check"
+            echo
+            echo "This PR touches FORGE language-surface source. Confirm these derived surfaces stay honest before merge (see issue #229 for the sync mechanism):"
+            echo
+            # Reference.md: always relevant if any language source was touched
+            if [ "${{ steps.paths.outputs.reference_touched }}" = "true" ]; then
+              echo "- [x] \`docs/forge-reference.md\` updated"
+            else
+              echo "- [ ] \`docs/forge-reference.md\` updated (grammar/AST/parser/checker/runtime section)"
+            fi
+            # SKILL preamble: relevant if authoritative file list shifts (new runtime modules, renamed checkers)
+            if [ "${{ steps.paths.outputs.runtime }}" = "true" ] || [ "${{ steps.paths.outputs.checker }}" = "true" ] || [ "${{ steps.paths.outputs.ast }}" = "true" ]; then
+              if [ "${{ steps.paths.outputs.skill_touched }}" = "true" ]; then
+                echo "- [x] \`skills/claude-code/SKILL.md\` FORGE preamble reviewed"
+              else
+                echo "- [ ] \`skills/claude-code/SKILL.md\` FORGE preamble reviewed (authoritative file list up to date?)"
+              fi
+            fi
+            # Examples: always relevant when grammar/parser/checker shift
+            if [ "${{ steps.paths.outputs.grammar }}" = "true" ] || [ "${{ steps.paths.outputs.parser }}" = "true" ] || [ "${{ steps.paths.outputs.checker }}" = "true" ]; then
+              if [ "${{ steps.paths.outputs.examples_touched }}" = "true" ]; then
+                echo "- [x] \`examples/**/*.forge\` and \`examples/validation.toml\` updated"
+              else
+                echo "- [ ] \`examples/**/*.forge\` still compile / \`examples/validation.toml\` classification still correct"
+              fi
+            fi
+            # Changelog: universal ask
+            if [ "${{ steps.paths.outputs.changelog_touched }}" = "true" ]; then
+              echo "- [x] \`CHANGELOG.md\` entry added"
+            else
+              echo "- [ ] \`CHANGELOG.md\` entry under \`Added\` / \`Changed\` / \`Fixed\`"
+            fi
+            echo
+            echo "_The Monday audit (Layer 2) will open a draft PR to sweep any drift this checklist misses._"
+          } > "$hint"
+          {
+            echo "body<<HINT_EOF"
+            cat "$hint"
+            echo "HINT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upsert hint comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = process.env.HINT_BODY;
+            const marker = '<!-- forge-surface-hint -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+        env:
+          HINT_BODY: ${{ steps.body.outputs.body }}
