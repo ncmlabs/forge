@@ -43,9 +43,9 @@ task calculate_total
 
 FORGE has reserved keywords that define control flow, task definitions, and logic. These cannot be used as identifiers.
 
-Reserved keywords: `task`, `pure`, `flow`, `stage`, `fn`, `needs`, `gives`, `do`, `is`, `give`, `say`, `use`, `when`, `else`, `if`, `match`, `for`, `in`, `try`, `or`, `with`, `above`, `reason`, `classify`, `search`, `into`, `not`, `and`, `true`, `false`, `agent`, `pool`, `warden`, `contract`, `system`, `event`, `states`, `type`, `endpoint`, `timer`, `emit`, `transition`, `escalate`, `forward`, `subscribe`, `start`, `cancel`, `reset`, `requires`
+Reserved keywords: `task`, `pure`, `flow`, `stage`, `fn`, `needs`, `gives`, `do`, `is`, `give`, `say`, `use`, `when`, `else`, `if`, `match`, `for`, `in`, `try`, `or`, `with`, `above`, `reason`, `classify`, `into`, `not`, `and`, `true`, `false`, `agent`, `pool`, `warden`, `contract`, `system`, `event`, `states`, `type`, `endpoint`, `timer`, `emit`, `transition`, `escalate`, `forward`, `subscribe`, `start`, `cancel`, `reset`, `requires`
 
-Additional contextual keywords (reserved in specific contexts): `memory`, `lifecycle`, `manages`, `can`, `workers`, `strategy`, `on`, `fail`, `where`, `stuck`, `crash`, `hallucination`, `budget`, `timeout`, `nudge`, `restart`, `replace`, `self`, `downstream`, `all`, `after`, `max_retries`, `per`, `then`
+Additional contextual keywords (reserved in specific contexts): `search`, `memory`, `lifecycle`, `manages`, `can`, `workers`, `strategy`, `on`, `fail`, `where`, `stuck`, `crash`, `hallucination`, `budget`, `timeout`, `nudge`, `restart`, `replace`, `self`, `downstream`, `all`, `after`, `max_retries`, `per`, `then`
 
 ```forge
 task validate_user
