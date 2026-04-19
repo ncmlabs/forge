@@ -20,6 +20,7 @@ var ForgeTimeline = (function () {
     { key: 'flow',      label: 'Flow',     color: 'oklch(0.6 0.15 170)',  events: ['flow_start', 'flow_complete', 'stage_start', 'stage_complete', 'wave_start', 'wave_complete', 'pool_send', 'pool_resolved'] },
     { key: 'event',     label: 'Events',   color: 'oklch(0.65 0.15 145)', events: ['event_emit', 'event_delivered'] },
     { key: 'schedule',  label: 'Schedule', color: 'oklch(0.72 0.17 95)',  events: ['schedule_fired', 'schedule_rehydrated', 'schedule_skipped_concurrent', 'schedule_skipped_budget', 'schedule_errored', 'schedule_claim_lost', 'session_rehydrate_failed'] },
+    { key: 'correlate', label: 'Correlate', color: 'oklch(0.7 0.17 320)', events: ['correlation_hit', 'correlation_miss', 'correlation_registered'] },
     { key: 'warden',    label: 'Warden',   color: 'oklch(0.7 0.15 25)',   events: ['ward_action'] },
     { key: 'http',      label: 'HTTP',     color: 'oklch(0.55 0.1 220)',  events: ['http_request', 'http_response'] }
   ];
@@ -250,12 +251,15 @@ var ForgeTimeline = (function () {
     var domainStart = domain[0].getTime();
     var domainEnd = domain[1].getTime();
 
-    // Filter events: within time domain and matching active category filters
+    // Filter events: within time domain and matching active category filters.
+    // Use `ts` (wall-clock epoch ms, set client-side when SSE received the
+    // event) — NOT `ts_ms` (which is server-start-relative elapsed time and
+    // never intersects xScale's wall-clock domain).
     var visible = buffer.filter(function (item) {
       var cat = eventToCategory[item.event];
       if (!cat) return false;
       if (!activeFilters[cat.key]) return false;
-      var t = item.ts_ms || item.ts;
+      var t = item.ts || item.ts_ms;
       return t >= domainStart && t <= domainEnd;
     });
 
@@ -264,7 +268,7 @@ var ForgeTimeline = (function () {
       var cat = eventToCategory[item.event];
       var catIdx = CATEGORIES.indexOf(cat);
       return {
-        x: xScale(new Date(item.ts_ms || item.ts)),
+        x: xScale(new Date(item.ts || item.ts_ms)),
         y: catIdx * LANE_HEIGHT + 4,
         h: LANE_HEIGHT - 8,
         color: cat.color,
