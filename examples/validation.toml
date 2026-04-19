@@ -120,6 +120,12 @@ check = "ok"
 run = "mock"
 
 [[cases]]
+name = "correlate block demo (#334)"
+paths = ["examples/basics/correlate.forge"]
+check = "ok"
+run = "mock"
+
+[[cases]]
 name = "command examples"
 paths = [
   "examples/command/command_argv.forge",

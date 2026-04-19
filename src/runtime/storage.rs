@@ -49,6 +49,11 @@ const FORGE_KV: TableDefinition<&str, &str> = TableDefinition::new("forge_kv");
 /// Value: JSON-encoded `ScheduleState`.
 const FORGE_SCHEDULES: TableDefinition<&str, &str> = TableDefinition::new("forge_schedules");
 
+/// Correlation rows for `CorrelationDriver` (issue #334).
+/// Key format: `"{agent_name}:{field_name}:{field_value}"`.
+/// Value: target agent alias to rehydrate when the correlated event arrives.
+const FORGE_CORRELATIONS: TableDefinition<&str, &str> = TableDefinition::new("forge_correlations");
+
 /// Terminal status of the most recent schedule dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScheduleStatus {
@@ -185,6 +190,8 @@ impl ForgeStorage {
         txn.open_table(FORGE_KV)
             .map_err(|e| StorageError::Table(Box::new(e)))?;
         txn.open_table(FORGE_SCHEDULES)
+            .map_err(|e| StorageError::Table(Box::new(e)))?;
+        txn.open_table(FORGE_CORRELATIONS)
             .map_err(|e| StorageError::Table(Box::new(e)))?;
         txn.commit()
             .map_err(|e| StorageError::Commit(Box::new(e)))?;
@@ -460,6 +467,102 @@ impl ForgeStorage {
             .map_err(|e| StorageError::Commit(Box::new(e)))?;
         Ok(outcome)
     }
+
+    // ── Correlation state (issue #334) ──────────────────────────────
+
+    /// Upsert a single correlation row. Used when an agent's `memory persistent`
+    /// write changes a declared correlation field.
+    pub fn upsert_correlation(
+        &self,
+        agent: &str,
+        field: &str,
+        value: &str,
+        target_alias: &str,
+    ) -> Result<(), StorageError> {
+        let key = correlation_key(agent, field, value);
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        {
+            let mut table = txn
+                .open_table(FORGE_CORRELATIONS)
+                .map_err(|e| StorageError::Table(Box::new(e)))?;
+            table
+                .insert(key.as_str(), target_alias)
+                .map_err(|e| StorageError::Write(Box::new(e)))?;
+        }
+        txn.commit()
+            .map_err(|e| StorageError::Commit(Box::new(e)))?;
+        Ok(())
+    }
+
+    /// Look up the target agent alias for a given correlation tuple.
+    pub fn lookup_correlation(
+        &self,
+        agent: &str,
+        field: &str,
+        value: &str,
+    ) -> Result<Option<String>, StorageError> {
+        let key = correlation_key(agent, field, value);
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        let table = txn
+            .open_table(FORGE_CORRELATIONS)
+            .map_err(|e| StorageError::Table(Box::new(e)))?;
+        match table
+            .get(key.as_str())
+            .map_err(|e| StorageError::Read(Box::new(e)))?
+        {
+            Some(v) => Ok(Some(v.value().to_string())),
+            None => Ok(None),
+        }
+    }
+
+    /// Atomically persist an agent's memory blob alongside any correlation
+    /// upserts derived from that memory. Both writes land in a single redb
+    /// write transaction — there is no window where memory and correlation
+    /// state can diverge.
+    ///
+    /// `rows` contains `(agent, field, value, target_alias)` tuples for every
+    /// declared correlation whose value is present in this memory snapshot.
+    pub fn store_memory_with_correlations(
+        &self,
+        mem_key: &str,
+        mem_json: &str,
+        rows: &[(String, String, String, String)],
+    ) -> Result<(), StorageError> {
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        {
+            let mut kv = txn
+                .open_table(FORGE_KV)
+                .map_err(|e| StorageError::Table(Box::new(e)))?;
+            kv.insert(mem_key, mem_json)
+                .map_err(|e| StorageError::Write(Box::new(e)))?;
+        }
+        if !rows.is_empty() {
+            let mut corr = txn
+                .open_table(FORGE_CORRELATIONS)
+                .map_err(|e| StorageError::Table(Box::new(e)))?;
+            for (agent, field, value, target) in rows {
+                let key = correlation_key(agent, field, value);
+                corr.insert(key.as_str(), target.as_str())
+                    .map_err(|e| StorageError::Write(Box::new(e)))?;
+            }
+        }
+        txn.commit()
+            .map_err(|e| StorageError::Commit(Box::new(e)))?;
+        Ok(())
+    }
+}
+
+fn correlation_key(agent: &str, field: &str, value: &str) -> String {
+    format!("{agent}:{field}:{value}")
 }
 
 // ── Errors ──────────────────────────────────────────────────────
@@ -762,5 +865,89 @@ mod tests {
         s.claimed_by = None;
         s.claim_expires_at_ms = Some(10_000);
         assert!(!s.is_claim_live(0), "no claimer → not live");
+    }
+
+    // ── Correlation state tests (issue #334) ─────────────────────────
+
+    #[test]
+    fn correlation_upsert_and_lookup_round_trip() {
+        let (_dir, storage) = temp_storage();
+        storage
+            .upsert_correlation("slack_specialist", "thread_ts", "T1", "slack_specialist")
+            .unwrap();
+        let hit = storage
+            .lookup_correlation("slack_specialist", "thread_ts", "T1")
+            .unwrap();
+        assert_eq!(hit, Some("slack_specialist".to_string()));
+    }
+
+    #[test]
+    fn correlation_lookup_miss_returns_none() {
+        let (_dir, storage) = temp_storage();
+        assert!(storage
+            .lookup_correlation("a", "thread_ts", "T-new")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn correlation_persists_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("correlations.redb");
+        {
+            let storage = ForgeStorage::open(&db_path).unwrap();
+            storage
+                .upsert_correlation("a", "thread_ts", "T1", "a")
+                .unwrap();
+        }
+        let storage = ForgeStorage::open(&db_path).unwrap();
+        assert_eq!(
+            storage.lookup_correlation("a", "thread_ts", "T1").unwrap(),
+            Some("a".to_string())
+        );
+    }
+
+    #[test]
+    fn store_memory_with_correlations_commits_both_or_neither() {
+        let (_dir, storage) = temp_storage();
+
+        // Happy path: memory + correlation row land together.
+        let rows = vec![(
+            "slack_specialist".to_string(),
+            "thread_ts".to_string(),
+            "T1".to_string(),
+            "slack_specialist".to_string(),
+        )];
+        storage
+            .store_memory_with_correlations(
+                "agent:slack_specialist:memory",
+                r#"{"thread_ts":"T1"}"#,
+                &rows,
+            )
+            .unwrap();
+
+        assert_eq!(
+            storage.get("agent:slack_specialist:memory").unwrap(),
+            Some(r#"{"thread_ts":"T1"}"#.to_string())
+        );
+        assert_eq!(
+            storage
+                .lookup_correlation("slack_specialist", "thread_ts", "T1")
+                .unwrap(),
+            Some("slack_specialist".to_string())
+        );
+
+        // Empty-rows path writes memory with no correlation side-effects.
+        storage
+            .store_memory_with_correlations("agent:other:memory", r#"{"foo":"bar"}"#, &[])
+            .unwrap();
+        assert_eq!(
+            storage.get("agent:other:memory").unwrap(),
+            Some(r#"{"foo":"bar"}"#.to_string())
+        );
+        assert!(storage
+            .lookup_correlation("other", "thread_ts", "T1")
+            .unwrap()
+            .is_none());
     }
 }

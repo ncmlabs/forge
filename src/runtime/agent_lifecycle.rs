@@ -257,6 +257,7 @@ mod tests {
             knowledge: None,
             timers: Vec::new(),
             schedules: Vec::new(),
+            correlates: Vec::new(),
             subscriptions: Vec::new(),
             warden_override: Vec::new(),
             handlers: Vec::new(),

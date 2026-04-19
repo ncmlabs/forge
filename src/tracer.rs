@@ -426,6 +426,55 @@ impl Tracer {
         );
     }
 
+    // ── Correlation tracing (issue #334) ────────────────────────────────────
+    //
+    // Correlations bridge inbound external events to the specialist session
+    // that owns the underlying thread/task. Every lookup and every persisted
+    // write emits a discrete event so the observer (and replay harness) can
+    // reconstruct routing deterministically (Principle I: no silent routing,
+    // Principle VII: accountability for which session claimed which key).
+
+    pub fn correlation_hit(&self, event: &str, field: &str, value: &str, target_alias: &str) {
+        self.emit(
+            "correlation_hit",
+            serde_json::json!({
+                "event": event,
+                "field": field,
+                "value": value,
+                "target_alias": target_alias,
+            }),
+        );
+    }
+
+    pub fn correlation_miss(&self, event: &str, field: &str, value: &str) {
+        self.emit(
+            "correlation_miss",
+            serde_json::json!({
+                "event": event,
+                "field": field,
+                "value": value,
+            }),
+        );
+    }
+
+    pub fn correlation_registered(
+        &self,
+        agent: &str,
+        field: &str,
+        value: &str,
+        target_alias: &str,
+    ) {
+        self.emit(
+            "correlation_registered",
+            serde_json::json!({
+                "agent": agent,
+                "field": field,
+                "value": value,
+                "target_alias": target_alias,
+            }),
+        );
+    }
+
     // ── HTTP server tracing (issue #43) ─────────────────────────────────────
 
     pub fn http_request(&self, endpoint: &str, method: &str, path: &str) {

@@ -452,6 +452,7 @@ fn decl_with_schedule(name: &str, schedule: ScheduleField) -> AgentDecl {
         knowledge: None,
         timers: Vec::new(),
         schedules: vec![sp(schedule)],
+        correlates: Vec::new(),
         subscriptions: Vec::new(),
         warden_override: Vec::new(),
         handlers: Vec::new(),

@@ -632,7 +632,41 @@ impl AgentProcess {
             if let Some(ref store) = self.storage {
                 let key = format!("agent:{}:memory", self.decl.name.node);
                 if let Ok(json) = ctx.memory.to_json() {
-                    let _ = store.store(&key, &json);
+                    // Collect correlation upserts atomically with the memory
+                    // blob so external events can never route into a session
+                    // whose memory isn't yet on disk (issue #334).
+                    let mut correlation_rows: Vec<(String, String, String, String)> =
+                        Vec::with_capacity(self.decl.correlates.len());
+                    for correlate_sp in &self.decl.correlates {
+                        let field = correlate_sp.node.field_name.node.as_str();
+                        if let Some(cv) = ctx.memory.get(field) {
+                            if let Value::Text(s) = &cv.value {
+                                if !s.is_empty() {
+                                    correlation_rows.push((
+                                        self.decl.name.node.clone(),
+                                        field.to_string(),
+                                        s.clone(),
+                                        self.decl.name.node.clone(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    if correlation_rows.is_empty() {
+                        let _ = store.store(&key, &json);
+                    } else {
+                        let rows_for_trace = correlation_rows.clone();
+                        if store
+                            .store_memory_with_correlations(&key, &json, &correlation_rows)
+                            .is_ok()
+                        {
+                            if let Some(t) = self.executor.tracer() {
+                                for (agent, field, value, target) in &rows_for_trace {
+                                    t.correlation_registered(agent, field, value, target);
+                                }
+                            }
+                        }
+                    }
                 }
                 // Persist lifecycle state
                 if let Some(ref sm) = ctx.state_machine {

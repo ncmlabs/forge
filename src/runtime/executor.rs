@@ -168,6 +168,10 @@ pub struct TaskExecutor {
     session_manager: Option<SharedSessionManager>,
     /// Working directory override for sandbox isolation (issue #194).
     working_dir: Option<std::path::PathBuf>,
+    /// Correlation driver for inbound event routing (issue #334).
+    correlation_driver: Option<crate::runtime::correlation_driver::CorrelationDriver>,
+    /// Agent lifecycle helper for rehydrate-before-publish (issues #333/#334).
+    agent_lifecycle: Option<Arc<crate::runtime::agent_lifecycle::AgentLifecycle>>,
 }
 
 impl Clone for TaskExecutor {
@@ -198,6 +202,8 @@ impl Clone for TaskExecutor {
             command_manager: self.command_manager.clone(),
             session_manager: self.session_manager.clone(),
             working_dir: self.working_dir.clone(),
+            correlation_driver: self.correlation_driver.clone(),
+            agent_lifecycle: self.agent_lifecycle.clone(),
         }
     }
 }
@@ -259,7 +265,23 @@ impl TaskExecutor {
                 crate::runtime::session_manager::new_shared_default_session_manager(tracer.clone()),
             ),
             working_dir: None,
+            correlation_driver: None,
+            agent_lifecycle: None,
         }
+    }
+
+    /// Wire the correlation driver + lifecycle helper for inbound event
+    /// routing. When both are present, `emit_precomputed` will consult the
+    /// driver before publishing and rehydrate the target session on a hit
+    /// (issue #334).
+    pub fn with_correlation(
+        mut self,
+        driver: crate::runtime::correlation_driver::CorrelationDriver,
+        lifecycle: Arc<crate::runtime::agent_lifecycle::AgentLifecycle>,
+    ) -> Self {
+        self.correlation_driver = Some(driver);
+        self.agent_lifecycle = Some(lifecycle);
+        self
     }
 
     /// Set working directory for sandbox isolation (issue #194).
@@ -475,6 +497,48 @@ impl TaskExecutor {
                 source_agent: source,
                 fields,
             };
+
+            // Correlation routing (issue #334): an inbound event matching a
+            // persisted key rehydrates the owning specialist BEFORE publish so
+            // the rehydrated session is subscribed when the event fans out.
+            // Principle I: handlers never see empty state.
+            if let (Some(driver), Some(lifecycle)) =
+                (&self.correlation_driver, &self.agent_lifecycle)
+            {
+                match driver.match_event(&payload) {
+                    Ok(Some(hit)) => {
+                        if let Some(t) = &self.tracer {
+                            t.correlation_hit(
+                                &hit.event_type,
+                                &hit.field_name,
+                                &hit.field_value,
+                                &hit.target_alias,
+                            );
+                        }
+                        if let Err(e) = lifecycle.rehydrate_or_spawn(&hit.target_alias).await {
+                            if let Some(t) = &self.tracer {
+                                t.session_rehydrate_failed(
+                                    &hit.target_alias,
+                                    "correlation",
+                                    &e.to_string(),
+                                );
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // Trace a miss only if at least one registered agent
+                        // correlates on this event+field (otherwise every
+                        // unrelated event emits a miss, which is noise).
+                        if let Some(t) = &self.tracer {
+                            if let Some((field, value)) = driver.first_registered_field(&payload) {
+                                t.correlation_miss(&payload.event_name, &field, &value);
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+
             // EventBus::publish traces event_emit internally (#325); don't double-trace here.
             bus.read().await.publish(&payload);
         } else {

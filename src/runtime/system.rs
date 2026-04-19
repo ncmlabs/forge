@@ -66,6 +66,10 @@ pub struct SystemRuntime {
     tracer: Option<Tracer>,
     clock: Option<SharedClock>,
     budget_query: Option<BudgetQuery>,
+    /// Lazily-built shared lifecycle (issue #334): both `start()` and external
+    /// callers (HTTP server / correlation driver) must share the same instance
+    /// so that rehydrated agents register in one `InstanceRegistry`.
+    agent_lifecycle: Option<Arc<AgentLifecycle>>,
 }
 
 impl SystemRuntime {
@@ -236,7 +240,58 @@ impl SystemRuntime {
             tracer,
             clock: None,
             budget_query: None,
+            agent_lifecycle: None,
         })
+    }
+
+    /// Build (or return the cached) shared `AgentLifecycle`. External callers
+    /// (HTTP server / CorrelationDriver, issue #334) use this to share a
+    /// single lifecycle with the internal `start()` dispatch path so that
+    /// rehydrated agents register in one `InstanceRegistry`.
+    pub fn ensure_lifecycle(&mut self) -> Arc<AgentLifecycle> {
+        if let Some(ref lc) = self.agent_lifecycle {
+            return lc.clone();
+        }
+        let lc = Arc::new(AgentLifecycle::new(
+            Arc::new(self.blueprints.clone()),
+            self.instance_registry.clone(),
+            self.event_bus.clone(),
+            self.storage.clone(),
+            self.max_agents,
+        ));
+        self.agent_lifecycle = Some(lc.clone());
+        lc
+    }
+
+    /// Build a `CorrelationDriver` from declared `correlate on Event.field`
+    /// blocks (issue #334). Returns `None` when no agent declares any.
+    pub fn build_correlation_driver(
+        &self,
+    ) -> Option<crate::runtime::correlation_driver::CorrelationDriver> {
+        use crate::ast::ScheduleMode;
+        use crate::runtime::correlation_driver::{CorrelationDriver, CorrelationRegistration};
+        let mut regs: Vec<CorrelationRegistration> = Vec::new();
+        for (alias, bp) in &self.blueprints {
+            for corr in &bp.decl.correlates {
+                regs.push(CorrelationRegistration {
+                    agent_alias: alias.clone(),
+                    event_type: corr.node.event_type.node.clone(),
+                    field_name: corr.node.field_name.node.clone(),
+                    mode: corr
+                        .node
+                        .mode
+                        .as_ref()
+                        .map(|m| m.node)
+                        .unwrap_or(ScheduleMode::Wake),
+                    emit: corr.node.emit.as_ref().map(|e| e.node.clone()),
+                });
+            }
+        }
+        if regs.is_empty() {
+            return None;
+        }
+        let storage = self.storage.clone()?;
+        Some(CorrelationDriver::new(storage, regs))
     }
 
     /// Override the wall-clock source used by WakeService. Defaults to
@@ -470,17 +525,10 @@ impl SystemRuntime {
             self.warded_runtimes.len()
         );
 
-        // Build the AgentLifecycle helper so `mode: wake` schedules (and
-        // future #334/#335 drivers) can rehydrate dormant agents on demand.
-        // Blueprints are snapshotted into an Arc because the lifecycle is
-        // cloneable across dispatchers.
-        let lifecycle = Arc::new(AgentLifecycle::new(
-            Arc::new(self.blueprints.clone()),
-            self.instance_registry.clone(),
-            self.event_bus.clone(),
-            self.storage.clone(),
-            self.max_agents,
-        ));
+        // Build (or reuse) the shared AgentLifecycle helper so `mode: wake`
+        // schedules (#333) and correlation-routed events (#334) both rehydrate
+        // dormant agents into the same `InstanceRegistry`.
+        let lifecycle = self.ensure_lifecycle();
 
         // Spawn the WakeService if any declared schedule exists and storage is
         // wired — schedules are durable and require the redb-backed ledger.

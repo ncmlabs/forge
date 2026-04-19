@@ -66,6 +66,7 @@ fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>
         knowledge: None,
         timers: vec![],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
             event_name: spanned(event_name.into()),
             filter,
@@ -98,6 +99,7 @@ fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDec
         knowledge: None,
         timers: vec![],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![],
         handlers: vec![spanned(OnHandler {
             event: spanned(trigger_event.into()),
@@ -481,6 +483,7 @@ async fn multi_agent_event_flow() {
         knowledge: None,
         timers: vec![],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![],
         handlers: vec![spanned(OnHandler {
             event: spanned("join".into()),
@@ -639,6 +642,7 @@ async fn agent_handler_emit_produces_event_emit_trace() {
         knowledge: None,
         timers: vec![],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
             event_name: spanned("Ping".into()),
             filter: None,
@@ -726,6 +730,7 @@ async fn agent_handler_emit_is_invisible_when_bus_has_no_tracer() {
         knowledge: None,
         timers: vec![],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
             event_name: spanned("Ping".into()),
             filter: None,

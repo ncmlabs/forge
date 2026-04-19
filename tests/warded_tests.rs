@@ -29,6 +29,7 @@ fn simple_agent(name: &str) -> AgentDecl {
         knowledge: None,
         timers: vec![],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![],
         warden_override: vec![],
         handlers: vec![sp(OnHandler {
@@ -56,6 +57,7 @@ fn crashing_agent(name: &str) -> AgentDecl {
         knowledge: None,
         timers: vec![],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![sp(SubscribeDecl {
             event_name: sp("trigger".to_string()),
             filter: None,
