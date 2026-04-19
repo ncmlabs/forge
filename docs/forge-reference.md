@@ -43,7 +43,7 @@ task calculate_total
 
 FORGE has reserved keywords that define control flow, task definitions, and logic. These cannot be used as identifiers.
 
-Reserved keywords: `task`, `pure`, `flow`, `stage`, `fn`, `needs`, `gives`, `do`, `is`, `give`, `say`, `use`, `when`, `else`, `if`, `match`, `for`, `in`, `try`, `or`, `with`, `above`, `reason`, `classify`, `into`, `not`, `and`, `true`, `false`, `agent`, `pool`, `warden`, `contract`, `system`, `event`, `states`, `type`, `endpoint`, `timer`, `emit`, `transition`, `escalate`, `forward`, `subscribe`, `start`, `cancel`, `reset`, `requires`
+Reserved keywords: `task`, `pure`, `flow`, `stage`, `fn`, `needs`, `gives`, `do`, `is`, `give`, `say`, `use`, `when`, `else`, `if`, `match`, `for`, `in`, `try`, `or`, `with`, `above`, `reason`, `classify`, `into`, `not`, `and`, `true`, `false`, `agent`, `pool`, `warden`, `contract`, `system`, `event`, `states`, `type`, `endpoint`, `timer`, `emit`, `transition`, `escalate`, `downgrade`, `forward`, `subscribe`, `start`, `cancel`, `reset`, `requires`, `to`, `recall`, `learn`, `spawn`, `find`, `retire`, `exec`, `exportable`, `import`, `from`, `as`, `command`, `background`, `session`, `schedule`
 
 Additional contextual keywords (reserved in specific contexts): `search`, `memory`, `lifecycle`, `manages`, `can`, `workers`, `strategy`, `on`, `fail`, `where`, `stuck`, `crash`, `hallucination`, `budget`, `timeout`, `nudge`, `restart`, `replace`, `self`, `downstream`, `all`, `after`, `max_retries`, `per`, `then`
 
@@ -1505,7 +1505,7 @@ agent forge_sensei
     say "drift check fired"
 ```
 
-> **Status:** The grammar, AST, and compile-time checker ship today. Runtime dispatch (`WakeService`) lands in a follow-up issue — a `schedule` block that passes `forge check` is declared but not yet dispatched.
+> **Status:** Fully shipped. Grammar, AST, compile-time checker, `WakeService`, and `CronDriver` are all available. Both `mode: spawn` and `mode: wake` are runtime-dispatched.
 
 A schedule block must declare `when:` and `mode:`. Extra options depend on the mode.
 
@@ -1959,6 +1959,7 @@ warden <name>
 | `stuck` | Agent cannot make progress |
 | `crash` | Agent encountered an unrecoverable error |
 | `hallucination` | Agent produced output that failed validation |
+| `contradiction` | Agent output contradicted a verified claim or prior state |
 | `budget` | Agent exceeded its token or cost budget |
 | `timeout` | Agent did not respond within the allowed time |
 
@@ -2007,7 +2008,7 @@ The warden checker produces **warnings** for:
 
 | Warning | Description |
 |---------|-------------|
-| Incomplete failure coverage | The warden does not define policies for all five failure types |
+| Incomplete failure coverage | The warden does not define policies for all six failure types |
 
 ### Agent-Level Overrides
 
@@ -2056,7 +2057,7 @@ warden supervisor
 
 ### Best Practices
 
-1. **Cover all five failure types** -- the compiler warns about incomplete coverage for a reason
+1. **Cover all six failure types** -- the compiler warns about incomplete coverage for a reason
 2. **Start with `nudge`** -- give agents a chance to self-correct before restarting or replacing
 3. **Use `after` for progressive escalation** -- a single severe response on first failure is usually too aggressive
 4. **Scope responses narrowly** -- prefer `self` over `all` unless the failure genuinely affects the entire group
