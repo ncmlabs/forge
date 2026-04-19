@@ -112,10 +112,18 @@ impl AgentLifecycle {
         &self,
         alias: &str,
     ) -> Result<AgentHandle, AgentLifecycleError> {
-        let blueprint = self
-            .blueprints
-            .get(alias)
-            .ok_or_else(|| AgentLifecycleError::NotDeclared(alias.to_string()))?;
+        // Blueprints are keyed by system-binding alias (e.g. "specialist"), but
+        // correlation rows are written keyed by the agent declaration name
+        // (e.g. "slack_specialist"). Fall back to a decl-name scan so either
+        // identifier routes correctly.
+        let blueprint = match self.blueprints.get(alias) {
+            Some(bp) => bp,
+            None => self
+                .blueprints
+                .values()
+                .find(|bp| bp.decl.name.node == alias)
+                .ok_or_else(|| AgentLifecycleError::NotDeclared(alias.to_string()))?,
+        };
         let agent_name = blueprint.decl.name.node.clone();
 
         // Fast path: already live?

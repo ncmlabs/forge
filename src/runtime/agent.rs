@@ -762,6 +762,21 @@ impl AgentProcess {
                 let rx = bus_guard.subscribe(&event_name, &self.decl.name.node, None);
                 receivers.push((None, rx));
             }
+            // Correlate blocks imply a subscription on the source event — the
+            // whole point is routing that event into this agent (#334). When
+            // `emit:` is declared, WakeService/CorrelationDriver publishes the
+            // emit event after rehydration; otherwise the inbound event is
+            // delivered directly, so the agent needs to be on the bus for it.
+            for correlate in &self.decl.correlates {
+                let event_name = correlate
+                    .node
+                    .emit
+                    .as_ref()
+                    .map(|e| e.node.clone())
+                    .unwrap_or_else(|| correlate.node.event_type.node.clone());
+                let rx = bus_guard.subscribe(&event_name, &self.decl.name.node, None);
+                receivers.push((None, rx));
+            }
         }
         self.event_bus = Some(bus.clone());
         self.executor = self.executor.with_event_bus(bus);

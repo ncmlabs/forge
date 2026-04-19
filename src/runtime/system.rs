@@ -271,10 +271,14 @@ impl SystemRuntime {
         use crate::ast::ScheduleMode;
         use crate::runtime::correlation_driver::{CorrelationDriver, CorrelationRegistration};
         let mut regs: Vec<CorrelationRegistration> = Vec::new();
-        for (alias, bp) in &self.blueprints {
+        for bp in self.blueprints.values() {
+            // Use the agent declaration name as the storage-key prefix so it
+            // matches what `agent.rs` writes during the atomic memory persist.
+            // System binding alias is not visible to the agent process — only
+            // decl.name reaches the write path.
             for corr in &bp.decl.correlates {
                 regs.push(CorrelationRegistration {
-                    agent_alias: alias.clone(),
+                    agent_alias: bp.decl.name.node.clone(),
                     event_type: corr.node.event_type.node.clone(),
                     field_name: corr.node.field_name.node.clone(),
                     mode: corr

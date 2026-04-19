@@ -438,7 +438,7 @@ impl Tracer {
         self.emit(
             "correlation_hit",
             serde_json::json!({
-                "event": event,
+                "event_name": event,
                 "field": field,
                 "value": value,
                 "target_alias": target_alias,
@@ -450,7 +450,7 @@ impl Tracer {
         self.emit(
             "correlation_miss",
             serde_json::json!({
-                "event": event,
+                "event_name": event,
                 "field": field,
                 "value": value,
             }),
