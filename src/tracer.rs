@@ -392,6 +392,40 @@ impl Tracer {
         );
     }
 
+    // ── Wake-mode session rehydration (issue #333) ──────────────────────────
+    //
+    // `mode: wake` schedules must restore `memory persistent` and re-subscribe
+    // the agent to the bus before publishing the wake event. These events make
+    // the `fired → rehydrated → published` ordering observable and replayable
+    // (Principle I, honesty — handlers never see empty state).
+
+    pub fn schedule_rehydrated(
+        &self,
+        agent: &str,
+        schedule: &str,
+        memory_keys_restored: &[String],
+    ) {
+        self.emit(
+            "schedule_rehydrated",
+            serde_json::json!({
+                "agent": agent,
+                "schedule": schedule,
+                "memory_keys_restored": memory_keys_restored,
+            }),
+        );
+    }
+
+    pub fn session_rehydrate_failed(&self, agent: &str, schedule: &str, error: &str) {
+        self.emit(
+            "session_rehydrate_failed",
+            serde_json::json!({
+                "agent": agent,
+                "schedule": schedule,
+                "error": error,
+            }),
+        );
+    }
+
     // ── HTTP server tracing (issue #43) ─────────────────────────────────────
 
     pub fn http_request(&self, endpoint: &str, method: &str, path: &str) {

@@ -1,0 +1,50 @@
+#! boundary: server
+
+# ================================================================
+# Wake-mode rehydration live smoke — wake-rehydration-smoke (#333)
+# ================================================================
+# Proves the `mode: wake` dispatch path end-to-end:
+#   - `schedule drift_check` fires on a wall-clock cadence,
+#   - WakeService calls AgentLifecycle::rehydrate_or_spawn to
+#     restore `memory persistent` and re-subscribe the agent
+#     BEFORE publishing the wake event,
+#   - the paired `on DriftCheckDue` handler sees the last
+#     persisted memory value (Principle I, honesty),
+#   - tracer emits schedule_fired → schedule_rehydrated →
+#     event_delivered in that order (load-bearing for replay).
+#
+# Run:
+#   cargo run -- serve \
+#     --manifest examples/agents/wake-rehydration-smoke/forge.project.toml \
+#     examples/agents/wake-rehydration-smoke/main.forge --port 3233
+#   # Watch the rehydration + wake cycle:
+#   curl -sN http://localhost:3233/__forge/events \
+#     | grep -E 'schedule_fired|schedule_rehydrated|DriftCheckDue'
+# ================================================================
+
+agent drift_watcher
+  memory persistent
+    last_level: Text
+    review_count: Number
+  schedule drift_check
+    when: every 30s
+    mode: wake
+    emit: DriftCheckDue
+
+  on start
+    if memory.review_count == 0
+      say "[drift_watcher] up — waiting for drift_check rehydration"
+    if memory.review_count > 0
+      say "[drift_watcher] resumed at review #{memory.review_count} ({memory.last_level})"
+
+  # WakeService rehydrates the agent (restoring `last_level` and
+  # `review_count` from redb) before publishing DriftCheckDue. The
+  # handler observes the last-persisted counter — this is the whole
+  # point of `mode: wake` vs `mode: spawn`.
+  on DriftCheckDue
+    memory.review_count = memory.review_count + 1
+    say "[drift_watcher] drift review #{memory.review_count} — last level: {memory.last_level}"
+
+system drift_smoke
+  use
+    watcher: drift_watcher

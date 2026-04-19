@@ -218,7 +218,11 @@ test.describe('Standalone Observer (issue #144)', () => {
 
     // Filter checkboxes should be visible
     const filters = obs.timelineFilters.locator('.timeline-filter');
-    await expect(filters).toHaveCount(6); // 6 categories
+    await expect(filters).toHaveCount(7); // 7 categories (incl. Schedule, #333)
+
+    // Schedule category must be present so wake-mode rehydration events
+    // are filterable and visible on the timeline (#333).
+    await expect(filters.filter({ hasText: 'Schedule' })).toHaveCount(1);
   });
 
   test('theme toggle works', async ({ page }) => {
