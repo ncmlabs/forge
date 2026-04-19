@@ -2,6 +2,7 @@
 /bin
 .worktrees/
 .claude/
+.forge-data/
 .forge-security-allow
 docs/superpowers/
 forge-principles.md
