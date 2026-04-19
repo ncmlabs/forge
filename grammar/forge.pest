@@ -42,9 +42,88 @@ i4         = _{ "        " }
 
 // --- Identifiers & Keywords ---
 // Only true keywords that can NEVER be used as identifiers.
-// Contextual keywords (memory, search, can, workers, strategy,
-// lifecycle, on, fail, where, etc.) are handled by rule ordering
-// and only reserved in their specific contexts.
+//
+// ---- Contextual keywords ----
+// These tokens are reserved only in specific grammar slots; they are valid
+// identifiers elsewhere. Mixed: RHS-of-slot keywords (e.g. `on`, `where`,
+// `can`) and enumerable slot values (e.g. `fastest`, `sure`).
+//
+// Authoritative list — `token -> enforcing-rule(s)`. Alphabetized. Any token
+// reserved anywhere in this grammar appears in exactly one of: (a) the
+// `keyword` rule below, or (b) this block. The surface audit reads this
+// block as the source of truth for contextually-reserved keywords; see
+// `scripts/audit-forge-surface.prompt.md`.
+//
+//   after           -> after_clause
+//   all             -> find_expr / ward_scope / pool_strategy
+//   at              -> schedule_when_daily
+//   boundary        -> boundary_directive
+//   budget          -> session_budget_modifier / failure_type
+//   can             -> can_signature
+//   category        -> category_clause / spawn_knowledge_pred
+//   client          -> boundary_kind
+//   complete        -> session_hook_kind
+//   confidence_cap  -> spawn_confidence_cap_option
+//   conflicted      -> conf_level
+//   contradiction   -> failure_type
+//   crash           -> fail_policy / failure_type
+//   cron            -> schedule_when_cron
+//   daily           -> schedule_when_daily
+//   document        -> learn_from_document
+//   downstream      -> ward_scope
+//   every           -> schedule_when_every
+//   export          -> retire_knowledge_export
+//   fail            -> requires_clause (on-fail)
+//   fails           -> if_fails_block
+//   fallback        -> pool_decl
+//   fastest         -> pool_strategy
+//   first           -> pool_strategy
+//   hallucination   -> failure_type
+//   high            -> schedule_precision_value
+//   interaction     -> learn_from_interaction
+//   isolate         -> spawn_isolate_option / session_isolate_modifier
+//   knowledge       -> knowledge_block / spawn_knowledge_option / retire_knowledge_export
+//   lifecycle       -> lifecycle_clause
+//   log             -> fail_policy
+//   main            -> fn_main_decl
+//   majority        -> pool_strategy
+//   manages         -> manages_clause
+//   max_entries     -> knowledge_option
+//   max_retries     -> max_retries_clause
+//   memory          -> memory_block / memory_update_stmt
+//   mode            -> schedule_mode
+//   nudge           -> ward_response
+//   on              -> on_handler / ward_policy / session_hook_modifier
+//   per             -> max_retries_clause
+//   persistent      -> memory_block
+//   precision       -> schedule_precision
+//   progress        -> session_hook_kind
+//   prompt          -> session_prompt_modifier / schedule_prompt
+//   quorum          -> pool_strategy
+//   replace         -> ward_response
+//   restart         -> ward_response
+//   retention       -> knowledge_option
+//   search          -> search_expr (oracle call)
+//   self            -> ward_scope
+//   server          -> boundary_kind
+//   shared          -> boundary_kind
+//   silent          -> fail_policy
+//   store           -> knowledge_block
+//   strategy        -> pool_decl
+//   stuck           -> stuck_policy / failure_type
+//   sure            -> conf_level
+//   then            -> max_retries_clause
+//   timeout         -> pool_decl / session_timeout_modifier / command_modifier / failure_type
+//   tools           -> session_tools_modifier
+//   turns           -> stuck_policy
+//   unreliable      -> conf_level
+//   unsure          -> conf_level
+//   wake            -> schedule_mode_value
+//   warden_override -> warden_override_block
+//   where           -> subscribe_line / spawn_knowledge_option / find_expr
+//   workers         -> pool_decl
+//   worktree        -> spawn_isolate_option / session_isolate_modifier
+//
 keyword = @{
     ( "use" | "task" | "flow" | "agent" | "pool" | "warden" | "contract" | "system"
     | "fn" | "needs" | "gives" | "do" | "is" | "stage"
