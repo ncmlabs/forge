@@ -1,0 +1,30 @@
+data: {"endpoint":"cross_project_requested","event":"http_request","method":"HTTP","path":"/cross_project_requested","ts_ms":1246}
+
+data: {"event":"CrossProjectRequested","target_agent":"mastermind","ts_ms":1246}
+
+data: {"event":"CrossProjectRequested","source_agent":"endpoint","subscribers":1,"ts_ms":1246}
+
+data: {"agent":"mastermind","event":"HandlerStarted","handler":"CrossProjectRequested","ts_ms":1246}
+
+data: {"duration_ms":0,"endpoint":"cross_project_requested","event":"http_response","status":200,"ts_ms":1247}
+
+data: {"event":"skill_call","skill":"github.create_labeled_issue","ts_ms":1247}
+
+data: {"duration_ms":4,"event":"skill_return","skill":"github.create_labeled_issue","success":true,"ts_ms":1251}
+
+data: {"event":"when_dispatch","level":"Sure(None)","matched":true,"subject":"issue_url","ts_ms":1252}
+
+data: {"event":"say","text":"[mastermind] spawned cross-project issue: https://github.com/stub/repo-b/issues/999","ts_ms":1252}
+
+data: {"agent":"mastermind","confidence":null,"duration_ms":5,"event":"HandlerCompleted","handler":"CrossProjectRequested","status":"success","ts_ms":1252}
+
+data: {"event":"TaskBlocked","target_agent":"mastermind","ts_ms":1253}
+
+data: {"event":"TaskBlocked","source_agent":"mastermind","subscribers":1,"ts_ms":1253}
+
+data: {"agent":"mastermind","event":"HandlerStarted","handler":"TaskBlocked","ts_ms":1253}
+
+data: {"event":"say","text":"[mastermind] T7 marked blocked","ts_ms":1255}
+
+data: {"agent":"mastermind","confidence":null,"duration_ms":1,"event":"HandlerCompleted","handler":"TaskBlocked","status":"success","ts_ms":1255}
+

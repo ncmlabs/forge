@@ -2617,6 +2617,15 @@ capabilities:
 
 Use `{param}` placeholders for capability arguments and `{env:NAME}` for environment variables. Use `{{` and `}}` for literal braces inside argv templates.
 
+The `github` skill ships two parallel issue-creation capabilities:
+
+| Capability | Shape | Executor | Use when |
+|---|---|---|---|
+| `skill.github.create_issue(repo, title, body)` | 3-arg, LLM-mediated | SKILL.md instructions | The caller does not need to guarantee a specific label set (the LLM decides whether to append `--label`). |
+| `skill.github.create_labeled_issue(repo, title, body, labels_csv)` | 4-arg, deterministic | `[gh, issue, create, -R, "{repo}", --title, "{title}", --body, "{body}", --label, "{labels_csv}"]` | The caller must attach a known set of labels — e.g. cross-project handoff, where the target repo's `dev_cycle` routes on labels. |
+
+`create_labeled_issue` keeps the CSV as a single argv element: commas travel through `tokio::process::Command::args` without shell interpolation, so `gh --label "clone-dev,from:T7"` is received as one argument that `gh` splits itself. Callers do not need to quote or escape commas.
+
 ---
 
 ## 22. Templates and Raw Interpolation
