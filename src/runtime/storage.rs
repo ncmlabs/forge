@@ -529,6 +529,63 @@ impl ForgeStorage {
         }
     }
 
+    /// List every `(agent, schedule, state)` row across the schedule table.
+    /// Used by the `/__forge/inspect/schedules` introspection endpoint (#336).
+    pub fn list_all_schedules(&self) -> Result<Vec<(String, String, ScheduleState)>, StorageError> {
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        let table = txn
+            .open_table(FORGE_SCHEDULES)
+            .map_err(|e| StorageError::Table(Box::new(e)))?;
+        let mut out = Vec::new();
+        for entry in table.iter().map_err(|e| StorageError::Read(Box::new(e)))? {
+            let (k, v) = entry.map_err(|e| StorageError::Read(Box::new(e)))?;
+            let key = k.value();
+            // Schedule keys are `"{agent}:{schedule}"` — split on the first `:`.
+            if let Some((agent, schedule)) = key.split_once(':') {
+                let state: ScheduleState =
+                    serde_json::from_str(v.value()).map_err(StorageError::Json)?;
+                out.push((agent.to_string(), schedule.to_string(), state));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Summarise correlation rows by `(agent, field)` with the count of distinct
+    /// values present. The endpoint surface deliberately does not expose the
+    /// values themselves — those can be sensitive (thread IDs, user IDs, etc.)
+    /// and the count is enough for the "is this agent correlated on X?" view.
+    pub fn list_all_correlations(&self) -> Result<Vec<(String, String, u64)>, StorageError> {
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        let table = txn
+            .open_table(FORGE_CORRELATIONS)
+            .map_err(|e| StorageError::Table(Box::new(e)))?;
+        let mut counts: std::collections::BTreeMap<(String, String), u64> =
+            std::collections::BTreeMap::new();
+        for entry in table.iter().map_err(|e| StorageError::Read(Box::new(e)))? {
+            let (k, _v) = entry.map_err(|e| StorageError::Read(Box::new(e)))?;
+            // Keys are `"{agent}:{field}:{value}"` — split on the first two `:`.
+            let key = k.value();
+            let mut parts = key.splitn(3, ':');
+            if let (Some(agent), Some(field), Some(_value)) =
+                (parts.next(), parts.next(), parts.next())
+            {
+                *counts
+                    .entry((agent.to_string(), field.to_string()))
+                    .or_insert(0) += 1;
+            }
+        }
+        Ok(counts
+            .into_iter()
+            .map(|((agent, field), count)| (agent, field, count))
+            .collect())
+    }
+
     /// Atomically persist an agent's memory blob alongside any correlation
     /// upserts derived from that memory. Both writes land in a single redb
     /// write transaction — there is no window where memory and correlation
@@ -869,6 +926,55 @@ mod tests {
         assert!(storage.delete_schedule("a", "s1").unwrap());
         assert!(!storage.delete_schedule("a", "s1").unwrap());
         assert!(storage.get_schedule_state("a", "s1").unwrap().is_none());
+    }
+
+    #[test]
+    fn list_all_schedules_returns_every_agent() {
+        let (_dir, storage) = temp_storage();
+        storage
+            .upsert_schedule_state("a", "s1", &ScheduleState::fresh(1))
+            .unwrap();
+        storage
+            .upsert_schedule_state("a", "s2", &ScheduleState::fresh(2))
+            .unwrap();
+        storage
+            .upsert_schedule_state("b", "s1", &ScheduleState::fresh(3))
+            .unwrap();
+
+        let rows = storage.list_all_schedules().unwrap();
+        assert_eq!(rows.len(), 3);
+        let mut keys: Vec<(String, String)> = rows
+            .iter()
+            .map(|(a, s, _)| (a.clone(), s.clone()))
+            .collect();
+        keys.sort();
+        assert!(keys.contains(&("a".to_string(), "s1".to_string())));
+        assert!(keys.contains(&("a".to_string(), "s2".to_string())));
+        assert!(keys.contains(&("b".to_string(), "s1".to_string())));
+    }
+
+    #[test]
+    fn list_all_correlations_groups_by_agent_field() {
+        let (_dir, storage) = temp_storage();
+        storage
+            .upsert_correlation("sensei", "thread_id", "T1", "alias-1")
+            .unwrap();
+        storage
+            .upsert_correlation("sensei", "thread_id", "T2", "alias-2")
+            .unwrap();
+        storage
+            .upsert_correlation("sensei", "user_id", "U1", "alias-3")
+            .unwrap();
+        storage
+            .upsert_correlation("bot", "thread_id", "T1", "alias-4")
+            .unwrap();
+
+        let mut rows = storage.list_all_correlations().unwrap();
+        rows.sort();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.contains(&("bot".to_string(), "thread_id".to_string(), 1)));
+        assert!(rows.contains(&("sensei".to_string(), "thread_id".to_string(), 2)));
+        assert!(rows.contains(&("sensei".to_string(), "user_id".to_string(), 1)));
     }
 
     #[test]

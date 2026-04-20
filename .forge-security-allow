@@ -20,3 +20,7 @@ docs/forge-reference.md
 
 # Default config uses ${ENV_VAR} references, not real keys
 config/forge.config.toml
+
+# Test fixtures for HMAC webhook handlers — intentional placeholder secrets
+tests/http_server_tests.rs
+tests/webhook_integration_tests.rs
