@@ -1970,9 +1970,10 @@ Responses are ordered by severity. Escalation ladders must increase in severity:
 | Response | Severity | Description |
 |----------|----------|-------------|
 | `nudge` | 1 (lowest) | Send a hint to the agent to retry |
-| `restart` | 2 | Restart the agent from its initial state |
-| `replace` | 3 | Replace the agent with a fresh instance |
-| `escalate` | 4 (highest) | Escalate to a higher-level supervisor or human |
+| `downgrade` | 2 | Switch the agent to a lower model tier |
+| `restart` | 3 | Restart the agent from its initial state |
+| `replace` | 4 | Replace the agent with a fresh instance |
+| `escalate` | 5 (highest) | Escalate to a higher-level supervisor or human |
 
 ### Scopes
 
