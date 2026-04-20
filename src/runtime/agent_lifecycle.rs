@@ -266,6 +266,7 @@ mod tests {
             timers: Vec::new(),
             schedules: Vec::new(),
             correlates: Vec::new(),
+            webhooks: vec![],
             subscriptions: Vec::new(),
             warden_override: Vec::new(),
             handlers: Vec::new(),

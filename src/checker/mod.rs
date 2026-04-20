@@ -10,6 +10,7 @@ pub mod spawn_checker;
 pub mod states_checker;
 pub mod uncertain_checker;
 pub mod warden_checker;
+pub mod webhook_checker;
 
 use crate::ast::Program;
 use crate::diagnostic::Diagnostic;
@@ -41,6 +42,9 @@ pub fn check_all(program: &Program, file: &str) -> Vec<Diagnostic> {
 
     // Pass 8: correlate block validation (Principle I/II — honesty + determinism)
     diagnostics.extend(correlate_checker::check(program, file));
+
+    // Pass 9: webhook block validation (Principle I/IX — honesty + boundary separation)
+    diagnostics.extend(webhook_checker::check(program, file));
 
     // boundary_checker::check() is called separately from main.rs (multi-program signature)
     diagnostics

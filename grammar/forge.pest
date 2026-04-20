@@ -269,6 +269,7 @@ agent_decl = {
     (i1 ~ timer_field ~ nl)* ~
     (i1 ~ schedule_block)* ~
     (i1 ~ correlate_block)* ~
+    (i1 ~ webhook_block)* ~
     (i1 ~ subscribe_line ~ nl)* ~
     (i1 ~ warden_override_block)? ~
     (blank_line | on_handler)+ ~
@@ -343,6 +344,23 @@ correlate_option = {
 correlate_mode      = { "mode" ~ _s_opt ~ ":" ~ _s_opt ~ correlate_mode_value }
 correlate_mode_value = @{ ("wake" | "spawn") ~ !(ASCII_ALPHANUMERIC | "_") }
 correlate_emit      = { "emit" ~ _s_opt ~ ":" ~ _s_opt ~ ident }
+
+// --- Webhook block ---
+// HMAC-verified inbound HTTP trigger — third driver on WakeService after
+// `schedule_block` (tick) and `correlate_block` (event). Ships cross-project
+// handoff (#300). Registered secrets live in the `FORGE_WAKE_SECRETS` redb
+// table via the `forge wake` CLI. Runtime wiring in #335.
+webhook_block = {
+    "webhook" ~ _s ~ ident ~ nl ~
+    (i2 ~ webhook_option ~ nl)+
+}
+webhook_option = {
+      webhook_mode
+    | webhook_emit
+}
+webhook_mode      = { "mode" ~ _s_opt ~ ":" ~ _s_opt ~ webhook_mode_value }
+webhook_mode_value = @{ ("wake" | "spawn") ~ !(ASCII_ALPHANUMERIC | "_") }
+webhook_emit      = { "emit" ~ _s_opt ~ ":" ~ _s_opt ~ ident }
 
 subscribe_line = { "subscribe" ~ _s ~ ident ~ (_s ~ "where" ~ _s ~ expr)? }
 

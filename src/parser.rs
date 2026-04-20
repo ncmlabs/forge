@@ -467,6 +467,78 @@ fn build_correlate_block(pair: Pair) -> anyhow::Result<Spanned<CorrelateField>> 
     ))
 }
 
+fn build_webhook_block(pair: Pair) -> anyhow::Result<Spanned<WebhookField>> {
+    let block_span = to_span(&pair);
+    let mut inner = pair.into_inner();
+
+    let name_pair = inner
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("webhook block missing trigger name"))?;
+    let name = spanned(name_pair.as_str().to_string(), &name_pair);
+
+    let mut mode: Option<Spanned<ScheduleMode>> = None;
+    let mut emit: Option<Spanned<String>> = None;
+    let mut duplicates: Vec<Spanned<String>> = Vec::new();
+
+    for option_pair in inner {
+        if option_pair.as_rule() != Rule::webhook_option {
+            continue;
+        }
+        let opt_inner = option_pair
+            .into_inner()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("empty webhook option"))?;
+        let opt_span = to_span(&opt_inner);
+        match opt_inner.as_rule() {
+            Rule::webhook_mode => {
+                let mode_val = opt_inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("mode: missing value"))?;
+                let m = match mode_val.as_str() {
+                    "spawn" => ScheduleMode::Spawn,
+                    "wake" => ScheduleMode::Wake,
+                    other => return Err(anyhow::anyhow!("unexpected mode value: {}", other)),
+                };
+                if mode.is_some() {
+                    duplicates.push(Spanned::new("mode".to_string(), opt_span));
+                } else {
+                    mode = Some(Spanned::new(m, opt_span));
+                }
+            }
+            Rule::webhook_emit => {
+                let id_pair = opt_inner
+                    .into_inner()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("emit: missing ident"))?;
+                let id_span = to_span(&id_pair);
+                let id_text = id_pair.as_str().to_string();
+                if emit.is_some() {
+                    duplicates.push(Spanned::new("emit".to_string(), opt_span));
+                } else {
+                    emit = Some(Spanned::new(id_text, id_span));
+                }
+            }
+            other => {
+                return Err(anyhow::anyhow!(
+                    "unexpected webhook_option variant: {:?}",
+                    other
+                ));
+            }
+        }
+    }
+
+    Ok(Spanned::new(
+        WebhookField {
+            name,
+            mode,
+            emit,
+            duplicates,
+        },
+        block_span,
+    ))
+}
+
 fn build_field_def(ident_pair: Pair, type_pair: Pair) -> anyhow::Result<Spanned<FieldDef>> {
     let start = ident_pair.as_span().start();
     let end = type_pair.as_span().end();
@@ -2285,6 +2357,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     let mut timers = Vec::new();
     let mut schedules = Vec::new();
     let mut correlates = Vec::new();
+    let mut webhooks = Vec::new();
     let mut subscriptions = Vec::new();
     let mut warden_override = Vec::new();
     let mut handlers = Vec::new();
@@ -2343,6 +2416,9 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             Rule::correlate_block => {
                 correlates.push(build_correlate_block(child)?);
             }
+            Rule::webhook_block => {
+                webhooks.push(build_webhook_block(child)?);
+            }
             Rule::subscribe_line => {
                 let sl_span = to_span(&child);
                 let mut sl_inner = child.into_inner();
@@ -2395,6 +2471,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             timers,
             schedules,
             correlates,
+            webhooks,
             subscriptions,
             warden_override,
             handlers,

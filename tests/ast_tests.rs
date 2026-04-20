@@ -422,6 +422,7 @@ fn ast_agent() {
         timers: vec![],
         schedules: vec![],
         correlates: vec![],
+        webhooks: vec![],
         subscriptions: vec![],
         handlers: vec![
             sp(OnHandler {
@@ -999,6 +1000,7 @@ fn ast_agent_v3() {
         })],
         schedules: vec![],
         correlates: vec![],
+        webhooks: vec![],
         subscriptions: vec![sp(SubscribeDecl {
             event_name: sp("MoveEvent".into()),
             filter: None,
