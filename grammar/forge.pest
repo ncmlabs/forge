@@ -268,6 +268,7 @@ agent_decl = {
     (i1 ~ knowledge_block)? ~
     (i1 ~ timer_field ~ nl)* ~
     (i1 ~ schedule_block)* ~
+    (i1 ~ correlate_block)* ~
     (i1 ~ subscribe_line ~ nl)* ~
     (i1 ~ warden_override_block)? ~
     (blank_line | on_handler)+ ~
@@ -326,6 +327,22 @@ schedule_precision_value = @{ "high" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 time_literal = @{ "\"" ~ ASCII_DIGIT{1,2} ~ ":" ~ ASCII_DIGIT{2} ~ "\"" }
 cron_string  = @{ "\"" ~ (!("\"" | NEWLINE) ~ ANY)+ ~ "\"" }
+
+// --- Correlate block ---
+// Durable event-to-session routing: inbound events matching a persisted
+// correlation key rehydrate the owning specialist instead of spawning fresh.
+// Peer driver to `schedule_block`; runtime wiring in #334.
+correlate_block = {
+    "correlate" ~ _s ~ "on" ~ _s ~ ident ~ "." ~ ident ~ nl ~
+    (i2 ~ correlate_option ~ nl)+
+}
+correlate_option = {
+      correlate_mode
+    | correlate_emit
+}
+correlate_mode      = { "mode" ~ _s_opt ~ ":" ~ _s_opt ~ correlate_mode_value }
+correlate_mode_value = @{ ("wake" | "spawn") ~ !(ASCII_ALPHANUMERIC | "_") }
+correlate_emit      = { "emit" ~ _s_opt ~ ":" ~ _s_opt ~ ident }
 
 subscribe_line = { "subscribe" ~ _s ~ ident ~ (_s ~ "where" ~ _s ~ expr)? }
 

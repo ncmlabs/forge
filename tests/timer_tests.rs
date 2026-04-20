@@ -58,6 +58,7 @@ fn simple_agent_with_timers(
         knowledge: None,
         timers,
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![],
         handlers,
         warden_override: Vec::new(),

@@ -1,0 +1,32 @@
+# Minimal demonstration of the `correlate on Event.field` block added in #334.
+# Declares a correlation key alongside `memory persistent` so inbound events
+# carrying the same key route back to the original specialist session.
+#
+# Runtime dispatch (CorrelationDriver) consults the correlations table before
+# publish: when a row exists for (agent, field, value), the owning agent is
+# rehydrated so the event lands on a warm session (Principle I — honesty:
+# handlers never see empty state).
+#
+# Run:
+#   forge check examples/basics/correlate.forge   # exit 0
+#   forge run   examples/basics/correlate.forge   # prints a greeting
+
+event SlackMention
+  thread_ts: Text
+  message: Text
+
+agent slack_specialist
+  memory persistent
+    thread_ts: Text
+    task_id: Text
+  correlate on SlackMention.thread_ts
+    mode: wake
+
+  on start
+    say "slack_specialist is up"
+  on SlackMention
+    say "resuming thread"
+
+fn main
+  say "### correlate-block demo (#334) ###"
+  say "correlate declared; runtime did not panic"

@@ -197,6 +197,7 @@ pub struct AgentDecl {
     pub knowledge: Option<Spanned<KnowledgeDecl>>,
     pub timers: Vec<Spanned<TimerField>>,
     pub schedules: Vec<Spanned<ScheduleField>>,
+    pub correlates: Vec<Spanned<CorrelateField>>,
     pub subscriptions: Vec<Spanned<SubscribeDecl>>,
     pub warden_override: Vec<Spanned<WardPolicy>>,
     pub handlers: Vec<Spanned<OnHandler>>,
@@ -285,6 +286,18 @@ pub enum ScheduleMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Precision {
     High,
+}
+
+/// Correlate declaration inside an agent — event-to-session routing via a
+/// persisted correlation key. Peer to `ScheduleField`; parser stays liberal
+/// so the checker owns semantic errors.
+#[derive(Debug, Clone)]
+pub struct CorrelateField {
+    pub event_type: Spanned<String>,
+    pub field_name: Spanned<String>,
+    pub mode: Option<Spanned<ScheduleMode>>,
+    pub emit: Option<Spanned<String>>,
+    pub duplicates: Vec<Spanned<String>>,
 }
 
 /// Event subscription inside an agent.

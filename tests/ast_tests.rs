@@ -421,6 +421,7 @@ fn ast_agent() {
         knowledge: None,
         timers: vec![],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![],
         handlers: vec![
             sp(OnHandler {
@@ -997,6 +998,7 @@ fn ast_agent_v3() {
             }),
         })],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![sp(SubscribeDecl {
             event_name: sp("MoveEvent".into()),
             filter: None,

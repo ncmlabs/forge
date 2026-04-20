@@ -7,6 +7,7 @@ pub mod agent_lifecycle;
 pub mod clock;
 pub mod command_manager;
 pub mod confidence;
+pub mod correlation_driver;
 pub mod cost_aggregator;
 pub mod event_bus;
 pub mod executor;

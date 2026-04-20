@@ -53,6 +53,7 @@ fn ping_agent(name: &str) -> AgentDecl {
         knowledge: None,
         timers: vec![],
         schedules: vec![],
+        correlates: vec![],
         subscriptions: vec![spanned(SubscribeDecl {
             event_name: spanned("Ping".into()),
             filter: None,

@@ -632,7 +632,41 @@ impl AgentProcess {
             if let Some(ref store) = self.storage {
                 let key = format!("agent:{}:memory", self.decl.name.node);
                 if let Ok(json) = ctx.memory.to_json() {
-                    let _ = store.store(&key, &json);
+                    // Collect correlation upserts atomically with the memory
+                    // blob so external events can never route into a session
+                    // whose memory isn't yet on disk (issue #334).
+                    let mut correlation_rows: Vec<(String, String, String, String)> =
+                        Vec::with_capacity(self.decl.correlates.len());
+                    for correlate_sp in &self.decl.correlates {
+                        let field = correlate_sp.node.field_name.node.as_str();
+                        if let Some(cv) = ctx.memory.get(field) {
+                            if let Value::Text(s) = &cv.value {
+                                if !s.is_empty() {
+                                    correlation_rows.push((
+                                        self.decl.name.node.clone(),
+                                        field.to_string(),
+                                        s.clone(),
+                                        self.decl.name.node.clone(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    if correlation_rows.is_empty() {
+                        let _ = store.store(&key, &json);
+                    } else {
+                        let rows_for_trace = correlation_rows.clone();
+                        if store
+                            .store_memory_with_correlations(&key, &json, &correlation_rows)
+                            .is_ok()
+                        {
+                            if let Some(t) = self.executor.tracer() {
+                                for (agent, field, value, target) in &rows_for_trace {
+                                    t.correlation_registered(agent, field, value, target);
+                                }
+                            }
+                        }
+                    }
                 }
                 // Persist lifecycle state
                 if let Some(ref sm) = ctx.state_machine {
@@ -725,6 +759,21 @@ impl AgentProcess {
                         .unwrap_or_else(|| format!("{}.tick", schedule.node.name.node)),
                     _ => schedule.node.name.node.clone(),
                 };
+                let rx = bus_guard.subscribe(&event_name, &self.decl.name.node, None);
+                receivers.push((None, rx));
+            }
+            // Correlate blocks imply a subscription on the source event — the
+            // whole point is routing that event into this agent (#334). When
+            // `emit:` is declared, WakeService/CorrelationDriver publishes the
+            // emit event after rehydration; otherwise the inbound event is
+            // delivered directly, so the agent needs to be on the bus for it.
+            for correlate in &self.decl.correlates {
+                let event_name = correlate
+                    .node
+                    .emit
+                    .as_ref()
+                    .map(|e| e.node.clone())
+                    .unwrap_or_else(|| correlate.node.event_type.node.clone());
                 let rx = bus_guard.subscribe(&event_name, &self.decl.name.node, None);
                 receivers.push((None, rx));
             }

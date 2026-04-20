@@ -1338,7 +1338,7 @@ async fn serve_program(
 
         // Build system runtime (if declared) and inject shared infrastructure (#140)
         let topology = executor.extract_topology();
-        let system_runtime = match executor.build_system_runtime() {
+        let mut system_runtime = match executor.build_system_runtime() {
             Ok(Some(sr)) => {
                 let mut sr = sr
                     .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
@@ -1353,6 +1353,22 @@ async fn serve_program(
                 eprintln!("Warning: failed to build system runtime: {e}");
                 None
             }
+        };
+
+        // Correlation routing (issue #334): when agents declare
+        // `correlate on Event.field`, share the lifecycle with the serving
+        // executor so webhook-emitted events rehydrate the owning specialist
+        // before publish.
+        let executor = if let Some(ref mut sr) = system_runtime {
+            match sr.build_correlation_driver() {
+                Some(driver) => {
+                    let lifecycle = sr.ensure_lifecycle();
+                    executor.with_correlation(driver, lifecycle)
+                }
+                None => executor,
+            }
+        } else {
+            executor
         };
 
         // Collect signal senders before system runtime is consumed (issue #143)
@@ -1627,7 +1643,7 @@ async fn serve_with_watch(
 
         // Build system runtime (if declared) and inject shared infrastructure (#140)
         let topology = executor.extract_topology();
-        let system_runtime = match executor.build_system_runtime() {
+        let mut system_runtime = match executor.build_system_runtime() {
             Ok(Some(sr)) => {
                 let mut sr = sr
                     .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
@@ -1642,6 +1658,22 @@ async fn serve_with_watch(
                 eprintln!("Warning: failed to build system runtime: {e}");
                 None
             }
+        };
+
+        // Correlation routing (issue #334): when agents declare
+        // `correlate on Event.field`, share the lifecycle with the serving
+        // executor so webhook-emitted events rehydrate the owning specialist
+        // before publish.
+        let executor = if let Some(ref mut sr) = system_runtime {
+            match sr.build_correlation_driver() {
+                Some(driver) => {
+                    let lifecycle = sr.ensure_lifecycle();
+                    executor.with_correlation(driver, lifecycle)
+                }
+                None => executor,
+            }
+        } else {
+            executor
         };
 
         // Collect signal senders before system runtime is consumed (issue #143)

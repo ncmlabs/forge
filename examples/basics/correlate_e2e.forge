@@ -1,0 +1,42 @@
+#! boundary: server
+
+# End-to-end smoke test for #334 CorrelationDriver.
+#
+# Two mentions on thread T1:
+#   1. First  → specialist writes memory{thread_ts=T1}; the atomic
+#      persistence path upserts the correlation row (agent,thread_ts,T1→agent).
+#   2. Second → CorrelationDriver.match_event hits, rehydrate_or_spawn reuses
+#      the live specialist, and the event delivers to its handler.
+#
+# Run:
+#   FORGE_STORAGE_ROOT=/tmp/corr cargo run -- serve examples/basics/correlate_e2e.forge
+#
+# Verify in server stderr:
+#   - first mention  → `correlation_registered` event (field:thread_ts, value:T1)
+#   - second mention → `correlation_hit` event BEFORE the SlackMention publish
+
+event SlackMention
+  thread_ts: Text
+  message: Text
+
+agent slack_specialist
+  memory persistent
+    thread_ts: Text
+    last_message: Text
+  correlate on SlackMention.thread_ts
+    mode: wake
+
+  on start
+    say "slack_specialist is up"
+  on SlackMention(thread_ts: Text, message: Text)
+    memory.thread_ts = thread_ts
+    memory.last_message = message
+    say "handled thread={thread_ts} msg={message}"
+
+endpoint mention(thread_ts: Text, message: Text)
+  emit SlackMention(thread_ts: thread_ts, message: message)
+  give "ok"
+
+system demo
+  use
+    specialist: slack_specialist
