@@ -1013,6 +1013,117 @@ async fn webhook_no_secret_configured_skips_verification() {
     assert_eq!(resp.status(), 200);
 }
 
+// ── webhook_received tracer event (issue #336) ───────────────────────
+
+/// Spawn a server with a capturing tracer plus optional HMAC secrets, returning
+/// `(base_url, tracer)` so tests can assert on the emitted events.
+async fn spawn_webhook_server_with_tracer(
+    source: &str,
+    secrets: Option<std::collections::HashMap<String, String>>,
+) -> (String, forge::tracer::Tracer) {
+    let program = forge::parser::parse(source).expect("parse failed");
+    let tracer = forge::tracer::Tracer::with_capture();
+    let executor = TaskExecutor::new(program, mock_registry(), Some(tracer.clone()));
+    let event_bus = forge::runtime::event_bus::EventBus::new_shared(None);
+    let mut server = ForgeServer::new(executor, None).with_event_bus(event_bus);
+    if let Some(secrets) = secrets {
+        server = server.with_webhook_secrets(secrets);
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    (format!("http://127.0.0.1:{port}"), tracer)
+}
+
+#[tokio::test]
+async fn webhook_received_emitted_without_secret() {
+    let (base, tracer) = spawn_webhook_server_with_tracer(WEBHOOK_SERVER, None).await;
+    let body = r#"{"payload": "hi"}"#;
+    reqwest::Client::new()
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("request failed");
+
+    let log = tracer.captured_log();
+    let (_, payload) = log
+        .iter()
+        .find(|(name, _)| name == "webhook_received")
+        .expect("webhook_received not emitted");
+    assert_eq!(payload["endpoint"], "hook");
+    assert!(payload["signature_valid"].is_null());
+    assert_eq!(payload["body_bytes"].as_u64().unwrap() as usize, body.len());
+}
+
+#[tokio::test]
+async fn webhook_received_emitted_on_valid_signature() {
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::Sha256;
+
+    let secret = "valid-secret";
+    let mut secrets = std::collections::HashMap::new();
+    secrets.insert("hook".to_string(), secret.to_string());
+    let (base, tracer) = spawn_webhook_server_with_tracer(WEBHOOK_SERVER, Some(secrets)).await;
+
+    let body = r#"{"payload": "ok"}"#;
+    let mut mac: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(body.as_bytes());
+    let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+
+    reqwest::Client::new()
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .header("x-hub-signature-256", &signature)
+        .body(body)
+        .send()
+        .await
+        .expect("request failed");
+
+    let log = tracer.captured_log();
+    let (_, payload) = log
+        .iter()
+        .find(|(name, _)| name == "webhook_received")
+        .expect("webhook_received not emitted");
+    assert_eq!(payload["signature_valid"], serde_json::json!(true));
+}
+
+#[tokio::test]
+async fn webhook_received_emitted_on_invalid_signature() {
+    let mut secrets = std::collections::HashMap::new();
+    secrets.insert("hook".to_string(), "real-secret".to_string());
+    let (base, tracer) = spawn_webhook_server_with_tracer(WEBHOOK_SERVER, Some(secrets)).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/webhook/hook"))
+        .header("content-type", "application/json")
+        .header("x-hub-signature-256", "sha256=deadbeef")
+        .body(r#"{"payload": "bad"}"#)
+        .send()
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 401);
+
+    let log = tracer.captured_log();
+    let (_, payload) = log
+        .iter()
+        .find(|(name, _)| name == "webhook_received")
+        .expect("webhook_received not emitted");
+    assert_eq!(payload["signature_valid"], serde_json::json!(false));
+}
+
 // ── Multi-file serve support ──────────────────────────────────
 
 const MULTI_CORE: &str = r#"

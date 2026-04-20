@@ -41,6 +41,7 @@
       <button id="tab-taskdag" role="tab" class="tab" data-view="taskdag">Task DAG</button>
       <button id="tab-costs" role="tab" class="tab" data-view="costs">Costs</button>
       <button id="tab-mastery" role="tab" class="tab" data-view="mastery">Mastery</button>
+      <button id="tab-schedules" role="tab" class="tab" data-view="schedules">Schedules</button>
       <button id="tab-timeline" role="tab" class="tab" data-view="timeline">Timeline</button>
     </div>
   </div>
@@ -228,6 +229,32 @@
         </div>
       </div>
 
+      <!-- Schedule attribution (issue #336) -->
+      <div class="grid gap-4 mb-4" style="grid-template-columns: 1fr 1fr;">
+        <div class="card bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">By Schedule</div>
+            <table class="table table-sm">
+              <thead><tr><th>Agent.schedule</th><th class="text-right">Calls</th><th class="text-right">Cost</th></tr></thead>
+              <tbody id="cost-by-schedule">
+                <tr><td colspan="3" class="text-center opacity-40 py-4">No schedule-attributed spend yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">Saved by budget gate</div>
+            <table class="table table-sm">
+              <thead><tr><th>Agent.schedule</th><th class="text-right">Skips</th></tr></thead>
+              <tbody id="cost-budget-skips">
+                <tr><td colspan="2" class="text-center opacity-40 py-4">No budget-gate skips yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- Confidence Chart -->
       <div class="card bg-base-200 shadow-sm mb-4">
         <div class="card-body p-4">
@@ -320,6 +347,32 @@
       </div>
     </div>
 
+    <!-- Schedules View (issue #336) -->
+    <div id="view-schedules" class="view-panel">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-xs uppercase font-semibold opacity-50 tracking-wider">Schedules &amp; Wakes</div>
+        <span id="schedules-status" class="text-xs opacity-60">Not streaming.</span>
+      </div>
+      <div class="grid gap-4" style="grid-template-columns: 1fr 1fr;">
+        <div class="card bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">Declared schedules</div>
+            <div id="schedules-list" class="overflow-x-auto">
+              <div class="text-sm opacity-40 py-4">Connect to a FORGE server to list schedules.</div>
+            </div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">Webhooks &amp; correlations</div>
+            <div id="schedules-meta" class="overflow-x-auto">
+              <div class="text-sm opacity-40 py-4">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Timeline View -->
     <div id="view-timeline" class="view-panel">
       <div id="timeline-filters" class="flex gap-2 mb-4 flex-wrap">
@@ -342,6 +395,7 @@
   <script src="js/taskdag.js"></script>
   <script src="js/costs.js"></script>
   <script src="js/mastery.js"></script>
+  <script src="js/schedules.js"></script>
   <script src="js/timeline.js"></script>
 </body>
 </html>

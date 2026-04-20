@@ -470,6 +470,146 @@ async fn inspect_mastery_surfaces_aggregator_and_knowledge() {
     assert_eq!(body["tasks"]["total_tasks"].as_u64(), Some(2));
 }
 
+// ── /inspect/schedules (issue #336) ─────────────────────────────
+
+const SCHEDULE_SOURCE: &str = r#"#! boundary: server
+
+event SlackMessage
+  thread_id: Text
+
+agent sensei
+  memory persistent
+    thread_id: Text
+  schedule mastery_review
+    when: daily at "09:00"
+    mode: spawn
+    prompt: "review"
+  correlate on SlackMessage.thread_id
+    mode: wake
+    emit: SlackReply
+  on start
+    say "ready"
+
+endpoint hello() -> Text
+  give "hi"
+"#;
+
+async fn spawn_schedule_inspect_server(storage: Arc<ForgeStorage>) -> String {
+    let program = forge::parser::parse(SCHEDULE_SOURCE).expect("parse failed");
+    let executor = TaskExecutor::new(program, mock_registry(), None);
+    let mut server = ForgeServer::new(executor, None).with_inspect_storage(storage);
+    let mut secrets = HashMap::new();
+    secrets.insert("hello".to_string(), "test-secret".to_string());
+    server = server.with_webhook_secrets(secrets);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    format!("http://127.0.0.1:{port}")
+}
+
+#[tokio::test]
+async fn inspect_schedules_declared_but_unfired() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(ForgeStorage::open(&dir.path().join("s.redb")).unwrap());
+    let base = spawn_schedule_inspect_server(storage).await;
+
+    let body: serde_json::Value = reqwest::get(format!("{base}/__forge/inspect/schedules"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let schedules = body["schedules"].as_array().unwrap();
+    assert_eq!(schedules.len(), 1);
+    assert_eq!(schedules[0]["agent"], "sensei");
+    assert_eq!(schedules[0]["schedule"], "mastery_review");
+    assert_eq!(schedules[0]["last_status"], "not_registered");
+    assert!(schedules[0]["next_run_at_ms"].is_null());
+    assert_eq!(schedules[0]["declaration"]["mode"], "spawn");
+    assert_eq!(schedules[0]["declaration"]["when"], "daily 09:00");
+
+    let webhooks = body["webhooks"].as_array().unwrap();
+    assert_eq!(webhooks.len(), 1);
+    assert_eq!(webhooks[0]["endpoint"], "hello");
+    assert_eq!(webhooks[0]["signed"], serde_json::json!(true));
+
+    let corr_decl = body["correlations_declared"].as_array().unwrap();
+    assert_eq!(corr_decl.len(), 1);
+    assert_eq!(corr_decl[0]["agent"], "sensei");
+    assert_eq!(corr_decl[0]["field"], "thread_id");
+    assert_eq!(corr_decl[0]["event_type"], "SlackMessage");
+    assert_eq!(corr_decl[0]["mode"], "wake");
+}
+
+#[tokio::test]
+async fn inspect_schedules_merges_live_state() {
+    use forge::runtime::storage::{ScheduleState, ScheduleStatus};
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(ForgeStorage::open(&dir.path().join("s.redb")).unwrap());
+
+    // Seed a live state row — the schedule has fired once and errored twice.
+    let mut state = ScheduleState::fresh(1_700_000_000_000);
+    state.last_run_at_ms = Some(1_699_999_000_000);
+    state.last_status = ScheduleStatus::Error;
+    state.consecutive_errors = 2;
+    storage
+        .upsert_schedule_state("sensei", "mastery_review", &state)
+        .unwrap();
+    // And a correlation row for the live count surface.
+    storage
+        .upsert_correlation("sensei", "thread_id", "T9", "alias-9")
+        .unwrap();
+
+    let base = spawn_schedule_inspect_server(storage).await;
+    let body: serde_json::Value = reqwest::get(format!("{base}/__forge/inspect/schedules"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let schedules = body["schedules"].as_array().unwrap();
+    assert_eq!(schedules.len(), 1);
+    assert_eq!(schedules[0]["last_status"], "error");
+    assert_eq!(schedules[0]["consecutive_errors"], 2);
+    assert_eq!(schedules[0]["next_run_at_ms"], 1_700_000_000_000_u64);
+    assert_eq!(schedules[0]["last_run_at_ms"], 1_699_999_000_000_u64);
+
+    let corr_live = body["correlations_live"].as_array().unwrap();
+    assert_eq!(corr_live.len(), 1);
+    assert_eq!(corr_live[0]["agent"], "sensei");
+    assert_eq!(corr_live[0]["field"], "thread_id");
+    assert_eq!(corr_live[0]["value_count"], 1);
+}
+
+#[tokio::test]
+async fn inspect_schedules_never_exposes_secrets() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(ForgeStorage::open(&dir.path().join("s.redb")).unwrap());
+    let base = spawn_schedule_inspect_server(storage).await;
+
+    let text = reqwest::get(format!("{base}/__forge/inspect/schedules"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !text.contains("test-secret"),
+        "response must not leak the HMAC secret"
+    );
+}
+
 fn mk_task_completed(
     repo: &str,
     task_id: &str,

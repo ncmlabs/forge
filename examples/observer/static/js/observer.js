@@ -33,6 +33,7 @@ var ForgeObserver = (function () {
       document.getElementById('tab-taskdag'),
       document.getElementById('tab-costs'),
       document.getElementById('tab-mastery'),
+      document.getElementById('tab-schedules'),
       document.getElementById('tab-timeline')
     ];
 
@@ -42,6 +43,7 @@ var ForgeObserver = (function () {
       taskdag: document.getElementById('view-taskdag'),
       costs: document.getElementById('view-costs'),
       mastery: document.getElementById('view-mastery'),
+      schedules: document.getElementById('view-schedules'),
       timeline: document.getElementById('view-timeline')
     };
 
@@ -180,6 +182,12 @@ var ForgeObserver = (function () {
       ForgeMastery.init();
     }
 
+    // Initialize schedules view (issue #336)
+    if (typeof ForgeSchedules !== 'undefined' && ForgeSchedules.init) {
+      ForgeSchedules.init();
+      ForgeSchedules.start();
+    }
+
     // Initialize timeline view
     if (typeof ForgeTimeline !== 'undefined' && ForgeTimeline.init) {
       ForgeTimeline.init();
@@ -204,6 +212,9 @@ var ForgeObserver = (function () {
     }
     if (typeof ForgeMastery !== 'undefined' && ForgeMastery.destroy) {
       ForgeMastery.destroy();
+    }
+    if (typeof ForgeSchedules !== 'undefined' && ForgeSchedules.stop) {
+      ForgeSchedules.stop();
     }
     if (typeof ForgeTimeline !== 'undefined' && ForgeTimeline.destroy) {
       ForgeTimeline.destroy();

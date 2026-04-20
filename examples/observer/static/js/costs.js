@@ -20,6 +20,9 @@ var ForgeCosts = (function () {
     by_operation: {},
     by_agent: {},
     by_provider_model: {},
+    by_schedule: [],        // issue #336 — (agent, schedule) cost attribution
+    budget_gate_skips: [],  // issue #336 — "saved by budget gate" tallies
+    concurrent_skips: [],   // issue #336 — schedule_skipped_concurrent counts
     confidence_histogram: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     uptime_secs: 0,
     tokens_per_sec: 0
@@ -29,6 +32,7 @@ var ForgeCosts = (function () {
   var costUsd, costCalls, tokensIn, tokensOut;
   var throughputIn, throughputOut, uptimeEl, tpsEl;
   var opTable, agentTable, providerTable;
+  var scheduleTable, budgetSkipTable;
   var confChart, sseStatus;
 
   // ── Intervals & subscriptions ──────────────────────────────────
@@ -200,11 +204,50 @@ var ForgeCosts = (function () {
       .text(function (d) { return d; });
   }
 
+  function renderScheduleTable() {
+    if (!scheduleTable) return;
+    if (!state.by_schedule || state.by_schedule.length === 0) {
+      scheduleTable.innerHTML = '<tr><td colspan="3" class="text-center opacity-40 py-4">'
+        + 'No schedule-attributed spend yet</td></tr>';
+      return;
+    }
+    var rows = state.by_schedule.slice().sort(function (a, b) {
+      return (b.cost_usd || 0) - (a.cost_usd || 0);
+    }).map(function (s) {
+      return '<tr>'
+        + '<td class="font-mono text-sm">' + ForgeAPI.escapeHtml((s.agent || '?') + '.' + (s.schedule || '?')) + '</td>'
+        + '<td class="text-right">' + (s.calls || 0) + '</td>'
+        + '<td class="text-right font-mono">' + ForgeAPI.formatCost(s.cost_usd || 0) + '</td>'
+        + '</tr>';
+    });
+    scheduleTable.innerHTML = rows.join('');
+  }
+
+  function renderBudgetSkipTable() {
+    if (!budgetSkipTable) return;
+    if (!state.budget_gate_skips || state.budget_gate_skips.length === 0) {
+      budgetSkipTable.innerHTML = '<tr><td colspan="2" class="text-center opacity-40 py-4">'
+        + 'No budget-gate skips yet</td></tr>';
+      return;
+    }
+    var rows = state.budget_gate_skips.slice().sort(function (a, b) {
+      return (b.count || 0) - (a.count || 0);
+    }).map(function (s) {
+      return '<tr>'
+        + '<td class="font-mono text-sm">' + ForgeAPI.escapeHtml((s.agent || '?') + '.' + (s.schedule || '?')) + '</td>'
+        + '<td class="text-right">' + (s.count || 0) + '</td>'
+        + '</tr>';
+    });
+    budgetSkipTable.innerHTML = rows.join('');
+  }
+
   function renderAll() {
     renderTotals();
     renderOpTable();
     renderAgentTable();
     renderProviderTable();
+    renderScheduleTable();
+    renderBudgetSkipTable();
     renderConfidenceChart();
   }
 
@@ -222,6 +265,9 @@ var ForgeCosts = (function () {
         state.by_operation = data.by_operation || {};
         state.by_agent = data.by_agent || {};
         state.by_provider_model = data.by_provider_model || {};
+        state.by_schedule = data.by_schedule || [];
+        state.budget_gate_skips = data.budget_gate_skips || [];
+        state.concurrent_skips = data.concurrent_skips || [];
         state.confidence_histogram = data.confidence_histogram || state.confidence_histogram;
         state.uptime_secs = data.uptime_secs || 0;
         state.tokens_per_sec = data.tokens_per_sec || 0;
@@ -296,6 +342,21 @@ var ForgeCosts = (function () {
     renderAll();
   }
 
+  // Budget-gate skip — increment the saved-by-budget-gate table live.
+  function bumpBudgetSkip(ev) {
+    var agent = ev.agent || '?';
+    var schedule = ev.schedule || '?';
+    var existing = state.budget_gate_skips.find(function (s) {
+      return s.agent === agent && s.schedule === schedule;
+    });
+    if (existing) {
+      existing.count = (existing.count || 0) + 1;
+    } else {
+      state.budget_gate_skips.push({ agent: agent, schedule: schedule, count: 1 });
+    }
+    renderBudgetSkipTable();
+  }
+
   // ── Public API ─────────────────────────────────────────────────
 
   function init() {
@@ -315,6 +376,8 @@ var ForgeCosts = (function () {
     opTable = document.getElementById('cost-by-operation');
     agentTable = document.getElementById('cost-by-agent');
     providerTable = document.getElementById('cost-by-provider');
+    scheduleTable = document.getElementById('cost-by-schedule');
+    budgetSkipTable = document.getElementById('cost-budget-skips');
     confChart = document.getElementById('confidence-chart');
     sseStatus = document.getElementById('cost-sse-status');
 
@@ -325,6 +388,8 @@ var ForgeCosts = (function () {
     unsubscribeSSE = ForgeEvents.onEvent(function (evt) {
       if (evt.event === 'llm_response') {
         handleLLMResponse(evt);
+      } else if (evt.event === 'schedule_skipped_budget') {
+        bumpBudgetSkip(evt);
       }
     });
 

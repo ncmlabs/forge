@@ -90,6 +90,59 @@ var ForgeEvents = (function () {
     },
     http_response: function (d) {
       return { cls: 'exec', icon: '\u2713', label: 'http', detail: d.endpoint + ' ' + d.status + ' (' + d.duration_ms + 'ms)' };
+    },
+    // ── Wake surface (issue #336) ─────────────────────────────────
+    schedule_fired: function (d) {
+      var delta = (d.scheduled_at_ms !== undefined && d.wall_time_ms !== undefined)
+        ? ' (\u0394 ' + (d.wall_time_ms - d.scheduled_at_ms) + 'ms)'
+        : '';
+      return { cls: 'schedule', icon: '\u23F0', label: 'schedule',
+        detail: d.agent + '.' + d.schedule + ' fired' + delta };
+    },
+    schedule_skipped_concurrent: function (d) {
+      return { cls: 'schedule', icon: '\u23F8', label: 'schedule',
+        detail: d.agent + '.' + d.schedule + ' skipped (held by ' + (d.held_by || '?') + ')' };
+    },
+    schedule_skipped_budget: function (d) {
+      return { cls: 'schedule', icon: '\uD83D\uDCB0', label: 'schedule',
+        detail: d.agent + '.' + d.schedule + ' skipped (budget: ' + (d.budget_state || '?') + ')' };
+    },
+    schedule_errored: function (d) {
+      return { cls: 'schedule', icon: '\u274C', label: 'schedule',
+        detail: d.agent + '.' + d.schedule + ' errored (retry ' + (d.retry_count || 0) + '): ' + (d.error || '') };
+    },
+    schedule_claim_lost: function (d) {
+      return { cls: 'schedule', icon: '\u26A0', label: 'schedule',
+        detail: d.agent + '.' + d.schedule + ' claim lost to ' + (d.winner || '?') };
+    },
+    schedule_rehydrated: function (d) {
+      var n = (d.memory_keys_restored && d.memory_keys_restored.length) || 0;
+      return { cls: 'schedule', icon: '\uD83D\uDCA4', label: 'schedule',
+        detail: d.agent + '.' + d.schedule + ' rehydrated (' + n + ' memory keys)' };
+    },
+    session_rehydrate_failed: function (d) {
+      return { cls: 'schedule', icon: '\uD83D\uDCA4', label: 'schedule',
+        detail: d.agent + '.' + d.schedule + ' rehydrate failed: ' + (d.error || '') };
+    },
+    webhook_received: function (d) {
+      var sig;
+      if (d.signature_valid === true) { sig = ' \u2713 signed'; }
+      else if (d.signature_valid === false) { sig = ' \u2717 bad sig'; }
+      else { sig = ' (unsigned)'; }
+      return { cls: 'webhook', icon: '\uD83E\uDE9D', label: 'webhook',
+        detail: d.endpoint + sig + ' ' + (d.body_bytes || 0) + 'B' };
+    },
+    correlation_hit: function (d) {
+      return { cls: 'correlate', icon: '\uD83C\uDFAF', label: 'correlate',
+        detail: d.event_name + '.' + d.field + ' \u2192 ' + d.target_alias };
+    },
+    correlation_miss: function (d) {
+      return { cls: 'correlate', icon: '\u00B7', label: 'correlate',
+        detail: d.event_name + '.' + d.field + ' miss' };
+    },
+    correlation_registered: function (d) {
+      return { cls: 'correlate', icon: '\u2731', label: 'correlate',
+        detail: d.agent + '.' + d.field + ' \u2192 ' + d.target_alias };
     }
   };
 

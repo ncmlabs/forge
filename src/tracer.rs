@@ -475,6 +475,30 @@ impl Tracer {
         );
     }
 
+    // ── Webhook tracing (issue #336) ────────────────────────────────────────
+    //
+    // `webhook_received` completes the wake-family surface: schedules (#332),
+    // session rehydration (#333), correlations (#334), and external webhook
+    // intake. `signature_valid` is `Some(true/false)` when an HMAC secret is
+    // configured for the endpoint, `None` when no secret check is required.
+    // Principle I: every inbound external trigger is observable.
+
+    pub fn webhook_received(
+        &self,
+        endpoint: &str,
+        signature_valid: Option<bool>,
+        body_bytes: usize,
+    ) {
+        self.emit(
+            "webhook_received",
+            serde_json::json!({
+                "endpoint": endpoint,
+                "signature_valid": signature_valid,
+                "body_bytes": body_bytes,
+            }),
+        );
+    }
+
     // ── HTTP server tracing (issue #43) ─────────────────────────────────────
 
     pub fn http_request(&self, endpoint: &str, method: &str, path: &str) {
