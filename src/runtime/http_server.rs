@@ -277,7 +277,8 @@ impl ForgeServer {
             .route("/__forge/inspect/wardens", get(handle_inspect_wardens))
             .route("/__forge/inspect/storage", get(handle_inspect_storage))
             .route("/__forge/inspect/costs", get(handle_inspect_costs))
-            .route("/__forge/inspect/mastery", get(handle_inspect_mastery));
+            .route("/__forge/inspect/mastery", get(handle_inspect_mastery))
+            .route("/__forge/inspect/schedules", get(handle_inspect_schedules));
 
         // Failure injection endpoint (issue #143)
         router = router.route(
@@ -686,6 +687,185 @@ async fn handle_inspect_storage(
     }
 }
 
+/// GET /__forge/inspect/schedules — declared wake surface + live schedule state (issue #336).
+///
+/// Walks the program AST for declared `schedule`/`correlate` blocks, then
+/// unions in the live `ScheduleState` rows from storage. Declared-but-not-yet-
+/// fired schedules appear with `state: null`. Webhooks are listed at the top
+/// level with a `signed` flag — secrets are never exposed.
+async fn handle_inspect_schedules(State(state): State<AppState>) -> Response {
+    use crate::ast::{Precision, ScheduleMode, TopLevel, WhenExpr};
+
+    // Declarations are keyed by the AST agent name (e.g. `cadence_probe`), but
+    // WakeService persists state under the system alias (e.g. `probe` from
+    // `use probe: cadence_probe`). Build `alias -> agent_name` from any
+    // system bindings so the two can be unioned cleanly — fall back to
+    // alias = agent_name when no system block is declared.
+    let mut alias_to_agent: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut correlations_decl: Vec<serde_json::Value> = Vec::new();
+    let mut declarations: std::collections::BTreeMap<(String, String), serde_json::Value> =
+        std::collections::BTreeMap::new();
+    {
+        let executor = state.executor.read().unwrap();
+        for item in &executor.program().items {
+            if let TopLevel::System(sys) = &item.node {
+                for binding in &sys.bindings {
+                    alias_to_agent.insert(binding.node.alias.clone(), binding.node.target.clone());
+                }
+            }
+        }
+        // Declarations are indexed by alias if a binding exists, otherwise by
+        // the agent name itself — `forge run` without a system block registers
+        // schedules under the raw agent name.
+        let agent_to_alias: std::collections::HashMap<&str, &str> = alias_to_agent
+            .iter()
+            .map(|(alias, agent)| (agent.as_str(), alias.as_str()))
+            .collect();
+        for item in &executor.program().items {
+            if let TopLevel::Agent(agent) = &item.node {
+                let agent_name_str = agent.name.node.as_str();
+                let key_name = agent_to_alias
+                    .get(agent_name_str)
+                    .map(|s| (*s).to_string())
+                    .unwrap_or_else(|| agent.name.node.clone());
+                let agent_name = &key_name;
+                for sched in &agent.schedules {
+                    let f = &sched.node;
+                    let when = f.when.as_ref().map(|w| match &w.node {
+                        WhenExpr::DailyAt(t) => format!("daily {:02}:{:02}", t.hour, t.minute),
+                        WhenExpr::Every(d) => format!("every {} {:?}", d.value, d.unit),
+                        WhenExpr::Cron(s) => format!("cron \"{s}\""),
+                    });
+                    let mode = f.mode.as_ref().map(|m| match m.node {
+                        ScheduleMode::Spawn => "spawn",
+                        ScheduleMode::Wake => "wake",
+                    });
+                    let precision = f.precision.as_ref().map(|p| match p.node {
+                        Precision::High => "high",
+                    });
+                    let emit = f.emit.as_ref().map(|e| e.node.clone());
+                    declarations.insert(
+                        (agent_name.clone(), f.name.node.clone()),
+                        serde_json::json!({
+                            "when": when,
+                            "mode": mode,
+                            "precision": precision,
+                            "emit": emit,
+                        }),
+                    );
+                }
+                for corr in &agent.correlates {
+                    let c = &corr.node;
+                    let mode = c.mode.as_ref().map(|m| match m.node {
+                        ScheduleMode::Spawn => "spawn",
+                        ScheduleMode::Wake => "wake",
+                    });
+                    correlations_decl.push(serde_json::json!({
+                        "agent": agent_name,
+                        "event_type": c.event_type.node,
+                        "field": c.field_name.node,
+                        "mode": mode,
+                        "emit": c.emit.as_ref().map(|e| e.node.clone()),
+                    }));
+                }
+            }
+        }
+    }
+
+    // Merge in live ScheduleState rows.
+    let mut schedule_rows: Vec<serde_json::Value> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    if let Some(ref storage) = state.inspect_storage {
+        match storage.list_all_schedules() {
+            Ok(rows) => {
+                for (agent, schedule, st) in rows {
+                    let key = (agent.clone(), schedule.clone());
+                    let declaration = declarations.get(&key).cloned();
+                    seen.insert(key);
+                    schedule_rows.push(serde_json::json!({
+                        "agent": agent,
+                        "schedule": schedule,
+                        "declaration": declaration,
+                        "next_run_at_ms": st.next_run_at_ms,
+                        "last_run_at_ms": st.last_run_at_ms,
+                        "last_status": format!("{:?}", st.last_status).to_lowercase(),
+                        "consecutive_errors": st.consecutive_errors,
+                        "claimed_by": st.claimed_by,
+                        "claim_expires_at_ms": st.claim_expires_at_ms,
+                    }));
+                }
+            }
+            Err(e) => {
+                return json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({"error": format!("{}", e)}),
+                );
+            }
+        }
+    }
+    // Append declared-but-never-fired schedules.
+    for ((agent, schedule), declaration) in &declarations {
+        if !seen.contains(&(agent.clone(), schedule.clone())) {
+            schedule_rows.push(serde_json::json!({
+                "agent": agent,
+                "schedule": schedule,
+                "declaration": declaration,
+                "next_run_at_ms": null,
+                "last_run_at_ms": null,
+                "last_status": "not_registered",
+                "consecutive_errors": 0,
+                "claimed_by": null,
+                "claim_expires_at_ms": null,
+            }));
+        }
+    }
+
+    // Correlation live counts.
+    let correlations_live: Vec<serde_json::Value> = match state.inspect_storage.as_ref() {
+        Some(storage) => match storage.list_all_correlations() {
+            Ok(rows) => rows
+                .into_iter()
+                .map(|(agent, field, count)| {
+                    serde_json::json!({
+                        "agent": agent,
+                        "field": field,
+                        "value_count": count,
+                    })
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        },
+        None => Vec::new(),
+    };
+
+    // Webhook endpoints: every endpoint is reachable at `/webhook/{name}`; the
+    // `signed` flag tells operators whether an HMAC secret is enforced.
+    let webhooks: Vec<serde_json::Value> = {
+        let executor = state.executor.read().unwrap();
+        executor
+            .endpoints()
+            .keys()
+            .map(|endpoint| {
+                serde_json::json!({
+                    "endpoint": endpoint,
+                    "signed": state.webhook_secrets.contains_key(endpoint),
+                })
+            })
+            .collect()
+    };
+
+    json_response(
+        StatusCode::OK,
+        serde_json::json!({
+            "schedules": schedule_rows,
+            "webhooks": webhooks,
+            "correlations_declared": correlations_decl,
+            "correlations_live": correlations_live,
+        }),
+    )
+}
+
 /// GET /__forge/inspect/mastery — per-(specialist, project) mastery progression
 /// plus per-task `review_rounds` trend (issue #304). The response combines:
 /// - knowledge-store entries under `mastery-{specialist}-{project}` (level
@@ -1030,6 +1210,29 @@ async fn handle_webhook(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
+    let body_bytes = body.len();
+
+    // Compute signature outcome up front so the tracer event (issue #336) can
+    // record whether HMAC validation passed — `None` means no secret was
+    // configured, `Some(true/false)` means the check ran with this outcome.
+    let signature_valid: Option<bool> = state.webhook_secrets.get(&endpoint_name).map(|secret| {
+        let signature = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        verify_hmac_signature(secret, &body, signature)
+    });
+
+    // Emit `webhook_received` regardless of downstream accept/reject — an
+    // arrived-but-rejected webhook is still observable traffic.
+    if let Some(tracer) = state.executor.read().unwrap().tracer() {
+        tracer.webhook_received(&endpoint_name, signature_valid, body_bytes);
+    }
+
+    if signature_valid == Some(false) {
+        return (StatusCode::UNAUTHORIZED, "invalid signature").into_response();
+    }
+
     // Content-Type must be application/json
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
@@ -1041,17 +1244,6 @@ async fn handle_webhook(
             "Content-Type must be application/json",
         )
             .into_response();
-    }
-
-    // Optional HMAC signature verification
-    if let Some(secret) = state.webhook_secrets.get(&endpoint_name) {
-        let signature = headers
-            .get("x-hub-signature-256")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if !verify_hmac_signature(secret, &body, signature) {
-            return (StatusCode::UNAUTHORIZED, "invalid signature").into_response();
-        }
     }
 
     // Parse JSON body

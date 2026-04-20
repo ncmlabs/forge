@@ -20,6 +20,7 @@ var ForgeTimeline = (function () {
     { key: 'flow',      label: 'Flow',     color: 'oklch(0.6 0.15 170)',  events: ['flow_start', 'flow_complete', 'stage_start', 'stage_complete', 'wave_start', 'wave_complete', 'pool_send', 'pool_resolved'] },
     { key: 'event',     label: 'Events',   color: 'oklch(0.65 0.15 145)', events: ['event_emit', 'event_delivered'] },
     { key: 'schedule',  label: 'Schedule', color: 'oklch(0.72 0.17 95)',  events: ['schedule_fired', 'schedule_rehydrated', 'schedule_skipped_concurrent', 'schedule_skipped_budget', 'schedule_errored', 'schedule_claim_lost', 'session_rehydrate_failed'] },
+    { key: 'webhook',   label: 'Webhook',  color: 'oklch(0.6 0.14 235)',  events: ['webhook_received'] },
     { key: 'correlate', label: 'Correlate', color: 'oklch(0.7 0.17 320)', events: ['correlation_hit', 'correlation_miss', 'correlation_registered'] },
     { key: 'warden',    label: 'Warden',   color: 'oklch(0.7 0.15 25)',   events: ['ward_action'] },
     { key: 'http',      label: 'HTTP',     color: 'oklch(0.55 0.1 220)',  events: ['http_request', 'http_response'] }
@@ -30,6 +31,22 @@ var ForgeTimeline = (function () {
   CATEGORIES.forEach(function (cat) {
     cat.events.forEach(function (e) { eventToCategory[e] = cat; });
   });
+
+  // Glyphs rendered on top of the tick rect for the wake-family surface
+  // (issue #336). Any event not in this map renders as a plain rect tick.
+  var EVENT_GLYPHS = {
+    schedule_fired:              '\u23F0',       // ⏰
+    schedule_skipped_concurrent: '\u23F8',       // ⏸
+    schedule_skipped_budget:     '\uD83D\uDCB0', // 💰
+    schedule_errored:            '\u274C',       // ❌
+    schedule_claim_lost:         '\u26A0',       // ⚠
+    schedule_rehydrated:         '\uD83D\uDCA4', // 💤
+    session_rehydrate_failed:    '\uD83D\uDCA4', // 💤
+    webhook_received:            '\uD83E\uDE9D', // 🪝
+    correlation_hit:             '\uD83C\uDFAF', // 🎯
+    correlation_registered:      '\u2731',        // ✱
+    correlation_miss:            '\u00B7'         // ·
+  };
 
   // ── State ──────────────────────────────────────────────────
   var containerEl = null;
@@ -272,6 +289,7 @@ var ForgeTimeline = (function () {
         y: catIdx * LANE_HEIGHT + 4,
         h: LANE_HEIGHT - 8,
         color: cat.color,
+        glyph: EVENT_GLYPHS[item.event] || null,
         item: item,
         cat: cat
       };
@@ -317,6 +335,24 @@ var ForgeTimeline = (function () {
       .attr('height', function (d) { return d.h; })
       .attr('fill', function (d) { return d.color; })
       .attr('opacity', 0.8);
+
+    // Glyphs for wake-family events (issue #336) — overlay the tick with the
+    // event's emoji/char so operators can distinguish fire vs. skip vs. error
+    // at a glance. Events without a glyph skip this layer cleanly.
+    var glyphData = tickData.filter(function (d) { return !!d.glyph; });
+    var glyphs = mainGroup.select('.ticks').selectAll('.timeline-glyph')
+      .data(glyphData, function (d, i) { return 'g' + i; });
+    glyphs.exit().remove();
+    var glyphEnter = glyphs.enter().append('text')
+      .attr('class', 'timeline-glyph')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .attr('font-size', '13px')
+      .attr('pointer-events', 'none');
+    glyphEnter.merge(glyphs)
+      .attr('x', function (d) { return d.x; })
+      .attr('y', function (d) { return d.y + d.h / 2; })
+      .text(function (d) { return d.glyph; });
   }
 
   // ── Tooltip & Detail ───────────────────────────────────────
@@ -329,10 +365,22 @@ var ForgeTimeline = (function () {
     var ts = new Date(d.item.ts_ms || d.item.ts);
     var timeStr = ts.toLocaleTimeString();
 
+    // Scheduled-vs-wall-time delta (issue #336) — only present on schedule_fired.
+    var delta = '';
+    var payload = d.item.data || {};
+    if (payload.scheduled_at_ms !== undefined && payload.wall_time_ms !== undefined) {
+      delta = '<br><span style="opacity:0.55;font-size:0.7em">'
+        + 'scheduled: ' + new Date(payload.scheduled_at_ms).toLocaleTimeString()
+        + ' \u2192 fired: ' + new Date(payload.wall_time_ms).toLocaleTimeString()
+        + ' (\u0394 ' + (payload.wall_time_ms - payload.scheduled_at_ms) + 'ms)'
+        + '</span>';
+    }
+
     tooltip
       .html('<strong>' + ForgeAPI.escapeHtml(info.label) + '</strong> ' +
             '<span style="opacity:0.6">' + ForgeAPI.escapeHtml(info.detail) + '</span>' +
-            '<br><span style="opacity:0.4;font-size:0.7em">' + timeStr + '</span>')
+            '<br><span style="opacity:0.4;font-size:0.7em">' + timeStr + '</span>' +
+            delta)
       .style('display', 'block')
       .style('left', (event.offsetX + 10) + 'px')
       .style('top', (event.offsetY - 10) + 'px');

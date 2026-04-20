@@ -83,6 +83,14 @@ enum Command {
         /// Path to a .forge file containing an agent declaration
         file: PathBuf,
     },
+    /// Print an agent's declared wake surface: schedules, webhooks, correlations
+    AgentInspect {
+        /// Path to a .forge file containing an agent declaration
+        file: PathBuf,
+        /// Name of the agent to inspect (if the file has multiple agents)
+        #[arg(long)]
+        agent: Option<String>,
+    },
     /// Estimate token usage and cost via static analysis (no API calls)
     Cost {
         /// Path to the .forge source file
@@ -296,6 +304,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Agent { file } => {
             run_agent(&file).await?;
+        }
+        Command::AgentInspect { file, agent } => {
+            run_agent_inspect(&file, agent.as_deref())?;
         }
         Command::Cost { file } => {
             let source = read_source(&file)?;
@@ -1943,6 +1954,160 @@ fn parse_args(input: &str) -> Vec<String> {
     }
 
     args
+}
+
+/// Print an agent's declared wake surface — schedules, correlations, and the
+/// file-level webhook endpoints — without starting a runtime. Issue #336.
+///
+/// This is the static-declaration view; live state (next fire times, claim
+/// holder, consecutive errors) is available via `GET /__forge/inspect/schedules`
+/// while `forge serve` is running.
+fn run_agent_inspect(file: &Path, agent: Option<&str>) -> anyhow::Result<()> {
+    use forge::ast::{Precision, ScheduleMode, WhenExpr};
+
+    let source = read_source(file)?;
+    let program = parse_or_exit(&source, file);
+
+    let agent_decls: Vec<&forge::ast::AgentDecl> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref()),
+            _ => None,
+        })
+        .collect();
+
+    if agent_decls.is_empty() {
+        anyhow::bail!("no agent declarations found in {}", file.display());
+    }
+
+    let targets: Vec<&forge::ast::AgentDecl> = match agent {
+        Some(name) => {
+            let matched: Vec<_> = agent_decls
+                .iter()
+                .copied()
+                .filter(|a| a.name.node == name)
+                .collect();
+            if matched.is_empty() {
+                anyhow::bail!("no agent named '{}' in {}", name, file.display());
+            }
+            matched
+        }
+        None => agent_decls.clone(),
+    };
+
+    let endpoint_names: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Endpoint(e) => Some(e.name.node.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    for (idx, decl) in targets.iter().enumerate() {
+        if idx > 0 {
+            println!();
+        }
+        println!("FORGE Agent: {}", decl.name.node);
+
+        let memory_fields: Vec<&str> = decl.memory.iter().map(|f| f.node.name.as_str()).collect();
+        if !memory_fields.is_empty() {
+            let marker = if decl.memory_persistent {
+                "persistent"
+            } else {
+                "transient"
+            };
+            println!("  memory ({}): {}", marker, memory_fields.join(", "));
+        }
+
+        let handler_names: Vec<&str> = decl
+            .handlers
+            .iter()
+            .map(|h| h.node.event.node.as_str())
+            .collect();
+        if !handler_names.is_empty() {
+            println!("  handlers: {}", handler_names.join(", "));
+        }
+
+        if decl.schedules.is_empty() {
+            println!("  schedules: (none)");
+        } else {
+            println!("  schedules:");
+            for sched in &decl.schedules {
+                let f = &sched.node;
+                let when = f
+                    .when
+                    .as_ref()
+                    .map(|w| match &w.node {
+                        WhenExpr::DailyAt(t) => format!("daily {:02}:{:02}", t.hour, t.minute),
+                        WhenExpr::Every(d) => format!("every {} {:?}", d.value, d.unit),
+                        WhenExpr::Cron(s) => format!("cron \"{s}\""),
+                    })
+                    .unwrap_or_else(|| "(no when)".to_string());
+                let mode = f
+                    .mode
+                    .as_ref()
+                    .map(|m| match m.node {
+                        ScheduleMode::Spawn => "spawn",
+                        ScheduleMode::Wake => "wake",
+                    })
+                    .unwrap_or("?");
+                let mut extras = String::new();
+                if let Some(e) = &f.emit {
+                    extras.push_str(&format!("  emit: {}", e.node));
+                }
+                if let Some(p) = &f.precision {
+                    let label = match p.node {
+                        Precision::High => "high",
+                    };
+                    extras.push_str(&format!("  precision: {label}"));
+                }
+                println!(
+                    "    {}  when: {}  mode: {}{}",
+                    f.name.node, when, mode, extras
+                );
+            }
+        }
+
+        if decl.correlates.is_empty() {
+            println!("  correlations: (none)");
+        } else {
+            println!("  correlations:");
+            for corr in &decl.correlates {
+                let c = &corr.node;
+                let mode = c
+                    .mode
+                    .as_ref()
+                    .map(|m| match m.node {
+                        ScheduleMode::Spawn => "spawn",
+                        ScheduleMode::Wake => "wake",
+                    })
+                    .unwrap_or("?");
+                let emit = c
+                    .emit
+                    .as_ref()
+                    .map(|e| format!("  emit: {}", e.node))
+                    .unwrap_or_default();
+                println!(
+                    "    {}.{}  mode: {}{}",
+                    c.event_type.node, c.field_name.node, mode, emit
+                );
+            }
+        }
+    }
+
+    // File-level webhooks (endpoints are currently file-scoped, not agent-scoped).
+    println!();
+    if endpoint_names.is_empty() {
+        println!("Webhooks / endpoints: (none in this file)");
+    } else {
+        println!("Webhooks / endpoints:");
+        for name in &endpoint_names {
+            println!("    /webhook/{name}");
+        }
+    }
+    Ok(())
 }
 
 /// Send a single event to an agent non-interactively, print the result, and exit.
