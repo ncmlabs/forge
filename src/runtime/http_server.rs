@@ -696,15 +696,40 @@ async fn handle_inspect_storage(
 async fn handle_inspect_schedules(State(state): State<AppState>) -> Response {
     use crate::ast::{Precision, ScheduleMode, TopLevel, WhenExpr};
 
-    // Build (agent, schedule) -> declaration JSON from the program AST.
+    // Declarations are keyed by the AST agent name (e.g. `cadence_probe`), but
+    // WakeService persists state under the system alias (e.g. `probe` from
+    // `use probe: cadence_probe`). Build `alias -> agent_name` from any
+    // system bindings so the two can be unioned cleanly — fall back to
+    // alias = agent_name when no system block is declared.
+    let mut alias_to_agent: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut correlations_decl: Vec<serde_json::Value> = Vec::new();
     let mut declarations: std::collections::BTreeMap<(String, String), serde_json::Value> =
         std::collections::BTreeMap::new();
-    let mut correlations_decl: Vec<serde_json::Value> = Vec::new();
     {
         let executor = state.executor.read().unwrap();
         for item in &executor.program().items {
+            if let TopLevel::System(sys) = &item.node {
+                for binding in &sys.bindings {
+                    alias_to_agent.insert(binding.node.alias.clone(), binding.node.target.clone());
+                }
+            }
+        }
+        // Declarations are indexed by alias if a binding exists, otherwise by
+        // the agent name itself — `forge run` without a system block registers
+        // schedules under the raw agent name.
+        let agent_to_alias: std::collections::HashMap<&str, &str> = alias_to_agent
+            .iter()
+            .map(|(alias, agent)| (agent.as_str(), alias.as_str()))
+            .collect();
+        for item in &executor.program().items {
             if let TopLevel::Agent(agent) = &item.node {
-                let agent_name = &agent.name.node;
+                let agent_name_str = agent.name.node.as_str();
+                let key_name = agent_to_alias
+                    .get(agent_name_str)
+                    .map(|s| (*s).to_string())
+                    .unwrap_or_else(|| agent.name.node.clone());
+                let agent_name = &key_name;
                 for sched in &agent.schedules {
                     let f = &sched.node;
                     let when = f.when.as_ref().map(|w| match &w.node {

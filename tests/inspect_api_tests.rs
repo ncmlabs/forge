@@ -610,6 +610,89 @@ async fn inspect_schedules_never_exposes_secrets() {
     );
 }
 
+// WakeService persists state under the `system` alias (e.g. `probe` in
+// `use probe: cadence_probe`), but the schedule declaration lives on
+// `AgentDecl.name`. The endpoint must union them via the system bindings
+// so each schedule shows up exactly once with both the declaration and
+// the live state populated. Regression guard from e2e smoke (#336).
+const ALIAS_SCHEDULE_SOURCE: &str = r#"#! boundary: server
+
+agent cadence_probe
+  memory persistent
+    tick_count: Number
+  schedule mastery_review
+    when: every 30s
+    mode: spawn
+    prompt: "tick"
+  on start
+    say "ready"
+
+system cadence_smoke
+  use
+    probe: cadence_probe
+
+endpoint health() -> Text
+  give "ok"
+"#;
+
+#[tokio::test]
+async fn inspect_schedules_unions_system_alias_with_declaration() {
+    use forge::runtime::storage::{ScheduleState, ScheduleStatus};
+
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(ForgeStorage::open(&dir.path().join("s.redb")).unwrap());
+
+    // WakeService keys state by the alias, not the agent name.
+    let mut state = ScheduleState::fresh(1_700_000_000_000);
+    state.last_run_at_ms = Some(1_699_999_000_000);
+    state.last_status = ScheduleStatus::Success;
+    storage
+        .upsert_schedule_state("probe", "mastery_review", &state)
+        .unwrap();
+
+    let program = forge::parser::parse(ALIAS_SCHEDULE_SOURCE).expect("parse failed");
+    let executor = TaskExecutor::new(program, mock_registry(), None);
+    let server =
+        forge::runtime::http_server::ForgeServer::new(executor, None).with_inspect_storage(storage);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind failed");
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        server
+            .run_on_listener(listener)
+            .await
+            .expect("server failed");
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let body: serde_json::Value =
+        reqwest::get(format!("http://127.0.0.1:{port}/__forge/inspect/schedules"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+    let schedules = body["schedules"].as_array().unwrap();
+    assert_eq!(
+        schedules.len(),
+        1,
+        "alias and agent name must merge into a single row, got {}: {:#?}",
+        schedules.len(),
+        schedules
+    );
+    assert_eq!(schedules[0]["agent"], "probe");
+    assert_eq!(schedules[0]["schedule"], "mastery_review");
+    assert_eq!(schedules[0]["last_status"], "success");
+    assert_eq!(schedules[0]["declaration"]["mode"], "spawn");
+    assert!(schedules[0]["declaration"]["when"]
+        .as_str()
+        .unwrap()
+        .contains("30"));
+}
+
 fn mk_task_completed(
     repo: &str,
     task_id: &str,
