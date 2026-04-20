@@ -118,6 +118,17 @@ event CycleDetected
   blocker_id: Text
   note: Text
 
+# ── T4.2 (#354): cross-project handoff (outgoing half) ─────────
+# A specialist emits this when work needs to land in a *different*
+# repo. Mastermind opens a labeled issue over there (via the github
+# skill) and records the blocker edge; the #335 webhook supplies the
+# matching TaskCompleted on the return trip.
+event CrossProjectRequested
+  source_task_id: Text
+  target_repo: Text
+  description: Text
+  labels: Text
+
 # ── States ─────────────────────────────────────────────────────
 
 states ReviewPhase
@@ -278,6 +289,7 @@ agent mastermind
   subscribe SeedTask
   subscribe TaskBlocked
   subscribe TaskCompleted
+  subscribe CrossProjectRequested
 
   on start
     memory.task_counter = 0
@@ -331,6 +343,18 @@ agent mastermind
     say "[mastermind] {task_id} done"
     for dep in newly_free
       emit UnblockTask(task_id: dep, unblocked_by: task_id)
+
+  # T4.2 (#354): outgoing cross-project request. Open a labeled issue
+  # in the target repo via the deterministic github skill, then record
+  # a TaskBlocked edge so the existing on TaskCompleted can unblock us
+  # once #335's webhook driver signals the merge.
+  on CrossProjectRequested(source_task_id: Text, target_repo: Text, description: Text, labels: Text)
+    composite_labels = "clone-dev,from:{source_task_id},blocks:{source_task_id}," + labels
+    body = "Spawned from repo-A task {source_task_id}"
+    issue_url = skill.github.create_labeled_issue(target_repo, description, body, composite_labels)
+    when issue_url.sure -> say "[mastermind] spawned cross-project issue: {issue_url}"
+    else -> say "[mastermind] cross-project issue creation uncertain"
+    emit TaskBlocked(task_id: source_task_id, blocked_on: [issue_url])
 
   if stuck for 3 turns
     escalate to human
@@ -508,3 +532,10 @@ event SeedTask
 endpoint seed_task(task_id: Text, specialist: Text, project: Text) -> Text
   emit SeedTask(task_id: task_id, specialist: specialist, project: project)
   give "SeedTask queued (task={task_id} specialist={specialist})"
+
+# T4.2 (#354): smoke endpoint so an e2e harness can drive the outgoing
+# half without standing up a real specialist. Mastermind picks the emit
+# up and opens a labeled issue in the target repo via the github skill.
+endpoint cross_project_requested(source_task_id: Text, target_repo: Text, description: Text, labels: Text) -> Text
+  emit CrossProjectRequested(source_task_id: source_task_id, target_repo: target_repo, description: description, labels: labels)
+  give "CrossProjectRequested queued (task={source_task_id} repo={target_repo})"

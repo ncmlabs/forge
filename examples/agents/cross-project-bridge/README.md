@@ -58,10 +58,33 @@ Watch the Observer timeline at `http://127.0.0.1:3000/__forge/events` —
   absorb retry storms without letting a rogue source wake specialists in a
   tight loop.
 
-## Scope
+## Full round-trip (#354 + #335)
 
-This PR ships the return path only: HMAC inbound → driver match → wake →
-bus publish. The outgoing half (`CrossProjectRequested` event + 
-`skill.github.create_labeled_issue` capability) is a sibling issue — per
-#300's closing comment it has no scheduler dependency and can ship
-independently.
+With the outgoing half shipped (#354), the complete cross-project loop
+runs end-to-end without polling:
+
+1. A specialist in repo A emits `CrossProjectRequested(source_task_id,
+   target_repo, description, labels)` — see
+   `examples/agents/clone-dev-skeleton/main.forge` for the handler side.
+2. Repo A's `mastermind` calls
+   `skill.github.create_labeled_issue(target_repo, description, body,
+   composite_labels)` — a deterministic `gh issue create --label …`
+   executor declared in `skills/github/SKILL.md` — and records
+   `TaskBlocked(source_task_id, [issue_url])` in its task graph.
+3. Repo B's `dev_cycle` picks up the labeled issue via T1.1 inbound
+   label routing and works it. When its PR merges…
+4. Repo B's GitHub Action (`webhooks/github-pr-merged.yml`) POSTs the
+   HMAC-signed wake to repo A's `/wake/mastermind/pr_merged` — the
+   return path this example ships (#335).
+5. `webhook pr_merged` validates the signature, rehydrates mastermind,
+   and publishes `PrMerged`. The `on PrMerged` handler emits
+   `TaskCompleted` for the upstream task.
+6. The existing `on TaskCompleted` handler (#299 T4.1) scans the task
+   graph, drops the cleared blocker, and fires `UnblockTask` for any
+   dependent task that is now free.
+
+The two examples — this bridge (return path) and the clone-dev skeleton
+(outgoing path) — compose into one loop with no scheduler, no polling,
+and no custom broker. `examples/agents/cross-project-bridge/tests/round_trip.sh`
+exercises both halves against a stubbed `gh` and asserts the Observer
+timeline contains every step of the sequence.

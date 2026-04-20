@@ -94,7 +94,7 @@ fn skill_loader_parses_repo_reference_cli_skills() {
     for (path, expected_name, expected_capabilities) in [
         ("skills/claude-code/SKILL.md", "claude", 4usize),
         ("skills/codex/SKILL.md", "codex", 4usize),
-        ("skills/github/SKILL.md", "github", 12usize),
+        ("skills/github/SKILL.md", "github", 13usize),
     ] {
         let skill = SkillLoader::parse_skill_md(Path::new(path)).unwrap();
         assert_eq!(skill.manifest.name, expected_name);
@@ -167,7 +167,7 @@ fn skill_loader_discovers_multiple_skills() {
 fn skill_loader_parses_github_skill() {
     let skill = SkillLoader::parse_skill_md(Path::new("skills/github/SKILL.md")).unwrap();
     assert_eq!(skill.manifest.name, "github");
-    assert_eq!(skill.manifest.capabilities.len(), 12);
+    assert_eq!(skill.manifest.capabilities.len(), 13);
     assert!(
         skill.manifest.legacy_signature.is_none(),
         "typed skill should not have legacy signature"
@@ -189,6 +189,7 @@ fn skill_loader_parses_github_skill() {
         .collect();
     for expected in [
         "create_issue",
+        "create_labeled_issue",
         "list_issues",
         "list_prs",
         "create_branch",
@@ -261,6 +262,7 @@ fn github_skill_registers_all_capabilities() {
     let sigs = registry.capability_signatures();
     for cap in [
         "skill.github.create_issue",
+        "skill.github.create_labeled_issue",
         "skill.github.list_issues",
         "skill.github.create_branch",
         "skill.github.create_pr",
@@ -872,6 +874,131 @@ fn typed_skill_loader_parses_capabilities() {
     assert_eq!(skill.manifest.capabilities.len(), 2);
     assert!(skill.manifest.legacy_signature.is_none());
     assert_eq!(skill.manifest.capabilities[0].name, "create_issue");
+}
+
+// ── #354: create_labeled_issue capability ──────────────────────
+
+#[test]
+fn create_labeled_issue_loads_with_four_text_inputs_and_command_executor() {
+    let skill = SkillLoader::parse_skill_md(Path::new("skills/github/SKILL.md")).unwrap();
+    let cap = skill
+        .manifest
+        .capabilities
+        .iter()
+        .find(|c| c.name == "create_labeled_issue")
+        .expect("create_labeled_issue capability must be declared");
+    assert_eq!(
+        cap.signature.inputs.len(),
+        4,
+        "expected (repo, title, body, labels_csv)"
+    );
+    for (i, ty) in cap.signature.inputs.iter().enumerate() {
+        assert!(
+            matches!(ty, forge::types::ForgeType::Text),
+            "input {} must be Text, got {:?}",
+            i,
+            ty
+        );
+    }
+    assert!(
+        matches!(cap.signature.output, forge::types::ForgeType::Text),
+        "output must be Text"
+    );
+    let executor = cap
+        .executor
+        .as_ref()
+        .expect("create_labeled_issue must have a deterministic command executor");
+    assert!(
+        matches!(
+            executor.kind,
+            forge::runtime::skill::SkillExecutorKind::Command
+        ),
+        "executor kind must be Command"
+    );
+    // argv must place the label CSV behind `--label` so `gh` sees one element.
+    let joined = executor.argv.join(" ");
+    assert!(
+        joined.contains("--label") && joined.contains("{labels_csv}"),
+        "argv must pipe labels_csv through --label, got: {:?}",
+        executor.argv
+    );
+    // params must be ordered to match FORGE call sites: (repo, title, body, labels_csv).
+    assert_eq!(
+        executor.params,
+        vec![
+            "repo".to_string(),
+            "title".to_string(),
+            "body".to_string(),
+            "labels_csv".to_string()
+        ]
+    );
+}
+
+#[test]
+fn create_labeled_issue_accepts_four_text_arguments() {
+    let source = "use\n  skill.github.create_labeled_issue\n\ntask run\n  gives Text\n  do\n    give skill.github.create_labeled_issue(\"o/r\", \"title\", \"body\", \"a,b,c\")\n";
+    let program = forge::parser::parse(source).unwrap();
+    let ctx = forge::resolver::CheckContext::with_skills("test.forge", labeled_issue_sig());
+    let result = ctx.check(&program);
+    assert!(
+        result.is_ok(),
+        "4-arg call should typecheck: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn create_labeled_issue_rejects_three_argument_call() {
+    let source = "use\n  skill.github.create_labeled_issue\n\ntask run\n  gives Text\n  do\n    give skill.github.create_labeled_issue(\"o/r\", \"title\", \"body\")\n";
+    let program = forge::parser::parse(source).unwrap();
+    let ctx = forge::resolver::CheckContext::with_skills("test.forge", labeled_issue_sig());
+    let errs = ctx.check(&program).unwrap_err();
+    assert!(
+        errs.iter().any(|err| matches!(
+            err,
+            forge::resolver::ResolveError::ArgumentCountMismatch {
+                name, expected, actual, ..
+            } if name == "skill.github.create_labeled_issue" && *expected == 4 && *actual == 3
+        )),
+        "expected ArgumentCountMismatch(4, 3), got {:?}",
+        errs
+    );
+}
+
+#[test]
+fn create_labeled_issue_rejects_non_text_labels_argument() {
+    // Number in the 4th slot where Text (labels_csv) is required.
+    let source = "use\n  skill.github.create_labeled_issue\n\ntask run\n  needs labels: Number\n  gives Text\n  do\n    give skill.github.create_labeled_issue(\"o/r\", \"title\", \"body\", labels)\n";
+    let program = forge::parser::parse(source).unwrap();
+    let ctx = forge::resolver::CheckContext::with_skills("test.forge", labeled_issue_sig());
+    let errs = ctx.check(&program).unwrap_err();
+    assert!(
+        errs.iter().any(|err| matches!(
+            err,
+            forge::resolver::ResolveError::ArgumentTypeMismatch {
+                name, expected, actual, ..
+            } if name == "skill.github.create_labeled_issue" && expected == "Text" && actual == "Number"
+        )),
+        "expected ArgumentTypeMismatch(Text, Number), got {:?}",
+        errs
+    );
+}
+
+fn labeled_issue_sig() -> std::collections::HashMap<String, forge::types::CapabilitySignature> {
+    let mut sigs = std::collections::HashMap::new();
+    sigs.insert(
+        "skill.github.create_labeled_issue".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+            ],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    sigs
 }
 
 // ── Full pipeline: skill_finder.forge example ───────────────────

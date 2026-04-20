@@ -604,3 +604,117 @@ fn json_value_to_text(value: &serde_json::Value) -> String {
         other => other.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::confidence::Value;
+
+    // #354: template expansion must preserve CSV labels as a single argv
+    // element — commas cannot split the token, because `gh issue create
+    // --label` receives the CSV as one argument and splits it itself.
+    #[test]
+    fn expand_argv_preserves_labels_csv() {
+        let argv = vec![
+            "gh".to_string(),
+            "issue".to_string(),
+            "create".to_string(),
+            "-R".to_string(),
+            "{repo}".to_string(),
+            "--title".to_string(),
+            "{title}".to_string(),
+            "--body".to_string(),
+            "{body}".to_string(),
+            "--label".to_string(),
+            "{labels_csv}".to_string(),
+        ];
+        let params: Vec<String> = vec![
+            "repo".into(),
+            "title".into(),
+            "body".into(),
+            "labels_csv".into(),
+        ];
+        let mut args: HashMap<String, ConfidentValue> = HashMap::new();
+        args.insert(
+            "repo".into(),
+            ConfidentValue::deterministic(Value::Text("ncmlabs/b".into())),
+        );
+        args.insert(
+            "title".into(),
+            ConfidentValue::deterministic(Value::Text("Port auth middleware".into())),
+        );
+        args.insert(
+            "body".into(),
+            ConfidentValue::deterministic(Value::Text("Spawned from repo-A task T7".into())),
+        );
+        args.insert(
+            "labels_csv".into(),
+            ConfidentValue::deterministic(Value::Text(
+                "clone-dev,from:T7,blocks:T7,area:auth".into(),
+            )),
+        );
+
+        let expanded = expand_argv(&argv, &params, &args).expect("argv expands");
+
+        assert_eq!(
+            expanded,
+            vec![
+                "gh",
+                "issue",
+                "create",
+                "-R",
+                "ncmlabs/b",
+                "--title",
+                "Port auth middleware",
+                "--body",
+                "Spawned from repo-A task T7",
+                "--label",
+                "clone-dev,from:T7,blocks:T7,area:auth",
+            ]
+        );
+
+        // The label CSV must land as one argv element: four labels, one comma-
+        // separated string. If template expansion ever split on commas this
+        // assertion breaks immediately.
+        assert_eq!(
+            expanded[10], "clone-dev,from:T7,blocks:T7,area:auth",
+            "label CSV must survive as a single argv element"
+        );
+    }
+
+    // #354: positional fallback — args keyed by `_0`, `_1`, ... must also
+    // resolve `{repo}` etc. via the `params` index lookup. This is the
+    // callsite used when the resolver lowers positional FORGE arguments.
+    #[test]
+    fn expand_argv_resolves_positional_args_for_labeled_issue() {
+        let argv = vec![
+            "gh".to_string(),
+            "issue".to_string(),
+            "create".to_string(),
+            "-R".to_string(),
+            "{repo}".to_string(),
+            "--label".to_string(),
+            "{labels_csv}".to_string(),
+        ];
+        let params: Vec<String> = vec![
+            "repo".into(),
+            "title".into(),
+            "body".into(),
+            "labels_csv".into(),
+        ];
+        let mut args: HashMap<String, ConfidentValue> = HashMap::new();
+        args.insert(
+            "_0".into(),
+            ConfidentValue::deterministic(Value::Text("ncmlabs/b".into())),
+        );
+        args.insert(
+            "_3".into(),
+            ConfidentValue::deterministic(Value::Text("clone-dev,from:T7".into())),
+        );
+
+        let expanded = expand_argv(&argv, &params, &args).expect("positional args expand");
+
+        assert_eq!(expanded[4], "ncmlabs/b");
+        assert_eq!(expanded[6], "clone-dev,from:T7");
+    }
+}

@@ -2216,3 +2216,156 @@ async fn clone_dev_skeleton_exposes_graph_smoke_endpoints() {
         );
     }
 }
+
+// ── Clone-dev cross-project handoff (#354 T4.2 outgoing) ───────────────────
+
+/// T4.2 (#354): the skeleton declares `event CrossProjectRequested` with the
+/// four fields the outgoing handler consumes. Shape is load-bearing — the
+/// webhook return path (#335) reads `source_task_id` back out on merge.
+#[tokio::test]
+async fn clone_dev_skeleton_declares_cross_project_requested_event() {
+    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+        .expect("could not read clone-dev-skeleton main.forge");
+    let program = forge::parser::parse(&source).expect("skeleton must parse (T4.2)");
+
+    let events: HashMap<String, EventDecl> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Event(e) => Some((e.name.node.clone(), e.clone())),
+            _ => None,
+        })
+        .collect();
+
+    let cross = events
+        .get("CrossProjectRequested")
+        .expect("event CrossProjectRequested must exist (T4.2)");
+    let fields: Vec<&str> = cross.fields.iter().map(|f| f.node.name.as_str()).collect();
+    for expected in &["source_task_id", "target_repo", "description", "labels"] {
+        assert!(
+            fields.contains(expected),
+            "CrossProjectRequested.{expected} missing — field order: {:?}",
+            fields
+        );
+    }
+    assert_eq!(
+        fields.len(),
+        4,
+        "CrossProjectRequested should have exactly 4 Text fields"
+    );
+}
+
+/// T4.2 (#354): mastermind subscribes to CrossProjectRequested and has the
+/// matching handler. The handler is what calls `create_labeled_issue` and
+/// records the `TaskBlocked` edge that the #335 return path clears.
+#[tokio::test]
+async fn clone_dev_mastermind_handles_cross_project_requested() {
+    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+        .expect("could not read clone-dev-skeleton main.forge");
+    let program = forge::parser::parse(&source).expect("skeleton must parse (T4.2)");
+
+    let mastermind = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) if a.name.node == "mastermind" => Some(a.clone()),
+            _ => None,
+        })
+        .expect("mastermind agent must exist");
+
+    let subscriptions: Vec<&str> = mastermind
+        .subscriptions
+        .iter()
+        .map(|s| s.node.event_name.node.as_str())
+        .collect();
+    assert!(
+        subscriptions.contains(&"CrossProjectRequested"),
+        "mastermind must `subscribe CrossProjectRequested`, got: {:?}",
+        subscriptions
+    );
+
+    let handler_events: Vec<&str> = mastermind
+        .handlers
+        .iter()
+        .map(|h| h.node.event.node.as_str())
+        .collect();
+    assert!(
+        handler_events.contains(&"CrossProjectRequested"),
+        "mastermind must declare `on CrossProjectRequested(...)`, got: {:?}",
+        handler_events
+    );
+
+    // The smoke endpoint is what `round_trip.sh` POSTs to for the e2e
+    // acceptance — without it there is no keyboardless way to drive the
+    // outgoing half in a live server.
+    let endpoints: Vec<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.node {
+            TopLevel::Endpoint(e) => Some(e.name.node.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        endpoints.contains(&"cross_project_requested"),
+        "endpoint /cross_project_requested must exist (T4.2), got: {:?}",
+        endpoints
+    );
+}
+
+/// T4.2 (#354): a minimal self-contained program — event decl, handler with
+/// four typed params, and an emit from a "specialist" agent — checks clean
+/// when the `create_labeled_issue` capability signature is registered. This
+/// is the grammar-green conformance check the acceptance criteria asks for.
+#[tokio::test]
+async fn cross_project_requested_emit_checks_clean_with_registered_skill() {
+    let source = r#"use
+  skill.github.create_labeled_issue
+
+event CrossProjectRequested
+  source_task_id: Text
+  target_repo: Text
+  description: Text
+  labels: Text
+
+agent dev_specialist
+  memory
+    last_request: Text
+  on start
+    memory.last_request = "none"
+    say "[specialist] ready"
+    emit CrossProjectRequested(source_task_id: "T1", target_repo: "o/r", description: "port auth middleware", labels: "area:auth")
+
+agent mastermind
+  subscribe CrossProjectRequested
+  on start
+    say "[mastermind] ready"
+  on CrossProjectRequested(source_task_id: Text, target_repo: Text, description: Text, labels: Text)
+    body = "spawned from {source_task_id}"
+    url = skill.github.create_labeled_issue(target_repo, description, body, labels)
+    when url.sure -> say "[mastermind] opened {url}"
+    else -> say "[mastermind] uncertain"
+"#;
+    let program = forge::parser::parse(source).expect("T4.2 minimal program must parse");
+
+    let mut sigs = HashMap::new();
+    sigs.insert(
+        "skill.github.create_labeled_issue".into(),
+        forge::types::CapabilitySignature {
+            inputs: vec![
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+                forge::types::ForgeType::Text,
+            ],
+            output: forge::types::ForgeType::Text,
+        },
+    );
+    let ctx = forge::resolver::CheckContext::with_skills("t4_2.forge", sigs);
+    let result = ctx.check(&program);
+    assert!(
+        result.is_ok(),
+        "T4.2 minimal program should typecheck with create_labeled_issue registered: {:?}",
+        result.err()
+    );
+}

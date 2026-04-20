@@ -17,6 +17,13 @@ capabilities:
   - name: create_pr
     inputs: [Text, Text, Text, Text]
     output: Text
+  - name: create_labeled_issue
+    inputs: [Text, Text, Text, Text]
+    output: Text
+    params: [repo, title, body, labels_csv]
+    executor:
+      kind: command
+      argv: [gh, issue, create, -R, "{repo}", --title, "{title}", --body, "{body}", --label, "{labels_csv}"]
   - name: check_ci
     inputs: [Text, Text]
     output: Text
@@ -141,6 +148,26 @@ gh pr create -R "$repo" --head "$branch" --title "$title" --body "$body"
 To target a different base branch, append `--base "development"`.
 
 Return the PR URL printed by `gh` on success.
+
+### `create_labeled_issue(repo, title, body, labels_csv)`
+
+Create a new issue with one or more labels attached. `labels_csv` is a
+comma-separated list (e.g. `"clone-dev,from:T7"`); `gh --label` accepts
+the CSV as-is.
+
+```bash
+gh issue create -R "$repo" --title "$title" --body "$body" --label "$labels_csv"
+```
+
+Unlike `create_issue`, this capability has a deterministic `command`
+executor — the argv is emitted directly to `gh`, so commas in the CSV
+cross the process boundary without shell interpolation.
+
+Use this over `create_issue` whenever downstream label routing matters
+(e.g. cross-project handoff, where the target repo's `dev_cycle` filters
+on the label set).
+
+Return the issue URL printed by `gh` on success.
 
 ### `list_prs(repo, state, limit)`
 
