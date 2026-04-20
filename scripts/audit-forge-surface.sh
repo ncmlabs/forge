@@ -54,21 +54,27 @@ claude -p \
   --output-format text \
   "$(cat "$PROMPT_FILE")" | tee "$REPORT_FILE"
 
-# Path-guard: every changed path must live under an allowed prefix.
+# Path-guard: every *tracked* change must live under an allowed prefix.
+# Untracked entries ('??' in porcelain) are out-of-scope — the `git add` below
+# only stages allow-listed surfaces, so a stray runtime artifact (e.g.
+# `.forge-data/`, a session cache, a tmp dir) outside those prefixes can never
+# be committed and must not trip the guard. See issue #348.
 ALLOWED='^(docs/|skills/|examples/|workflows/|CHANGELOG\.md$)'
-CHANGED="$(git status --porcelain | awk '{print $2}')"
-if [ -n "$CHANGED" ]; then
-  OFFENDERS="$(echo "$CHANGED" | grep -Ev "$ALLOWED" || true)"
-  if [ -n "$OFFENDERS" ]; then
-    echo "audit: path-guard violation — edits outside allowed derived surfaces:" >&2
-    echo "$OFFENDERS" >&2
-    exit 3
-  fi
+PORCELAIN="$(git status --porcelain)"
+OFFENDERS="$(echo "$PORCELAIN" | awk '$1 != "??" {print $2}' | grep -Ev "$ALLOWED" || true)"
+if [ -n "$OFFENDERS" ]; then
+  echo "audit: path-guard violation — tracked edits outside allowed derived surfaces:" >&2
+  echo "$OFFENDERS" >&2
+  exit 3
 fi
 
-# If nothing changed, stop here — that's the "no drift detected" outcome.
+# Drift = any change (tracked edit or new file) under an allowed surface.
+# Untracked artifacts outside ALLOWED are intentionally excluded so they can't
+# masquerade as drift; new files the audit creates inside an allowed surface
+# (e.g. a fresh `docs/foo.md`) appear here as '??' and are still detected.
+CHANGED="$(echo "$PORCELAIN" | awk '{print $2}' | grep -E "$ALLOWED" || true)"
 if [ -z "$CHANGED" ]; then
-  echo "audit: no drift detected (no files changed)"
+  echo "audit: no drift detected (no changes within allowed surfaces)"
   exit 0
 fi
 
