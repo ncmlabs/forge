@@ -131,6 +131,11 @@ paths = ["examples/basics/correlate_e2e.forge"]
 check = "ok"
 
 [[cases]]
+name = "cross-project bridge webhook demo (#335)"
+paths = ["examples/agents/cross-project-bridge/main.forge"]
+check = "ok"
+
+[[cases]]
 name = "command examples"
 paths = [
   "examples/command/command_argv.forge",

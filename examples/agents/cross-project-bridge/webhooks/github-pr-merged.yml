@@ -1,0 +1,42 @@
+# GitHub Actions wrapper for issue #335 — cross-project handoff (#300).
+#
+# Drop this into `.github/workflows/forge-wake.yml` in repo B. When a PR
+# merges, the job computes an HMAC-SHA256 over the JSON payload using the
+# secret `FORGE_WAKE_SECRET` (matching the value registered by
+# `forge wake rotate --agent mastermind --trigger pr_merged` in repo A) and
+# POSTs to the FORGE server.
+#
+# Required GitHub config:
+#   - Actions secret: `FORGE_WAKE_SECRET` (hex string from `forge wake rotate`)
+#   - Actions variable: `FORGE_WAKE_URL` (e.g. `https://forge.example.com`)
+
+name: forge-wake pr-merged
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  wake-mastermind:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /wake/mastermind/pr_merged with HMAC signature
+        env:
+          FORGE_WAKE_SECRET: ${{ secrets.FORGE_WAKE_SECRET }}
+          FORGE_WAKE_URL: ${{ vars.FORGE_WAKE_URL }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+        run: |
+          set -euo pipefail
+          body=$(jq -nc --arg repo "$REPO" --argjson pr "$PR_NUMBER" --arg by "$MERGED_BY" \
+            '{repo: $repo, pr_number: $pr, merged_by: $by}')
+          sig=$(printf '%s' "$body" \
+            | openssl dgst -sha256 -hmac "$FORGE_WAKE_SECRET" \
+            | sed 's/^.* //')
+          curl --fail --show-error --silent \
+            -X POST "$FORGE_WAKE_URL/wake/mastermind/pr_merged" \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: sha256=$sig" \
+            -d "$body"

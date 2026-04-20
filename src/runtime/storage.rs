@@ -54,6 +54,12 @@ const FORGE_SCHEDULES: TableDefinition<&str, &str> = TableDefinition::new("forge
 /// Value: target agent alias to rehydrate when the correlated event arrives.
 const FORGE_CORRELATIONS: TableDefinition<&str, &str> = TableDefinition::new("forge_correlations");
 
+/// Per-`(agent, trigger)` HMAC secret for `WebhookDriver` (issue #335).
+/// Key format: `"{agent_name}:{trigger_name}"`. Value: hex-encoded 32 random
+/// bytes. Written only via the `forge wake` CLI; never emitted to logs or
+/// tracer events. The verifier reads a secret exactly once per inbound request.
+const FORGE_WAKE_SECRETS: TableDefinition<&str, &str> = TableDefinition::new("forge_wake_secrets");
+
 /// Terminal status of the most recent schedule dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScheduleStatus {
@@ -192,6 +198,8 @@ impl ForgeStorage {
         txn.open_table(FORGE_SCHEDULES)
             .map_err(|e| StorageError::Table(Box::new(e)))?;
         txn.open_table(FORGE_CORRELATIONS)
+            .map_err(|e| StorageError::Table(Box::new(e)))?;
+        txn.open_table(FORGE_WAKE_SECRETS)
             .map_err(|e| StorageError::Table(Box::new(e)))?;
         txn.commit()
             .map_err(|e| StorageError::Commit(Box::new(e)))?;
@@ -620,6 +628,111 @@ impl ForgeStorage {
 
 fn correlation_key(agent: &str, field: &str, value: &str) -> String {
     format!("{agent}:{field}:{value}")
+}
+
+fn wake_secret_key(agent: &str, trigger: &str) -> String {
+    format!("{agent}:{trigger}")
+}
+
+impl ForgeStorage {
+    // ── Wake-webhook secrets (issue #335) ──────────────────────────────
+    //
+    // Secrets are hex-encoded bytes shared with an external caller. The
+    // storage layer is deliberately narrow: upsert, lookup, list, delete.
+    // Nothing here logs or serializes the secret value. The `list_` path
+    // returns identifiers only.
+
+    /// Store or replace the HMAC secret for `(agent, trigger)`.
+    pub fn upsert_wake_secret(
+        &self,
+        agent: &str,
+        trigger: &str,
+        secret: &str,
+    ) -> Result<(), StorageError> {
+        let key = wake_secret_key(agent, trigger);
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        {
+            let mut table = txn
+                .open_table(FORGE_WAKE_SECRETS)
+                .map_err(|e| StorageError::Table(Box::new(e)))?;
+            table
+                .insert(key.as_str(), secret)
+                .map_err(|e| StorageError::Write(Box::new(e)))?;
+        }
+        txn.commit()
+            .map_err(|e| StorageError::Commit(Box::new(e)))?;
+        Ok(())
+    }
+
+    /// Read the HMAC secret for `(agent, trigger)`, or `None` if not registered.
+    pub fn lookup_wake_secret(
+        &self,
+        agent: &str,
+        trigger: &str,
+    ) -> Result<Option<String>, StorageError> {
+        let key = wake_secret_key(agent, trigger);
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        let table = txn
+            .open_table(FORGE_WAKE_SECRETS)
+            .map_err(|e| StorageError::Table(Box::new(e)))?;
+        match table
+            .get(key.as_str())
+            .map_err(|e| StorageError::Read(Box::new(e)))?
+        {
+            Some(v) => Ok(Some(v.value().to_string())),
+            None => Ok(None),
+        }
+    }
+
+    /// List every registered `(agent, trigger)` pair. Secret material is
+    /// deliberately excluded from the return type.
+    pub fn list_wake_triggers(&self) -> Result<Vec<(String, String)>, StorageError> {
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        let table = txn
+            .open_table(FORGE_WAKE_SECRETS)
+            .map_err(|e| StorageError::Table(Box::new(e)))?;
+        let mut out = Vec::new();
+        for row in table.iter().map_err(|e| StorageError::Read(Box::new(e)))? {
+            let (k, _) = row.map_err(|e| StorageError::Read(Box::new(e)))?;
+            let key = k.value().to_string();
+            if let Some((agent, trigger)) = key.split_once(':') {
+                out.push((agent.to_string(), trigger.to_string()));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Delete the HMAC secret for `(agent, trigger)`. Returns `true` if a row
+    /// was removed.
+    pub fn delete_wake_secret(&self, agent: &str, trigger: &str) -> Result<bool, StorageError> {
+        let key = wake_secret_key(agent, trigger);
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| StorageError::Transaction(Box::new(e)))?;
+        let removed;
+        {
+            let mut table = txn
+                .open_table(FORGE_WAKE_SECRETS)
+                .map_err(|e| StorageError::Table(Box::new(e)))?;
+            removed = table
+                .remove(key.as_str())
+                .map_err(|e| StorageError::Write(Box::new(e)))?
+                .is_some();
+        }
+        txn.commit()
+            .map_err(|e| StorageError::Commit(Box::new(e)))?;
+        Ok(removed)
+    }
 }
 
 // ── Errors ──────────────────────────────────────────────────────
@@ -1055,5 +1168,88 @@ mod tests {
             .lookup_correlation("other", "thread_ts", "T1")
             .unwrap()
             .is_none());
+    }
+
+    // ── Wake-secret state tests (issue #335) ─────────────────────────
+
+    #[test]
+    fn wake_secret_upsert_and_lookup_round_trip() {
+        let (_dir, storage) = temp_storage();
+        storage
+            .upsert_wake_secret("mastermind", "pr_merged", "deadbeefcafe")
+            .unwrap();
+        assert_eq!(
+            storage
+                .lookup_wake_secret("mastermind", "pr_merged")
+                .unwrap(),
+            Some("deadbeefcafe".to_string())
+        );
+    }
+
+    #[test]
+    fn wake_secret_lookup_miss_returns_none() {
+        let (_dir, storage) = temp_storage();
+        assert!(storage
+            .lookup_wake_secret("unknown", "pr_merged")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn wake_secret_upsert_replaces_prior_value() {
+        let (_dir, storage) = temp_storage();
+        storage.upsert_wake_secret("a", "t", "v1").unwrap();
+        storage.upsert_wake_secret("a", "t", "v2").unwrap();
+        assert_eq!(
+            storage.lookup_wake_secret("a", "t").unwrap(),
+            Some("v2".to_string())
+        );
+    }
+
+    #[test]
+    fn wake_secret_persists_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("secrets.redb");
+        {
+            let storage = ForgeStorage::open(&db_path).unwrap();
+            storage.upsert_wake_secret("a", "t", "s").unwrap();
+        }
+        let storage = ForgeStorage::open(&db_path).unwrap();
+        assert_eq!(
+            storage.lookup_wake_secret("a", "t").unwrap(),
+            Some("s".to_string())
+        );
+    }
+
+    #[test]
+    fn wake_secret_list_returns_pairs_without_values() {
+        let (_dir, storage) = temp_storage();
+        storage.upsert_wake_secret("a", "t1", "secret-a1").unwrap();
+        storage.upsert_wake_secret("a", "t2", "secret-a2").unwrap();
+        storage.upsert_wake_secret("b", "t1", "secret-b1").unwrap();
+
+        let mut pairs = storage.list_wake_triggers().unwrap();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![
+                ("a".to_string(), "t1".to_string()),
+                ("a".to_string(), "t2".to_string()),
+                ("b".to_string(), "t1".to_string()),
+            ]
+        );
+        // list never returns secret bytes — nothing in the serialized form
+        // can contain "secret-".
+        let serialized = format!("{:?}", pairs);
+        assert!(!serialized.contains("secret-"));
+    }
+
+    #[test]
+    fn wake_secret_delete_reports_prior_existence() {
+        let (_dir, storage) = temp_storage();
+        storage.upsert_wake_secret("a", "t", "s").unwrap();
+        assert!(storage.delete_wake_secret("a", "t").unwrap());
+        assert!(!storage.delete_wake_secret("a", "t").unwrap());
+        assert!(storage.lookup_wake_secret("a", "t").unwrap().is_none());
     }
 }

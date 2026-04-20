@@ -198,6 +198,7 @@ pub struct AgentDecl {
     pub timers: Vec<Spanned<TimerField>>,
     pub schedules: Vec<Spanned<ScheduleField>>,
     pub correlates: Vec<Spanned<CorrelateField>>,
+    pub webhooks: Vec<Spanned<WebhookField>>,
     pub subscriptions: Vec<Spanned<SubscribeDecl>>,
     pub warden_override: Vec<Spanned<WardPolicy>>,
     pub handlers: Vec<Spanned<OnHandler>>,
@@ -295,6 +296,17 @@ pub enum Precision {
 pub struct CorrelateField {
     pub event_type: Spanned<String>,
     pub field_name: Spanned<String>,
+    pub mode: Option<Spanned<ScheduleMode>>,
+    pub emit: Option<Spanned<String>>,
+    pub duplicates: Vec<Spanned<String>>,
+}
+
+/// Webhook trigger declaration — HMAC-verified inbound HTTP wake source
+/// (issue #335). Peer to `CorrelateField`; parser stays liberal so the
+/// checker owns semantic errors. Runtime wiring in `WebhookDriver`.
+#[derive(Debug, Clone)]
+pub struct WebhookField {
+    pub name: Spanned<String>,
     pub mode: Option<Spanned<ScheduleMode>>,
     pub emit: Option<Spanned<String>>,
     pub duplicates: Vec<Spanned<String>>,

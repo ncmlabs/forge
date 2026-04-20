@@ -298,6 +298,33 @@ impl SystemRuntime {
         Some(CorrelationDriver::new(storage, regs))
     }
 
+    /// Build a `WebhookDriver` from declared `webhook TRIGGER` blocks
+    /// (issue #335). Returns `None` when no agent declares any.
+    ///
+    /// Skips blocks with missing `mode:` or `emit:` — those should have been
+    /// surfaced as errors by `webhook_checker` before this runs.
+    pub fn build_webhook_driver(&self) -> Option<crate::runtime::webhook_driver::WebhookDriver> {
+        use crate::runtime::webhook_driver::{WebhookDriver, WebhookRegistration};
+        let mut regs: Vec<WebhookRegistration> = Vec::new();
+        for bp in self.blueprints.values() {
+            for wh in &bp.decl.webhooks {
+                let (Some(mode_sp), Some(emit_sp)) = (&wh.node.mode, &wh.node.emit) else {
+                    continue;
+                };
+                regs.push(WebhookRegistration {
+                    agent: bp.decl.name.node.clone(),
+                    trigger: wh.node.name.node.clone(),
+                    mode: mode_sp.node,
+                    emit_event: emit_sp.node.clone(),
+                });
+            }
+        }
+        if regs.is_empty() {
+            return None;
+        }
+        Some(WebhookDriver::new(regs))
+    }
+
     /// Override the wall-clock source used by WakeService. Defaults to
     /// `SystemClock`. Tests and replay harnesses inject `MockClock` /
     /// `RecordedClock` to control firing cadence deterministically.

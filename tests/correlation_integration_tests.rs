@@ -59,6 +59,7 @@ fn slack_specialist_decl() -> AgentDecl {
             emit: None,
             duplicates: Vec::new(),
         })],
+        webhooks: vec![],
         subscriptions: Vec::new(),
         warden_override: Vec::new(),
         handlers: Vec::new(),

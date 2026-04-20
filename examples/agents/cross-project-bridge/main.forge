@@ -1,0 +1,44 @@
+# Cross-project bridge — closes #300 by ingesting a GitHub PR-merged webhook
+# into a declared `webhook` block that wakes the mastermind (#335, T4.2).
+#
+# Flow:
+#   1. A cross-project task in repo A depends on repo B.
+#   2. An external system (GitHub Actions) POSTs to `/wake/mastermind/pr_merged`
+#      with an HMAC signature when B's PR merges.
+#   3. FORGE's WebhookDriver verifies the signature, rehydrates `mastermind`
+#      if dormant, and publishes `PrMerged` on the bus.
+#   4. The `on PrMerged` handler records the merge and emits `TaskCompleted`
+#      so the upstream planner unblocks.
+#
+# Register the HMAC secret before first receive:
+#
+#     forge wake rotate --agent mastermind --trigger pr_merged
+#
+# Then paste the printed secret into repo B's GitHub Actions as
+# `FORGE_WAKE_SECRET` (see webhooks/github-pr-merged.yml).
+
+event PrMerged
+  repo: Text
+  pr_number: Number
+  merged_by: Text
+
+event TaskCompleted
+  source: Text
+  repo: Text
+  pr_number: Number
+
+exportable agent mastermind
+  webhook pr_merged
+    mode: wake
+    emit: PrMerged
+
+  on start
+    say "mastermind ready: waiting for cross-project PR merges"
+
+  on PrMerged
+    say "cross-project PR merged"
+    emit TaskCompleted(source: "webhook:pr_merged", repo: "unknown", pr_number: 0)
+
+fn main
+  say "### cross-project bridge demo (#335) ###"
+  say "register the secret with `forge wake rotate --agent mastermind --trigger pr_merged`"

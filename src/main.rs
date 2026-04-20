@@ -192,6 +192,43 @@ enum Command {
         #[arg(long, short)]
         output: Option<PathBuf>,
     },
+    /// Manage HMAC secrets for the wake-webhook driver (issue #335)
+    Wake {
+        #[command(subcommand)]
+        action: WakeAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum WakeAction {
+    /// Register a new HMAC secret for `(agent, trigger)`. Secret bytes are
+    /// read from stdin (trimmed); refuses to overwrite without `--force`.
+    Register {
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        trigger: String,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Generate a fresh 32-byte secret for `(agent, trigger)`, upsert it,
+    /// and print the hex-encoded value to stdout exactly once.
+    Rotate {
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        trigger: String,
+    },
+    /// List every `(agent, trigger)` pair with a registered secret. Secret
+    /// material is never printed.
+    List,
+    /// Remove a registered secret. Reports whether a row was deleted.
+    Delete {
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        trigger: String,
+    },
 }
 
 #[tokio::main]
@@ -509,8 +546,83 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Command::Wake { action } => {
+            run_wake_command(action)?;
+        }
     }
 
+    Ok(())
+}
+
+/// Handle `forge wake <action>` — manages HMAC secrets for `WebhookDriver`
+/// (issue #335). All paths open the unified storage database via the config
+/// loader so they see the same `FORGE_WAKE_SECRETS` table as `forge serve`.
+fn run_wake_command(action: WakeAction) -> anyhow::Result<()> {
+    use std::io::Read;
+    let config = forge::config::ForgeConfig::load_or_default();
+    let storage = open_forge_storage(&config)?;
+
+    match action {
+        WakeAction::Register {
+            agent,
+            trigger,
+            force,
+        } => {
+            if !force && storage.lookup_wake_secret(&agent, &trigger)?.is_some() {
+                anyhow::bail!(
+                    "a secret is already registered for {}:{} — pass --force to replace it",
+                    agent,
+                    trigger
+                );
+            }
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|e| anyhow::anyhow!("failed to read secret from stdin: {e}"))?;
+            let secret = buf.trim();
+            if secret.is_empty() {
+                anyhow::bail!("refusing to register an empty secret");
+            }
+            storage.upsert_wake_secret(&agent, &trigger, secret)?;
+            eprintln!(
+                "registered wake secret for {}:{} ({} chars)",
+                agent,
+                trigger,
+                secret.len()
+            );
+        }
+        WakeAction::Rotate { agent, trigger } => {
+            let mut bytes = [0u8; 32];
+            getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("getrandom failed: {e}"))?;
+            let hex = hex::encode(bytes);
+            storage.upsert_wake_secret(&agent, &trigger, &hex)?;
+            // Print once. Stderr gets the warning; stdout gets only the
+            // secret so scripts can capture it cleanly.
+            eprintln!(
+                "rotated wake secret for {}:{}. Store this now — it will not be shown again:",
+                agent, trigger
+            );
+            println!("{hex}");
+        }
+        WakeAction::List => {
+            let pairs = storage.list_wake_triggers()?;
+            if pairs.is_empty() {
+                eprintln!("(no wake secrets registered)");
+            } else {
+                for (agent, trigger) in pairs {
+                    println!("{agent}:{trigger}");
+                }
+            }
+        }
+        WakeAction::Delete { agent, trigger } => {
+            let removed = storage.delete_wake_secret(&agent, &trigger)?;
+            if removed {
+                eprintln!("deleted wake secret for {}:{}", agent, trigger);
+            } else {
+                eprintln!("no wake secret for {}:{} (nothing removed)", agent, trigger);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1366,20 +1478,26 @@ async fn serve_program(
             }
         };
 
-        // Correlation routing (issue #334): when agents declare
-        // `correlate on Event.field`, share the lifecycle with the serving
-        // executor so webhook-emitted events rehydrate the owning specialist
-        // before publish.
-        let executor = if let Some(ref mut sr) = system_runtime {
-            match sr.build_correlation_driver() {
-                Some(driver) => {
-                    let lifecycle = sr.ensure_lifecycle();
-                    executor.with_correlation(driver, lifecycle)
-                }
-                None => executor,
-            }
+        // Correlation + webhook routing (issues #334, #335): when agents declare
+        // `correlate on Event.field` or `webhook TRIGGER`, share one lifecycle
+        // with the serving executor and the HTTP wake handler so rehydrations
+        // register in a single `InstanceRegistry`.
+        let (executor, webhook_driver, agent_lifecycle) = if let Some(ref mut sr) = system_runtime {
+            let correlation_driver = sr.build_correlation_driver();
+            let webhook_driver = sr.build_webhook_driver().map(Arc::new);
+            let needs_lifecycle = correlation_driver.is_some() || webhook_driver.is_some();
+            let lifecycle = if needs_lifecycle {
+                Some(sr.ensure_lifecycle())
+            } else {
+                None
+            };
+            let executor = match (correlation_driver, lifecycle.clone()) {
+                (Some(driver), Some(lc)) => executor.with_correlation(driver, lc),
+                _ => executor,
+            };
+            (executor, webhook_driver, lifecycle)
         } else {
-            executor
+            (executor, None, None)
         };
 
         // Collect signal senders before system runtime is consumed (issue #143)
@@ -1426,10 +1544,18 @@ async fn serve_program(
             server = server.with_signal_senders(senders);
         }
         if let Some(storage) = inspect_storage {
-            server = server.with_inspect_storage(storage);
+            server = server.with_inspect_storage(storage.clone());
+            server = server.with_wake_storage(storage);
         }
         if let Some(topo) = topology {
             server = server.with_topology(topo);
+        }
+        if let Some(d) = webhook_driver {
+            eprintln!("  webhook triggers registered: {}", d.len());
+            server = server.with_webhook_driver(d);
+        }
+        if let Some(lc) = agent_lifecycle {
+            server = server.with_agent_lifecycle(lc);
         }
 
         // Wire webhook secrets from config
@@ -1671,20 +1797,25 @@ async fn serve_with_watch(
             }
         };
 
-        // Correlation routing (issue #334): when agents declare
-        // `correlate on Event.field`, share the lifecycle with the serving
-        // executor so webhook-emitted events rehydrate the owning specialist
-        // before publish.
-        let executor = if let Some(ref mut sr) = system_runtime {
-            match sr.build_correlation_driver() {
-                Some(driver) => {
-                    let lifecycle = sr.ensure_lifecycle();
-                    executor.with_correlation(driver, lifecycle)
-                }
-                None => executor,
-            }
+        // Correlation + webhook routing (issues #334, #335): share one
+        // lifecycle between the correlate executor path and the HTTP wake
+        // handler so rehydrations register in a single `InstanceRegistry`.
+        let (executor, webhook_driver, agent_lifecycle) = if let Some(ref mut sr) = system_runtime {
+            let correlation_driver = sr.build_correlation_driver();
+            let webhook_driver = sr.build_webhook_driver().map(Arc::new);
+            let needs_lifecycle = correlation_driver.is_some() || webhook_driver.is_some();
+            let lifecycle = if needs_lifecycle {
+                Some(sr.ensure_lifecycle())
+            } else {
+                None
+            };
+            let executor = match (correlation_driver, lifecycle.clone()) {
+                (Some(driver), Some(lc)) => executor.with_correlation(driver, lc),
+                _ => executor,
+            };
+            (executor, webhook_driver, lifecycle)
         } else {
-            executor
+            (executor, None, None)
         };
 
         // Collect signal senders before system runtime is consumed (issue #143)
@@ -1730,10 +1861,18 @@ async fn serve_with_watch(
             server = server.with_signal_senders(senders);
         }
         if let Some(storage) = inspect_storage {
-            server = server.with_inspect_storage(storage);
+            server = server.with_inspect_storage(storage.clone());
+            server = server.with_wake_storage(storage);
         }
         if let Some(topo) = topology {
             server = server.with_topology(topo);
+        }
+        if let Some(d) = webhook_driver {
+            eprintln!("  webhook triggers registered: {}", d.len());
+            server = server.with_webhook_driver(d);
+        }
+        if let Some(lc) = agent_lifecycle {
+            server = server.with_agent_lifecycle(lc);
         }
 
         // Wire webhook secrets from config

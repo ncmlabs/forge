@@ -21,8 +21,10 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 use crate::config::ServerConfig;
+use crate::runtime::agent_lifecycle::AgentLifecycle;
 use crate::runtime::confidence::{ConfidentValue, Value};
 use crate::runtime::cost_aggregator::SharedCostAggregator;
+use crate::runtime::event_bus::EventPayload;
 use crate::runtime::event_bus::SharedEventBus;
 use crate::runtime::executor::{EndpointResult, TaskExecutor};
 use crate::runtime::instance_registry::SharedInstanceRegistry;
@@ -31,6 +33,8 @@ use crate::runtime::storage::SharedStorage;
 use crate::runtime::system::{SharedSignalSenders, TopologySnapshot};
 use crate::runtime::task_history_aggregator::SharedTaskHistoryAggregator;
 use crate::runtime::warded::SharedWardenSnapshots;
+use crate::runtime::webhook_driver::WebhookDriver;
+use crate::runtime::webhook_rate_limiter::WebhookRateLimiter;
 
 // ── Swappable executor for hot-reload ───────────────────────────────────────
 
@@ -66,6 +70,16 @@ pub struct AppState {
     pub mastery_knowledge_store: Option<SharedKnowledgeStore>,
     /// Signal senders for failure injection (issue #143).
     pub signal_senders: Option<SharedSignalSenders>,
+    /// Static registry of declared `webhook TRIGGER` blocks — event sources
+    /// for `POST /wake/{agent}/{trigger}` (issue #335).
+    pub webhook_driver: Option<Arc<WebhookDriver>>,
+    /// Storage handle for the wake-secrets table. Read-only from the HTTP
+    /// handler; writes go through the `forge wake` CLI.
+    pub wake_storage: Option<SharedStorage>,
+    /// Shared agent lifecycle so webhook wakes rehydrate before bus publish.
+    pub agent_lifecycle: Option<Arc<AgentLifecycle>>,
+    /// Per-`(agent, trigger)` token-bucket limiter for webhook ingress.
+    pub webhook_rate_limiter: Arc<WebhookRateLimiter>,
 }
 
 impl AppState {
@@ -119,6 +133,10 @@ impl ForgeServer {
                 task_history_aggregator: None,
                 mastery_knowledge_store: None,
                 signal_senders: None,
+                webhook_driver: None,
+                wake_storage: None,
+                agent_lifecycle: None,
+                webhook_rate_limiter: Arc::new(WebhookRateLimiter::default_for_webhooks()),
             },
             host,
             port,
@@ -233,13 +251,44 @@ impl ForgeServer {
         self
     }
 
+    /// Attach the webhook driver registry for `POST /wake/...` routing (issue #335).
+    pub fn with_webhook_driver(mut self, driver: Arc<WebhookDriver>) -> Self {
+        self.state.webhook_driver = Some(driver);
+        self
+    }
+
+    /// Attach the storage handle used to look up per-`(agent, trigger)` HMAC
+    /// secrets (issue #335). Separate from `inspect_storage` because this path
+    /// is hot and must not block on reads serving introspection snapshots.
+    pub fn with_wake_storage(mut self, storage: SharedStorage) -> Self {
+        self.state.wake_storage = Some(storage);
+        self
+    }
+
+    /// Attach the shared agent lifecycle so `mode: wake` webhooks can
+    /// rehydrate the target specialist before the event bus publishes
+    /// (issue #335, mirroring the correlate path from #350).
+    pub fn with_agent_lifecycle(mut self, lc: Arc<AgentLifecycle>) -> Self {
+        self.state.agent_lifecycle = Some(lc);
+        self
+    }
+
+    /// Override the default rate limiter (issue #335). Primarily for tests;
+    /// production uses `WebhookRateLimiter::default_for_webhooks()`.
+    pub fn with_webhook_rate_limiter(mut self, rl: Arc<WebhookRateLimiter>) -> Self {
+        self.state.webhook_rate_limiter = rl;
+        self
+    }
+
     /// Get a handle to the reload broadcast sender (for the watcher to signal reloads).
     pub fn reload_sender(&self) -> Option<broadcast::Sender<()>> {
         self.state.reload_tx.clone()
     }
 
-    /// Build the axum router with dynamic endpoint dispatch.
-    fn build_router(&self) -> Router<()> {
+    /// Build the axum router with dynamic endpoint dispatch. Public so
+    /// integration tests can mount it against a random TCP port without
+    /// going through `run()`'s signal-handling loop.
+    pub fn build_router(&self) -> Router<()> {
         // Dynamic catch-all routing: endpoint lookup happens at request time,
         // so new/removed endpoints are visible immediately after hot-reload.
         // Webhook route: POST /webhook/:name with Content-Type validation and optional HMAC
@@ -252,6 +301,13 @@ impl ForgeServer {
                 axum::routing::post(handle_approval_webhook),
             )
             .route("/webhook/{endpoint}", axum::routing::post(handle_webhook))
+            // Wake-driver webhook (#335): HMAC-verified POST that routes into a
+            // specific agent's declared `webhook TRIGGER` block. Registered
+            // before the generic `/{endpoint}` catch-all below.
+            .route(
+                "/wake/{agent_name}/{trigger_name}",
+                axum::routing::post(handle_wake_webhook),
+            )
             .route("/api/{endpoint}", get(handle_get_api).post(handle_post_api))
             .route("/{endpoint}", get(handle_get).post(handle_post))
             .route(
@@ -1324,6 +1380,226 @@ fn verify_hmac_signature(secret: &str, body: &[u8], signature: &str) -> bool {
 
 fn api_endpoint_name(endpoint_name: &str) -> String {
     format!("api_{}", endpoint_name.replace('-', "_"))
+}
+
+/// Wake-webhook handler (issue #335). Flow:
+///
+/// 1. Per-`(agent, trigger)` rate-limit check → `429` on exceed.
+/// 2. Read raw body as bytes.
+/// 3. Look up the registered HMAC secret → `404` if absent.
+/// 4. Verify `X-Hub-Signature-256` against the raw body → `401` on mismatch.
+/// 5. Resolve the declared webhook block in the driver → `404` if absent.
+/// 6. For `mode: wake`, await `AgentLifecycle::rehydrate_or_spawn(agent)`
+///    *before* publishing so the rehydrated specialist is subscribed.
+/// 7. Publish the declared event on the bus with body-derived fields.
+/// 8. Return `202 Accepted`.
+///
+/// Tracer events (`webhook_received` etc.) are emitted via `events_tx`; they
+/// intentionally never include secret material or signature bytes.
+async fn handle_wake_webhook(
+    State(state): State<AppState>,
+    Path((agent_name, trigger_name)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    // 1. Rate limit.
+    if !state.webhook_rate_limiter.check(&agent_name, &trigger_name) {
+        emit_wake_event(
+            &state,
+            "webhook_rate_limited",
+            serde_json::json!({
+                "agent": agent_name,
+                "trigger": trigger_name,
+            }),
+        );
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded").into_response();
+    }
+
+    // 3. Secret lookup (before HMAC verify).
+    let storage = match &state.wake_storage {
+        Some(s) => s,
+        None => {
+            emit_wake_event(
+                &state,
+                "webhook_rejected_unknown",
+                serde_json::json!({
+                    "agent": agent_name,
+                    "trigger": trigger_name,
+                    "reason": "wake_storage_unconfigured",
+                }),
+            );
+            return (StatusCode::NOT_FOUND, "wake webhooks not configured").into_response();
+        }
+    };
+    let secret = match storage.lookup_wake_secret(&agent_name, &trigger_name) {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            emit_wake_event(
+                &state,
+                "webhook_rejected_unknown",
+                serde_json::json!({
+                    "agent": agent_name,
+                    "trigger": trigger_name,
+                    "reason": "secret_missing",
+                }),
+            );
+            return (StatusCode::NOT_FOUND, "unknown webhook").into_response();
+        }
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response();
+        }
+    };
+
+    // 4. HMAC verify against the raw body — do this before parsing.
+    let signature = headers
+        .get("x-hub-signature-256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !verify_hmac_signature(&secret, &body, signature) {
+        emit_wake_event(
+            &state,
+            "webhook_rejected_signature",
+            serde_json::json!({
+                "agent": agent_name,
+                "trigger": trigger_name,
+            }),
+        );
+        return (StatusCode::UNAUTHORIZED, "invalid signature").into_response();
+    }
+
+    // 5. Driver lookup — 404 if no declared webhook block for this pair.
+    let driver = match &state.webhook_driver {
+        Some(d) => d.clone(),
+        None => {
+            return (StatusCode::NOT_FOUND, "no webhooks declared").into_response();
+        }
+    };
+    let registration = match driver.match_webhook(&agent_name, &trigger_name) {
+        Some(r) => r.clone(),
+        None => {
+            emit_wake_event(
+                &state,
+                "webhook_rejected_unknown",
+                serde_json::json!({
+                    "agent": agent_name,
+                    "trigger": trigger_name,
+                    "reason": "unknown_pair",
+                }),
+            );
+            return (StatusCode::NOT_FOUND, "unknown webhook").into_response();
+        }
+    };
+
+    // 6. If `mode: wake`, rehydrate the target agent before publishing so the
+    // rehydrated specialist is subscribed when the event fans out.
+    let mut rehydrated = false;
+    if matches!(registration.mode, crate::ast::ScheduleMode::Wake) {
+        if let Some(ref lc) = state.agent_lifecycle {
+            match lc.rehydrate_or_spawn(&registration.agent).await {
+                Ok(handle) => {
+                    rehydrated = !handle.was_already_live;
+                }
+                Err(e) => {
+                    emit_wake_event(
+                        &state,
+                        "webhook_rehydrate_failed",
+                        serde_json::json!({
+                            "agent": agent_name,
+                            "trigger": trigger_name,
+                            "reason": format!("{e:?}"),
+                        }),
+                    );
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "rehydrate failed").into_response();
+                }
+            }
+        }
+    }
+
+    // 7. Build the event payload. If body is JSON object, expose its fields
+    // as `ConfidentValue`s (same shape as the existing `/webhook/{endpoint}`
+    // handler). Otherwise, expose the raw body as a `Text` under `body`.
+    let payload_format;
+    let fields: HashMap<String, ConfidentValue> = if let Ok(v) =
+        serde_json::from_slice::<serde_json::Value>(&body)
+    {
+        match v.as_object() {
+            Some(map) => {
+                payload_format = "json";
+                json_object_to_args(map)
+            }
+            None => {
+                payload_format = "text";
+                let mut m = HashMap::new();
+                m.insert(
+                    "body".to_string(),
+                    ConfidentValue::deterministic(Value::Text(
+                        String::from_utf8_lossy(&body).to_string(),
+                    )),
+                );
+                m
+            }
+        }
+    } else {
+        payload_format = "text";
+        let mut m = HashMap::new();
+        m.insert(
+            "body".to_string(),
+            ConfidentValue::deterministic(Value::Text(String::from_utf8_lossy(&body).to_string())),
+        );
+        m
+    };
+    let event_payload = EventPayload {
+        event_name: registration.emit_event.clone(),
+        args: Vec::new(),
+        source_agent: format!("webhook:{}", trigger_name),
+        fields,
+    };
+
+    if let Some(ref bus) = state.event_bus {
+        let guard = bus.read().await;
+        guard.publish(&event_payload);
+    }
+
+    // 8. Trace the successful receipt.
+    emit_wake_event(
+        &state,
+        "webhook_received",
+        serde_json::json!({
+            "agent": agent_name,
+            "trigger": trigger_name,
+            "mode": match registration.mode {
+                crate::ast::ScheduleMode::Wake => "wake",
+                crate::ast::ScheduleMode::Spawn => "spawn",
+            },
+            "emit": registration.emit_event,
+            "bytes_len": body.len(),
+            "payload_format": payload_format,
+            "rehydrated": rehydrated,
+        }),
+    );
+
+    (StatusCode::ACCEPTED, "accepted").into_response()
+}
+
+fn emit_wake_event(state: &AppState, event: &str, data: serde_json::Value) {
+    let Some(ref tx) = state.events_tx else {
+        return;
+    };
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let mut obj = match data {
+        serde_json::Value::Object(m) => m,
+        other => {
+            let mut m = serde_json::Map::new();
+            m.insert("value".to_string(), other);
+            m
+        }
+    };
+    obj.insert("ts_ms".to_string(), serde_json::json!(ts_ms));
+    obj.insert("event".to_string(), serde_json::json!(event));
+    let _ = tx.send(serde_json::Value::Object(obj).to_string());
 }
 
 /// Convert a map of string-valued parameters into `ConfidentValue` args, coercing

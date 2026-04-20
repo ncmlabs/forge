@@ -46,6 +46,7 @@ fn simple_agent(
         timers: vec![],
         schedules: vec![],
         correlates: vec![],
+        webhooks: vec![],
         subscriptions: vec![],
         warden_override: Vec::new(),
         handlers,
