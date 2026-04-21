@@ -30,6 +30,7 @@ var ForgeObserver = (function () {
     tabs = [
       document.getElementById('tab-tree'),
       document.getElementById('tab-topology'),
+      document.getElementById('tab-cockpit'),
       document.getElementById('tab-taskdag'),
       document.getElementById('tab-costs'),
       document.getElementById('tab-mastery'),
@@ -40,6 +41,7 @@ var ForgeObserver = (function () {
     views = {
       tree: document.getElementById('view-tree'),
       topology: document.getElementById('view-topology'),
+      cockpit: document.getElementById('view-cockpit'),
       taskdag: document.getElementById('view-taskdag'),
       costs: document.getElementById('view-costs'),
       mastery: document.getElementById('view-mastery'),
@@ -167,6 +169,11 @@ var ForgeObserver = (function () {
       ForgeTopology.init();
     }
 
+    // Initialize Cockpit view (#308 T7)
+    if (typeof ForgeCockpit !== 'undefined' && ForgeCockpit.init) {
+      ForgeCockpit.init();
+    }
+
     // Initialize Task DAG view (#299 T4.1)
     if (typeof ForgeTaskDag !== 'undefined' && ForgeTaskDag.init) {
       ForgeTaskDag.init();
@@ -203,6 +210,9 @@ var ForgeObserver = (function () {
     }
     if (typeof ForgeTopology !== 'undefined' && ForgeTopology.destroy) {
       ForgeTopology.destroy();
+    }
+    if (typeof ForgeCockpit !== 'undefined' && ForgeCockpit.destroy) {
+      ForgeCockpit.destroy();
     }
     if (typeof ForgeTaskDag !== 'undefined' && ForgeTaskDag.destroy) {
       ForgeTaskDag.destroy();
@@ -250,6 +260,9 @@ var ForgeObserver = (function () {
     // Trigger resize for D3 views that need dimension recalculation
     if (name === 'topology' && typeof ForgeTopology !== 'undefined' && ForgeTopology.resize) {
       setTimeout(function () { ForgeTopology.resize(); }, 50);
+    }
+    if (name === 'cockpit' && typeof ForgeCockpit !== 'undefined' && ForgeCockpit.resize) {
+      setTimeout(function () { ForgeCockpit.resize(); }, 50);
     }
     if (name === 'taskdag' && typeof ForgeTaskDag !== 'undefined' && ForgeTaskDag.resize) {
       setTimeout(function () { ForgeTaskDag.resize(); }, 50);

@@ -25,6 +25,9 @@ Supervision hierarchy: system root, wardens, managed agents. Click any node to i
 ### Topology
 D3 force-directed graph showing agent composition wiring and warden supervision relationships. Nodes pulse on events; edges animate during data flow. Click any node for detailed inspection.
 
+### Cockpit
+Orchestration view for a running clone-dev / dev-cycle swarm (#308). Pipeline Kanban shows active issues by stage (planning → implementing → testing → reviewing → pr_ready → merged), derived from each specialist's `memory.issue_id` and lifecycle state. Decision Queue surfaces agents in any `awaiting_*` state with their PR and Slack links. Agent Activity strip renders live per-agent pills annotated with warden health.
+
 ### Costs
 Token economy dashboard: total cost (USD), LLM call counts, token throughput, per-operation/agent/provider breakdowns, and confidence distribution histogram. Updates live via SSE.
 

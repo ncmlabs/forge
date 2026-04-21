@@ -38,6 +38,7 @@
     <div role="tablist" class="tabs tabs-bordered">
       <button id="tab-tree" role="tab" class="tab tab-active" data-view="tree">Tree</button>
       <button id="tab-topology" role="tab" class="tab" data-view="topology">Topology</button>
+      <button id="tab-cockpit" role="tab" class="tab" data-view="cockpit">Cockpit</button>
       <button id="tab-taskdag" role="tab" class="tab" data-view="taskdag">Task DAG</button>
       <button id="tab-costs" role="tab" class="tab" data-view="costs">Costs</button>
       <button id="tab-mastery" role="tab" class="tab" data-view="mastery">Mastery</button>
@@ -101,6 +102,42 @@
           <div id="topo-event-log" class="forge-activity" style="max-height: 200px; overflow-y: auto;">
             <div id="topo-event-log-empty" class="text-center opacity-40 py-4 text-sm">
               No topology events yet.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cockpit View (#308 T7) -->
+    <div id="view-cockpit" class="view-panel">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-xs uppercase font-semibold opacity-50 tracking-wider">Orchestration Cockpit</div>
+        <span id="cockpit-status" class="text-xs opacity-60">Not streaming.</span>
+      </div>
+
+      <div class="card bg-base-200 shadow-sm mb-4">
+        <div class="card-body p-4">
+          <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">Pipeline</div>
+          <div id="cockpit-pipeline">
+            <div class="cockpit-empty">Connect to a FORGE server to see the pipeline.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid gap-4 mb-4" style="grid-template-columns: 1fr 1fr;">
+        <div class="card bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">Decision Queue</div>
+            <div id="cockpit-decisions">
+              <div class="cockpit-empty-inline">Connect to see pending decisions.</div>
+            </div>
+          </div>
+        </div>
+        <div class="card bg-base-200 shadow-sm">
+          <div class="card-body p-4">
+            <div class="text-xs uppercase opacity-50 font-semibold tracking-wider mb-2">Agent Activity</div>
+            <div id="cockpit-agents">
+              <div class="cockpit-empty-inline">Connect to see live agent state.</div>
             </div>
           </div>
         </div>
@@ -392,6 +429,7 @@
   <script src="js/events.js"></script>
   <script src="js/tree.js"></script>
   <script src="js/topology.js"></script>
+  <script src="js/cockpit.js"></script>
   <script src="js/taskdag.js"></script>
   <script src="js/costs.js"></script>
   <script src="js/mastery.js"></script>
