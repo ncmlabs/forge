@@ -1010,12 +1010,15 @@ agent fixer_broken
 /// through events, handlers, and the endpoint.
 #[tokio::test]
 async fn dev_cycle_workflow_parses_with_test_cmd() {
-    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
-        .expect("could not read dev-cycle workflow");
+    let agents = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
+        .expect("could not read dev-cycle agents.forge");
+    let main = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle main.forge");
+    let source = format!("{agents}\n{main}");
     let program = forge::parser::parse(&source);
     assert!(
         program.is_ok(),
-        "dev-cycle/main.forge must parse: {:?}",
+        "dev-cycle workflow must parse: {:?}",
         program.err()
     );
     let program = program.unwrap();
@@ -1417,7 +1420,7 @@ agent impl_agent
 /// T2.1: enhanced main.forge parses and contains the new task + memory fields.
 #[tokio::test]
 async fn dev_cycle_main_forge_has_iteration_loop_enhancements() {
-    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
         .expect("could not read dev-cycle workflow");
     let program = forge::parser::parse(&source);
     assert!(
@@ -1476,7 +1479,7 @@ async fn dev_cycle_main_forge_has_iteration_loop_enhancements() {
 /// with the signal schema from the issue's definition of done.
 #[tokio::test]
 async fn dev_cycle_has_task_completed_and_lesson_extracted_events() {
-    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
         .expect("could not read dev-cycle workflow");
     let program = forge::parser::parse(&source).expect("dev-cycle must parse");
 
@@ -1536,7 +1539,7 @@ async fn dev_cycle_has_task_completed_and_lesson_extracted_events() {
 /// written to the knowledge store.
 #[tokio::test]
 async fn dev_cycle_five_specialists_handle_task_completed() {
-    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
         .expect("could not read dev-cycle workflow");
     let program = forge::parser::parse(&source).expect("dev-cycle must parse");
 
@@ -1578,7 +1581,7 @@ async fn dev_cycle_five_specialists_handle_task_completed() {
 /// payload is populated from real pipeline state, not hardcoded values.
 #[tokio::test]
 async fn dev_cycle_threads_signals_through_acceptance_and_prmerged() {
-    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
         .expect("could not read dev-cycle workflow");
     let program = forge::parser::parse(&source).expect("dev-cycle must parse");
 
@@ -1627,7 +1630,7 @@ async fn dev_cycle_threads_signals_through_acceptance_and_prmerged() {
 /// in memory so `ci_passed_first_try` and review_rounds signals are real.
 #[tokio::test]
 async fn dev_cycle_tester_and_reviewer_track_signal_counters() {
-    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
         .expect("could not read dev-cycle workflow");
     let program = forge::parser::parse(&source).expect("dev-cycle must parse");
 
@@ -1670,7 +1673,7 @@ async fn dev_cycle_tester_and_reviewer_track_signal_counters() {
 /// and scoring helpers exist in the dev-cycle program.
 #[tokio::test]
 async fn dev_cycle_has_swarm_mastery_schema() {
-    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
         .expect("could not read dev-cycle workflow");
     let program = forge::parser::parse(&source).expect("dev-cycle must parse");
 
@@ -1723,7 +1726,7 @@ async fn dev_cycle_has_swarm_mastery_schema() {
 /// swarm_mastery_tuple subscribes to MasterySignal with a per-tuple filter.
 #[tokio::test]
 async fn dev_cycle_swarm_mastery_agents_subscribe_correctly() {
-    let source = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
         .expect("could not read dev-cycle workflow");
     let program = forge::parser::parse(&source).expect("dev-cycle must parse");
 
@@ -1793,7 +1796,7 @@ async fn dev_cycle_swarm_mastery_agents_subscribe_correctly() {
 /// 1 worker, and its warden. Parses from source.
 #[tokio::test]
 async fn slack_adapter_main_forge_has_seven_events_and_handlers() {
-    let source = std::fs::read_to_string("examples/agents/slack-adapter/main.forge")
+    let source = std::fs::read_to_string("examples/agents/slack-adapter/agents.forge")
         .expect("could not read slack-adapter main.forge");
     let program =
         forge::parser::parse(&source).expect("slack-adapter main.forge must parse cleanly");
@@ -1877,7 +1880,7 @@ async fn slack_adapter_main_forge_has_seven_events_and_handlers() {
 /// — the rate-limit-backpressure shape called for in #298.
 #[tokio::test]
 async fn slack_adapter_declares_single_worker_pool() {
-    let source = std::fs::read_to_string("examples/agents/slack-adapter/main.forge")
+    let source = std::fs::read_to_string("examples/agents/slack-adapter/agents.forge")
         .expect("could not read slack-adapter main.forge");
     let program = forge::parser::parse(&source).expect("slack-adapter must parse");
 
@@ -1899,7 +1902,7 @@ async fn slack_adapter_declares_single_worker_pool() {
 /// template library the issue calls for.
 #[tokio::test]
 async fn slack_adapter_has_five_template_tasks() {
-    let source = std::fs::read_to_string("examples/agents/slack-adapter/main.forge")
+    let source = std::fs::read_to_string("examples/agents/slack-adapter/agents.forge")
         .expect("could not read slack-adapter main.forge");
     let program = forge::parser::parse(&source).expect("slack-adapter must parse");
 
