@@ -1018,3 +1018,93 @@ async fn skill_finder_example_validates() {
         errs.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
+
+// ── #375: skill errors route through when/else instead of crashing ──────
+
+/// Regression for #375: a `skill.*` method that returns `SkillError` must not
+/// crash the handler. Instead, the runtime wraps the failure as a
+/// zero-confidence `ConfidentValue` so `when sure / else` can route it — the
+/// same contract `reason` and `classify` already honor.
+#[tokio::test]
+async fn skill_error_routes_through_else_instead_of_crashing_handler() {
+    use forge::runtime::skill::{
+        LoadedSkill, SkillCapability, SkillCapabilityExecutor, SkillExecutorKind, SkillManifest,
+    };
+    use forge::runtime::skill_executor::SkillExecutor;
+    use forge::runtime::skill_registry::SkillRegistry;
+    use std::sync::{Arc, Mutex};
+
+    // A capability whose Command executor shells out to `false` — guaranteed
+    // non-zero exit ⇒ SkillError::ExecutionFailed. This mirrors the real
+    // failure mode described in the issue (`skill.github.check_ci` returning
+    // `success: false` on a rate-limited branch with no CI).
+    let capability = SkillCapability {
+        name: "always_fails".to_string(),
+        signature: forge::types::CapabilitySignature {
+            inputs: vec![forge::types::ForgeType::Text],
+            output: forge::types::ForgeType::Text,
+        },
+        executor: Some(SkillCapabilityExecutor {
+            params: vec!["ignored".to_string()],
+            kind: SkillExecutorKind::Command,
+            argv: vec!["false".to_string()],
+            result: None,
+        }),
+    };
+    let skill = LoadedSkill {
+        manifest: SkillManifest {
+            name: "testsk".to_string(),
+            description: "fixture skill whose only capability always fails".to_string(),
+            capabilities: vec![capability],
+            legacy_signature: None,
+            default_confidence: 0.9,
+            timeout_secs: 5,
+            allowed_tools: Vec::new(),
+        },
+        instructions: String::new(),
+        path: std::path::PathBuf::from("/tmp/testsk-375"),
+    };
+    let mut registry = SkillRegistry::new();
+    registry.register(skill);
+    let shared_registry = Arc::new(Mutex::new(registry));
+
+    let mock = MockProvider::new("mock").with_default("mock");
+    let providers = mock_registry(mock);
+    let skill_executor = Arc::new(SkillExecutor::new(providers.clone(), shared_registry));
+
+    let source = r#"task run_bad
+  gives Text
+  do
+    result = skill.testsk.always_fails("ignored")
+    when result.sure -> give "SHOULD_NOT_REACH"
+    else -> give "ROUTED_THROUGH_ELSE"
+
+fn main
+  say run_bad()
+"#;
+    let program = forge::parser::parse(source).expect("program should parse");
+
+    let executor = TaskExecutor::new(program, providers, None).with_skill_executor(skill_executor);
+    let result = executor.run().await;
+
+    // Before #375 fix: the handler crashed with FlowError("skill.testsk.always_fails: ...")
+    // and `executor.run()` returned Err(...). After the fix, skill failures are
+    // demoted to low-confidence values so the handler keeps running.
+    assert!(
+        result.is_ok(),
+        "skill failure must not crash the handler (#375): {:?}",
+        result.err()
+    );
+
+    let outputs = executor.outputs();
+    assert!(
+        outputs.iter().any(|o| o.contains("ROUTED_THROUGH_ELSE")),
+        "skill failure should route through else branch, got: {:?}",
+        outputs
+    );
+    assert!(
+        !outputs.iter().any(|o| o.contains("SHOULD_NOT_REACH")),
+        "sure branch must not fire when skill failed, got: {:?}",
+        outputs
+    );
+}

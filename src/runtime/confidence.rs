@@ -256,6 +256,18 @@ impl ConfidentValue {
             source: ConfidenceSource::SkillInvocation(confidence),
         }
     }
+
+    /// Create from a failed skill invocation (#375). Produces a zero-confidence
+    /// value carrying the error text so `when sure / else` routes the failure
+    /// through `else` — matching how `reason`/`classify` surface weak LLM
+    /// outcomes instead of crashing the handler.
+    pub fn from_skill_error(message: impl Into<String>) -> Self {
+        Self {
+            value: Value::Text(message.into()),
+            confidence: 0.0,
+            source: ConfidenceSource::SkillInvocation(0.0),
+        }
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────
