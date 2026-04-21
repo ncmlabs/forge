@@ -143,3 +143,58 @@ pure apply_completion
       patched = propagate_completion(node, completed_id)
       result = result + [patched]
     give result
+
+# ================================================================
+# T8.2 (#357) — clone-dev.toml config shape
+# ================================================================
+# The Rust-side loader `config.load_clone_dev(path)` reads the TOML,
+# merges [defaults] with each [repos."<slug>"] (scalars per-repo wins,
+# arrays concat), resolves any `*_env` indirections via std::env::var,
+# and returns a CloneDevConfig record matching the fields below.
+#
+# Flat shape intentionally — FORGE today has no tested path for
+# record-typed record fields (all existing records are scalar + array).
+# RepoConfig is an array element so we stay inside the idiomatic
+# "scalar + Text[]" pattern.
+#
+# Numeric per-repo fields use -1.0 as the "inherit default" sentinel;
+# text per-repo fields use "". The helper `repo_config_for` below
+# returns a safe default RepoConfig when the repo is not listed.
+# ================================================================
+
+type RepoConfig
+  slug: Text
+  slack_channel: Text
+  test_cmd: Text
+  model_override: Text
+  budget_per_task_usd: Number
+  warden_max_retries: Number
+  labels_extra: Text[]
+
+type CloneDevConfig
+  org_name: Text
+  slack_bot_token: Text
+  slack_default_channel: Text
+  slack_signing_secret: Text
+  github_token: Text
+  github_labels_triage: Text[]
+  github_labels_blocked: Text[]
+  llm_routing_fast: Text
+  llm_routing_balanced: Text
+  llm_routing_high: Text
+  warden_max_retries: Number
+  warden_escalate_after_seconds: Number
+  budget_per_task_usd: Number
+  budget_per_hour_usd: Number
+  gates_require_approval_for: Text[]
+  gates_auto_approve_labels: Text[]
+  repos: RepoConfig[]
+
+pure repo_config_for
+  needs cfg: CloneDevConfig, slug: Text
+  gives RepoConfig
+  do
+    for r in cfg.repos
+      if r.slug == slug
+        give r
+    give RepoConfig(slug: "", slack_channel: cfg.slack_default_channel, test_cmd: "", model_override: "", budget_per_task_usd: -1.0, warden_max_retries: -1.0, labels_extra: [])

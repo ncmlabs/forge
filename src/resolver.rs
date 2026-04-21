@@ -211,6 +211,17 @@ impl CapabilityRegistry {
                 output: ForgeType::Number,
             },
         );
+        // config.load_clone_dev(path) -> CloneDevConfig — read and merge the
+        // clone-dev TOML at `path`, resolving *_env indirections. Returns the
+        // CloneDevConfig record declared in workflows/clone-dev/shared/types.forge.
+        // Issue #357 (T8.2).
+        caps.insert(
+            "config.load_clone_dev".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Named("CloneDevConfig".into()),
+            },
+        );
         caps.insert(
             "data.store".into(),
             CapabilitySignature {

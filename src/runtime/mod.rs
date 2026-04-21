@@ -5,6 +5,7 @@ pub mod adapter_loader;
 pub mod agent;
 pub mod agent_lifecycle;
 pub mod clock;
+pub mod clone_dev_config;
 pub mod command_manager;
 pub mod confidence;
 pub mod correlation_driver;
