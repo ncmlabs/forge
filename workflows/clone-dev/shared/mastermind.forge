@@ -1,0 +1,146 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev — Mastermind
+# ================================================================
+# Follows the four invariants from
+# examples/agents/mastermind-pattern/README.md:
+#   1. Classification via `reason` with defensive `if kind ==`
+#   2. Routing via a `target_agent` that downstream specialists
+#      filter on (here: the mastermind emits dev-cycle's
+#      IssueAssigned, and `planner` subscribes to it by default)
+#   3. Correlation via `task_id = "T{counter}"` threaded through
+#      every downstream event
+#   4. Single warden over the whole supervised swarm — lives in
+#      workflows/clone-dev/main.forge as `org_warden`
+#
+# Task-graph + cycle-detection shape: identical to T4.1 (#299) in
+# examples/agents/clone-dev-skeleton/main.forge.
+#
+# Webhook triggers: POST /wake/mastermind/{github_issue_opened,
+# github_pr_merged, slack_message} fire after HMAC verification
+# via the WebhookDriver shipped in #335. Register secrets with
+#   forge wake rotate --agent mastermind --trigger <name>
+# before accepting external traffic.
+# ================================================================
+
+use
+  llm.reason
+  skill.github
+  env.get
+
+agent mastermind
+  memory persistent
+    task_counter: Number
+    task_graph: TaskNode[]
+    last_kind: Text
+    last_target: Text
+    config_path: Text
+  webhook github_issue_opened
+    mode: wake
+    emit: GithubIssueOpened
+  webhook github_pr_merged
+    mode: wake
+    emit: GithubPrMerged
+  webhook slack_message
+    mode: wake
+    emit: SlackMessageReceived
+  subscribe CloneDevInbound
+  subscribe GithubIssueOpened
+  subscribe GithubPrMerged
+  subscribe SlackMessageReceived
+  subscribe TaskBlocked
+  subscribe TaskCompleted
+  subscribe SeedTask
+  subscribe CrossProjectRequested
+
+  on start
+    memory.task_counter = 0
+    memory.last_kind = ""
+    memory.last_target = ""
+    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.config.toml")
+    say "[mastermind] config path: {memory.config_path} (loader lands in T8.2)"
+    say "[mastermind] ready — classifying inbound and routing into dev-cycle"
+
+  # Primary inbound path. The HTTP `clone_dev` endpoint in main.forge
+  # emits this after form-decoding a direct API call; the webhook
+  # handlers below emit this after translating provider-specific
+  # payloads.
+  on CloneDevInbound(kind: Text, repo: Text, issue_id: Text, title: Text, body: Text, channel: Text, callback_url: Text, test_cmd: Text)
+    memory.task_counter = memory.task_counter + 1
+    task_id = "T{memory.task_counter}"
+    memory.last_kind = kind
+    decision = reason "Classify this clone-dev request. kind={kind} title={title}. Valid routes: dev-cycle (default), observe (read-only), ignore. Reply with route name only."
+    target = "planner"
+    if kind == "github_issue"
+      target = "planner"
+    if kind == "slack_request"
+      target = "planner"
+    if kind == "observe"
+      target = "observe"
+    if kind == "ignore"
+      target = "ignore"
+    memory.last_target = target
+    node = TaskNode(task_id: task_id, status: "in_flight", blocked_on: [], specialist: target, project: repo)
+    memory.task_graph = memory.task_graph + [node]
+    say "[mastermind] {task_id} kind={kind} -> {target} (reason={decision})"
+    if target == "planner"
+      emit IssueAssigned(issue_id: issue_id, repo: repo, title: title, body: body, channel: channel, callback_url: callback_url, test_cmd: test_cmd)
+    if target == "observe"
+      say "[mastermind] {task_id} marked observe-only; no dev-cycle handoff"
+    if target == "ignore"
+      say "[mastermind] {task_id} ignored"
+
+  # Webhook translator: GitHub issue_opened → CloneDevInbound
+  on GithubIssueOpened(repo: Text, issue_number: Number, title: Text, body: Text)
+    say "[mastermind] github_issue_opened received for {repo}#{issue_number}"
+    emit CloneDevInbound(kind: "github_issue", repo: repo, issue_id: "{issue_number}", title: title, body: body, channel: "", callback_url: "", test_cmd: "cargo test")
+
+  # Webhook translator: GitHub pr_merged → TaskCompleted
+  # Bridges external PR merges (in linked repos) into our task graph.
+  on GithubPrMerged(repo: Text, pr_number: Number, merged_by: Text)
+    say "[mastermind] github_pr_merged received for {repo}#{pr_number} by {merged_by}"
+    emit TaskCompleted(task_id: "{repo}#{pr_number}", repo: repo, outcome: "merged", ci_passed_first_try: false, review_rounds: 1, time_to_merge: 0, reverted_within_7d: false)
+
+  # Webhook translator: Slack message → CloneDevInbound
+  on SlackMessageReceived(channel: Text, user: Text, text: Text)
+    say "[mastermind] slack_message received from {user} in {channel}"
+    emit CloneDevInbound(kind: "slack_request", repo: "unknown", issue_id: "slack-{user}", title: text, body: text, channel: channel, callback_url: "", test_cmd: "")
+
+  # T4.1 (#299): record blocker relations with 1-hop cycle refusal.
+  on TaskBlocked(task_id: Text, blocked_on: Text[])
+    cycle_blocker = first_cycling_blocker(memory.task_graph, task_id, blocked_on)
+    if cycle_blocker != ""
+      emit CycleDetected(task_id: task_id, blocker_id: cycle_blocker, note: "adding {cycle_blocker} as blocker of {task_id} would close a 1-hop cycle")
+      say "[mastermind] CYCLE REJECTED: {task_id} cannot be blocked on {cycle_blocker}"
+      memory.task_graph = update_task_node(memory.task_graph, task_id, "cycle_rejected", [])
+      escalate to lead
+    else
+      memory.task_graph = update_task_node(memory.task_graph, task_id, "blocked", blocked_on)
+      say "[mastermind] {task_id} marked blocked"
+
+  # Terminal signal (reuses dev-cycle's TaskCompleted payload).
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    newly_free = find_newly_unblocked(memory.task_graph, task_id)
+    memory.task_graph = apply_completion(memory.task_graph, task_id)
+    say "[mastermind] {task_id} done ({outcome}); freed {newly_free.length} dependent(s)"
+    for dep in newly_free
+      emit UnblockTask(task_id: dep, unblocked_by: task_id)
+
+  on SeedTask(task_id: Text, specialist: Text, project: Text)
+    node = TaskNode(task_id: task_id, status: "in_flight", blocked_on: [], specialist: specialist, project: project)
+    memory.task_graph = memory.task_graph + [node]
+    say "[mastermind] seeded {task_id} specialist={specialist} project={project}"
+
+  # T4.2 (#354): outgoing cross-project handoff.
+  on CrossProjectRequested(source_task_id: Text, target_repo: Text, description: Text, labels: Text)
+    composite_labels = "clone-dev,from:{source_task_id},blocks:{source_task_id}," + labels
+    body = "Spawned from task {source_task_id}"
+    issue_url = skill.github.create_labeled_issue(target_repo, description, body, composite_labels)
+    when issue_url.sure -> say "[mastermind] spawned cross-project issue: {issue_url}"
+    else -> say "[mastermind] cross-project issue creation uncertain"
+    emit TaskBlocked(task_id: source_task_id, blocked_on: [issue_url])
+
+  if stuck for 3 turns
+    say "[mastermind] Stuck. Escalating."
+    escalate to lead

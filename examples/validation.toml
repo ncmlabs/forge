@@ -53,6 +53,7 @@ manifest = "examples/agents/pr-review-bot/forge.project.toml"
 name = "Slack adapter agent (+ smoke harness)"
 paths = [
   "examples/agents/slack-adapter/main.forge",
+  "examples/agents/slack-adapter/agents.forge",
   "examples/agents/slack-adapter/smoke.forge",
 ]
 check = "ok"
@@ -315,8 +316,28 @@ check = "ok"
 
 [[cases]]
 name = "executable dev-cycle (server boundary)"
-paths = ["workflows/dev-cycle/main.forge"]
-check = "error"
+paths = [
+  "workflows/dev-cycle/main.forge",
+  "workflows/dev-cycle/agents.forge",
+  "examples/agents/slack-adapter/agents.forge",
+]
+check = "ok"
+merge = true
+manifest = "workflows/dev-cycle/forge.project.toml"
+
+[[cases]]
+name = "clone-dev top-level assembly (#356, T8.1)"
+paths = [
+  "workflows/clone-dev/main.forge",
+  "workflows/clone-dev/shared/types.forge",
+  "workflows/clone-dev/shared/events.forge",
+  "workflows/clone-dev/shared/mastermind.forge",
+  "workflows/dev-cycle/agents.forge",
+  "examples/agents/slack-adapter/agents.forge",
+]
+check = "ok"
+merge = true
+manifest = "workflows/clone-dev/forge.project.toml"
 
 [[cases]]
 name = "forge-sensei single-file workflow"

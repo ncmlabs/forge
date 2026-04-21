@@ -1,0 +1,123 @@
+#! boundary: server
+
+# ================================================================
+# FORGE Clone-Developer — Top-Level Assembly (#356, T8.1)
+# ================================================================
+# The existential clone-developer program. Boots the full supervised
+# swarm on ONE HTTP port, composing five imported pieces:
+#
+#   workflows/dev-cycle/agents.forge
+#     • planner, implementer, tester, reviewer, release_manager
+#     • swarm_mastery_coordinator + swarm_mastery_tuple (#303)
+#
+#   examples/agents/slack-adapter/agents.forge
+#     • slack_adapter — the ONLY outbound Slack surface
+#
+#   shared/mastermind.forge
+#     • clone-dev mastermind (follows mastermind-pattern #295
+#       invariants, routes inbound into dev-cycle via IssueAssigned)
+#
+#   shared/types.forge + shared/events.forge
+#     • TaskNode + 12 cycle-detection helpers (T4.1 #299 shape)
+#     • CloneDevInbound, GithubIssueOpened/PrMerged, SlackMessage,
+#       TaskBlocked / UnblockTask / CycleDetected, SeedTask,
+#       CrossProjectRequested
+#
+# Single `org_warden` supervises all nine agents.
+#
+# HTTP surface (one port):
+#   GET  /health                     → liveness probe
+#   POST /clone_dev                  → direct API inbound
+#   POST /task_blocked, /task_completed, /seed_task, /cross_project
+#                                    → task-graph smoke endpoints
+#   POST /wake/mastermind/{github_issue_opened, github_pr_merged,
+#         slack_message}             → HMAC-verified webhook (#335)
+#   POST /webhook/approval           → Slack approval callback
+#                                     (runtime-built-in, auto-routed)
+#   GET  /__forge/events             → live SSE trace
+#   GET  /__forge/inspect/*          → topology / agents / wardens /
+#                                     costs / mastery / schedules
+#
+# Run:
+#   FORGE_CLONEDEV_CONFIG=... SLACK_BOT_TOKEN=xoxb-... \
+#   ANTHROPIC_API_KEY=... \
+#   cargo run -- serve \
+#     --manifest workflows/clone-dev/forge.project.toml \
+#     -s workflows/clone-dev/shared/types.forge \
+#     -s workflows/clone-dev/shared/events.forge \
+#     -s workflows/clone-dev/shared/mastermind.forge \
+#     -s workflows/dev-cycle/agents.forge \
+#     -s examples/agents/slack-adapter/agents.forge \
+#     workflows/clone-dev/main.forge --port 3300
+#
+# Register webhook secrets before opening traffic from GitHub/Slack:
+#   forge wake rotate --agent mastermind --trigger github_issue_opened
+#   forge wake rotate --agent mastermind --trigger github_pr_merged
+#   forge wake rotate --agent mastermind --trigger slack_message
+# ================================================================
+
+# ── Warden: Org ──────────────────────────────────────────────────
+# Single warden over the whole clone-dev swarm, enforcing the same
+# escalation ladder as dev-cycle's `dev_lead` (from which this policy
+# was copied verbatim).
+
+warden org_warden
+  manages [mastermind, planner, implementer, tester, reviewer, release_manager, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
+  on stuck: nudge, self
+    after 3: escalate
+  on timeout: restart, self
+  on crash: restart, self
+  on hallucination: nudge, self
+    after 3: escalate
+  on contradiction: nudge, self
+    after 2: escalate
+  on budget: nudge, all
+    after 1: restart
+    after 3: escalate
+  max_retries 3 per 1h then escalate
+
+# ── System ───────────────────────────────────────────────────────
+# Linear pipeline with mastermind as the intake and slack_adapter as
+# a sink (all user-visible output flows through it). Mastery agents
+# observe TaskCompleted out-of-band and don't need explicit wiring.
+
+system clone_dev_system
+  use
+    mm: mastermind
+    plan: planner
+    impl: implementer
+    test: tester
+    review: reviewer
+    release: release_manager
+    slack: slack_adapter
+  mm >> plan >> impl >> test >> review
+
+# ── Endpoints ────────────────────────────────────────────────────
+
+endpoint health() -> Text
+  give "ok"
+
+# Primary inbound. Form-encoded POST; kind determines classification.
+# kind ∈ {"github_issue", "slack_request", "observe", "ignore"}.
+endpoint clone_dev(kind: Text, repo: Text, issue_id: Text, title: Text, body: Text, channel: Text, callback_url: Text, test_cmd: Text) -> Text
+  emit CloneDevInbound(kind: kind, repo: repo, issue_id: issue_id, title: title, body: body, channel: channel, callback_url: callback_url, test_cmd: test_cmd)
+  give "clone-dev task queued (kind={kind} repo={repo} issue={issue_id})"
+
+# T4.1 (#299) smoke endpoints — drive the task-graph flows without
+# needing a full classification trip.
+endpoint task_blocked(task_id: Text, blocker_id: Text) -> Text
+  emit TaskBlocked(task_id: task_id, blocked_on: [blocker_id])
+  give "TaskBlocked queued (task={task_id} blocker={blocker_id})"
+
+endpoint task_completed(task_id: Text, repo: Text, outcome: Text) -> Text
+  emit TaskCompleted(task_id: task_id, repo: repo, outcome: outcome, ci_passed_first_try: false, review_rounds: 1, time_to_merge: 0, reverted_within_7d: false)
+  give "TaskCompleted queued (task={task_id} outcome={outcome})"
+
+endpoint seed_task(task_id: Text, specialist: Text, project: Text) -> Text
+  emit SeedTask(task_id: task_id, specialist: specialist, project: project)
+  give "SeedTask queued (task={task_id} specialist={specialist} project={project})"
+
+# T4.2 (#354) — outgoing cross-project handoff trigger.
+endpoint cross_project(source_task_id: Text, target_repo: Text, description: Text, labels: Text) -> Text
+  emit CrossProjectRequested(source_task_id: source_task_id, target_repo: target_repo, description: description, labels: labels)
+  give "CrossProjectRequested queued (source={source_task_id} target_repo={target_repo})"

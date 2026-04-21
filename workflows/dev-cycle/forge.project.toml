@@ -5,6 +5,10 @@ description = "Full issue lifecycle: plan → implement → test → review → 
 
 [build]
 entry = "main.forge"
+sources = [
+  "agents.forge",
+  "../../examples/agents/slack-adapter/agents.forge",
+]
 
 [skills]
 slack = { path = "../../skills/slack" }

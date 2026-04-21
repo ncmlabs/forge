@@ -1,0 +1,887 @@
+#! boundary: server
+
+# ================================================================
+# FORGE Development Lifecycle — Agents Library
+# ================================================================
+# Shared agent declarations for the dev-cycle workflow.
+#
+# Sourced by:
+#   workflows/dev-cycle/main.forge   (standalone runner)
+#   workflows/clone-dev/main.forge   (top-level assembly, #356)
+#
+# This file declares ONLY agents, tasks, events, types, states, and
+# pure functions. The warden, system, and endpoints live in the
+# corresponding main.forge so different runners can wrap these
+# agents with different supervisor policies and trigger surfaces.
+#
+# Slack outbound is event-based: emits PostMessage, PostApproval,
+# and PostApprovalResult to the slack_adapter agent declared in
+# examples/agents/slack-adapter/agents.forge (sourced alongside this
+# file). There are no direct skill.slack.* calls here.
+# ================================================================
+
+use
+  llm.reason
+  llm.classify
+  skill.github
+
+# ── Types ────────────────────────────────────────────────────────
+
+type Issue
+  id: Text
+  title: Text
+  criteria: Text
+
+type TestReport
+  passed: Bool
+  failures: Text
+  coverage: Number
+
+type ChangelogEntry
+  category: Text
+  description: Text
+  issue_id: Text
+
+type PullRequest
+  branch: Text
+  title: Text
+  body: Text
+  target: Text
+
+# ── Events ───────────────────────────────────────────────────────
+# Every pipeline event carries repo, channel, callback_url so agents
+# thread context without shared global state (flat-payload pattern
+# from clone-dev-skeleton).
+
+event IssueAssigned
+  issue_id: Text
+  repo: Text
+  title: Text
+  body: Text
+  channel: Text
+  callback_url: Text
+  test_cmd: Text
+
+event PlanApproved
+  issue_id: Text
+  repo: Text
+  plan: Text
+  criteria: Text
+  branch: Text
+  channel: Text
+  callback_url: Text
+  test_cmd: Text
+
+event ImplementationReady
+  issue_id: Text
+  repo: Text
+  branch: Text
+  channel: Text
+  callback_url: Text
+  test_cmd: Text
+
+event TestsFailed
+  issue_id: Text
+  repo: Text
+  branch: Text
+  failures: Text
+  channel: Text
+  callback_url: Text
+  test_cmd: Text
+
+event AcceptanceMet
+  issue_id: Text
+  repo: Text
+  branch: Text
+  report: Text
+  channel: Text
+  callback_url: Text
+  test_cmd: Text
+  ci_passed_first_try: Bool
+
+event PRReady
+  issue_id: Text
+  repo: Text
+  pr_url: Text
+  channel: Text
+  callback_url: Text
+
+# Emitted by FORGE's built-in /webhook/approval handler when a
+# Slack button is clicked.
+event ApprovalResponse
+  request_id: Text
+  approved: Bool
+  comment: Text
+
+event PRMerged
+  issue_id: Text
+  repo: Text
+  branch: Text
+  ci_passed_first_try: Bool
+  review_rounds: Number
+
+event ReviewDecision
+  issue_id: Text
+  repo: Text
+  decision: Text
+
+# T5.1 (#302): outcome-driven learning loop.
+event TaskCompleted
+  task_id: Text
+  repo: Text
+  outcome: Text
+  ci_passed_first_try: Bool
+  review_rounds: Number
+  time_to_merge: Number
+  reverted_within_7d: Bool
+
+event LessonExtracted
+  task_id: Text
+  agent_id: Text
+  category: Text
+  content: Text
+  confidence: Number
+
+# T5.2 (#303): outcome-driven mastery.
+event MasterySignal
+  specialist: Text
+  project: Text
+  task_id: Text
+  clean: Bool
+  regress: Bool
+
+event MasteryUpdated
+  specialist: Text
+  project: Text
+  level: Text
+  score: Number
+  clean_count: Number
+  regress_count: Number
+  total: Number
+
+# ── State Machines ───────────────────────────────────────────────
+
+states IssueLifecycle
+  open -> planning
+  planning -> in_progress
+  in_progress -> in_progress when iteration_needed
+  in_progress -> testing
+  testing -> in_progress when not tests_passed
+  testing -> review_ready when tests_passed
+  review_ready -> merged
+  merged -> open when issue_reopened
+
+states ReviewPhase
+  idle -> awaiting_approval
+  awaiting_approval -> idle
+
+states SwarmMastery
+  novice -> apprentice when score >= 40
+  apprentice -> journeyman when score >= 70
+  journeyman -> expert when score >= 90
+  apprentice -> novice when score < 40
+  journeyman -> apprentice when score < 70
+  expert -> journeyman when score < 90
+
+# ── Tasks (LLM-augmented steps) ─────────────────────────────────
+
+task draft_plan
+  needs issue: Issue
+  gives Text
+  do
+    result = reason "You are a senior engineer planning work on a GitHub repo. Given this issue, produce a concise implementation plan with numbered steps.\n\nTitle: {issue.title}\nAcceptance criteria: {issue.criteria}"
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Manual planning required."
+
+task check_acceptance
+  needs issue: Issue, report: TestReport
+  gives Text
+  do
+    failure_text = report.failures
+    result = classify failure_text into ["blocking", "minor", "none"]
+    when result.sure -> give result
+    when result.unsure -> give "needs_human_review"
+    else -> give "inconclusive"
+
+task draft_changelog_entry
+  needs issue: Issue, branch: Text
+  gives Text
+  do
+    result = reason "Write a Keep-a-Changelog entry.\n\nIssue: {issue.title}\nBranch: {branch}\nUse one of: Added, Changed, Fixed. Then a one-line description."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Changed: {issue.title}"
+
+task draft_pr_description
+  needs issue: Issue, changelog: Text
+  gives Text
+  do
+    result = reason "Write a concise PR description.\n\nIssue: {issue.title}\nAcceptance criteria: {issue.criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Test plan section."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Summary: {issue.title}"
+
+task diagnose_failures
+  needs failures: Text, plan: Text, iteration: Number
+  gives Text
+  do
+    result = reason "You are diagnosing test failures (attempt {iteration}).\n\nOriginal plan:\n{plan}\n\nTest output:\n{failures}\n\nProvide a concise diagnosis: 1) Root cause of each failure 2) Which plan step is affected 3) Recommended fix approach."
+    when result.sure -> give result
+    when result.unsure -> give result
+    else -> give "Diagnosis inconclusive — failures: {failures}"
+
+task slugify_repo
+  needs repo: Text
+  gives Text
+  do
+    result = command "printf '%s' '{repo}' | tr '/' '-'" timeout 5s
+    when result.sure -> give "{result.stdout}"
+    else -> give "unknown-repo"
+
+task characterize_pr_diff
+  needs diff_text: Text, title: Text
+  gives Text
+  do
+    prompt = "Summarize this PR diff in 2-3 sentences. Focus on: what was changed, why (infer from title), and which area of the codebase is affected. Be specific about file types and modules.\n\nTitle: {title}\nDiff (truncated):\n{diff_text}"
+    result = reason prompt
+    when result.sure -> give "{result}"
+    when result.unsure -> give "{result}"
+    else -> give "Diff characterization unavailable"
+
+task fetch_pr_diff
+  needs branch: Text, repo: Text
+  gives Text
+  do
+    result = command "gh pr diff {branch} -R {repo} 2>/dev/null | head -150" timeout 30s
+    when result.sure -> give "{result.stdout}"
+    else -> give "Diff unavailable"
+
+task assess_with_history
+  needs characterization: Text, prior_decisions: Text, branch: Text
+  gives Text
+  do
+    if prior_decisions == ""
+      give "needs_human"
+    analysis_prompt = "You are a code reviewer deciding whether a PR should be approved based on historical patterns from this repository.\n\nCurrent PR:\n- Branch: {branch}\n- Diff characterization: {characterization}\n\nSimilar prior PR decisions from this repository:\n{prior_decisions}\n\nRules:\n- auto_approve: Current PR closely matches >=2 prior PRs that were approved, with similar scope, area, and patterns\n- auto_reject: Current PR matches >=2 prior PRs that were rejected for the same structural reason\n- needs_human: Not enough similar history, mixed signals, novel pattern, or insufficient confidence\n\nAnalyze the evidence and classify."
+    result = classify analysis_prompt into ["auto_approve", "needs_human", "auto_reject"]
+    when result.sure -> give "{result}"
+    when result.unsure -> give "needs_human"
+    else -> give "needs_human"
+
+# ── Pure Functions ───────────────────────────────────────────────
+
+pure branch_name
+  needs issue_id: Text
+  gives Text
+  do
+    give "clone-dev/{issue_id}"
+
+# T5.2 (#303): mastery scoring.
+pure compute_swarm_score
+  needs clean: Number, regress: Number, total: Number
+  gives Number
+  do
+    if total == 0
+      give 0
+    raw = (clean - regress) / total
+    give raw * 50 + 50
+
+pure determine_swarm_level
+  needs score: Number
+  gives Text
+  do
+    if score >= 90
+      give "expert"
+    if score >= 70
+      give "journeyman"
+    if score >= 40
+      give "apprentice"
+    give "novice"
+
+pure reviewer_clean_signal
+  needs merged: Bool, light_review: Bool
+  gives Bool
+  do
+    if merged and light_review
+      give true
+    give false
+
+pure reviewer_regress_signal
+  needs heavy_review: Bool, reverted: Bool
+  gives Bool
+  do
+    if heavy_review
+      give true
+    if reverted
+      give true
+    give false
+
+# ── Agent: Planner ───────────────────────────────────────────────
+
+agent planner
+  lifecycle: IssueLifecycle
+  memory
+    issue_id: Text
+    repo: Text
+    channel: Text
+    callback_url: Text
+    plan_text: Text
+    criteria: Text
+    test_cmd: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
+  subscribe IssueAssigned
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.channel = ""
+    memory.callback_url = ""
+    memory.plan_text = ""
+    memory.criteria = ""
+    memory.test_cmd = ""
+    memory.repo_slug = ""
+    say "[planner] ready"
+
+  on IssueAssigned(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text, test_cmd: Text)
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.channel = channel
+    memory.callback_url = callback_url
+    memory.criteria = body
+    memory.test_cmd = test_cmd
+    memory.repo_slug = slugify_repo(repo)
+    say "[planner] Planning issue {issue_id} in {repo}"
+    issue = Issue(id: issue_id, title: title, criteria: body)
+    plan_text = draft_plan(issue)
+    memory.plan_text = plan_text
+    branch = branch_name(issue_id)
+    emit PostMessage(channel: channel, text: "Plan drafted for {issue_id} in {repo}:\n{plan_text}", thread_ts: "")
+    say "[planner] Plan drafted - handing off to implementer"
+    emit PlanApproved(issue_id: issue_id, repo: repo, plan: plan_text, criteria: body, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[planner] Extracting lesson for {task_id} (outcome={outcome})"
+    lesson_prompt = "You are the planner for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nOriginal acceptance criteria:\n{memory.criteria}\n\nThe plan you produced:\n{memory.plan_text}\n\nWrite a one- to three-sentence lesson of the form 'this plan shape -> this outcome'. Focus on what a future planner should repeat or avoid for similar issues. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[planner] Lesson: {lesson}"
+    else -> say "[planner] Lesson uncertain: {lesson}"
+    cat = "lesson-planner-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "planner", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:planner task:{task_id} outcome:{outcome} first_try:{ci_passed_first_try} rounds:{review_rounds}\ncriteria:{memory.criteria}\nplan:\n{memory.plan_text}\nlesson:\n{lesson}" category: cat
+
+  if stuck for 5 turns
+    say "[planner] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Implementer ──────────────────────────────────────────
+
+agent implementer
+  lifecycle: IssueLifecycle
+  memory
+    issue_id: Text
+    repo: Text
+    branch: Text
+    plan: Text
+    criteria: Text
+    iteration: Number
+    channel: Text
+    callback_url: Text
+    last_failures: Text
+    test_cmd: Text
+    max_iterations: Number
+    iteration_log: Text
+    last_diagnosis: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
+  subscribe PlanApproved
+  subscribe TestsFailed
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.branch = ""
+    memory.plan = ""
+    memory.criteria = ""
+    memory.iteration = 0
+    memory.channel = ""
+    memory.callback_url = ""
+    memory.last_failures = ""
+    memory.test_cmd = ""
+    memory.max_iterations = 3
+    memory.iteration_log = ""
+    memory.last_diagnosis = ""
+    memory.repo_slug = ""
+    say "[implementer] ready"
+
+  on PlanApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.plan = plan
+    memory.criteria = criteria
+    memory.branch = branch
+    memory.channel = channel
+    memory.callback_url = callback_url
+    memory.test_cmd = test_cmd
+    memory.repo_slug = slugify_repo(repo)
+    memory.iteration = 0
+    memory.iteration_log = ""
+    memory.last_diagnosis = ""
+    say "[implementer] Starting implementation for {issue_id} on branch {branch}"
+    clone_cmd = "rm -rf /tmp/forge-workdir-{issue_id} && gh repo clone {repo} /tmp/forge-workdir-{issue_id} 2>&1 && cd /tmp/forge-workdir-{issue_id} && git checkout -b {branch} 2>&1"
+    clone_result = command clone_cmd timeout 60s
+    when clone_result.sure -> say "[implementer] Repo cloned and branch {branch} created"
+    else -> say "[implementer] Clone/checkout issue: {clone_result}"
+    impl_prompt = "You are implementing a code change for a GitHub issue.\n\nIssue: {issue_id}\nPlan:\n{plan}\nAcceptance criteria:\n{memory.criteria}\n\nGenerate the implementation as a shell script that creates or modifies files using cat heredocs. Output ONLY the shell commands, no markdown fencing, no explanations. Keep changes minimal and focused."
+    code = reason impl_prompt
+    when code.sure -> say "[implementer] Implementation generated"
+    else -> say "[implementer] Implementation generation uncertain"
+    apply_result = command "cd /tmp/forge-workdir-{issue_id} && sh -c '{code}'" timeout 30s
+    when apply_result.sure -> say "[implementer] Changes applied"
+    else -> say "[implementer] Changes may not have applied cleanly"
+    commit_result = command "cd /tmp/forge-workdir-{issue_id} && git add -A && git diff --cached --quiet || git commit -m 'feat({issue_id}): implement per plan' && git push origin {branch} 2>&1" timeout 60s
+    when commit_result.sure -> say "[implementer] Changes committed and pushed"
+    else -> say "[implementer] Commit/push issue: {commit_result}"
+    emit PostMessage(channel: channel, text: "Implementation pushed for {issue_id} on branch {branch}. Running tests next.", thread_ts: "")
+    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+
+  on TestsFailed(issue_id: Text, repo: Text, branch: Text, failures: Text, channel: Text, callback_url: Text, test_cmd: Text)
+    memory.iteration = memory.iteration + 1
+    memory.last_failures = failures
+    say "[implementer] Iteration {memory.iteration}: diagnosing failures for {issue_id}"
+    diagnosis = diagnose_failures(failures, memory.plan, memory.iteration)
+    memory.last_diagnosis = diagnosis
+    memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\n{diagnosis}"
+    say "[implementer] Diagnosis: {diagnosis}"
+    if memory.iteration >= memory.max_iterations
+      say "[implementer] Max iterations ({memory.max_iterations}) reached for {issue_id}. Escalating."
+      escalate_msg = "ESCALATION: Issue {issue_id} in {repo} failed after {memory.max_iterations} fix attempts. Branch: {branch}. Iteration count: {memory.iteration}. Last diagnosis: {diagnosis}. Last failure output: {failures}"
+      emit RequestHuman(channel: channel, context: escalate_msg, urgency: "high", thread_ts: "")
+      escalate to lead
+      give "escalated"
+    fix_prompt = "Fix the test failures for issue {issue_id}.\n\nOriginal plan:\n{memory.plan}\n\nDiagnosis of current failures:\n{diagnosis}\n\nRaw test output:\n{failures}\n\nGenerate ONLY shell commands (cat heredocs, sed, etc.) to fix the issues. No markdown, no explanations."
+    fix_code = reason fix_prompt
+    when fix_code.sure -> say "[implementer] Fix generated"
+    else -> say "[implementer] Fix generation uncertain"
+    apply_result = command "cd /tmp/forge-workdir-{issue_id} && sh -c '{fix_code}'" timeout 30s
+    when apply_result.sure -> say "[implementer] Fix applied"
+    else -> say "[implementer] Fix may not have applied cleanly"
+    commit_result = command "cd /tmp/forge-workdir-{issue_id} && git add -A && git diff --cached --quiet || git commit -m 'fix({issue_id}): iteration {memory.iteration}' && git push origin {branch} 2>&1" timeout 60s
+    when commit_result.sure -> say "[implementer] Fix committed and pushed"
+    else -> say "[implementer] Fix commit/push issue"
+    say "[implementer] Fix iteration {memory.iteration} for {issue_id} pushed. Re-running tests."
+    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[implementer] Extracting lesson for {task_id} (outcome={outcome}, iterations={memory.iteration})"
+    lesson_prompt = "You are the implementer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nFix iterations used: {memory.iteration}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nPlan executed:\n{memory.plan}\n\nIteration log (diagnoses across fix attempts):\n{memory.iteration_log}\n\nWrite a one- to three-sentence lesson of the form 'this error pattern -> this fix' (or 'this pattern -> first-try pass'). Focus on what a future implementer should reuse or avoid. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[implementer] Lesson: {lesson}"
+    else -> say "[implementer] Lesson uncertain: {lesson}"
+    cat = "lesson-implementer-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "implementer", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:implementer task:{task_id} outcome:{outcome} iterations:{memory.iteration} first_try:{ci_passed_first_try}\nplan:\n{memory.plan}\niteration_log:\n{memory.iteration_log}\nlesson:\n{lesson}" category: cat
+
+  if stuck for 5 turns
+    say "[implementer] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Tester ────────────────────────────────────────────────
+
+agent tester
+  lifecycle: IssueLifecycle
+  memory
+    issue_id: Text
+    repo: Text
+    branch: Text
+    channel: Text
+    callback_url: Text
+    acceptance_result: Text
+    test_cmd: Text
+    test_runs: Number
+    last_test_output: Text
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
+  subscribe ImplementationReady
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.branch = ""
+    memory.channel = ""
+    memory.callback_url = ""
+    memory.acceptance_result = ""
+    memory.test_cmd = ""
+    memory.test_runs = 0
+    memory.last_test_output = ""
+    memory.repo_slug = ""
+    say "[tester] ready"
+
+  on ImplementationReady(issue_id: Text, repo: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
+    if memory.issue_id != issue_id
+      memory.test_runs = 0
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.branch = branch
+    memory.channel = channel
+    memory.callback_url = callback_url
+    memory.test_cmd = test_cmd
+    memory.repo_slug = slugify_repo(repo)
+    memory.test_runs = memory.test_runs + 1
+    say "[tester] Running tests on {branch} in {repo} (run #{memory.test_runs})"
+    pull_result = command "cd /tmp/forge-workdir-{issue_id} && git pull origin {branch} 2>&1" timeout 30s
+    when pull_result.sure -> say "[tester] Latest changes pulled"
+    else -> say "[tester] Pull may have issues: {pull_result}"
+    test_output = command "cd /tmp/forge-workdir-{issue_id} && {memory.test_cmd} 2>&1" timeout 120s
+    when test_output.sure -> say "[tester] Tests completed (exit 0)"
+    else -> say "[tester] Tests completed with failures"
+    memory.last_test_output = test_output
+    report = TestReport(passed: false, failures: test_output, coverage: 0)
+    issue = Issue(id: issue_id, title: branch, criteria: "all tests pass")
+    acceptance = check_acceptance(issue, report)
+    memory.acceptance_result = acceptance
+    tcmd = memory.test_cmd
+    first_try = memory.test_runs == 1
+    if acceptance == "none" or acceptance == "minor"
+      say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met (first_try: {first_try})"
+      emit PostMessage(channel: channel, text: "Tests passed for {issue_id} on {branch}. Moving to review.", thread_ts: "")
+      emit AcceptanceMet(issue_id: issue_id, repo: repo, branch: branch, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd, ci_passed_first_try: first_try)
+    if acceptance == "blocking" or acceptance == "needs_human_review" or acceptance == "inconclusive"
+      say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
+      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: test_output, channel: channel, callback_url: callback_url, test_cmd: tcmd)
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[tester] Extracting lesson for {task_id} (outcome={outcome}, first_try={ci_passed_first_try})"
+    lesson_prompt = "You are the tester for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nTest runs on this task: {memory.test_runs}\nci_passed_first_try: {ci_passed_first_try}\nFinal acceptance result: {memory.acceptance_result}\nLast test output (truncated):\n{memory.last_test_output}\n\nWrite a one- to three-sentence lesson of the form 'this coverage gap -> this miss' (or 'this coverage pattern -> this pass'). Focus on what the test signal revealed that future tasks can reuse. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[tester] Lesson: {lesson}"
+    else -> say "[tester] Lesson uncertain: {lesson}"
+    cat = "lesson-tester-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "tester", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:tester task:{task_id} outcome:{outcome} first_try:{ci_passed_first_try}\ntest_runs:{memory.test_runs}\nacceptance:{memory.acceptance_result}\nlesson:\n{lesson}" category: cat
+
+  if stuck for 3 turns
+    say "[tester] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Reviewer ──────────────────────────────────────────────
+
+agent reviewer
+  lifecycle: ReviewPhase
+  memory
+    issue_id: Text
+    repo: Text
+    branch: Text
+    channel: Text
+    callback_url: Text
+    changelog_entry: Text
+    pr_body: Text
+    pr_url: Text
+    test_cmd: Text
+    review_verdict: Text
+    diff_characterization: Text
+    repo_slug: Text
+    auto_decision: Text
+    review_rounds: Number
+    ci_passed_first_try: Bool
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
+  subscribe AcceptanceMet
+  subscribe ApprovalResponse
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.branch = ""
+    memory.channel = ""
+    memory.callback_url = ""
+    memory.changelog_entry = ""
+    memory.pr_body = ""
+    memory.pr_url = ""
+    memory.test_cmd = ""
+    memory.review_verdict = ""
+    memory.diff_characterization = ""
+    memory.repo_slug = ""
+    memory.auto_decision = "disabled"
+    memory.review_rounds = 0
+    memory.ci_passed_first_try = false
+    say "[reviewer] ready"
+
+  on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text, ci_passed_first_try: Bool)
+    requires lifecycle == idle on fail: give "review already in progress"
+    if memory.issue_id != issue_id
+      memory.review_rounds = 0
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.branch = branch
+    memory.channel = channel
+    memory.callback_url = callback_url
+    memory.test_cmd = test_cmd
+    memory.repo_slug = slugify_repo(repo)
+    memory.review_rounds = memory.review_rounds + 1
+    memory.ci_passed_first_try = ci_passed_first_try
+    say "[reviewer] Drafting changelog for {issue_id}"
+    issue = Issue(id: issue_id, title: "close #{issue_id}", criteria: "")
+    entry = draft_changelog_entry(issue, branch)
+    memory.changelog_entry = entry
+    say "[reviewer] Drafting PR description"
+    body = draft_pr_description(issue, entry)
+    memory.pr_body = body
+    say "[reviewer] Creating PR in {repo} from {branch}"
+    pr_url = skill.github.create_pr(repo, branch, "feat({issue_id}): automated implementation", body)
+    when pr_url.sure -> say "[reviewer] PR created: {pr_url}"
+    else -> say "[reviewer] PR creation uncertain: {pr_url}"
+    memory.pr_url = pr_url
+    ci_result = skill.github.check_ci(repo, branch)
+    when ci_result.sure -> say "[reviewer] CI status: {ci_result}"
+    else -> say "[reviewer] CI check uncertain: {ci_result}"
+    say "[reviewer] Consulting PR history for {issue_id}"
+    pr_title = "feat({issue_id}): automated implementation"
+    diff_text = fetch_pr_diff(branch, repo)
+    characterization = characterize_pr_diff(diff_text, pr_title)
+    memory.diff_characterization = characterization
+    say "[reviewer] Diff characterized — recalling similar decisions"
+    prior = recall "{characterization}"
+    when prior.sure -> say "[reviewer] Strong matches found in PR history"
+    when prior.unsure -> say "[reviewer] Partial matches in PR history"
+    else -> say "[reviewer] No relevant PR history found"
+    verdict = assess_with_history(characterization, prior, branch)
+    memory.review_verdict = verdict
+    say "[reviewer] Knowledge verdict: {verdict}"
+    emit ReviewDecision(issue_id: issue_id, repo: repo, decision: verdict)
+    if verdict == "auto_approve" and memory.auto_decision == "enabled"
+      say "[reviewer] AUTO-APPROVED by knowledge store — merging PR for {issue_id}"
+      merge_result = skill.github.merge_pr(repo, pr_url)
+      when merge_result.sure -> say "[reviewer] PR merged successfully"
+      else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      merge_msg = "AUTO-MERGED: {issue_id} in {repo}. Branch {branch} merged. Approved by knowledge-store."
+      emit PostApprovalResult(channel: channel, request_id: issue_id, approved: true, approver: "knowledge-store", summary: merge_msg, thread_ts: "")
+      cleanup = skill.github.delete_branch(repo, branch)
+      workdir_cleanup = command "rm -rf /tmp/forge-workdir-{issue_id}" timeout 10s
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{pr_url} decision:auto_approved\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
+      emit PRMerged(issue_id: issue_id, repo: repo, branch: branch, ci_passed_first_try: memory.ci_passed_first_try, review_rounds: memory.review_rounds)
+      give "auto-approved"
+    if verdict == "auto_reject" and memory.auto_decision == "enabled"
+      say "[reviewer] AUTO-REJECTED by knowledge store — sending back to implementer"
+      reject_msg = "AUTO-REJECTED: PR for {issue_id} in {repo}. Knowledge store found prior rejection patterns. Iterating."
+      emit PostApprovalResult(channel: channel, request_id: issue_id, approved: false, approver: "knowledge-store", summary: reject_msg, thread_ts: "")
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{pr_url} decision:auto_rejected\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
+      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: "Auto-rejected by knowledge store: prior rejection patterns", channel: channel, callback_url: callback_url, test_cmd: test_cmd)
+      give "auto-rejected"
+    emit PRReady(issue_id: issue_id, repo: repo, pr_url: pr_url, channel: channel, callback_url: callback_url)
+    transition to awaiting_approval
+    approval_context = "Branch: {branch}\nChangelog: {entry}\nCI: {ci_result}\n\nKnowledge verdict: {verdict}\nDiff summary: {characterization}\n\nApprove to merge or reject to iterate."
+    emit PostApproval(channel: channel, title: "PR for {issue_id} in {repo} ready for review", context: approval_context, callback_url: callback_url, request_id: issue_id, thread_ts: "")
+    say "[reviewer] Approval request emitted to slack-adapter"
+
+  on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
+    requires lifecycle == awaiting_approval on fail: give "no pending review"
+    requires request_id == memory.issue_id on fail: give "stale response"
+    if approved
+      say "[reviewer] APPROVED by {comment} — merging PR for {memory.issue_id}"
+      merge_result = skill.github.merge_pr(memory.repo, memory.pr_url)
+      when merge_result.sure -> say "[reviewer] PR merged successfully"
+      else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      merge_msg = "MERGED: {memory.issue_id} in {memory.repo}. Branch {memory.branch} merged. Approved by {comment}."
+      emit PostApprovalResult(channel: memory.channel, request_id: memory.issue_id, approved: true, approver: comment, summary: merge_msg, thread_ts: "")
+      cleanup = skill.github.delete_branch(memory.repo, memory.branch)
+      when cleanup.sure -> say "[reviewer] Branch {memory.branch} deleted"
+      else -> say "[reviewer] Branch cleanup uncertain"
+      workdir_cleanup = command "rm -rf /tmp/forge-workdir-{memory.issue_id}" timeout 10s
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:human_approved\nbranch: {memory.branch}\ndiff_characterization: {memory.diff_characterization}\nverdict_was: {memory.review_verdict}\nhuman_action: approved by {comment}" category: "pr-decisions-{memory.repo_slug}"
+      emit PRMerged(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, ci_passed_first_try: memory.ci_passed_first_try, review_rounds: memory.review_rounds)
+      transition to idle
+    if not approved
+      say "[reviewer] REJECTED by {comment} — sending back to implementer"
+      reject_msg = "PR for {memory.issue_id} REJECTED by {comment}. Iterating."
+      emit PostApprovalResult(channel: memory.channel, request_id: memory.issue_id, approved: false, approver: comment, summary: reject_msg, thread_ts: "")
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:human_rejected\nbranch: {memory.branch}\ndiff_characterization: {memory.diff_characterization}\nverdict_was: {memory.review_verdict}\nhuman_action: rejected by {comment}" category: "pr-decisions-{memory.repo_slug}"
+      emit TestsFailed(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, failures: "PR rejected: {comment}", channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
+      transition to idle
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[reviewer] Extracting lesson for {task_id} (outcome={outcome}, rounds={review_rounds})"
+    lesson_prompt = "You are the reviewer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nReview rounds: {review_rounds}\nKnowledge-store verdict: {memory.review_verdict}\nDiff characterization:\n{memory.diff_characterization}\n\nWrite a one- to three-sentence lesson of the form 'this objection -> this response' (or 'this diff shape -> this verdict path'). Focus on what review pattern future tasks should expect. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[reviewer] Lesson: {lesson}"
+    else -> say "[reviewer] Lesson uncertain: {lesson}"
+    cat = "lesson-reviewer-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "reviewer", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:reviewer task:{task_id} outcome:{outcome} rounds:{review_rounds}\nverdict:{memory.review_verdict}\ndiff_characterization:{memory.diff_characterization}\nlesson:\n{lesson}" category: cat
+
+  if stuck for 3 turns
+    say "[reviewer] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Release Manager ───────────────────────────────────────
+
+agent release_manager
+  memory
+    merged_count: Number
+    last_merged: Text
+    issue_id: Text
+    repo: Text
+    branch: Text
+    repo_slug: Text
+    last_outcome: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
+  subscribe PRMerged
+  subscribe TaskCompleted where task_id == memory.issue_id
+
+  on start
+    memory.merged_count = 0
+    memory.last_merged = ""
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.branch = ""
+    memory.repo_slug = ""
+    memory.last_outcome = ""
+    say "[release_manager] ready"
+
+  on PRMerged(issue_id: Text, repo: Text, branch: Text, ci_passed_first_try: Bool, review_rounds: Number)
+    memory.merged_count = memory.merged_count + 1
+    memory.last_merged = issue_id
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.branch = branch
+    memory.repo_slug = slugify_repo(repo)
+    memory.last_outcome = "merged"
+    say "[release_manager] PR merged for {issue_id} in {repo} (total: {memory.merged_count})"
+    say "[release_manager] Emitting TaskCompleted for {issue_id}"
+    emit TaskCompleted(task_id: issue_id, repo: repo, outcome: "merged", ci_passed_first_try: ci_passed_first_try, review_rounds: review_rounds, time_to_merge: 0, reverted_within_7d: false)
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    say "[release_manager] Extracting lesson for {task_id} (outcome={outcome})"
+    lesson_prompt = "You are the release manager for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nBranch: {memory.branch}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nWrite a one- to three-sentence lesson of the form 'this PR shape -> this merge path'. Focus on what the release signal says about how this kind of change should be shipped next time. Be specific and concrete."
+    lesson = reason lesson_prompt
+    when lesson.sure -> say "[release_manager] Lesson: {lesson}"
+    else -> say "[release_manager] Lesson uncertain: {lesson}"
+    cat = "lesson-release-{memory.repo_slug}"
+    emit LessonExtracted(task_id: task_id, agent_id: "release_manager", category: cat, content: lesson, confidence: 0.7)
+    learn "LESSON agent:release_manager task:{task_id} outcome:{outcome} first_try:{ci_passed_first_try} rounds:{review_rounds}\nbranch:{memory.branch}\nlesson:\n{lesson}" category: cat
+
+  if stuck for 3 turns
+    say "[release_manager] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Swarm Mastery Coordinator ─────────────────────────────
+
+agent swarm_mastery_coordinator
+  memory
+    last_task_id: Text
+    spawned_for_project: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
+  subscribe TaskCompleted
+
+  on start
+    memory.last_task_id = ""
+    memory.spawned_for_project = ""
+    say "[swarm_mastery_coordinator] ready"
+
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+    memory.last_task_id = task_id
+    slug = slugify_repo(repo)
+    say "[swarm_mastery_coordinator] Attributing task {task_id} signals across 5 specialists (project={slug})"
+    is_merged = outcome == "merged"
+    is_reverted = reverted_within_7d
+    is_light_review = review_rounds <= 1
+    is_heavy_review = review_rounds >= 3
+    reviewer_clean = reviewer_clean_signal(is_merged, is_light_review)
+    reviewer_regress = reviewer_regress_signal(is_heavy_review, is_reverted)
+    if memory.spawned_for_project != slug
+      say "[swarm_mastery_coordinator] First task for project {slug} — spawning 5 tuples"
+      spawn swarm_mastery_tuple as "mastery_planner_{slug}"
+        with memory specialist: "planner"
+        with memory project: slug
+      spawn swarm_mastery_tuple as "mastery_implementer_{slug}"
+        with memory specialist: "implementer"
+        with memory project: slug
+      spawn swarm_mastery_tuple as "mastery_tester_{slug}"
+        with memory specialist: "tester"
+        with memory project: slug
+      spawn swarm_mastery_tuple as "mastery_reviewer_{slug}"
+        with memory specialist: "reviewer"
+        with memory project: slug
+      spawn swarm_mastery_tuple as "mastery_release_manager_{slug}"
+        with memory specialist: "release_manager"
+        with memory project: slug
+      memory.spawned_for_project = slug
+    emit MasterySignal(specialist: "planner", project: slug, task_id: task_id, clean: is_merged, regress: is_reverted)
+    emit MasterySignal(specialist: "implementer", project: slug, task_id: task_id, clean: ci_passed_first_try, regress: is_reverted)
+    emit MasterySignal(specialist: "tester", project: slug, task_id: task_id, clean: ci_passed_first_try, regress: is_reverted)
+    emit MasterySignal(specialist: "reviewer", project: slug, task_id: task_id, clean: reviewer_clean, regress: reviewer_regress)
+    emit MasterySignal(specialist: "release_manager", project: slug, task_id: task_id, clean: is_merged, regress: is_reverted)
+
+  if stuck for 3 turns
+    say "[swarm_mastery_coordinator] Stuck. Escalating."
+    escalate to lead
+
+# ── Agent: Swarm Mastery Tuple (spawnable) ───────────────────────
+
+agent swarm_mastery_tuple
+  lifecycle: SwarmMastery
+  memory
+    specialist: Text
+    project: Text
+    clean_count: Number
+    regress_count: Number
+    total: Number
+    current_level: Text
+  knowledge store: ".forge-knowledge/pr-history"
+    max_entries: 10000
+    retention: 365d
+  subscribe MasterySignal where specialist == memory.specialist and project == memory.project
+
+  on start
+    memory.clean_count = 0
+    memory.regress_count = 0
+    memory.total = 0
+    memory.current_level = "novice"
+    say "[mastery_{memory.specialist}_{memory.project}] ready at novice"
+
+  on MasterySignal(specialist: Text, project: Text, task_id: Text, clean: Bool, regress: Bool)
+    requires lifecycle == novice or lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: silent
+    if clean
+      memory.clean_count = memory.clean_count + 1
+    if regress
+      memory.regress_count = memory.regress_count + 1
+    memory.total = memory.total + 1
+    score = compute_swarm_score(memory.clean_count, memory.regress_count, memory.total)
+    new_level = determine_swarm_level(score)
+    say "[mastery_{memory.specialist}_{memory.project}] task={task_id} clean={clean} regress={regress} total={memory.total} score={score} level={new_level}"
+    if score >= 90 and lifecycle == journeyman
+      transition to expert
+    if score >= 70 and lifecycle == apprentice
+      transition to journeyman
+    if score < 90 and lifecycle == expert
+      transition to journeyman
+    if score >= 40 and lifecycle == novice
+      transition to apprentice
+    if score < 70 and lifecycle == journeyman
+      transition to apprentice
+    if score < 40 and lifecycle == apprentice
+      transition to novice
+    if new_level != memory.current_level
+      memory.current_level = new_level
+      emit MasteryUpdated(specialist: specialist, project: project, level: new_level, score: score, clean_count: memory.clean_count, regress_count: memory.regress_count, total: memory.total)
+      learn "SWARM-MASTERY specialist:{specialist} project:{project} level:{new_level} score:{score}\nclean:{memory.clean_count} regress:{memory.regress_count} total:{memory.total}\nlast_task:{task_id}" category: "mastery-{specialist}-{project}"
+
+  if stuck for 3 turns
+    say "[mastery_{memory.specialist}_{memory.project}] Stuck. Escalating."
+    escalate to lead

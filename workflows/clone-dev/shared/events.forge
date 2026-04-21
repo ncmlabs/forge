@@ -1,0 +1,68 @@
+#! boundary: shared
+
+# ================================================================
+# Clone-Dev — Inbound & Task-Graph Events
+# ================================================================
+# Events specific to the clone-dev assembly. Events declared by the
+# sourced dev-cycle (IssueAssigned, TaskCompleted, …) and slack-adapter
+# (PostMessage, PostApproval, …) are reused, not redeclared.
+# ================================================================
+
+# Unified inbound for the clone-dev HTTP endpoint. The mastermind
+# translates this into dev-cycle's IssueAssigned after classification.
+event CloneDevInbound
+  kind: Text
+  repo: Text
+  issue_id: Text
+  title: Text
+  body: Text
+  channel: Text
+  callback_url: Text
+  test_cmd: Text
+
+# Webhook-carried events. The WebhookDriver (#335) populates these
+# fields from the POST JSON body; HMAC secrets are registered via
+# `forge wake rotate --agent mastermind --trigger <name>`.
+event GithubIssueOpened
+  repo: Text
+  issue_number: Number
+  title: Text
+  body: Text
+
+event GithubPrMerged
+  repo: Text
+  pr_number: Number
+  merged_by: Text
+
+event SlackMessageReceived
+  channel: Text
+  user: Text
+  text: Text
+
+# T4.1 (#299): task-graph edges.
+event TaskBlocked
+  task_id: Text
+  blocked_on: Text[]
+
+event UnblockTask
+  task_id: Text
+  unblocked_by: Text
+
+event CycleDetected
+  task_id: Text
+  blocker_id: Text
+  note: Text
+
+# T4.1 (#299): seed a node without going through LLM classification.
+# Used by smoke endpoints and by T4.2 cross-project routing.
+event SeedTask
+  task_id: Text
+  specialist: Text
+  project: Text
+
+# T4.2 (#354): outgoing cross-project handoff.
+event CrossProjectRequested
+  source_task_id: Text
+  target_repo: Text
+  description: Text
+  labels: Text

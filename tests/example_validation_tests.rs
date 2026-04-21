@@ -2,7 +2,7 @@
 // Keeps the examples corpus classified, parser/checker-clean where expected,
 // and runnable in CI only through mock-safe examples.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -70,11 +70,15 @@ fn example_manifest_covers_every_forge_example() {
 
     let missing: Vec<_> = discovered.difference(&classified).cloned().collect();
     let stale: Vec<_> = classified.difference(&discovered).cloned().collect();
-    let duplicates = duplicate_paths(&manifest);
+    // Duplicate paths across cases are allowed: with multi-file composition
+    // (introduced by #313, exercised by #356), shared library files like
+    // `examples/agents/slack-adapter/agents.forge` legitimately appear in
+    // multiple cases — once for the standalone program, once for each
+    // downstream compound that sources it.
 
     assert!(
-        missing.is_empty() && stale.is_empty() && duplicates.is_empty(),
-        "example validation manifest coverage mismatch\nmissing: {missing:?}\nstale: {stale:?}\nduplicates: {duplicates:?}"
+        missing.is_empty() && stale.is_empty(),
+        "example validation manifest coverage mismatch\nmissing: {missing:?}\nstale: {stale:?}"
     );
 }
 
@@ -187,17 +191,6 @@ fn classified_paths(manifest: &ValidationManifest) -> BTreeSet<String> {
         .cases
         .iter()
         .flat_map(|case| case.paths.iter().cloned())
-        .collect()
-}
-
-fn duplicate_paths(manifest: &ValidationManifest) -> Vec<String> {
-    let mut counts = BTreeMap::new();
-    for path in manifest.cases.iter().flat_map(|case| case.paths.iter()) {
-        *counts.entry(path.clone()).or_insert(0usize) += 1;
-    }
-    counts
-        .into_iter()
-        .filter_map(|(path, count)| (count > 1).then_some(path))
         .collect()
 }
 

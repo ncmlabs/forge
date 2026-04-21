@@ -5,6 +5,9 @@ description = "Slack adapter agent — wraps all outbound Slack calls behind typ
 
 [build]
 entry = "main.forge"
+sources = [
+  "agents.forge",
+]
 
 [skills]
 slack = { path = "../../../skills/slack" }

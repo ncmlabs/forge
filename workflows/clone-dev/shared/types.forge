@@ -1,0 +1,145 @@
+#! boundary: shared
+
+# ================================================================
+# Clone-Dev — Task Graph Types & Cycle-Detection Helpers
+# ================================================================
+# TaskNode and the 10 pure helpers are structurally identical to
+# examples/agents/clone-dev-skeleton/main.forge (T4.1, #299) so the
+# existential clone-dev assembly can reuse the same DAG shape that
+# the skeleton proved in smoke tests. We copy rather than source the
+# skeleton file because FORGE compose rejects duplicate agent names
+# (the skeleton declares its own `mastermind` which conflicts with
+# this workflow's mastermind — see src/compose.rs:109-124).
+# ================================================================
+
+type TaskNode
+  task_id: Text
+  status: Text
+  blocked_on: Text[]
+  specialist: Text
+  project: Text
+
+# ── Pure cycle-detection helpers ───────────────────────────────
+
+pure text_in_list
+  needs items: Text[], target: Text
+  gives Bool
+  do
+    for item in items
+      if item == target
+        give true
+    give false
+
+pure get_task_blockers
+  needs graph: TaskNode[], task_id: Text
+  gives Text[]
+  do
+    for node in graph
+      if node.task_id == task_id
+        give node.blocked_on
+    give []
+
+pure would_create_cycle
+  needs graph: TaskNode[], dependent_id: Text, blocker_id: Text
+  gives Bool
+  do
+    blocker_blockers = get_task_blockers(graph, blocker_id)
+    give text_in_list(blocker_blockers, dependent_id)
+
+pure first_cycling_blocker
+  needs graph: TaskNode[], dependent_id: Text, candidates: Text[]
+  gives Text
+  do
+    for candidate in candidates
+      would_loop = would_create_cycle(graph, dependent_id, candidate)
+      if would_loop
+        give candidate
+    give ""
+
+pure keep_unless_match
+  needs id: Text, target: Text
+  gives Text[]
+  do
+    if id == target
+      give []
+    give [id]
+
+pure remove_id
+  needs ids: Text[], target: Text
+  gives Text[]
+  do
+    result = []
+    for id in ids
+      kept = keep_unless_match(id, target)
+      result = result + kept
+    give result
+
+pure status_for_blockers
+  needs blockers: Text[]
+  gives Text
+  do
+    if blockers.length == 0
+      give "in_flight"
+    give "blocked"
+
+pure becomes_unblocked
+  needs node: TaskNode, completed_id: Text
+  gives Bool
+  do
+    had_blocker = text_in_list(node.blocked_on, completed_id)
+    if had_blocker
+      new_blockers = remove_id(node.blocked_on, completed_id)
+      give new_blockers.length == 0
+    give false
+
+pure find_newly_unblocked
+  needs graph: TaskNode[], completed_id: Text
+  gives Text[]
+  do
+    result = []
+    for node in graph
+      freed = becomes_unblocked(node, completed_id)
+      if freed
+        result = result + [node.task_id]
+    give result
+
+pure maybe_patch_node
+  needs node: TaskNode, target_id: Text, new_status: Text, new_blocked_on: Text[]
+  gives TaskNode
+  do
+    if node.task_id == target_id
+      give TaskNode(task_id: node.task_id, status: new_status, blocked_on: new_blocked_on, specialist: node.specialist, project: node.project)
+    give node
+
+pure update_task_node
+  needs graph: TaskNode[], task_id: Text, new_status: Text, new_blocked_on: Text[]
+  gives TaskNode[]
+  do
+    result = []
+    for node in graph
+      patched = maybe_patch_node(node, task_id, new_status, new_blocked_on)
+      result = result + [patched]
+    give result
+
+pure propagate_completion
+  needs node: TaskNode, completed_id: Text
+  gives TaskNode
+  do
+    if node.task_id == completed_id
+      give TaskNode(task_id: node.task_id, status: "done", blocked_on: node.blocked_on, specialist: node.specialist, project: node.project)
+    had_blocker = text_in_list(node.blocked_on, completed_id)
+    if had_blocker
+      new_blockers = remove_id(node.blocked_on, completed_id)
+      new_status = status_for_blockers(new_blockers)
+      give TaskNode(task_id: node.task_id, status: new_status, blocked_on: new_blockers, specialist: node.specialist, project: node.project)
+    give node
+
+pure apply_completion
+  needs graph: TaskNode[], completed_id: Text
+  gives TaskNode[]
+  do
+    result = []
+    for node in graph
+      patched = propagate_completion(node, completed_id)
+      result = result + [patched]
+    give result
