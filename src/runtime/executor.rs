@@ -2396,15 +2396,19 @@ impl TaskExecutor {
                                             .unwrap_or_else(|| format!("_{}", arg_map.len()));
                                         arg_map.insert(key, val);
                                     }
-                                    return skill_executor
+                                    // #375: a failing skill must not crash the handler. Demote
+                                    // SkillError to a zero-confidence ConfidentValue so that
+                                    // `when sure / else` dispatch routes failure through
+                                    // `else`, mirroring `reason`/`classify` semantics.
+                                    return Ok(skill_executor
                                         .execute(&skill_name, &method_name, &arg_map)
                                         .await
-                                        .map_err(|e| {
-                                            RuntimeError::FlowError(format!(
+                                        .unwrap_or_else(|e| {
+                                            ConfidentValue::from_skill_error(format!(
                                                 "skill.{}.{}: {}",
                                                 skill_name, method_name, e
                                             ))
-                                        });
+                                        }));
                                 } else {
                                     return Err(RuntimeError::Unsupported(
                                         "skill calls require a skill executor — configure [skills] in forge.config.toml".to_string(),

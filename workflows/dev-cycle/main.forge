@@ -695,7 +695,7 @@ agent reviewer
     memory.pr_url = pr_url
     ci_result = skill.github.check_ci(repo, branch)
     when ci_result.sure -> say "[reviewer] CI status: {ci_result}"
-    else -> say "[reviewer] CI check uncertain"
+    else -> say "[reviewer] CI check uncertain: {ci_result}"
     say "[reviewer] Consulting PR history for {issue_id}"
     pr_title = "feat({issue_id}): automated implementation"
     diff_text = fetch_pr_diff(branch, repo)
