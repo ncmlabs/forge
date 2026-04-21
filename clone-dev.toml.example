@@ -1,0 +1,117 @@
+# clone-dev.toml — configuration for the clone-developer assembly.
+# Loaded by `workflows/clone-dev/main.forge` on startup via the
+# FORGE_CLONEDEV_CONFIG env var:
+#
+#   export FORGE_CLONEDEV_CONFIG=$PWD/clone-dev.toml
+#   cargo run -- serve --manifest workflows/clone-dev/forge.project.toml ...
+#
+# The Rust-side loader (see src/runtime/clone_dev_config.rs) parses
+# this file, merges [defaults] into every [repos."<slug>"] block
+# (scalar fields: per-repo wins; arrays: concat defaults then per-repo),
+# resolves `*_env` indirections through the process environment, and
+# returns a CloneDevConfig record to FORGE.
+#
+# Secrets (bot tokens, signing secrets, GitHub tokens) MUST NEVER be
+# written as literals here — list only the env-var NAME via `*_env`.
+# The loader reads `std::env::var(<name>)` at parse time.
+
+# ── [org] ─────────────────────────────────────────────────────────
+# Friendly name for the org this clone-dev instance serves. Logged
+# verbatim by the mastermind at startup ("Loaded config for org=…").
+[org]
+name = "ncmlabs"
+
+# ── [slack] ───────────────────────────────────────────────────────
+# Organization-wide Slack surface. `default_channel` is the fallback
+# for WardenEscalation events that carry an empty `channel` payload.
+# Tokens never appear literally — list only env-var names.
+[slack]
+bot_token_env       = "SLACK_BOT_TOKEN"       # reads std::env::var("SLACK_BOT_TOKEN")
+signing_secret_env  = "SLACK_SIGNING_SECRET"  # used by /webhook/approval
+default_channel     = "C0123456789"           # channel ID, not name
+
+# ── [github] ──────────────────────────────────────────────────────
+# Token used by skill.github.create_labeled_issue and friends.
+# Env-var indirection only.
+[github]
+token_env = "GITHUB_TOKEN"
+
+# ── [labels] ──────────────────────────────────────────────────────
+# Org-wide label policies. Applied to every repo unless the per-repo
+# [repos."…"].labels_extra block adds more (arrays concat).
+[labels]
+triage  = ["needs-triage", "auto-forge"]
+blocked = ["blocked", "blocked:external"]
+
+# ── [llm.routing] ─────────────────────────────────────────────────
+# Named provider profiles from forge.config.toml. The mastermind and
+# specialists reference these by role (fast/balanced/high), so the
+# deployment picks the concrete model.
+[llm.routing]
+fast     = "claude-haiku"
+balanced = "claude-haiku"
+high     = "claude-opus"
+
+# ── [warden] ──────────────────────────────────────────────────────
+# Defaults for org_warden. Per-repo overrides (below) win when set.
+[warden]
+max_retries            = 3
+escalate_after_seconds = 3600
+
+# ── [budget] ──────────────────────────────────────────────────────
+# Organization-level spend guardrails in USD. Per-repo overrides
+# tighten the budget for individual repos; see [repos."…"].
+[budget]
+per_task_usd = 2.50
+per_hour_usd = 20.00
+
+# ── [gates] ───────────────────────────────────────────────────────
+# Approval gates. `require_approval_for` lists task-kinds that must
+# wait for human approval (PostApproval round-trip). `auto_approve_labels`
+# bypasses the gate when the issue carries ANY listed label.
+[gates]
+require_approval_for = ["release", "destructive-migration"]
+auto_approve_labels  = ["docs-only", "trivial"]
+
+# ── [defaults] ────────────────────────────────────────────────────
+# Per-repo-style knobs that apply to every repo unless [repos."…"]
+# explicitly overrides. Scalars per-repo wins; arrays concat with
+# defaults first.
+#   • slack_channel       — where this repo's progress messages land
+#   • test_cmd            — what `tester` runs after `implementer`
+#   • model_override      — swap the default llm routing for this repo
+#                           (empty = inherit [llm.routing])
+#   • budget_per_task_usd — tighten budget for this repo (-1 = inherit)
+#   • warden_max_retries  — tighten retry ceiling for this repo (-1 = inherit)
+#   • labels_extra        — appended to [labels].triage on issue open
+[defaults]
+slack_channel       = "C0123456789"
+test_cmd            = "cargo test"
+model_override      = ""
+budget_per_task_usd = 1.00
+warden_max_retries  = 3
+labels_extra        = ["auto-forge"]
+
+# ── [repos."<owner>/<name>"] ──────────────────────────────────────
+# Per-repo overrides. Each key is an "<owner>/<name>" slug matching
+# the `repo` field of CloneDevInbound / GithubIssueOpened / etc.
+#
+# Any field that is absent inherits from [defaults]. Numeric fields
+# use -1 as "inherit default"; string fields use "".
+#
+# Two examples below — replace with your own repos.
+
+[repos."ncmlabs/forge"]
+slack_channel       = "C0000000001"
+test_cmd            = "cargo test --all"
+budget_per_task_usd = 5.00         # compiler work is expensive
+warden_max_retries  = 5
+labels_extra        = ["forge-core"]
+
+[repos."ncmlabs/forge-playground"]
+slack_channel       = "C0000000002"
+test_cmd            = "echo ok"    # smoke repo — no real tests
+model_override      = "claude-haiku"
+# budget_per_task_usd omitted → inherits 1.00 from [defaults]
+# warden_max_retries omitted → inherits 3 from [defaults]
+labels_extra        = ["playground"]

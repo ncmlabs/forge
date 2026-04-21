@@ -25,8 +25,9 @@ of Track 9.
 # Set required env
 export ANTHROPIC_API_KEY=sk-ant-...
 export SLACK_BOT_TOKEN=xoxb-...
-# Optional: path that T8.2 will load (T8.1 only reads the var)
-export FORGE_CLONEDEV_CONFIG=$PWD/workflows/clone-dev/clone-dev.config.toml
+# Point at the clone-dev TOML the mastermind loads at startup (T8.2 #357).
+# Copy and edit clone-dev.toml.example at the repo root.
+export FORGE_CLONEDEV_CONFIG=$PWD/clone-dev.toml
 
 cargo run -- serve \
   --manifest workflows/clone-dev/forge.project.toml \
@@ -38,6 +39,68 @@ cargo run -- serve \
   workflows/clone-dev/main.forge \
   --port 3300
 ```
+
+## Config — `clone-dev.toml` (T8.2 #357)
+
+The mastermind loads `$FORGE_CLONEDEV_CONFIG` on startup and logs
+`Loaded config for org=<name>`. The loader lives in Rust
+(`src/runtime/clone_dev_config.rs`) and is exposed to FORGE as the
+intrinsic `config.load_clone_dev(path) -> CloneDevConfig`.
+
+### Sections
+
+| Section | Purpose |
+|---|---|
+| `[org]`           | Friendly org name (logged at boot) |
+| `[slack]`         | `bot_token_env`, `signing_secret_env`, `default_channel` |
+| `[github]`        | `token_env` for `skill.github.*` |
+| `[labels]`        | Org-wide `triage` + `blocked` label lists |
+| `[llm.routing]`   | Named provider profiles (`fast`, `balanced`, `high`) |
+| `[warden]`        | `max_retries`, `escalate_after_seconds` |
+| `[budget]`        | `per_task_usd`, `per_hour_usd` |
+| `[gates]`         | Approval-required task kinds + auto-approve labels |
+| `[defaults]`      | Per-repo-style knobs applied org-wide |
+| `[repos."<slug>"]` | Per-repo overrides keyed on `<owner>/<name>` |
+
+### Merge rules
+
+- **Scalar fields** (Text, Number): per-repo wins over `[defaults]`.
+- **Array fields** (`labels_extra`, …): concatenated — `[defaults]` first, then `[repos."…"]`.
+- **Absent per-repo numeric field**: inherits `[defaults]` value.
+- **Absent `[defaults]` numeric field**: surfaces as `-1.0` to FORGE
+  (the `repo_config_for` pure helper treats `-1.0` as "inherit org-wide default").
+
+### Secrets — env-var indirection
+
+Any TOML key suffixed `_env` is treated as an environment-variable
+NAME, not the secret itself. The loader resolves it via
+`std::env::var` at parse time:
+
+```toml
+[slack]
+bot_token_env      = "SLACK_BOT_TOKEN"       # NOT the literal token
+signing_secret_env = "SLACK_SIGNING_SECRET"
+```
+
+The resolved value appears as `config.slack_bot_token` on the FORGE
+side. Missing env vars resolve to the empty string — there is no
+error on unset, so agents can check `config.slack_bot_token == ""`
+and degrade gracefully.
+
+### Minimal example
+
+See `clone-dev.toml.example` at the repo root for a fully commented
+example covering all ten sections and both merge patterns.
+
+### Scope note
+
+T8.2 wires config into the mastermind only (the agent that actually
+reads it). Specialist-level threading — implementer/tester/reviewer
+timeouts, per-repo model overrides, and slack-adapter's escalation
+channel — lands with T8.5 (budgets) and T8.6 (approval gates),
+which are the tickets that introduce per-specialist behavior the
+config drives. The shared type + loader + merge logic are ready for
+those tracks to consume.
 
 ## Webhook secret registration
 

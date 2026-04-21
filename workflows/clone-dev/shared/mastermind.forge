@@ -28,6 +28,7 @@ use
   llm.reason
   skill.github
   env.get
+  config.load_clone_dev
 
 agent mastermind
   memory persistent
@@ -36,6 +37,7 @@ agent mastermind
     last_kind: Text
     last_target: Text
     config_path: Text
+    config: CloneDevConfig
   webhook github_issue_opened
     mode: wake
     emit: GithubIssueOpened
@@ -58,8 +60,9 @@ agent mastermind
     memory.task_counter = 0
     memory.last_kind = ""
     memory.last_target = ""
-    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.config.toml")
-    say "[mastermind] config path: {memory.config_path} (loader lands in T8.2)"
+    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml")
+    memory.config = config.load_clone_dev(memory.config_path)
+    say "[mastermind] Loaded config for org={memory.config.org_name}"
     say "[mastermind] ready — classifying inbound and routing into dev-cycle"
 
   # Primary inbound path. The HTTP `clone_dev` endpoint in main.forge
