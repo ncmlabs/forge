@@ -602,3 +602,223 @@ html {
     flex: 1;
   }
 }
+
+/* ── Cockpit (#308 T7) ────────────────────────────────────────── */
+
+.cockpit-empty,
+.cockpit-empty-inline {
+  text-align: center;
+  opacity: 0.5;
+  font-size: 0.875rem;
+  padding: 1rem;
+}
+
+.cockpit-empty-inline {
+  padding: 0.5rem;
+}
+
+.cockpit-pipeline-columns {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.cockpit-pipeline-column {
+  background: hsl(var(--b3, var(--b2)));
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  min-height: 120px;
+}
+
+.cockpit-pipeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+  padding: 0 0.25rem 0.5rem;
+  border-bottom: 1px solid hsl(var(--bc) / 0.1);
+  margin-bottom: 0.5rem;
+}
+
+.cockpit-pipeline-count {
+  background: hsl(var(--bc) / 0.15);
+  border-radius: 9999px;
+  padding: 0 0.5rem;
+  font-size: 0.65rem;
+}
+
+.cockpit-pipeline-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.cockpit-card {
+  background: hsl(var(--b1));
+  border: 1px solid hsl(var(--bc) / 0.1);
+  border-left: 3px solid hsl(var(--p));
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.cockpit-card--done {
+  border-left-color: #22c55e;
+  opacity: 0.75;
+}
+
+.cockpit-card--waiting {
+  border-left-color: #f59e0b;
+}
+
+.cockpit-card-title {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-weight: 600;
+  margin-bottom: 0.15rem;
+}
+
+.cockpit-card-meta {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  margin-bottom: 0.2rem;
+  word-break: break-word;
+}
+
+.cockpit-card-agent {
+  font-size: 0.7rem;
+  opacity: 0.85;
+}
+
+.cockpit-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+}
+
+.cockpit-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  padding: 0 0.4rem;
+  border-radius: 9999px;
+  background: hsl(var(--bc) / 0.1);
+}
+
+.cockpit-badge--waiting {
+  background: #f59e0b;
+  color: #0f172a;
+}
+
+.cockpit-decision-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.cockpit-decision-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(160px, 2fr) auto auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  background: hsl(var(--b1));
+  border-left: 3px solid #f59e0b;
+  border-radius: 0.25rem;
+  font-size: 0.8rem;
+}
+
+.cockpit-decision-agent {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-weight: 600;
+}
+
+.cockpit-decision-meta {
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+.cockpit-decision-state {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.cockpit-decision-wait {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.cockpit-decision-links a {
+  font-size: 0.75rem;
+  text-decoration: underline;
+}
+
+.cockpit-agent-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.cockpit-agent-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 9999px;
+  background: hsl(var(--b1));
+  border: 1px solid hsl(var(--bc) / 0.1);
+  font-size: 0.75rem;
+}
+
+.cockpit-agent-pill--active {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 1px #22c55e55 inset;
+}
+
+.cockpit-agent-pill--idle {
+  opacity: 0.65;
+}
+
+.cockpit-agent-pill--waiting {
+  border-color: #f59e0b;
+}
+
+.cockpit-agent-pill--degraded {
+  border-color: #ef4444;
+  background: #ef444415;
+}
+
+.cockpit-agent-name {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-weight: 600;
+}
+
+.cockpit-agent-state {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.cockpit-agent-last {
+  font-size: 0.65rem;
+  opacity: 0.5;
+}
+
+@media (max-width: 1024px) {
+  .cockpit-pipeline-columns {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .cockpit-decision-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .cockpit-pipeline-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
