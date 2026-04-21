@@ -243,10 +243,7 @@ impl CloneDevConfig {
             llm_routing_fast: raw.llm.routing.fast,
             llm_routing_balanced: raw.llm.routing.balanced,
             llm_routing_high: raw.llm.routing.high,
-            warden_max_retries: raw
-                .warden
-                .max_retries
-                .unwrap_or(DEFAULT_WARDEN_MAX_RETRIES),
+            warden_max_retries: raw.warden.max_retries.unwrap_or(DEFAULT_WARDEN_MAX_RETRIES),
             warden_escalate_after_seconds: raw
                 .warden
                 .escalate_after_seconds
@@ -300,16 +297,8 @@ impl CloneDevConfig {
             "warden_escalate_after_seconds",
             self.warden_escalate_after_seconds,
         );
-        insert_number(
-            &mut fields,
-            "budget_per_task_usd",
-            self.budget_per_task_usd,
-        );
-        insert_number(
-            &mut fields,
-            "budget_per_hour_usd",
-            self.budget_per_hour_usd,
-        );
+        insert_number(&mut fields, "budget_per_task_usd", self.budget_per_task_usd);
+        insert_number(&mut fields, "budget_per_hour_usd", self.budget_per_hour_usd);
         insert_text_array(
             &mut fields,
             "gates_require_approval_for",
@@ -352,10 +341,7 @@ fn insert_text_array(fields: &mut HashMap<String, ConfidentValue>, key: &str, it
         .iter()
         .map(|s| ConfidentValue::deterministic(Value::Text(s.clone())))
         .collect();
-    fields.insert(
-        key.into(),
-        ConfidentValue::deterministic(Value::Array(arr)),
-    );
+    fields.insert(key.into(), ConfidentValue::deterministic(Value::Array(arr)));
 }
 
 fn repo_to_record(r: &ResolvedRepo) -> ConfidentValue {
@@ -540,11 +526,7 @@ mod tests {
             "#,
         )
         .expect("parse");
-        let alpha = cfg
-            .repos
-            .iter()
-            .find(|r| r.slug == "acme/alpha")
-            .unwrap();
+        let alpha = cfg.repos.iter().find(|r| r.slug == "acme/alpha").unwrap();
         let beta = cfg.repos.iter().find(|r| r.slug == "acme/beta").unwrap();
         // defaults first, per-repo concatenated after
         assert_eq!(
@@ -609,8 +591,8 @@ mod tests {
 
     #[test]
     fn invalid_toml_returns_clean_error() {
-        let err = CloneDevConfig::from_toml_str("this is not = valid = toml")
-            .expect_err("should reject");
+        let err =
+            CloneDevConfig::from_toml_str("this is not = valid = toml").expect_err("should reject");
         assert!(
             err.contains("invalid clone-dev TOML"),
             "error should mention clone-dev TOML, got: {err}"
