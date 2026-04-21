@@ -1,0 +1,18 @@
+[project]
+name = "clone-dev"
+version = "0.1.0"
+description = "Top-level clone-developer assembly — mastermind + dev-cycle specialists + slack-adapter + mastery under one warden (#356, T8.1)"
+
+[build]
+entry = "main.forge"
+sources = [
+  "shared/types.forge",
+  "shared/events.forge",
+  "shared/mastermind.forge",
+  "../dev-cycle/agents.forge",
+  "../../examples/agents/slack-adapter/agents.forge",
+]
+
+[skills]
+slack  = { path = "../../skills/slack" }
+github = { path = "../../skills/github" }

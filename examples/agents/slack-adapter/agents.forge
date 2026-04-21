@@ -1,0 +1,235 @@
+#! boundary: server
+
+# ================================================================
+# Slack Adapter — Agents Library
+# ================================================================
+# Single outbound Slack surface behind typed events.
+#
+# Sourced by:
+#   examples/agents/slack-adapter/main.forge  (standalone runner)
+#   workflows/dev-cycle/main.forge            (dev-cycle runs this
+#                                              adapter alongside its
+#                                              specialists since #356
+#                                              rewired dev-cycle off
+#                                              direct skill.slack.*)
+#   workflows/clone-dev/main.forge            (top-level assembly)
+#
+# Specialists never call skill.slack.* directly — they emit
+# PostMessage, PostApproval, PostApprovalResult, PostThreadReply,
+# AddReaction, RequestHuman, or WardenEscalation. This adapter
+# consumes all of them. Rate-limit backpressure + .sure/.unsure
+# bookkeeping lives here.
+# ================================================================
+
+use
+  skill.slack
+
+# ── Events ─────────────────────────────────────────────────────
+
+event PostApproval
+  channel: Text
+  title: Text
+  context: Text
+  callback_url: Text
+  request_id: Text
+  thread_ts: Text
+
+event PostApprovalResult
+  channel: Text
+  request_id: Text
+  approved: Bool
+  approver: Text
+  summary: Text
+  thread_ts: Text
+
+event PostMessage
+  channel: Text
+  text: Text
+  thread_ts: Text
+
+event PostThreadReply
+  channel: Text
+  thread_ts: Text
+  text: Text
+
+event AddReaction
+  channel: Text
+  timestamp: Text
+  emoji: Text
+
+event RequestHuman
+  channel: Text
+  context: Text
+  urgency: Text
+  thread_ts: Text
+
+event WardenEscalation
+  agent_id: Text
+  cause: Text
+  detail: Text
+  channel: Text
+
+# ── Templates ──────────────────────────────────────────────────
+
+task build_approval_block
+  needs title: Text, context: Text, request_id: Text
+  gives Text
+  do
+    give "{title}\n\n{context}\n\n_request_id: {request_id}_"
+
+task build_progress_block
+  needs text: Text
+  gives Text
+  do
+    give "{text}"
+
+task build_error_block
+  needs agent_id: Text, cause: Text, detail: Text
+  gives Text
+  do
+    give ":rotating_light: *{agent_id}* — {cause}\n{detail}"
+
+task build_merge_confirmation_block
+  needs request_id: Text, approver: Text, summary: Text
+  gives Text
+  do
+    give ":white_check_mark: *MERGED* (req {request_id}) by {approver}\n{summary}"
+
+task build_rejection_block
+  needs request_id: Text, approver: Text, summary: Text
+  gives Text
+  do
+    give ":x: *REJECTED* (req {request_id}) by {approver}\n{summary}"
+
+task build_escalation_block
+  needs agent_id: Text, cause: Text, detail: Text
+  gives Text
+  do
+    give ":rotating_light: *ESCALATION* {agent_id} — {cause}\n{detail}"
+
+task slack_post_fallback
+  gives Text
+  do
+    give "SLACK_POST_FAILED: see trace"
+
+# ── Agent ──────────────────────────────────────────────────────
+
+agent slack_adapter
+  memory
+    sent_count: Number
+    failed_count: Number
+    default_escalation_channel: Text
+    last_error: Text
+  subscribe PostApproval
+  subscribe PostApprovalResult
+  subscribe PostMessage
+  subscribe PostThreadReply
+  subscribe AddReaction
+  subscribe RequestHuman
+  subscribe WardenEscalation
+
+  on start
+    memory.sent_count = 0
+    memory.failed_count = 0
+    memory.default_escalation_channel = "C0123456789"
+    memory.last_error = ""
+    say "[slack_adapter] ready"
+
+  on PostApproval(channel: Text, title: Text, context: Text, callback_url: Text, request_id: Text, thread_ts: Text)
+    body = build_approval_block(title, context, request_id)
+    approval_result = skill.slack.send_approval(channel, body, callback_url, request_id)
+    when approval_result.sure -> say "[slack_adapter] approval sent for {request_id}"
+    when approval_result.unsure -> say "[slack_adapter] approval unsure for {request_id}"
+    else -> say "[slack_adapter] approval failed for {request_id}"
+    memory.sent_count = memory.sent_count + 1
+
+  on PostApprovalResult(channel: Text, request_id: Text, approved: Bool, approver: Text, summary: Text, thread_ts: Text)
+    if approved and thread_ts == ""
+      merged_body = build_merge_confirmation_block(request_id, approver, summary)
+      merged_top = skill.slack.send_message(channel, merged_body)
+      when merged_top.sure -> say "[slack_adapter] merge confirmation posted for {request_id}"
+      else -> say "[slack_adapter] merge confirmation uncertain for {request_id}"
+      memory.sent_count = memory.sent_count + 1
+    if approved and thread_ts != ""
+      merged_body_t = build_merge_confirmation_block(request_id, approver, summary)
+      merged_thread = skill.slack.reply_thread(channel, thread_ts, merged_body_t)
+      when merged_thread.sure -> say "[slack_adapter] merge confirmation threaded for {request_id}"
+      else -> say "[slack_adapter] merge confirmation uncertain for {request_id}"
+      memory.sent_count = memory.sent_count + 1
+    if not approved and thread_ts == ""
+      rejected_body = build_rejection_block(request_id, approver, summary)
+      rejected_top = skill.slack.send_message(channel, rejected_body)
+      when rejected_top.sure -> say "[slack_adapter] rejection posted for {request_id}"
+      else -> say "[slack_adapter] rejection uncertain for {request_id}"
+      memory.sent_count = memory.sent_count + 1
+    if not approved and thread_ts != ""
+      rejected_body_t = build_rejection_block(request_id, approver, summary)
+      rejected_thread = skill.slack.reply_thread(channel, thread_ts, rejected_body_t)
+      when rejected_thread.sure -> say "[slack_adapter] rejection threaded for {request_id}"
+      else -> say "[slack_adapter] rejection uncertain for {request_id}"
+      memory.sent_count = memory.sent_count + 1
+
+  on PostMessage(channel: Text, text: Text, thread_ts: Text)
+    body = build_progress_block(text)
+    if thread_ts == ""
+      msg_top = skill.slack.send_message(channel, body)
+      when msg_top.sure -> say "[slack_adapter] message posted"
+      else -> say "[slack_adapter] message uncertain"
+      memory.sent_count = memory.sent_count + 1
+    if thread_ts != ""
+      msg_thread = skill.slack.reply_thread(channel, thread_ts, body)
+      when msg_thread.sure -> say "[slack_adapter] message threaded"
+      else -> say "[slack_adapter] message uncertain"
+      memory.sent_count = memory.sent_count + 1
+
+  on PostThreadReply(channel: Text, thread_ts: Text, text: Text)
+    reply_result = skill.slack.reply_thread(channel, thread_ts, text)
+    when reply_result.sure -> say "[slack_adapter] thread reply posted"
+    else -> say "[slack_adapter] thread reply uncertain"
+    memory.sent_count = memory.sent_count + 1
+
+  on AddReaction(channel: Text, timestamp: Text, emoji: Text)
+    reaction_result = skill.slack.add_reaction(channel, timestamp, emoji)
+    when reaction_result.sure -> say "[slack_adapter] reaction {emoji} added"
+    else -> say "[slack_adapter] reaction uncertain"
+    memory.sent_count = memory.sent_count + 1
+
+  on RequestHuman(channel: Text, context: Text, urgency: Text, thread_ts: Text)
+    human_body = "NEEDS HUMAN ({urgency}): {context}"
+    if thread_ts == ""
+      human_top = skill.slack.send_message(channel, human_body)
+      when human_top.sure -> say "[slack_adapter] human request posted ({urgency})"
+      else -> say "[slack_adapter] human request uncertain"
+      memory.sent_count = memory.sent_count + 1
+    if thread_ts != ""
+      human_thread = skill.slack.reply_thread(channel, thread_ts, human_body)
+      when human_thread.sure -> say "[slack_adapter] human request threaded ({urgency})"
+      else -> say "[slack_adapter] human request uncertain"
+      memory.sent_count = memory.sent_count + 1
+
+  on WardenEscalation(agent_id: Text, cause: Text, detail: Text, channel: Text)
+    esc_body = build_escalation_block(agent_id, cause, detail)
+    if channel == ""
+      esc_default = skill.slack.send_message(memory.default_escalation_channel, esc_body)
+      when esc_default.sure -> say "[slack_adapter] escalation posted for {agent_id}"
+      else -> say "[slack_adapter] escalation uncertain for {agent_id}"
+      memory.sent_count = memory.sent_count + 1
+    if channel != ""
+      esc_explicit = skill.slack.send_message(channel, esc_body)
+      when esc_explicit.sure -> say "[slack_adapter] escalation posted for {agent_id}"
+      else -> say "[slack_adapter] escalation uncertain for {agent_id}"
+      memory.sent_count = memory.sent_count + 1
+
+  on status
+    give "sent={memory.sent_count} failed={memory.failed_count} last_error={memory.last_error}"
+
+  if stuck for 3 turns
+    escalate to human
+
+# ── Pool ───────────────────────────────────────────────────────
+
+pool slack_adapter_pool
+  workers: slack_adapter * 1
+  strategy: fastest
+  timeout: 30s
+  fallback: slack_post_fallback
