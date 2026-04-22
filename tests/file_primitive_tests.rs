@@ -30,6 +30,15 @@ async fn run(src: &str) -> forge::runtime::confidence::ConfidentValue {
     executor.run().await.expect("run should succeed")
 }
 
+/// Render a filesystem path so it can be embedded in a FORGE string
+/// literal. Windows paths contain `\`, which FORGE parses as the start
+/// of a `\n`/`\r`/`\t`/`\"`/`\\` template escape — anything else is a
+/// syntax error. Forward slashes are portable: Windows `std::fs::*`
+/// accepts them, so the path still resolves at runtime.
+fn forge_path(p: &std::path::Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
 // ── Boundary acceptance ────────────────────────────────────────────────────
 
 #[test]
@@ -111,7 +120,7 @@ async fn file_read_returns_contents_for_existing_file() {
   contents = file.read("{}")
   give contents
 "#,
-        path.display()
+        forge_path(&path)
     );
     let result = run(&src).await;
     assert_eq!(format!("{}", result.value), "hi from disk");
@@ -166,7 +175,7 @@ fn main
   host = toml.parse(contents, "Host")
   give host
 "#,
-        path.display()
+        forge_path(&path)
     );
     let result = run(&src).await;
     if let Value::Record(fields) = &result.value {
@@ -296,7 +305,7 @@ fn main
   host = json.parse(contents, "Host")
   give host
 "#,
-        path.display()
+        forge_path(&path)
     );
     let result = run(&src).await;
     if let Value::Record(fields) = &result.value {
@@ -326,7 +335,7 @@ fn main
   cfg = json.parse(contents, "Cfg")
   give cfg
 "#,
-        path.display()
+        forge_path(&path)
     );
     let result = run(&src).await;
     assert_eq!(result.confidence, 0.0);
