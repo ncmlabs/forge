@@ -282,23 +282,33 @@ impl TaskExecutor {
         }
     }
 
-    /// Synchronous dispatch for structured-data intrinsics (#380). Lives
-    /// outside `eval_expr`'s async body so the three branches don't inflate
-    /// its combined state machine — the Windows 1 MiB default stack trips
-    /// on deep expression trees when they do (wiki docgen regression).
+    /// Dispatch the three structured-data intrinsics (`file.read`,
+    /// `toml.parse`, `json.parse` — #380). Called via `Box::pin` from
+    /// `eval_expr`, so this helper's async state machine (including the
+    /// arg-eval loop) lives on the heap and contributes only a fat
+    /// pointer's worth of state to eval_expr's combined state machine.
+    /// The separation is load-bearing — inlining the arg-eval loop and
+    /// dispatch back into eval_expr overflowed the Windows 1 MiB default
+    /// stack on the wiki docgen flow.
     #[inline(never)]
-    fn eval_structured_intrinsic(
+    async fn dispatch_structured_intrinsic(
         &self,
-        ns: &str,
-        method: &str,
-        args: &[ConfidentValue],
-    ) -> ConfidentValue {
+        ns: String,
+        method: String,
+        args: &[Spanned<CallArg>],
+        env: &mut Env,
+    ) -> Result<ConfidentValue, RuntimeError> {
+        let mut arg_vals = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+        }
         let text_arg = |i: usize| {
-            args.get(i)
+            arg_vals
+                .get(i)
                 .map(|v| format!("{}", v.value))
                 .unwrap_or_default()
         };
-        match (ns, method) {
+        Ok(match (ns.as_str(), method.as_str()) {
             ("file", "read") => {
                 let path_s = text_arg(0);
                 match std::fs::read_to_string(&path_s) {
@@ -310,9 +320,9 @@ impl TaskExecutor {
                 let text = text_arg(0);
                 let type_name = text_arg(1);
                 let Some(schema) = self.type_registry.lookup(&type_name) else {
-                    return ConfidentValue::from_parse_error(format!(
+                    return Ok(ConfidentValue::from_parse_error(format!(
                         "toml.parse: unknown type '{type_name}'"
-                    ));
+                    )));
                 };
                 match crate::runtime::structured_parse::toml_to_record(
                     &text,
@@ -327,9 +337,9 @@ impl TaskExecutor {
                 let text = text_arg(0);
                 let type_name = text_arg(1);
                 let Some(schema) = self.type_registry.lookup(&type_name) else {
-                    return ConfidentValue::from_parse_error(format!(
+                    return Ok(ConfidentValue::from_parse_error(format!(
                         "json.parse: unknown type '{type_name}'"
-                    ));
+                    )));
                 };
                 match crate::runtime::structured_parse::json_to_record(
                     &text,
@@ -341,7 +351,7 @@ impl TaskExecutor {
                 }
             }
             _ => ConfidentValue::deterministic(Value::Unit),
-        }
+        })
     }
 
     /// Wire the correlation driver + lifecycle helper for inbound event
@@ -2098,23 +2108,26 @@ impl TaskExecutor {
                     }
 
                     // file.read / toml.parse / json.parse — structured-data
-                    // intrinsics (#380). Collapsed into a single branch that
-                    // shares the arg-eval loop and delegates the actual work
-                    // to a sync helper. Keeping these out of the inline async
-                    // state machine is load-bearing: three separate async
-                    // blocks bloated eval_expr's combined state machine enough
-                    // to overflow the Windows 1 MiB default stack under deeply
-                    // nested expression evaluation (wiki docgen flow).
+                    // intrinsics (#380). Dispatch goes through a Box::pin'd
+                    // helper so the arg-eval loop's future is heap-allocated
+                    // rather than merged into eval_expr's combined state
+                    // machine. Inlining bloated the state machine enough to
+                    // overflow the Windows 1 MiB default stack on the wiki
+                    // docgen flow (six parallel reason() stages).
                     if let Expr::Ident(ref ns) = obj_expr.node {
                         if matches!(
                             (ns.as_str(), method.node.as_str()),
                             ("file", "read") | ("toml", "parse") | ("json", "parse")
                         ) {
-                            let mut arg_vals = Vec::new();
-                            for arg in args {
-                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
-                            }
-                            return Ok(self.eval_structured_intrinsic(ns, &method.node, &arg_vals));
+                            let ns = ns.clone();
+                            let method_name = method.node.clone();
+                            return Box::pin(self.dispatch_structured_intrinsic(
+                                ns,
+                                method_name,
+                                args,
+                                env,
+                            ))
+                            .await;
                         }
                     }
 
