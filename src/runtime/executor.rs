@@ -277,6 +277,68 @@ impl TaskExecutor {
         }
     }
 
+    /// Synchronous dispatch for structured-data intrinsics (#380). Lives
+    /// outside `eval_expr`'s async body so the three branches don't inflate
+    /// its combined state machine — the Windows 1 MiB default stack trips
+    /// on deep expression trees when they do (wiki docgen regression).
+    #[inline(never)]
+    fn eval_structured_intrinsic(
+        &self,
+        ns: &str,
+        method: &str,
+        args: &[ConfidentValue],
+    ) -> ConfidentValue {
+        let text_arg = |i: usize| {
+            args.get(i)
+                .map(|v| format!("{}", v.value))
+                .unwrap_or_default()
+        };
+        match (ns, method) {
+            ("file", "read") => {
+                let path_s = text_arg(0);
+                match std::fs::read_to_string(&path_s) {
+                    Ok(content) => ConfidentValue::deterministic(Value::Text(content)),
+                    Err(e) => ConfidentValue::from_io_error(format!("file.read('{path_s}'): {e}")),
+                }
+            }
+            ("toml", "parse") => {
+                let text = text_arg(0);
+                let type_name = text_arg(1);
+                let Some(schema) = self.type_registry.lookup(&type_name) else {
+                    return ConfidentValue::from_parse_error(format!(
+                        "toml.parse: unknown type '{type_name}'"
+                    ));
+                };
+                match crate::runtime::structured_parse::toml_to_record(
+                    &text,
+                    schema,
+                    &self.type_registry,
+                ) {
+                    Ok(v) => ConfidentValue::deterministic(v),
+                    Err(e) => ConfidentValue::from_parse_error(e),
+                }
+            }
+            ("json", "parse") => {
+                let text = text_arg(0);
+                let type_name = text_arg(1);
+                let Some(schema) = self.type_registry.lookup(&type_name) else {
+                    return ConfidentValue::from_parse_error(format!(
+                        "json.parse: unknown type '{type_name}'"
+                    ));
+                };
+                match crate::runtime::structured_parse::json_to_record(
+                    &text,
+                    schema,
+                    &self.type_registry,
+                ) {
+                    Ok(v) => ConfidentValue::deterministic(v),
+                    Err(e) => ConfidentValue::from_parse_error(e),
+                }
+            }
+            _ => ConfidentValue::deterministic(Value::Unit),
+        }
+    }
+
     /// Wire the correlation driver + lifecycle helper for inbound event
     /// routing. When both are present, `emit_precomputed` will consult the
     /// driver before publishing and rehydrate the target session on a hit
@@ -2030,101 +2092,24 @@ impl TaskExecutor {
                         }
                     }
 
-                    // file.read(path) — read a UTF-8 text file. Missing /
-                    // unreadable paths produce a zero-confidence Text
-                    // (`when sure / else` routes the failure); no RuntimeError.
-                    // Server-only boundary — enforced by boundary_checker. #380.
+                    // file.read / toml.parse / json.parse — structured-data
+                    // intrinsics (#380). Collapsed into a single branch that
+                    // shares the arg-eval loop and delegates the actual work
+                    // to a sync helper. Keeping these out of the inline async
+                    // state machine is load-bearing: three separate async
+                    // blocks bloated eval_expr's combined state machine enough
+                    // to overflow the Windows 1 MiB default stack under deeply
+                    // nested expression evaluation (wiki docgen flow).
                     if let Expr::Ident(ref ns) = obj_expr.node {
-                        if ns == "file" && method.node == "read" {
+                        if matches!(
+                            (ns.as_str(), method.node.as_str()),
+                            ("file", "read") | ("toml", "parse") | ("json", "parse")
+                        ) {
                             let mut arg_vals = Vec::new();
                             for arg in args {
                                 arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
                             }
-                            let path_s = arg_vals
-                                .first()
-                                .map(|v| format!("{}", v.value))
-                                .unwrap_or_default();
-                            return Ok(match std::fs::read_to_string(&path_s) {
-                                Ok(content) => ConfidentValue::deterministic(Value::Text(content)),
-                                Err(e) => ConfidentValue::from_io_error(format!(
-                                    "file.read('{path_s}'): {e}"
-                                )),
-                            });
-                        }
-                    }
-
-                    // toml.parse(text, type_name) — schema-driven TOML to
-                    // Record. The second argument names a `type` declaration
-                    // in the program; shape / parse errors surface as zero-
-                    // confidence Text. #380.
-                    if let Expr::Ident(ref ns) = obj_expr.node {
-                        if ns == "toml" && method.node == "parse" {
-                            let mut arg_vals = Vec::new();
-                            for arg in args {
-                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
-                            }
-                            let text = arg_vals
-                                .first()
-                                .map(|v| format!("{}", v.value))
-                                .unwrap_or_default();
-                            let type_name = arg_vals
-                                .get(1)
-                                .map(|v| format!("{}", v.value))
-                                .unwrap_or_default();
-                            let schema = match self.type_registry.lookup(&type_name) {
-                                Some(s) => s.clone(),
-                                None => {
-                                    return Ok(ConfidentValue::from_parse_error(format!(
-                                        "toml.parse: unknown type '{type_name}'"
-                                    )))
-                                }
-                            };
-                            return Ok(
-                                match crate::runtime::structured_parse::toml_to_record(
-                                    &text,
-                                    &schema,
-                                    &self.type_registry,
-                                ) {
-                                    Ok(v) => ConfidentValue::deterministic(v),
-                                    Err(e) => ConfidentValue::from_parse_error(e),
-                                },
-                            );
-                        }
-                    }
-
-                    // json.parse(text, type_name) — parallel to toml.parse. #380.
-                    if let Expr::Ident(ref ns) = obj_expr.node {
-                        if ns == "json" && method.node == "parse" {
-                            let mut arg_vals = Vec::new();
-                            for arg in args {
-                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
-                            }
-                            let text = arg_vals
-                                .first()
-                                .map(|v| format!("{}", v.value))
-                                .unwrap_or_default();
-                            let type_name = arg_vals
-                                .get(1)
-                                .map(|v| format!("{}", v.value))
-                                .unwrap_or_default();
-                            let schema = match self.type_registry.lookup(&type_name) {
-                                Some(s) => s.clone(),
-                                None => {
-                                    return Ok(ConfidentValue::from_parse_error(format!(
-                                        "json.parse: unknown type '{type_name}'"
-                                    )))
-                                }
-                            };
-                            return Ok(
-                                match crate::runtime::structured_parse::json_to_record(
-                                    &text,
-                                    &schema,
-                                    &self.type_registry,
-                                ) {
-                                    Ok(v) => ConfidentValue::deterministic(v),
-                                    Err(e) => ConfidentValue::from_parse_error(e),
-                                },
-                            );
+                            return Ok(self.eval_structured_intrinsic(ns, &method.node, &arg_vals));
                         }
                     }
 
