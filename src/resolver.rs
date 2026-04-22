@@ -222,6 +222,39 @@ impl CapabilityRegistry {
                 output: ForgeType::Named("CloneDevConfig".into()),
             },
         );
+        // file.read(path) -> Text — read a UTF-8 file at `path`. On failure
+        // (missing / unreadable / not UTF-8), returns a zero-confidence Text
+        // carrying the OS error so callers route via `when sure / else`.
+        // Server-only (see boundary_checker.rs). Issue #380.
+        caps.insert(
+            "file.read".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        // toml.parse(text, type_name) -> Record — schema-driven. The second
+        // arg names a `type` declaration visible to the program; the runtime
+        // coerces each TOML field to the declared type. Parse / shape errors
+        // return a zero-confidence Text. Issue #380.
+        //
+        // Output is marked dynamic here; the checker specializes it to the
+        // named type when the second argument is a string literal.
+        caps.insert(
+            "toml.parse".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Text],
+                output: ForgeType::Named("<dynamic>".into()),
+            },
+        );
+        // json.parse(text, type_name) -> Record — parallel to toml.parse.
+        caps.insert(
+            "json.parse".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Text],
+                output: ForgeType::Named("<dynamic>".into()),
+            },
+        );
         caps.insert(
             "data.store".into(),
             CapabilitySignature {
@@ -650,7 +683,7 @@ fn infer_type(
             }
             None
         }
-        Expr::MethodCall(inner, method, _) => {
+        Expr::MethodCall(inner, method, args) => {
             if let Expr::FieldAccess(target, namespace) = &inner.node {
                 if matches!(&target.node, Expr::Ident(prefix) if prefix == "skill") {
                     return registry
@@ -663,6 +696,17 @@ fn infer_type(
                         });
                 }
             }
+            // toml.parse / json.parse — refine return type from the string-
+            // literal naming the target schema, when present (#380).
+            if let Expr::Ident(ns) = &inner.node {
+                if (ns == "toml" || ns == "json") && method.node == "parse" {
+                    if let Some(arg) = args.get(1) {
+                        if let Some(type_name) = string_literal(&arg.node.value.node) {
+                            return Some(ForgeType::Named(type_name));
+                        }
+                    }
+                }
+            }
             None
         }
         Expr::Compose(parts) => parts
@@ -672,6 +716,21 @@ fn infer_type(
         Expr::ArrayLit(_) => None, // would need element type inference
         _ => None,
     }
+}
+
+/// Extract the literal string value from an expression if it is a
+/// single-part template with no interpolation — i.e., a plain string
+/// literal in user code. Used by the `toml.parse` / `json.parse`
+/// return-type refinement. (#380)
+fn string_literal(expr: &Expr) -> Option<String> {
+    if let Expr::Template(parts) = expr {
+        if parts.len() == 1 {
+            if let crate::ast::TemplatePart::Text(s) = &parts[0].node {
+                return Some(s.clone());
+            }
+        }
+    }
+    None
 }
 
 /// Infer the expected input type for an expression when used as the RHS of `>>`.

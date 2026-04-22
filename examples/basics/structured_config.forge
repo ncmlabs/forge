@@ -1,0 +1,30 @@
+#! boundary: server
+
+use
+  file.read
+  toml.parse
+
+type AuthCfg
+  issuer: Text
+  audience: Text
+
+type ServiceCfg
+  name: Text
+  port: Number
+  tls: Bool
+  tags: Text[]
+  auth: AuthCfg
+
+task load_cfg
+  needs path: Text
+  gives Text
+  do
+    contents = file.read(path)
+    cfg = toml.parse(contents, "ServiceCfg")
+    when cfg.sure -> give "loaded {cfg.name} on port {cfg.port} (tls={cfg.tls})"
+    else -> give "could not load config at {path}: {contents}"
+
+fn main
+  path = env.get("FORGE_DEMO_CFG", "examples/basics/structured_config.toml")
+  summary = load_cfg(path)
+  say summary

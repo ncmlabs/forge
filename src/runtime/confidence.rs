@@ -268,6 +268,30 @@ impl ConfidentValue {
             source: ConfidenceSource::SkillInvocation(0.0),
         }
     }
+
+    /// Create from a failed filesystem read (#380). `file.read` never raises
+    /// a RuntimeError on missing/unreadable paths — it returns a zero-
+    /// confidence Text carrying the OS error so callers route the failure
+    /// through `when sure / else`, matching the `skill.*` contract (#375).
+    pub fn from_io_error(message: impl Into<String>) -> Self {
+        Self {
+            value: Value::Text(message.into()),
+            confidence: 0.0,
+            source: ConfidenceSource::ExecResult(0.0),
+        }
+    }
+
+    /// Create from a structured-parse failure (#380). `toml.parse` /
+    /// `json.parse` surface malformed input, shape mismatches, or unknown
+    /// schemas as zero-confidence Text so the same `when sure / else`
+    /// pattern handles them.
+    pub fn from_parse_error(message: impl Into<String>) -> Self {
+        Self {
+            value: Value::Text(message.into()),
+            confidence: 0.0,
+            source: ConfidenceSource::Derived(0.0),
+        }
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────

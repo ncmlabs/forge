@@ -1,0 +1,8 @@
+name    = "forge-demo"
+port    = 8080
+tls     = true
+tags    = ["web", "demo", "example"]
+
+[auth]
+issuer   = "https://example.com"
+audience = "forge-demo"
