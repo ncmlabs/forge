@@ -174,7 +174,10 @@ pub struct TaskExecutor {
     agent_lifecycle: Option<Arc<crate::runtime::agent_lifecycle::AgentLifecycle>>,
     /// Type registry built from the program's `type` declarations, used by
     /// structured-data intrinsics like `toml.parse` / `json.parse` (#380).
-    type_registry: crate::runtime::type_registry::TypeRegistry,
+    /// Behind an Arc because TaskExecutor is cloned into every async future
+    /// that dispatches work; keeping the field pointer-sized matters for
+    /// the combined state-machine footprint on small-stack platforms.
+    type_registry: Arc<crate::runtime::type_registry::TypeRegistry>,
 }
 
 impl Clone for TaskExecutor {
@@ -241,7 +244,9 @@ impl TaskExecutor {
             }
         }
 
-        let type_registry = crate::runtime::type_registry::TypeRegistry::from_program(&program);
+        let type_registry = Arc::new(crate::runtime::type_registry::TypeRegistry::from_program(
+            &program,
+        ));
 
         Self {
             program,
