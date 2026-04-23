@@ -66,3 +66,38 @@ event CrossProjectRequested
   target_repo: Text
   description: Text
   labels: Text
+
+# ================================================================
+# T8.3 (#358) — deterministic label-based routing
+# ================================================================
+# `label_router_agent` (stage2/label_router_agent.forge) subscribes to
+# `GithubIssueLabeled` (populated from a flat webhook body) and emits
+# `TaskRouted` after consulting the pure `label_router` task. If two
+# namespace-matching labels appear on one issue, a `RoutingConflict`
+# event is emitted alongside a fallback `TaskRouted` to triage.
+#
+# NOTE: `GithubIssueLabeled` is a **flat** event. Native GitHub webhook
+# payloads have nested `issue.labels[].name` — out of scope for T8.3;
+# integration tests POST a pre-reshaped flat body. A follow-up issue
+# will teach the wake webhook driver to extract nested GH fields.
+event GithubIssueLabeled
+  repo: Text
+  issue_number: Number
+  title: Text
+  body: Text
+  labels: Text[]
+
+event TaskRouted
+  task_id: Text
+  specialist: Text
+  issue_id: Text
+  repo: Text
+  labels: Text[]
+  matched_label: Text
+  route_reason: Text
+
+event RoutingConflict
+  issue_id: Text
+  repo: Text
+  labels: Text[]
+  note: Text

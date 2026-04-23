@@ -1,0 +1,11 @@
+{
+  "name": "label_router_no_match",
+  "category": "runtime",
+  "description": "T8.3 (#358): pure label_router falls back to triage when no labels match (unlabeled + unknown labels)",
+  "input": "type LabelRoute\n  label: Text\n  specialist: Text\n\ntype RoutingDecision\n  specialist: Text\n  matched_label: Text\n  route_reason: Text\n\npure route_if_matches\n  needs r: LabelRoute, l_lower: Text\n  gives LabelRoute[]\n  do\n    route_label = r.label\n    route_lower = route_label.lower()\n    if route_lower == l_lower\n      give [r]\n    give []\n\npure routes_matching_label\n  needs l: Text, routes: LabelRoute[]\n  gives LabelRoute[]\n  do\n    l_lower = l.lower()\n    result = []\n    for r in routes\n      hit = route_if_matches(r, l_lower)\n      result = result + hit\n    give result\n\npure match_routes\n  needs issue_labels: Text[], routes: LabelRoute[]\n  gives LabelRoute[]\n  do\n    result = []\n    for l in issue_labels\n      hits = routes_matching_label(l, routes)\n      result = result + hits\n    give result\n\npure label_router\n  needs issue_labels: Text[], routes: LabelRoute[], fallback: Text\n  gives RoutingDecision\n  do\n    matches = match_routes(issue_labels, routes)\n    if matches.length == 0\n      give RoutingDecision(specialist: fallback, matched_label: \"\", route_reason: \"no-matching-label\")\n    if matches.length > 1\n      give RoutingDecision(specialist: fallback, matched_label: \"\", route_reason: \"multi-label-conflict\")\n    give RoutingDecision(specialist: matches[0].specialist, matched_label: matches[0].label, route_reason: \"unique-label-match\")\n\nfn main\n  routes = [LabelRoute(label: \"clone-dev:plan\", specialist: \"plan_specialist\")]\n  unlabeled = label_router([], routes, \"triage_specialist\")\n  unknown_only = label_router([\"bug\", \"priority:high\"], routes, \"triage_specialist\")\n  say unlabeled.specialist\n  say unlabeled.route_reason\n  say unknown_only.specialist\n  say unknown_only.route_reason\n",
+  "mock_responses": [],
+  "expected": {
+    "outcome": "run_ok",
+    "trace_shape": []
+  }
+}

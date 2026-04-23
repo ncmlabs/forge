@@ -39,9 +39,25 @@ token_env = "GITHUB_TOKEN"
 # ── [labels] ──────────────────────────────────────────────────────
 # Org-wide label policies. Applied to every repo unless the per-repo
 # [repos."…"].labels_extra block adds more (arrays concat).
+#
+# T8.3 (#358) adds deterministic specialist routing. `namespace` +
+# each `specialist_<suffix>` combine to form a full label string the
+# router matches on (e.g. `"clone-dev:plan" → plan_specialist`). An
+# empty `namespace` disables routing; empty `specialist_<suffix>`
+# skips that suffix; empty `specialist_triage` falls back to the
+# literal `"triage_specialist"`.
 [labels]
 triage  = ["needs-triage", "auto-forge"]
 blocked = ["blocked", "blocked:external"]
+# T8.3 (#358) — deterministic specialist routing
+namespace          = "clone-dev"
+specialist_plan    = "plan_specialist"
+specialist_impl    = "impl_specialist"
+specialist_test    = "test_specialist"
+specialist_review  = "review_specialist"
+specialist_merge   = "merge_specialist"
+specialist_ops     = "ops_specialist"
+specialist_triage  = "triage_specialist"   # fallback for unlabeled / multi-labeled issues
 
 # ── [llm.routing] ─────────────────────────────────────────────────
 # Named provider profiles from forge.config.toml. The mastermind and

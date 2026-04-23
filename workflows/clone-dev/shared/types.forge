@@ -171,6 +171,13 @@ type RepoConfig
   warden_max_retries: Number
   labels_extra: Text[]
 
+# T8.3 (#358): deterministic label → specialist routing.
+# The Rust loader assembles full label strings `"{namespace}:{suffix}"`
+# so the `pure label_router` in stage2/ does exact equality only.
+type LabelRoute
+  label: Text
+  specialist: Text
+
 type CloneDevConfig
   org_name: Text
   slack_bot_token: Text
@@ -189,6 +196,9 @@ type CloneDevConfig
   gates_require_approval_for: Text[]
   gates_auto_approve_labels: Text[]
   repos: RepoConfig[]
+  labels_namespace: Text
+  labels_fallback_specialist: Text
+  labels_routes: LabelRoute[]
 
 pure repo_config_for
   needs cfg: CloneDevConfig, slug: Text

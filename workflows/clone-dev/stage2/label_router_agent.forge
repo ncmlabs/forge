@@ -1,0 +1,46 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev — Stage-2 Label Router Agent (T8.3, #358)
+# ================================================================
+# Thin wrapper around the `pure label_router` in label_router.forge.
+# Pure tasks cannot emit — agents can — so this agent subscribes to
+# `GithubIssueLabeled`, runs the router, emits `TaskRouted`, and on
+# multi-label-conflict also emits `RoutingConflict` for observability.
+#
+# Runs in parallel with the existing `mastermind`. Mastermind keeps
+# doing `reason`-based classification on `CloneDevInbound` (different
+# event, different ingress). `TaskRouted` is the new deterministic
+# handoff signal; rewiring dev-cycle specialists to consume it is
+# deferred to a later T8 task.
+#
+# Webhook body shape: flat pre-reshaped JSON for now — the native
+# GitHub `issues` payload has nested `issue.labels[].name`, which the
+# wake webhook driver does not yet extract. A follow-up issue will
+# teach the driver to extract nested fields; until then, the caller
+# (test harness, or an upstream shim) pre-flattens.
+# ================================================================
+
+use
+  env.get
+  config.load_clone_dev
+
+agent label_router_agent
+  memory persistent
+    config: CloneDevConfig
+  webhook github_issue_labeled
+    mode: wake
+    emit: GithubIssueLabeled
+  subscribe GithubIssueLabeled
+
+  on start
+    memory.config = config.load_clone_dev(env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml"))
+    say "[label_router] ready — {memory.config.labels_routes.length} route(s) under namespace={memory.config.labels_namespace}"
+
+  on GithubIssueLabeled(repo: Text, issue_number: Number, title: Text, body: Text, labels: Text[])
+    task_id = "T-{repo}-{issue_number}"
+    decision = label_router(labels, memory.config.labels_routes, memory.config.labels_fallback_specialist)
+    emit TaskRouted(task_id: task_id, specialist: decision.specialist, issue_id: "{issue_number}", repo: repo, labels: labels, matched_label: decision.matched_label, route_reason: decision.route_reason)
+    if decision.route_reason == "multi-label-conflict"
+      emit RoutingConflict(issue_id: "{issue_number}", repo: repo, labels: labels, note: "multiple namespace labels on one issue")
+      say "[label_router] CONFLICT {repo}#{issue_number}: {labels.length} labels, routed to {decision.specialist}"

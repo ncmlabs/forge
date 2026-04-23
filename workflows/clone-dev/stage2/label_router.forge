@@ -1,0 +1,76 @@
+#! boundary: shared
+
+# ================================================================
+# Clone-Dev — Stage-2 Deterministic Label Routing (T8.3, #358)
+# ================================================================
+# Pure task that converts an issue's labels into a RoutingDecision,
+# with zero `reason`/`classify`/skill/search calls. Labels are the
+# contract (FORGE token-economy first principle).
+#
+# The Rust loader (src/runtime/clone_dev_config.rs) assembles full
+# label strings "{namespace}:{suffix}" at config-load time, so this
+# task matches on pure equality — no FORGE string-prefix primitive
+# required.
+#
+# Three outcomes, encoded in RoutingDecision.route_reason:
+#   unique-label-match    → exactly one namespace label present
+#   no-matching-label     → zero namespace labels → fallback specialist
+#   multi-label-conflict  → two or more namespace labels → fallback
+#
+# LabelRoute type and the CloneDevConfig fields it populates live in
+# shared/types.forge — they're loader concerns, not router concerns.
+# ================================================================
+
+type RoutingDecision
+  specialist: Text
+  matched_label: Text
+  route_reason: Text
+
+# Inner helper: return [r] if r's label matches the (lowercased) issue
+# label, else []. Split out so the outer loop stays flat — nested for
+# with conditional emission is not supported by the pure parser today.
+pure route_if_matches
+  needs r: LabelRoute, l_lower: Text
+  gives LabelRoute[]
+  do
+    route_label = r.label
+    route_lower = route_label.lower()
+    if route_lower == l_lower
+      give [r]
+    give []
+
+# All routes whose label equals a single issue label (case-insensitive).
+pure routes_matching_label
+  needs l: Text, routes: LabelRoute[]
+  gives LabelRoute[]
+  do
+    l_lower = l.lower()
+    result = []
+    for r in routes
+      hit = route_if_matches(r, l_lower)
+      result = result + hit
+    give result
+
+# Collect every (label, route) pair where the issue label matches a
+# configured route. Case-insensitive because GitHub preserves case in
+# the webhook body but treats labels case-insensitively server-side.
+pure match_routes
+  needs issue_labels: Text[], routes: LabelRoute[]
+  gives LabelRoute[]
+  do
+    result = []
+    for l in issue_labels
+      hits = routes_matching_label(l, routes)
+      result = result + hits
+    give result
+
+pure label_router
+  needs issue_labels: Text[], routes: LabelRoute[], fallback: Text
+  gives RoutingDecision
+  do
+    matches = match_routes(issue_labels, routes)
+    if matches.length == 0
+      give RoutingDecision(specialist: fallback, matched_label: "", route_reason: "no-matching-label")
+    if matches.length > 1
+      give RoutingDecision(specialist: fallback, matched_label: "", route_reason: "multi-label-conflict")
+    give RoutingDecision(specialist: matches[0].specialist, matched_label: matches[0].label, route_reason: "unique-label-match")

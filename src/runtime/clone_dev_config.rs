@@ -71,6 +71,26 @@ pub struct LabelsSection {
     pub triage: Vec<String>,
     #[serde(default)]
     pub blocked: Vec<String>,
+    // T8.3 (#358) — deterministic specialist routing. The loader
+    // assembles full label strings "{namespace}:{suffix}" so the
+    // FORGE-side pure task matches on exact equality only (no FORGE
+    // string-prefix primitive needed).
+    #[serde(default)]
+    pub namespace: String,
+    #[serde(default)]
+    pub specialist_plan: String,
+    #[serde(default)]
+    pub specialist_impl: String,
+    #[serde(default)]
+    pub specialist_test: String,
+    #[serde(default)]
+    pub specialist_review: String,
+    #[serde(default)]
+    pub specialist_merge: String,
+    #[serde(default)]
+    pub specialist_ops: String,
+    #[serde(default)]
+    pub specialist_triage: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -171,6 +191,16 @@ pub struct CloneDevConfig {
     pub gates_require_approval_for: Vec<String>,
     pub gates_auto_approve_labels: Vec<String>,
     pub repos: Vec<ResolvedRepo>,
+    // T8.3 (#358) — deterministic specialist routing.
+    pub labels_namespace: String,
+    pub labels_fallback_specialist: String,
+    pub labels_routes: Vec<LabelRoute>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LabelRoute {
+    pub label: String, // "namespace:suffix", loader-assembled
+    pub specialist: String,
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +220,9 @@ pub struct ResolvedRepo {
 const INHERIT_F64: f64 = -1.0;
 const DEFAULT_WARDEN_MAX_RETRIES: f64 = 3.0;
 const DEFAULT_WARDEN_ESCALATE_AFTER_SEC: f64 = 3600.0;
+// T8.3 (#358): fallback specialist when [labels].specialist_triage is
+// unset. Keeps the router agent functional under minimal config.
+const DEFAULT_FALLBACK_SPECIALIST: &str = "triage_specialist";
 
 impl CloneDevConfig {
     pub fn from_toml_str(s: &str) -> Result<Self, String> {
@@ -232,6 +265,14 @@ impl CloneDevConfig {
         // Stable ordering makes test assertions and log output predictable.
         repos.sort_by(|a, b| a.slug.cmp(&b.slug));
 
+        let labels_namespace = raw.labels.namespace.clone();
+        let labels_fallback_specialist = if raw.labels.specialist_triage.is_empty() {
+            DEFAULT_FALLBACK_SPECIALIST.to_string()
+        } else {
+            raw.labels.specialist_triage.clone()
+        };
+        let labels_routes = assemble_label_routes(&labels_namespace, &raw.labels);
+
         CloneDevConfig {
             org_name: raw.org.name,
             slack_bot_token: resolve_env(&raw.slack.bot_token_env),
@@ -253,6 +294,9 @@ impl CloneDevConfig {
             gates_require_approval_for: raw.gates.require_approval_for,
             gates_auto_approve_labels: raw.gates.auto_approve_labels,
             repos,
+            labels_namespace,
+            labels_fallback_specialist,
+            labels_routes,
         }
     }
 
@@ -314,6 +358,22 @@ impl CloneDevConfig {
             "repos".into(),
             ConfidentValue::deterministic(Value::Array(repo_records)),
         );
+        // T8.3 (#358) — deterministic specialist routing.
+        insert_text(&mut fields, "labels_namespace", &self.labels_namespace);
+        insert_text(
+            &mut fields,
+            "labels_fallback_specialist",
+            &self.labels_fallback_specialist,
+        );
+        let route_records: Vec<ConfidentValue> = self
+            .labels_routes
+            .iter()
+            .map(label_route_to_record)
+            .collect();
+        fields.insert(
+            "labels_routes".into(),
+            ConfidentValue::deterministic(Value::Array(route_records)),
+        );
         Value::Record(fields)
     }
 }
@@ -342,6 +402,40 @@ fn insert_text_array(fields: &mut HashMap<String, ConfidentValue>, key: &str, it
         .map(|s| ConfidentValue::deterministic(Value::Text(s.clone())))
         .collect();
     fields.insert(key.into(), ConfidentValue::deterministic(Value::Array(arr)));
+}
+
+// T8.3 (#358): build the ordered LabelRoute list from the raw TOML
+// section. Suffix order (plan/impl/test/review/merge/ops) is load-
+// bearing: FORGE tests assert on .labels_routes[0] matching "plan".
+// An empty namespace disables routing; empty specialist strings are
+// skipped (the DoD allows a partial route table).
+fn assemble_label_routes(namespace: &str, labels: &LabelsSection) -> Vec<LabelRoute> {
+    if namespace.is_empty() {
+        return Vec::new();
+    }
+    let pairs: [(&str, &String); 6] = [
+        ("plan", &labels.specialist_plan),
+        ("impl", &labels.specialist_impl),
+        ("test", &labels.specialist_test),
+        ("review", &labels.specialist_review),
+        ("merge", &labels.specialist_merge),
+        ("ops", &labels.specialist_ops),
+    ];
+    pairs
+        .iter()
+        .filter(|(_, specialist)| !specialist.is_empty())
+        .map(|(suffix, specialist)| LabelRoute {
+            label: format!("{namespace}:{suffix}"),
+            specialist: (*specialist).clone(),
+        })
+        .collect()
+}
+
+fn label_route_to_record(r: &LabelRoute) -> ConfidentValue {
+    let mut fields = HashMap::new();
+    insert_text(&mut fields, "label", &r.label);
+    insert_text(&mut fields, "specialist", &r.specialist);
+    ConfidentValue::deterministic(Value::Record(fields))
 }
 
 fn repo_to_record(r: &ResolvedRepo) -> ConfidentValue {
@@ -672,5 +766,114 @@ mod tests {
         let missing = std::path::PathBuf::from("/nonexistent/forge-t357/not-a-file.toml");
         let err = load(&missing).expect_err("missing file should error");
         assert!(err.contains("cannot resolve config path"));
+    }
+
+    // ── T8.3 (#358) — deterministic specialist routing ────────────
+
+    #[test]
+    fn labels_routes_assemble_full_label_strings() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            namespace          = "clone-dev"
+            specialist_plan    = "plan_specialist"
+            specialist_impl    = "impl_specialist"
+            specialist_test    = "test_specialist"
+            specialist_review  = "review_specialist"
+            specialist_merge   = "merge_specialist"
+            specialist_ops     = "ops_specialist"
+            specialist_triage  = "triage_specialist"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.labels_namespace, "clone-dev");
+        assert_eq!(cfg.labels_fallback_specialist, "triage_specialist");
+        let labels: Vec<&str> = cfg.labels_routes.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "clone-dev:plan",
+                "clone-dev:impl",
+                "clone-dev:test",
+                "clone-dev:review",
+                "clone-dev:merge",
+                "clone-dev:ops",
+            ]
+        );
+        assert_eq!(cfg.labels_routes[1].specialist, "impl_specialist");
+    }
+
+    #[test]
+    fn labels_fallback_defaults_when_specialist_triage_missing() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            namespace       = "clone-dev"
+            specialist_plan = "plan_specialist"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.labels_fallback_specialist, "triage_specialist");
+    }
+
+    #[test]
+    fn labels_empty_namespace_yields_no_routes() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            specialist_plan = "plan_specialist"
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.labels_routes.is_empty());
+    }
+
+    #[test]
+    fn labels_partial_specialists_produces_partial_routes() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            namespace       = "clone-dev"
+            specialist_plan = "plan_specialist"
+            specialist_impl = "impl_specialist"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.labels_routes.len(), 2);
+        assert_eq!(cfg.labels_routes[0].label, "clone-dev:plan");
+        assert_eq!(cfg.labels_routes[1].label, "clone-dev:impl");
+    }
+
+    #[test]
+    fn to_forge_record_exposes_label_routes_array() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            namespace       = "clone-dev"
+            specialist_plan = "plan_specialist"
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        assert!(fields.contains_key("labels_namespace"));
+        assert!(fields.contains_key("labels_fallback_specialist"));
+        let routes = fields.get("labels_routes").expect("labels_routes field");
+        match &routes.value {
+            Value::Array(items) => {
+                assert_eq!(items.len(), 1);
+                match &items[0].value {
+                    Value::Record(r) => {
+                        assert!(r.contains_key("label"));
+                        assert!(r.contains_key("specialist"));
+                    }
+                    _ => panic!("route item should be a Record"),
+                }
+            }
+            _ => panic!("labels_routes should be an Array"),
+        }
     }
 }

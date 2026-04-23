@@ -338,6 +338,8 @@ paths = [
   "workflows/clone-dev/shared/types.forge",
   "workflows/clone-dev/shared/events.forge",
   "workflows/clone-dev/shared/mastermind.forge",
+  "workflows/clone-dev/stage2/label_router.forge",
+  "workflows/clone-dev/stage2/label_router_agent.forge",
   "workflows/dev-cycle/agents.forge",
   "examples/agents/slack-adapter/agents.forge",
 ]
