@@ -2580,6 +2580,8 @@ Built-in capability families:
 | Markdown | `markdown.render` |
 | Assets | `asset` |
 | Command | `command.status`, `command.output`, `command.cancel` |
+| Files | `file.read` (server-only) |
+| Structured Data | `toml.parse`, `json.parse` |
 | Skills | `skill.<namespace>.<capability>(...)` |
 
 `search "query"` is restricted to `#! boundary: server`.
@@ -2628,7 +2630,83 @@ The `github` skill ships two parallel issue-creation capabilities:
 
 ---
 
-## 22. Templates and Raw Interpolation
+## 22. Files and Structured Data
+
+FORGE exposes three built-in capabilities for loading structured config from disk without per-use-case Rust escape hatches:
+
+| Capability | Signature | Boundary | Notes |
+|---|---|---|---|
+| `file.read(path)` | `Text -> Text` | server-only | Reads a UTF-8 file and returns its contents. Errors surface as low-confidence text. |
+| `toml.parse(text, "TypeName")` | `(Text, Text) -> TypeName` | any | Parses TOML into a typed record using the named `type` declaration as the schema. |
+| `json.parse(text, "TypeName")` | `(Text, Text) -> TypeName` | any | Parses JSON into a typed record using the named `type` declaration as the schema. |
+
+### Schema-Driven Parsing
+
+The second argument to `toml.parse` / `json.parse` is a **string literal** naming a `type` declared in the same program. The checker uses that literal to refine the expression's return type to `Named(<TypeName>)`, so field access through `.field_name` is type-checked normally.
+
+```forge
+#! boundary: server
+
+use
+  file.read
+  toml.parse
+  llm.reason
+
+type Persona
+  name: Text
+  tone: Text
+  specialty: Text
+
+task load_persona
+  do
+    raw = file.read("persona.toml")
+    when raw.sure ->
+      persona = toml.parse(raw, "Persona")
+      when persona.sure ->
+        give reason "Introduce {persona.name} who favors {persona.tone}"
+      else ->
+        give "Persona config malformed"
+    else ->
+      give "Could not read persona.toml"
+```
+
+### Coercion Rules
+
+The runtime coerces format-native values against each declared field's `ForgeType`:
+
+- **Text / Number / Bool**: coerced directly from the source literal.
+- **Array[T]**: each element coerced to `T`.
+- **Named(InnerType)**: recurses into a nested table/object using `InnerType`'s schema.
+- **Missing fields**: filled with a type-appropriate default (empty text, zero, false, empty array, empty record).
+- **Unknown type names**: parse returns a low-confidence error value; access through `.field` is still typed, but `result.sure` will be false.
+
+JSON `null` is treated as "missing" and triggers the default-fill path.
+
+### Error Surfacing
+
+Every failure mode returns a `ConfidentValue` with confidence `0.0`, matching the `skill.*` pattern from issue #375:
+
+| Failure | Source |
+|---|---|
+| File not found / IO error | `ConfidenceSource::ExecResult(0.0)` |
+| Invalid TOML/JSON syntax | `ConfidenceSource::Derived(0.0)` |
+| Schema mismatch (wrong shape, unknown type name) | `ConfidenceSource::Derived(0.0)` |
+
+The compiler requires callers to bind the result and discriminate with `when x.sure` / `else` before using it — the same taint-clearing rules as any other uncertain operation (see Section 17).
+
+### Boundary Rule for `file.read`
+
+`file.read` is rejected in `#! boundary: client` and `#! boundary: shared` with a diagnostic, alongside the existing server-only rules for `search` and `data.*`. `toml.parse` and `json.parse` are pure string-to-record transforms and remain available on every boundary.
+
+### Runtime Notes
+
+- The schema index (`src/runtime/type_registry.rs`) is built once at `TaskExecutor::new` from all `TopLevel::TypeDef` items in the program.
+- Coercion lives in `src/runtime/structured_parse.rs`; both formats normalize through a shared `Generic` intermediate so format-specific parsing is confined to the entry point.
+- `clone-dev`'s `[repos."<owner>/<name>"]` dynamic-key shape is **not** expressible through `toml.parse`: the schema is drawn from a `type` declaration with named fields, so tables keyed by arbitrary user strings have no FORGE-side representation. `config.load_clone_dev` remains as a Rust-side escape hatch for that case.
+
+---
+
+## 23. Templates and Raw Interpolation
 
 Normal template interpolation uses `{expr}` and is escaped in HTML contexts. Raw interpolation uses `{!expr}` and skips HTML escaping. Use raw interpolation only for trusted or already-sanitized HTML.
 
@@ -2640,7 +2718,7 @@ endpoint page() -> Html
 
 ---
 
-## 23. Example Validation Buckets
+## 24. Example Validation Buckets
 
 Examples are not all validated the same way:
 

@@ -51,6 +51,7 @@ Treat source and tests as authoritative when docs disagree. Follow the GitHub is
 Current FORGE surfaces to account for include:
 - uncertainty handling: do not directly `give` oracle/runtime results; bind then use `when result.sure`, `when result.unsure`, and `else`
 - `exec`, `command`, background `command.status/output/cancel`
+- `file.read` (server-only) plus schema-driven `toml.parse(text, "TypeName")` / `json.parse(text, "TypeName")` built-ins; `TypeName` is a string literal naming a `type` in the same program and refines the return type to `Named(TypeName)`
 - `session`, `on progress`/`on complete` hooks, `isolate worktree`, and `gives AgentResult`
 - `AgentResult` fields and `metadata.verification`
 - `knowledge store`, `recall`, `learn`

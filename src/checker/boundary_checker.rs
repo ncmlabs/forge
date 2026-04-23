@@ -620,6 +620,25 @@ fn check_refs_in_expr(
                         .with_help("call a server endpoint that reads or writes the data, or move this code to `#! boundary: server`"),
                     );
                 }
+                // file.read: filesystem access is server-only. Clients and
+                // shared-boundary code reading arbitrary paths is a footgun
+                // (data exfiltration, ambient capability escape). #380.
+                if ns == "file" && method.node == "read" && boundary != BoundaryKind::Server {
+                    let boundary_name = match boundary {
+                        BoundaryKind::Client => "client",
+                        BoundaryKind::Shared => "shared",
+                        _ => unreachable!(),
+                    };
+                    diagnostics.push(
+                        Diagnostic::error(
+                            file,
+                            format!("file.read() is not allowed in {} boundary", boundary_name),
+                            inner.span.start..method.span.end,
+                            "file.read touches the host filesystem and must live in server boundary files",
+                        )
+                        .with_help("move this code to a file with `#! boundary: server`, or surface the file contents via a server endpoint"),
+                    );
+                }
             }
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
             for arg in args {

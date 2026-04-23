@@ -172,6 +172,12 @@ pub struct TaskExecutor {
     correlation_driver: Option<crate::runtime::correlation_driver::CorrelationDriver>,
     /// Agent lifecycle helper for rehydrate-before-publish (issues #333/#334).
     agent_lifecycle: Option<Arc<crate::runtime::agent_lifecycle::AgentLifecycle>>,
+    /// Type registry built from the program's `type` declarations, used by
+    /// structured-data intrinsics like `toml.parse` / `json.parse` (#380).
+    /// Behind an Arc because TaskExecutor is cloned into every async future
+    /// that dispatches work; keeping the field pointer-sized matters for
+    /// the combined state-machine footprint on small-stack platforms.
+    type_registry: Arc<crate::runtime::type_registry::TypeRegistry>,
 }
 
 impl Clone for TaskExecutor {
@@ -204,6 +210,7 @@ impl Clone for TaskExecutor {
             working_dir: self.working_dir.clone(),
             correlation_driver: self.correlation_driver.clone(),
             agent_lifecycle: self.agent_lifecycle.clone(),
+            type_registry: self.type_registry.clone(),
         }
     }
 }
@@ -237,6 +244,10 @@ impl TaskExecutor {
             }
         }
 
+        let type_registry = Arc::new(crate::runtime::type_registry::TypeRegistry::from_program(
+            &program,
+        ));
+
         Self {
             program,
             providers,
@@ -267,7 +278,80 @@ impl TaskExecutor {
             working_dir: None,
             correlation_driver: None,
             agent_lifecycle: None,
+            type_registry,
         }
+    }
+
+    /// Dispatch the three structured-data intrinsics (`file.read`,
+    /// `toml.parse`, `json.parse` — #380). Called via `Box::pin` from
+    /// `eval_expr`, so this helper's async state machine (including the
+    /// arg-eval loop) lives on the heap and contributes only a fat
+    /// pointer's worth of state to eval_expr's combined state machine.
+    /// The separation is load-bearing — inlining the arg-eval loop and
+    /// dispatch back into eval_expr overflowed the Windows 1 MiB default
+    /// stack on the wiki docgen flow.
+    #[inline(never)]
+    async fn dispatch_structured_intrinsic(
+        &self,
+        ns: String,
+        method: String,
+        args: &[Spanned<CallArg>],
+        env: &mut Env,
+    ) -> Result<ConfidentValue, RuntimeError> {
+        let mut arg_vals = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+        }
+        let text_arg = |i: usize| {
+            arg_vals
+                .get(i)
+                .map(|v| format!("{}", v.value))
+                .unwrap_or_default()
+        };
+        Ok(match (ns.as_str(), method.as_str()) {
+            ("file", "read") => {
+                let path_s = text_arg(0);
+                match std::fs::read_to_string(&path_s) {
+                    Ok(content) => ConfidentValue::deterministic(Value::Text(content)),
+                    Err(e) => ConfidentValue::from_io_error(format!("file.read('{path_s}'): {e}")),
+                }
+            }
+            ("toml", "parse") => {
+                let text = text_arg(0);
+                let type_name = text_arg(1);
+                let Some(schema) = self.type_registry.lookup(&type_name) else {
+                    return Ok(ConfidentValue::from_parse_error(format!(
+                        "toml.parse: unknown type '{type_name}'"
+                    )));
+                };
+                match crate::runtime::structured_parse::toml_to_record(
+                    &text,
+                    schema,
+                    &self.type_registry,
+                ) {
+                    Ok(v) => ConfidentValue::deterministic(v),
+                    Err(e) => ConfidentValue::from_parse_error(e),
+                }
+            }
+            ("json", "parse") => {
+                let text = text_arg(0);
+                let type_name = text_arg(1);
+                let Some(schema) = self.type_registry.lookup(&type_name) else {
+                    return Ok(ConfidentValue::from_parse_error(format!(
+                        "json.parse: unknown type '{type_name}'"
+                    )));
+                };
+                match crate::runtime::structured_parse::json_to_record(
+                    &text,
+                    schema,
+                    &self.type_registry,
+                ) {
+                    Ok(v) => ConfidentValue::deterministic(v),
+                    Err(e) => ConfidentValue::from_parse_error(e),
+                }
+            }
+            _ => ConfidentValue::deterministic(Value::Unit),
+        })
     }
 
     /// Wire the correlation driver + lifecycle helper for inbound event
@@ -2020,6 +2104,30 @@ impl TaskExecutor {
                                 .unwrap_or_default();
                             let path = std::path::Path::new(&path_s);
                             return crate::runtime::clone_dev_config::load_as_forge_value(path);
+                        }
+                    }
+
+                    // file.read / toml.parse / json.parse — structured-data
+                    // intrinsics (#380). Dispatch goes through a Box::pin'd
+                    // helper so the arg-eval loop's future is heap-allocated
+                    // rather than merged into eval_expr's combined state
+                    // machine. Inlining bloated the state machine enough to
+                    // overflow the Windows 1 MiB default stack on the wiki
+                    // docgen flow (six parallel reason() stages).
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if matches!(
+                            (ns.as_str(), method.node.as_str()),
+                            ("file", "read") | ("toml", "parse") | ("json", "parse")
+                        ) {
+                            let ns = ns.clone();
+                            let method_name = method.node.clone();
+                            return Box::pin(self.dispatch_structured_intrinsic(
+                                ns,
+                                method_name,
+                                args,
+                                env,
+                            ))
+                            .await;
                         }
                     }
 

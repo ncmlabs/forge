@@ -115,6 +115,12 @@ check = "ok"
 run = "mock"
 
 [[cases]]
+name = "structured config: file.read + toml.parse (#380)"
+paths = ["examples/basics/structured_config.forge"]
+check = "ok"
+run = "mock"
+
+[[cases]]
 name = "schedule block demo (#331)"
 paths = ["examples/basics/schedule.forge"]
 check = "ok"

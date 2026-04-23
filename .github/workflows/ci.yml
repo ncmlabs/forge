@@ -40,7 +40,17 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test
+      - name: Run test suite
+        # Windows default thread stack is 1 MiB; cargo test spawns each test
+        # on a thread that honors RUST_MIN_STACK. The wiki docgen flow
+        # (six parallel reason() stages with multi-KB prompts) sits at the
+        # edge of that limit and tips into a stack overflow on minor
+        # executor state-machine changes. Bumping to 8 MiB on Windows —
+        # matching Linux's default — removes the platform-specific cliff
+        # without masking a real bug. Linux/macOS defaults stay as-is. (#380)
+        env:
+          RUST_MIN_STACK: ${{ matrix.os == 'windows-latest' && '8388608' || '' }}
+        run: cargo test
       # StartupManager E2E (#254): exercise the real launchctl/systemd path
       # on macOS and Linux. Linux needs a user systemd session; if it's not
       # available in the runner, the test skips itself cleanly.
