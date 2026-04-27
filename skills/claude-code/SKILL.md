@@ -58,6 +58,8 @@ Current FORGE surfaces to account for include:
 - `spawn`, `find`, `retire`, `exportable agent`
 - project skills via `forge.project.toml` and `skill.<namespace>.<capability>(...)`
 - `schedule` blocks with `mode: spawn` (prompt-driven stateless turn) and `mode: wake` (memory rehydration + event emit); both modes are runtime-dispatched via `WakeService`/`CronDriver`
+- `correlate on Event.field` blocks: routes inbound events carrying a matching key value back to the owning specialist session (`CorrelationDriver`); the agent must declare `memory persistent` with a matching `Text` field; `mode:` required; `mode: wake` requires `emit:` or a direct `on <Event>` handler
+- `webhook trigger_name` blocks: HMAC-verified inbound HTTP trigger at `/wake/{agent}/{trigger}` (`WebhookDriver`); requires `mode:` and `emit:` pointing to a declared event with a matching `on` handler; register secrets with `forge wake rotate`
 - server-only `search`, boundary directives, and raw Html interpolation with `{!expr}`
 
 Validation notes:

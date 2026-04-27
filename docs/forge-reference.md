@@ -1417,6 +1417,9 @@ All clauses are optional except for at least one `on` handler.
 | `memory` | Declares persistent fields that survive across handler invocations |
 | `timer <name>: <duration>` | Declares a named timer with a duration (e.g., `10m`, `30s`, `1h`) |
 | `subscribe <Event>` | Subscribes to events from the event bus |
+| `schedule <name>` | Declares a durable wall-clock trigger (see Schedules subsection) |
+| `correlate on <Event>.<field>` | Declares an event-to-session routing rule (see Correlate Blocks subsection) |
+| `webhook <trigger>` | Declares an HMAC-verified inbound HTTP trigger (see Webhook Blocks subsection) |
 | `warden_override` | Overrides warden policies for this specific agent |
 | `on <event>` | Declares a handler that runs when the named event occurs |
 | `if stuck` | Declares a recovery policy when the agent is stuck |
@@ -1576,6 +1579,89 @@ Extraneous options — `emit:` under `mode: spawn`, or `prompt:` under `mode: wa
 Use `timer` when the countdown is **inside a flow**: "if the user doesn't respond in 30 seconds, escalate." The agent arms, cancels, and resets the timer explicitly; the lifetime is the session.
 
 Use `schedule` when the cadence is **orthogonal to any session**: "every morning at 09:00, reassess mastery," or "every 6 hours, publish a drift check." The dispatcher owns the cadence; the agent only declares it.
+
+### Correlate Blocks
+
+`correlate on Event.field` declares a durable routing rule: when an inbound event carries a correlation-key value that matches a value previously stored in `memory persistent`, the runtime routes that event back to the specialist session that originally set the key — rehydrating it if dormant — rather than spawning a new instance. Use this for Slack-thread continuity, session resumption by conversation or request ID, and any pattern where a long-running specialist must receive follow-up messages in context.
+
+```forge
+agent slack_specialist
+  memory persistent
+    thread_ts: Text
+  correlate on SlackMention.thread_ts
+    mode: wake
+
+  on start
+    say "slack_specialist ready"
+
+  on SlackMention(thread_ts: Text, message: Text)
+    memory.thread_ts = thread_ts
+    say "resuming thread {thread_ts}: {message}"
+```
+
+#### Correlate options
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `mode: wake \| spawn` | Yes | `wake` rehydrates the owning session; `spawn` creates a fresh instance |
+| `emit: EventName` | For `mode: wake` without a direct handler | Event to publish after rehydration |
+
+#### Correlate compile-time enforcement
+
+| Error | Description |
+|-------|-------------|
+| Unknown event | The event name in `correlate on X.field` is not declared |
+| Unknown field | The named field does not exist on the event |
+| Field not Text | The correlation field must be `Text`-typed |
+| Missing `memory persistent` field | The agent must declare a matching `Text` field in `memory persistent` |
+| Missing `mode:` | Every `correlate` block requires a `mode:` clause |
+| Wake without pair | `mode: wake` requires either `emit: SomeEvent` with a matching `on SomeEvent` handler, or a direct `on <Event>` handler |
+| Duplicate block | Only one `correlate on Event.field` per (event, field) pair per agent |
+
+---
+
+### Webhook Blocks
+
+`webhook trigger_name` declares an HMAC-verified inbound HTTP trigger. When an external system POSTs to `/wake/{agent}/{trigger}` with a valid HMAC-SHA256 signature, FORGE verifies the signature, wakes the declared agent, and publishes the declared event on the bus. Use this for cross-project handoff: a GitHub Actions workflow can fire a merge webhook that rehydrates a waiting mastermind.
+
+```forge
+exportable agent mastermind
+  webhook pr_merged
+    mode: wake
+    emit: PrMerged
+
+  on start
+    say "mastermind ready: waiting for cross-project PR merges"
+
+  on PrMerged
+    say "cross-project PR merged"
+    emit TaskCompleted(source: "webhook:pr_merged", repo: "unknown", pr_number: 0)
+```
+
+Register the HMAC secret before first receive:
+
+```bash
+forge wake rotate --agent mastermind --trigger pr_merged
+```
+
+#### Webhook options
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `mode: wake \| spawn` | Yes | How to route the inbound request |
+| `emit: EventName` | Yes | Event to publish after the HMAC check passes |
+
+#### Webhook compile-time enforcement
+
+| Error | Description |
+|-------|-------------|
+| Missing `mode:` | Every `webhook` block requires a `mode:` clause |
+| Missing `emit:` | Every `webhook` block requires an `emit:` clause |
+| Unknown event | The emitted event is not declared at the top level |
+| Wake without handler | `mode: wake` requires an `on <Event>` handler for the emitted event |
+| Duplicate trigger | Only one `webhook` block per trigger name per agent |
+
+---
 
 ### Handlers
 
@@ -1970,9 +2056,10 @@ Responses are ordered by severity. Escalation ladders must increase in severity:
 | Response | Severity | Description |
 |----------|----------|-------------|
 | `nudge` | 1 (lowest) | Send a hint to the agent to retry |
-| `restart` | 2 | Restart the agent from its initial state |
-| `replace` | 3 | Replace the agent with a fresh instance |
-| `escalate` | 4 (highest) | Escalate to a higher-level supervisor or human |
+| `downgrade` | 2 | Switch the agent to a lower-tier model |
+| `restart` | 3 | Restart the agent from its initial state |
+| `replace` | 4 | Replace the agent with a fresh instance |
+| `escalate` | 5 (highest) | Escalate to a higher-level supervisor or human |
 
 ### Scopes
 
@@ -2582,6 +2669,8 @@ Built-in capability families:
 | Command | `command.status`, `command.output`, `command.cancel` |
 | Files | `file.read` (server-only) |
 | Structured Data | `toml.parse`, `json.parse` |
+| Text utilities | `text.to_number(str)` — parse text to Number (returns `0.0` on failure) |
+| Environment | `env.get(name, default)` — read an environment variable; returns `default` if unset |
 | Skills | `skill.<namespace>.<capability>(...)` |
 
 `search "query"` is restricted to `#! boundary: server`.
