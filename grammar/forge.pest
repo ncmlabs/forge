@@ -150,7 +150,11 @@ template_string = ${ "\"" ~ template_part* ~ "\"" }
 template_part       =  { template_interp_raw | template_interp | template_escape | template_text }
 template_interp     =  { "{" ~ _s_opt ~ expr ~ _s_opt ~ "}" }
 template_interp_raw =  { "{!" ~ _s_opt ~ expr ~ _s_opt ~ "}" }
-template_escape = @{ "\\" ~ ("n" | "r" | "t" | "\"" | "\\") }
+// `\{` and `\}` allow literal braces inside template strings so the
+// program can pass placeholder text (e.g. "{issue_id}") to runtime helpers
+// like text.replace without the parser eating it as `{expr}` interpolation.
+// Issue #360 (T8.5).
+template_escape = @{ "\\" ~ ("n" | "r" | "t" | "\"" | "\\" | "{" | "}") }
 template_text   = @{ (!("\"" | "{" | "\\") ~ ANY)+ }
 
 // --- Type names ---

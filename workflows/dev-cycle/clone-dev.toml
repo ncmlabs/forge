@@ -1,0 +1,34 @@
+# Dev-cycle standalone runtime config — T8.5 (#360).
+#
+# `workflows/dev-cycle/main.forge` runs without the full clone-dev
+# assembly, but agents.forge now reads CloneDevConfig (issue #357,
+# T8.2) for workdir/branch/commit/iteration/auto-approve knobs. This
+# fixture supplies a minimal config so the standalone runner doesn't
+# need every clone-dev section just to start.
+#
+# Override per-tenant:
+#   FORGE_CLONEDEV_CONFIG=/path/to/your/clone-dev.toml \
+#   forge serve --manifest workflows/dev-cycle/forge.project.toml \
+#               workflows/dev-cycle/main.forge
+
+[org]
+name = "dev-cycle-standalone"
+
+[slack]
+default_channel = ""
+bot_token_env   = "SLACK_BOT_TOKEN"
+
+[github]
+token_env = "GITHUB_TOKEN"
+
+[defaults]
+# Built-in dev-cycle defaults — keep in sync with the constants in
+# src/runtime/clone_dev_config.rs (DEFAULT_WORKDIR_ROOT etc.). Each
+# can be overridden per-repo via [repos."<owner>/<name>"].
+workdir_root        = "/tmp/forge-workdir"
+branch_prefix       = "clone-dev"
+commit_template     = "feat({issue_id}): implement per plan"
+fix_commit_template = "fix({issue_id}): iteration {iteration}"
+max_iterations      = 3
+auto_approve        = false
+test_cmd            = "cargo test --quiet"
