@@ -505,7 +505,10 @@ agent scoped_agent
                 .collect();
             assert_eq!(text, "literal-repo-slug");
         }
-        other => panic!("expected Template expr for literal project_id, got {:?}", other),
+        other => panic!(
+            "expected Template expr for literal project_id, got {:?}",
+            other
+        ),
     }
 
     // Forward-compat: T8.5 will inject `memory.repo_slug`. The grammar accepts
