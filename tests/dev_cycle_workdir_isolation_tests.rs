@@ -143,10 +143,15 @@ fn concurrent_workdirs_can_be_created_without_collision_on_disk() {
         pid = std::process::id(),
         nonce = short_id()
     ));
+    // TOML single-quoted literal strings preserve backslashes verbatim,
+    // which matters on Windows where `temp_dir().display()` yields a
+    // path like `C:\Users\RUNNER~1\AppData\Local\Temp\...` — the `\U`
+    // and `\R` runs would otherwise be parsed as Unicode escapes by a
+    // double-quoted basic string.
     let cfg = CloneDevConfig::from_toml_str(&format!(
         r#"
         [defaults]
-        workdir_root = "{root}"
+        workdir_root = '{root}'
 
         [repos."acme/alpha"]
         [repos."acme/beta"]
