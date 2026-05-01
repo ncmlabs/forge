@@ -606,6 +606,7 @@ fn build_knowledge_block(pair: Pair) -> anyhow::Result<Spanned<KnowledgeDecl>> {
     let mut max_entries = None;
     let mut retention = None;
     let mut imports = Vec::new();
+    let mut project_id = None;
 
     for child in inner {
         if child.as_rule() == Rule::knowledge_option {
@@ -625,6 +626,11 @@ fn build_knowledge_block(pair: Pair) -> anyhow::Result<Spanned<KnowledgeDecl>> {
                         }
                     }
                 }
+                Rule::knowledge_project_id => {
+                    // `project_id: <expr>` — expr is the only inner child (#359).
+                    let expr_pair = opt_inner.into_inner().next().unwrap();
+                    project_id = Some(build_expr(expr_pair)?);
+                }
                 _ => {}
             }
         }
@@ -633,6 +639,7 @@ fn build_knowledge_block(pair: Pair) -> anyhow::Result<Spanned<KnowledgeDecl>> {
     Ok(Spanned::new(
         KnowledgeDecl {
             store_path,
+            project_id,
             max_entries,
             retention,
             imports,

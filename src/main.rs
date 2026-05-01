@@ -1449,10 +1449,13 @@ async fn serve_program(
         // Create shared knowledge store from agent declaration (#309).
         // The same Arc is passed to both the executor (for endpoint recall) and
         // the system runtime (for agent learn), ensuring a single source of truth.
-        let executor = if let Some((store_path, max_entries, retention_days)) =
-            extract_knowledge_config(executor.program())
-        {
-            let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
+        let executor = if let Some(cfg) = extract_knowledge_config(executor.program()) {
+            let ks = KnowledgeStore::new_scoped(
+                &cfg.store_path,
+                cfg.project_id.as_deref(),
+                cfg.max_entries,
+                cfg.retention_days,
+            );
             let shared_ks = Arc::new(Mutex::new(ks));
             executor.with_shared_knowledge_store_arc(shared_ks)
         } else {
@@ -1590,9 +1593,14 @@ async fn serve_program(
 /// Subdirectories use the filename only (e.g., `content/reference/task.md` → `page:task`).
 /// Extract knowledge store config from the first agent declaration in the program.
 /// Returns (store_path, max_entries, retention_days) if found.
-fn extract_knowledge_config(
-    program: &forge::ast::Program,
-) -> Option<(String, Option<usize>, Option<u64>)> {
+struct KnowledgeConfig {
+    store_path: String,
+    project_id: Option<String>,
+    max_entries: Option<usize>,
+    retention_days: Option<u64>,
+}
+
+fn extract_knowledge_config(program: &forge::ast::Program) -> Option<KnowledgeConfig> {
     program
         .items
         .iter()
@@ -1601,16 +1609,16 @@ fn extract_knowledge_config(
             _ => None,
         })
         .and_then(|kd| {
-            let store_path = match &kd.node.store_path.node {
-                Expr::Template(parts) => parts
-                    .iter()
-                    .filter_map(|p| match &p.node {
-                        TemplatePart::Text(t) => Some(t.as_str()),
-                        _ => None,
-                    })
-                    .collect::<String>(),
-                _ => return None,
-            };
+            let store_path = literal_text_from_expr(&kd.node.store_path.node)?;
+            // Per-repo scope (#359 / T8.4): only resolve if the expression is
+            // a plain Text literal at parse time. Templates that reference
+            // `memory.*` or other identifiers are deferred to T8.5, which
+            // wires per-event resolution from clone-dev config.
+            let project_id = kd
+                .node
+                .project_id
+                .as_ref()
+                .and_then(|p| literal_text_from_expr(&p.node));
             let max_entries = kd.node.max_entries.as_ref().map(|m| m.node as usize);
             let retention_days = kd.node.retention.as_ref().map(|r| {
                 let dur = &r.node;
@@ -1621,8 +1629,31 @@ fn extract_knowledge_config(
                     forge::ast::DurationUnit::Seconds => dur.value / (24 * 60 * 60),
                 }
             });
-            Some((store_path, max_entries, retention_days))
+            Some(KnowledgeConfig {
+                store_path,
+                project_id,
+                max_entries,
+                retention_days,
+            })
         })
+}
+
+/// Extract a literal Text value from an Expr if (and only if) the expression
+/// is a `Template` whose parts are all `Text` (no interpolations).
+fn literal_text_from_expr(expr: &forge::ast::Expr) -> Option<String> {
+    match expr {
+        Expr::Template(parts) => {
+            let mut out = String::new();
+            for p in parts {
+                match &p.node {
+                    TemplatePart::Text(t) => out.push_str(t),
+                    _ => return None,
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
 }
 
 fn seed_content_dir(file: &Path, storage: &forge::runtime::storage::ForgeStorage) {
@@ -1768,10 +1799,13 @@ async fn serve_with_watch(
         };
 
         // Create shared knowledge store from agent declaration (#309).
-        let executor = if let Some((store_path, max_entries, retention_days)) =
-            extract_knowledge_config(executor.program())
-        {
-            let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
+        let executor = if let Some(cfg) = extract_knowledge_config(executor.program()) {
+            let ks = KnowledgeStore::new_scoped(
+                &cfg.store_path,
+                cfg.project_id.as_deref(),
+                cfg.max_entries,
+                cfg.retention_days,
+            );
             let shared_ks = Arc::new(Mutex::new(ks));
             executor.with_shared_knowledge_store_arc(shared_ks)
         } else {

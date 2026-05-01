@@ -291,7 +291,12 @@ knowledge_option = {
     "max_entries" ~ _s_opt ~ ":" ~ _s_opt ~ number_lit
   | "retention" ~ _s_opt ~ ":" ~ _s_opt ~ duration
   | "import" ~ _s_opt ~ ":" ~ _s_opt ~ ident_list
+  | knowledge_project_id
 }
+// Per-repo store scoping (#359 / T8.4). Value is any expression so T8.5 can
+// inject `memory.repo_slug` from clone-dev config; for T8.4 itself only
+// literal Text values are honoured at config-extraction time.
+knowledge_project_id = { "project_id" ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 
 timer_field = { "timer" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ duration }
 

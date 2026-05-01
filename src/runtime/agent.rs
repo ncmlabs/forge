@@ -360,6 +360,24 @@ impl AgentProcess {
                         }
                         _ => ".forge-knowledge/default".to_string(),
                     };
+                    // Per-repo scope (#359 / T8.4): only resolve at agent-init time
+                    // if the expression is a literal Text. Templates that reference
+                    // memory.* (the T8.5 use case) yield None here and will be
+                    // resolved per-event once T8.5 lands.
+                    let project_id: Option<String> =
+                        kd.node.project_id.as_ref().and_then(|p| match &p.node {
+                            Expr::Template(parts) => {
+                                let mut out = String::new();
+                                for tp in parts {
+                                    match &tp.node {
+                                        TemplatePart::Text(t) => out.push_str(t),
+                                        _ => return None,
+                                    }
+                                }
+                                Some(out)
+                            }
+                            _ => None,
+                        });
                     let max_entries = kd.node.max_entries.as_ref().map(|m| m.node as usize);
                     let retention_days = kd.node.retention.as_ref().map(|r| {
                         let dur = &r.node;
@@ -370,8 +388,9 @@ impl AgentProcess {
                             DurationUnit::Seconds => dur.value / (24 * 60 * 60),
                         }
                     });
-                    Arc::new(Mutex::new(KnowledgeStore::new(
+                    Arc::new(Mutex::new(KnowledgeStore::new_scoped(
                         &store_path,
+                        project_id.as_deref(),
                         max_entries,
                         retention_days,
                     )))

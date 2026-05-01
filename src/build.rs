@@ -1125,8 +1125,9 @@ async fn main() -> anyhow::Result<()> {{
         executor = executor.with_storage(shared);
     }}
     if let Some(config) = knowledge_config {{
-        let knowledge_store = forge::runtime::knowledge_store::KnowledgeStore::new(
+        let knowledge_store = forge::runtime::knowledge_store::KnowledgeStore::new_scoped(
             &config.store_path,
+            config.project_id.as_deref(),
             config.max_entries,
             config.retention_days,
         );
@@ -1215,6 +1216,7 @@ async fn main() -> anyhow::Result<()> {{
 
 struct AgentKnowledgeConfig {{
     store_path: String,
+    project_id: Option<String>,
     max_entries: Option<usize>,
     retention_days: Option<u64>,
 }}
@@ -1248,6 +1250,24 @@ fn agent_knowledge_config(
             }} else {{
                 store_path
             }};
+            // Per-repo scope (#359 / T8.4): only resolve at build time if the
+            // expression is a literal Text. Templates that reference memory.*
+            // (the T8.5 use case) yield None here.
+            let project_id: Option<String> = knowledge.node.project_id.as_ref().and_then(|p| {{
+                match &p.node {{
+                    forge::ast::Expr::Template(parts) => {{
+                        let mut out = String::new();
+                        for tp in parts {{
+                            match &tp.node {{
+                                forge::ast::TemplatePart::Text(t) => out.push_str(t),
+                                _ => return None,
+                            }}
+                        }}
+                        Some(out)
+                    }}
+                    _ => None,
+                }}
+            }});
             let max_entries = knowledge.node.max_entries.as_ref().map(|m| m.node as usize);
             let retention_days = knowledge.node.retention.as_ref().map(|r| match r.node.unit {{
                 forge::ast::DurationUnit::Days => r.node.value,
@@ -1257,6 +1277,7 @@ fn agent_knowledge_config(
             }});
             Some(AgentKnowledgeConfig {{
                 store_path,
+                project_id,
                 max_entries,
                 retention_days,
             }})
