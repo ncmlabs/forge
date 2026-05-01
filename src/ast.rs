@@ -211,6 +211,11 @@ pub struct AgentDecl {
 #[derive(Debug, Clone)]
 pub struct KnowledgeDecl {
     pub store_path: Spanned<Expr>,
+    /// Optional repo / project scope (issue #359 / T8.4). When present, the
+    /// runtime resolves persistence to `{store_path}/{project_id}/knowledge.json`
+    /// and filters recall to that project. T8.5 will thread the per-repo
+    /// `RepoConfig.slug` from `clone-dev.toml` into this slot.
+    pub project_id: Option<Spanned<Expr>>,
     pub max_entries: Option<Spanned<f64>>,
     pub retention: Option<Spanned<Duration>>,
     pub imports: Vec<Spanned<String>>,

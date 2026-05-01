@@ -15,6 +15,7 @@ fn make_entry(content: &str, confidence: f32, category: &str) -> KnowledgeEntry 
         source: KnowledgeSource::Direct,
         confidence,
         category: Some(category.to_string()),
+        project_id: None,
         created_at: chrono::Utc::now(),
         last_accessed: chrono::Utc::now(),
         access_count: 0,
