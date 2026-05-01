@@ -21,9 +21,14 @@
 #     • TaskNode + 12 cycle-detection helpers (T4.1 #299 shape)
 #     • CloneDevInbound, GithubIssueOpened/PrMerged, SlackMessage,
 #       TaskBlocked / UnblockTask / CycleDetected, SeedTask,
-#       CrossProjectRequested
+#       CrossProjectRequested, TaskRouted (#358)
 #
-# Single `org_warden` supervises all nine agents.
+#   stage2/label_router.forge + stage2/triage_specialist.forge
+#     • T8.3 (#358): pure deterministic label routing + visibility
+#       fall-through agent for unmapped / multi-labeled / unlabeled
+#       inbound issues.
+#
+# Single `org_warden` supervises all ten agents.
 #
 # HTTP surface (one port):
 #   GET  /health                     → liveness probe
@@ -46,6 +51,8 @@
 #     -s workflows/clone-dev/shared/types.forge \
 #     -s workflows/clone-dev/shared/events.forge \
 #     -s workflows/clone-dev/shared/mastermind.forge \
+#     -s workflows/clone-dev/stage2/label_router.forge \
+#     -s workflows/clone-dev/stage2/triage_specialist.forge \
 #     -s workflows/dev-cycle/agents.forge \
 #     -s examples/agents/slack-adapter/agents.forge \
 #     workflows/clone-dev/main.forge --port 3300
@@ -62,7 +69,7 @@
 # was copied verbatim).
 
 warden org_warden
-  manages [mastermind, planner, implementer, tester, reviewer, release_manager, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
+  manages [mastermind, planner, implementer, tester, reviewer, release_manager, triage_specialist, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
   on stuck: nudge, self
     after 3: escalate
   on timeout: restart, self
@@ -89,6 +96,7 @@ system clone_dev_system
     test: tester
     review: reviewer
     release: release_manager
+    triage: triage_specialist
     slack: slack_adapter
   mm >> plan >> impl >> test >> review
 

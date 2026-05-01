@@ -94,10 +94,32 @@ agent mastermind
     if target == "ignore"
       say "[mastermind] {task_id} ignored"
 
-  # Webhook translator: GitHub issue_opened → CloneDevInbound
-  on GithubIssueOpened(repo: Text, issue_number: Number, title: Text, body: Text)
-    say "[mastermind] github_issue_opened received for {repo}#{issue_number}"
-    emit CloneDevInbound(kind: "github_issue", repo: repo, issue_id: "{issue_number}", title: title, body: body, channel: "", callback_url: "", test_cmd: "cargo test")
+  # T8.3 (#358) — Stage-2 deterministic routing. label_router is a
+  # pure FORGE task in workflows/clone-dev/stage2/label_router.forge:
+  # zero LLM calls, zero I/O, p99 < 5ms. The TaskRouted emit is the
+  # contract that specialists subscribe to via `where specialist ==
+  # "<name>"`. Routed issues additionally fan out CloneDevInbound to
+  # preserve the existing dev-cycle pipeline; triage decisions skip
+  # that hand-off and rely on triage_specialist for visibility.
+  #
+  # Webhook fixture shape note: the integration test posts a
+  # pre-flattened `labels: ["clone-dev:plan"]` array. Real GitHub
+  # `issues.opened` payloads send `labels: [{name, color, ...}]`;
+  # bridging that shape into `Text[]` is a separate runtime change
+  # (tracked in a follow-up issue).
+  on GithubIssueOpened(repo: Text, issue_number: Number, title: Text, body: Text, labels: Text[])
+    say "[mastermind] github_issue_opened received for {repo}#{issue_number} labels={labels}"
+    routing = label_routing_of(memory.config)
+    decision = label_router(labels, routing)
+    memory.task_counter = memory.task_counter + 1
+    task_id = "T{memory.task_counter}"
+    node = TaskNode(task_id: task_id, status: "in_flight", blocked_on: [], specialist: decision.specialist, project: repo)
+    memory.task_graph = memory.task_graph + [node]
+    memory.last_target = decision.specialist
+    emit TaskRouted(task_id: task_id, specialist: decision.specialist, repo: repo, issue_id: "{issue_number}", outcome: decision.outcome, matched_suffix: decision.matched_suffix, diagnostic: decision.diagnostic)
+    say "[mastermind] {task_id} routed -> {decision.specialist} (outcome={decision.outcome} diagnostic={decision.diagnostic})"
+    if decision.outcome == "routed"
+      emit CloneDevInbound(kind: "github_issue", repo: repo, issue_id: "{issue_number}", title: title, body: body, channel: "", callback_url: "", test_cmd: "cargo test")
 
   # Webhook translator: GitHub pr_merged → TaskCompleted
   # Bridges external PR merges (in linked repos) into our task graph.

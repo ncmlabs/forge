@@ -39,9 +39,27 @@ token_env = "GITHUB_TOKEN"
 # ── [labels] ──────────────────────────────────────────────────────
 # Org-wide label policies. Applied to every repo unless the per-repo
 # [repos."…"].labels_extra block adds more (arrays concat).
+#
+# T8.3 (#358): namespace + suffix→specialist routing drives the
+# Stage-2 label_router pure task. A label `clone-dev:plan` on an
+# inbound issue routes deterministically to the `planner` agent
+# (zero LLM calls). Issues with no `clone-dev:*` label, multiple
+# such labels, or a suffix that isn't mapped fall through to the
+# `triage_target` agent. Adding a new specialist is config-only —
+# add a `<suffix> = "<agent_name>"` line under [labels.routing].
 [labels]
-triage  = ["needs-triage", "auto-forge"]
-blocked = ["blocked", "blocked:external"]
+triage         = ["needs-triage", "auto-forge"]
+blocked        = ["blocked", "blocked:external"]
+namespace      = "clone-dev"
+triage_target  = "triage_specialist"
+
+[labels.routing]
+plan   = "planner"
+impl   = "implementer"
+test   = "tester"
+review = "reviewer"
+merge  = "release_manager"
+ops    = "release_manager"   # no dedicated ops agent yet — alias to release_manager
 
 # ── [llm.routing] ─────────────────────────────────────────────────
 # Named provider profiles from forge.config.toml. The mastermind and

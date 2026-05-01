@@ -188,7 +188,17 @@ type CloneDevConfig
   budget_per_hour_usd: Number
   gates_require_approval_for: Text[]
   gates_auto_approve_labels: Text[]
+  label_routing_namespace: Text
+  label_routing_suffixes: Text[]
+  label_routing_targets: Text[]
+  label_routing_triage_target: Text
   repos: RepoConfig[]
+
+# T8.3 (#358) — `label_routing_*` flat sibling fields above carry the
+# Stage-2 deterministic routing config. `suffixes` and `targets` are
+# parallel arrays (Text[]+Text[]) rather than a record-of-record per
+# the same flat-shape constraint that drives `repos: RepoConfig[]`.
+# label_router rebuilds a typed LabelRouting record from these scalars.
 
 pure repo_config_for
   needs cfg: CloneDevConfig, slug: Text
