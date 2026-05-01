@@ -8,7 +8,7 @@
 // language surface. If FORGE ever grows `file.read` + `toml.parse` we can
 // move the merge logic into .forge code without changing the surface.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -71,6 +71,15 @@ pub struct LabelsSection {
     pub triage: Vec<String>,
     #[serde(default)]
     pub blocked: Vec<String>,
+    // T8.3 (#358) — Deterministic routing.
+    // BTreeMap so the parallel suffix/target arrays we expose to FORGE
+    // come out in stable, predictable order regardless of TOML key order.
+    #[serde(default)]
+    pub namespace: String,
+    #[serde(default)]
+    pub triage_target: String,
+    #[serde(default)]
+    pub routing: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -170,6 +179,14 @@ pub struct CloneDevConfig {
     pub budget_per_hour_usd: f64,
     pub gates_require_approval_for: Vec<String>,
     pub gates_auto_approve_labels: Vec<String>,
+    // T8.3 (#358) — flat sibling fields. FORGE record-of-record is
+    // untested today (see workflows/clone-dev/shared/types.forge:154–158);
+    // suffixes/targets are parallel arrays so a pure FORGE task can
+    // rebuild a typed LabelRouting record from these scalars.
+    pub label_routing_namespace: String,
+    pub label_routing_suffixes: Vec<String>,
+    pub label_routing_targets: Vec<String>,
+    pub label_routing_triage_target: String,
     pub repos: Vec<ResolvedRepo>,
 }
 
@@ -190,6 +207,10 @@ pub struct ResolvedRepo {
 const INHERIT_F64: f64 = -1.0;
 const DEFAULT_WARDEN_MAX_RETRIES: f64 = 3.0;
 const DEFAULT_WARDEN_ESCALATE_AFTER_SEC: f64 = 3600.0;
+// T8.3 (#358) — back-compat default for older TOML files that pre-date
+// the [labels.routing] block. The label_router pure task uses this
+// name when emitting fall-through routes.
+const DEFAULT_TRIAGE_TARGET: &str = "triage_specialist";
 
 impl CloneDevConfig {
     pub fn from_toml_str(s: &str) -> Result<Self, String> {
@@ -200,6 +221,16 @@ impl CloneDevConfig {
 
     fn from_raw(raw: CloneDevConfigRaw) -> Self {
         let defaults = raw.defaults;
+
+        // BTreeMap iteration is deterministic — suffixes[i] always pairs
+        // with targets[i] regardless of TOML authoring order.
+        let (label_routing_suffixes, label_routing_targets): (Vec<_>, Vec<_>) =
+            raw.labels.routing.into_iter().unzip();
+        let label_routing_triage_target = if raw.labels.triage_target.is_empty() {
+            DEFAULT_TRIAGE_TARGET.to_string()
+        } else {
+            raw.labels.triage_target
+        };
 
         let mut repos: Vec<ResolvedRepo> = raw
             .repos
@@ -252,6 +283,10 @@ impl CloneDevConfig {
             budget_per_hour_usd: raw.budget.per_hour_usd.unwrap_or(INHERIT_F64),
             gates_require_approval_for: raw.gates.require_approval_for,
             gates_auto_approve_labels: raw.gates.auto_approve_labels,
+            label_routing_namespace: raw.labels.namespace,
+            label_routing_suffixes,
+            label_routing_targets,
+            label_routing_triage_target,
             repos,
         }
     }
@@ -308,6 +343,26 @@ impl CloneDevConfig {
             &mut fields,
             "gates_auto_approve_labels",
             &self.gates_auto_approve_labels,
+        );
+        insert_text(
+            &mut fields,
+            "label_routing_namespace",
+            &self.label_routing_namespace,
+        );
+        insert_text_array(
+            &mut fields,
+            "label_routing_suffixes",
+            &self.label_routing_suffixes,
+        );
+        insert_text_array(
+            &mut fields,
+            "label_routing_targets",
+            &self.label_routing_targets,
+        );
+        insert_text(
+            &mut fields,
+            "label_routing_triage_target",
+            &self.label_routing_triage_target,
         );
         let repo_records: Vec<ConfidentValue> = self.repos.iter().map(repo_to_record).collect();
         fields.insert(
@@ -665,6 +720,88 @@ mod tests {
         assert_eq!(b.org_name, "cache-test");
         assert!(Arc::ptr_eq(&a, &b), "cache should return same Arc");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn label_routing_parses_namespace_and_suffix_target_pairs() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            namespace      = "clone-dev"
+            triage_target  = "custom_triage"
+
+            [labels.routing]
+            plan   = "planner"
+            impl   = "implementer"
+            test   = "tester"
+            review = "reviewer"
+            merge  = "release_manager"
+            ops    = "release_manager"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.label_routing_namespace, "clone-dev");
+        assert_eq!(cfg.label_routing_triage_target, "custom_triage");
+        // BTreeMap iteration is alphabetical by key; suffixes/targets are paired.
+        assert_eq!(cfg.label_routing_suffixes.len(), 6);
+        let pairs: Vec<(String, String)> = cfg
+            .label_routing_suffixes
+            .iter()
+            .cloned()
+            .zip(cfg.label_routing_targets.iter().cloned())
+            .collect();
+        assert!(pairs.contains(&("plan".into(), "planner".into())));
+        assert!(pairs.contains(&("impl".into(), "implementer".into())));
+        assert!(pairs.contains(&("test".into(), "tester".into())));
+        assert!(pairs.contains(&("review".into(), "reviewer".into())));
+        assert!(pairs.contains(&("merge".into(), "release_manager".into())));
+        assert!(pairs.contains(&("ops".into(), "release_manager".into())));
+    }
+
+    #[test]
+    fn label_routing_defaults_triage_target_when_omitted() {
+        // Older TOML files (pre-#358) won't carry triage_target. Loader must
+        // fall back to "triage_specialist" so the stub agent receives routes.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            triage = ["needs-triage"]
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.label_routing_triage_target, "triage_specialist");
+        assert_eq!(cfg.label_routing_namespace, "");
+        assert!(cfg.label_routing_suffixes.is_empty());
+        assert!(cfg.label_routing_targets.is_empty());
+    }
+
+    #[test]
+    fn to_forge_record_emits_label_routing_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            namespace = "clone-dev"
+
+            [labels.routing]
+            plan = "planner"
+            impl = "implementer"
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        assert!(fields.contains_key("label_routing_namespace"));
+        assert!(fields.contains_key("label_routing_suffixes"));
+        assert!(fields.contains_key("label_routing_targets"));
+        assert!(fields.contains_key("label_routing_triage_target"));
+        let suffixes = fields.get("label_routing_suffixes").expect("suffixes");
+        match &suffixes.value {
+            Value::Array(items) => assert_eq!(items.len(), 2),
+            _ => panic!("suffixes should be a Text[]"),
+        }
     }
 
     #[test]

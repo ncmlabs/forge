@@ -28,6 +28,7 @@ event GithubIssueOpened
   issue_number: Number
   title: Text
   body: Text
+  labels: Text[]
 
 event GithubPrMerged
   repo: Text
@@ -66,3 +67,16 @@ event CrossProjectRequested
   target_repo: Text
   description: Text
   labels: Text
+
+# T8.3 (#358): deterministic Stage-2 routing decision. Mastermind's
+# label_router emits this for every GithubIssueOpened — `routed`
+# specialists pick it up and run; `triage` falls through to the
+# triage_specialist stub for human attention. No LLM in the hot path.
+event TaskRouted
+  task_id: Text
+  specialist: Text
+  repo: Text
+  issue_id: Text
+  outcome: Text
+  matched_suffix: Text
+  diagnostic: Text

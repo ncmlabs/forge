@@ -1,0 +1,40 @@
+#! boundary: shared
+
+# T8.3 (#358) — Test harness for the label_router pure task.
+#
+# Composed with workflows/clone-dev/stage2/label_router.forge in
+# tests/label_router_unit_tests.rs. The harness:
+#   1. Builds a fixed LabelRouting matching the clone-dev.toml.example
+#      mapping (plan/impl/test/review/merge/ops → specialists).
+#   2. Calls label_router with each of the 10 fixture inputs from the
+#      DoD: 6 mapped suffixes, unlabeled, multi-labeled, non-namespace,
+#      unknown suffix.
+#   3. `say`s a stable, parseable line per case so the Rust test can
+#      assert via substring match.
+#
+# Output line format:
+#   case=<name>|specialist=<text>|outcome=<text>|diagnostic=<text>
+
+task fixture_routing
+  gives LabelRouting
+  do
+    give LabelRouting(namespace: "clone-dev", suffixes: ["impl", "merge", "ops", "plan", "review", "test"], targets: ["implementer", "release_manager", "release_manager", "planner", "reviewer", "tester"], triage_target: "triage_specialist")
+
+task emit_decision
+  needs case_name: Text, decision: RoutingDecision
+  gives Text
+  do
+    give "case={case_name}|specialist={decision.specialist}|outcome={decision.outcome}|diagnostic={decision.diagnostic}"
+
+fn main
+  routing = fixture_routing()
+  say emit_decision("plan",   label_router(["clone-dev:plan"],   routing))
+  say emit_decision("impl",   label_router(["clone-dev:impl"],   routing))
+  say emit_decision("test",   label_router(["clone-dev:test"],   routing))
+  say emit_decision("review", label_router(["clone-dev:review"], routing))
+  say emit_decision("merge",  label_router(["clone-dev:merge"],  routing))
+  say emit_decision("ops",    label_router(["clone-dev:ops"],    routing))
+  say emit_decision("unlabeled", label_router([],                                    routing))
+  say emit_decision("multi",     label_router(["clone-dev:plan", "clone-dev:impl"], routing))
+  say emit_decision("non_ns",    label_router(["bug", "p0"],                        routing))
+  say emit_decision("unknown",   label_router(["clone-dev:weird"],                  routing))

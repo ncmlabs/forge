@@ -1,0 +1,41 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev — Triage Specialist (T8.3, #358)
+# ================================================================
+# Fall-through agent for the deterministic label_router. Receives
+# TaskRouted whenever an inbound GitHub issue:
+#   - has zero `clone-dev:*` labels
+#   - has more than one `clone-dev:*` label (conflict)
+#   - has a clone-dev:<suffix> whose suffix isn't mapped in
+#     [labels.routing] of clone-dev.toml
+#
+# Stays deliberately minimal: no LLM, no skills, no learn. It logs
+# and posts the routing diagnostic to the org's default Slack
+# channel so a human can disambiguate. Real triage workflows can
+# subscribe TaskRouted alongside this agent — this one is the
+# always-on visibility floor.
+# ================================================================
+
+use
+  env.get
+  config.load_clone_dev
+
+agent triage_specialist
+  memory
+    config_path: Text
+    config: CloneDevConfig
+  subscribe TaskRouted where specialist == "triage_specialist"
+
+  on start
+    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml")
+    memory.config = config.load_clone_dev(memory.config_path)
+    say "[triage_specialist] ready — routing fall-through for org={memory.config.org_name}"
+
+  on TaskRouted(task_id: Text, specialist: Text, repo: Text, issue_id: Text, outcome: Text, matched_suffix: Text, diagnostic: Text)
+    say "[triage_specialist] {task_id} {repo}#{issue_id} diagnostic={diagnostic} matched_suffix={matched_suffix}"
+    emit PostMessage(channel: memory.config.slack_default_channel, text: ":mag: clone-dev triage needed for {repo}#{issue_id} ({task_id}) — diagnostic: {diagnostic}", thread_ts: "")
+
+  if stuck for 3 turns
+    say "[triage_specialist] Stuck. Escalating."
+    escalate to lead
