@@ -211,6 +211,29 @@ impl CapabilityRegistry {
                 output: ForgeType::Number,
             },
         );
+        // text.replace(s, find, replacement) -> Text — substitute every
+        // occurrence of `find` in `s` with `replacement`. Used by T8.5
+        // (#360) dev-cycle to render commit templates loaded from TOML
+        // (parse-time `{var}` interpolation doesn't reach runtime
+        // strings). Allowed in all boundaries.
+        caps.insert(
+            "text.replace".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Text, ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
+        // text.short_id() -> Text — 8-char lowercase hex prefix of a v4
+        // UUID. Used by T8.5 (#360) to suffix dev-cycle workdirs so two
+        // concurrent runs with the same {repo_slug}/{issue_id} can't
+        // collide on disk. Allowed in all boundaries.
+        caps.insert(
+            "text.short_id".into(),
+            CapabilitySignature {
+                inputs: vec![],
+                output: ForgeType::Text,
+            },
+        );
         // config.load_clone_dev(path) -> CloneDevConfig — read and merge the
         // clone-dev TOML at `path`, resolving *_env indirections. Returns the
         // CloneDevConfig record declared in workflows/clone-dev/shared/types.forge.

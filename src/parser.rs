@@ -51,6 +51,11 @@ fn decode_template_escape(pair: &Pair) -> anyhow::Result<char> {
         "\\t" => Ok('\t'),
         "\\\"" => Ok('"'),
         "\\\\" => Ok('\\'),
+        // `\{` / `\}` — literal braces. Lets templates carry placeholder
+        // strings (e.g. "{issue_id}") past the parser so runtime helpers
+        // such as text.replace can substitute them. Issue #360 (T8.5).
+        "\\{" => Ok('{'),
+        "\\}" => Ok('}'),
         other => Err(parse_error(
             pair,
             &format!("unsupported escape sequence: {}", other),

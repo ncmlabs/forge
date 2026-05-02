@@ -138,6 +138,21 @@ pub struct DefaultsSection {
     pub warden_max_retries: Option<f64>,
     #[serde(default)]
     pub labels_extra: Vec<String>,
+    // T8.5 (#360) — dev-cycle template knobs. Empty string ⇒ apply
+    // built-in default (constants below); per-repo overrides win when
+    // non-empty / Some.
+    #[serde(default)]
+    pub workdir_root: String,
+    #[serde(default)]
+    pub branch_prefix: String,
+    #[serde(default)]
+    pub commit_template: String,
+    #[serde(default)]
+    pub fix_commit_template: String,
+    #[serde(default)]
+    pub max_iterations: Option<f64>,
+    #[serde(default)]
+    pub auto_approve: Option<bool>,
 }
 
 // [repos."<owner>/<name>"]. Any scalar set on a per-repo block wins over
@@ -157,6 +172,19 @@ pub struct RepoOverride {
     pub warden_max_retries: Option<f64>,
     #[serde(default)]
     pub labels_extra: Vec<String>,
+    // T8.5 (#360) — per-repo overrides. None ⇒ inherit defaults.
+    #[serde(default)]
+    pub workdir_root: Option<String>,
+    #[serde(default)]
+    pub branch_prefix: Option<String>,
+    #[serde(default)]
+    pub commit_template: Option<String>,
+    #[serde(default)]
+    pub fix_commit_template: Option<String>,
+    #[serde(default)]
+    pub max_iterations: Option<f64>,
+    #[serde(default)]
+    pub auto_approve: Option<bool>,
 }
 
 // ── Resolved config (post-merge, env-vars resolved) ──────────────
@@ -187,6 +215,16 @@ pub struct CloneDevConfig {
     pub label_routing_suffixes: Vec<String>,
     pub label_routing_targets: Vec<String>,
     pub label_routing_triage_target: String,
+    // T8.5 (#360) — dev-cycle template defaults. Per-repo overrides
+    // resolve into ResolvedRepo (below). agents.forge consults the
+    // resolved RepoConfig, which falls back to these scalars via
+    // repo_config_for in shared/types.forge.
+    pub defaults_workdir_root: String,
+    pub defaults_branch_prefix: String,
+    pub defaults_commit_template: String,
+    pub defaults_fix_commit_template: String,
+    pub defaults_max_iterations: f64,
+    pub defaults_auto_approve: bool,
     pub repos: Vec<ResolvedRepo>,
 }
 
@@ -199,6 +237,16 @@ pub struct ResolvedRepo {
     pub budget_per_task_usd: f64,
     pub warden_max_retries: f64,
     pub labels_extra: Vec<String>,
+    // T8.5 (#360) — per-repo dev-cycle templates, resolved by merging
+    // RepoOverride against DefaultsSection (and built-in constants when
+    // both are empty). Empty Text ⇒ "inherit"; FORGE side uses the
+    // default scalars from CloneDevConfig in that case.
+    pub workdir_root: String,
+    pub branch_prefix: String,
+    pub commit_template: String,
+    pub fix_commit_template: String,
+    pub max_iterations: f64,
+    pub auto_approve: bool,
 }
 
 // Sentinels exposed to FORGE as "inherit default" markers for numeric
@@ -211,6 +259,15 @@ const DEFAULT_WARDEN_ESCALATE_AFTER_SEC: f64 = 3600.0;
 // the [labels.routing] block. The label_router pure task uses this
 // name when emitting fall-through routes.
 const DEFAULT_TRIAGE_TARGET: &str = "triage_specialist";
+// T8.5 (#360) — built-in defaults for dev-cycle templating knobs. Used
+// when neither [defaults] nor [repos."*"] supplies a value. The literal
+// strings preserve the historical hardcoded behavior in agents.forge so
+// pre-T8.5 TOML files keep working.
+const DEFAULT_WORKDIR_ROOT: &str = "/tmp/forge-workdir";
+const DEFAULT_BRANCH_PREFIX: &str = "clone-dev";
+const DEFAULT_COMMIT_TEMPLATE: &str = "feat({issue_id}): implement per plan";
+const DEFAULT_FIX_COMMIT_TEMPLATE: &str = "fix({issue_id}): iteration {iteration}";
+const DEFAULT_MAX_ITERATIONS: f64 = 3.0;
 
 impl CloneDevConfig {
     pub fn from_toml_str(s: &str) -> Result<Self, String> {
@@ -231,6 +288,33 @@ impl CloneDevConfig {
         } else {
             raw.labels.triage_target
         };
+
+        // T8.5 — resolve [defaults] templating fields once so per-repo
+        // merge has a single fallback layer. Empty TOML strings collapse
+        // to the built-in constants here; per-repo None then falls back
+        // to these resolved defaults.
+        let defaults_workdir_root = if defaults.workdir_root.is_empty() {
+            DEFAULT_WORKDIR_ROOT.to_string()
+        } else {
+            defaults.workdir_root.clone()
+        };
+        let defaults_branch_prefix = if defaults.branch_prefix.is_empty() {
+            DEFAULT_BRANCH_PREFIX.to_string()
+        } else {
+            defaults.branch_prefix.clone()
+        };
+        let defaults_commit_template = if defaults.commit_template.is_empty() {
+            DEFAULT_COMMIT_TEMPLATE.to_string()
+        } else {
+            defaults.commit_template.clone()
+        };
+        let defaults_fix_commit_template = if defaults.fix_commit_template.is_empty() {
+            DEFAULT_FIX_COMMIT_TEMPLATE.to_string()
+        } else {
+            defaults.fix_commit_template.clone()
+        };
+        let defaults_max_iterations = defaults.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
+        let defaults_auto_approve = defaults.auto_approve.unwrap_or(false);
 
         let mut repos: Vec<ResolvedRepo> = raw
             .repos
@@ -257,6 +341,20 @@ impl CloneDevConfig {
                     v.extend(over.labels_extra);
                     v
                 },
+                workdir_root: over
+                    .workdir_root
+                    .unwrap_or_else(|| defaults_workdir_root.clone()),
+                branch_prefix: over
+                    .branch_prefix
+                    .unwrap_or_else(|| defaults_branch_prefix.clone()),
+                commit_template: over
+                    .commit_template
+                    .unwrap_or_else(|| defaults_commit_template.clone()),
+                fix_commit_template: over
+                    .fix_commit_template
+                    .unwrap_or_else(|| defaults_fix_commit_template.clone()),
+                max_iterations: over.max_iterations.unwrap_or(defaults_max_iterations),
+                auto_approve: over.auto_approve.unwrap_or(defaults_auto_approve),
             })
             .collect();
 
@@ -287,6 +385,12 @@ impl CloneDevConfig {
             label_routing_suffixes,
             label_routing_targets,
             label_routing_triage_target,
+            defaults_workdir_root,
+            defaults_branch_prefix,
+            defaults_commit_template,
+            defaults_fix_commit_template,
+            defaults_max_iterations,
+            defaults_auto_approve,
             repos,
         }
     }
@@ -364,6 +468,36 @@ impl CloneDevConfig {
             "label_routing_triage_target",
             &self.label_routing_triage_target,
         );
+        insert_text(
+            &mut fields,
+            "defaults_workdir_root",
+            &self.defaults_workdir_root,
+        );
+        insert_text(
+            &mut fields,
+            "defaults_branch_prefix",
+            &self.defaults_branch_prefix,
+        );
+        insert_text(
+            &mut fields,
+            "defaults_commit_template",
+            &self.defaults_commit_template,
+        );
+        insert_text(
+            &mut fields,
+            "defaults_fix_commit_template",
+            &self.defaults_fix_commit_template,
+        );
+        insert_number(
+            &mut fields,
+            "defaults_max_iterations",
+            self.defaults_max_iterations,
+        );
+        insert_bool(
+            &mut fields,
+            "defaults_auto_approve",
+            self.defaults_auto_approve,
+        );
         let repo_records: Vec<ConfidentValue> = self.repos.iter().map(repo_to_record).collect();
         fields.insert(
             "repos".into(),
@@ -391,6 +525,10 @@ fn insert_number(fields: &mut HashMap<String, ConfidentValue>, key: &str, n: f64
     fields.insert(key.into(), ConfidentValue::deterministic(Value::Number(n)));
 }
 
+fn insert_bool(fields: &mut HashMap<String, ConfidentValue>, key: &str, b: bool) {
+    fields.insert(key.into(), ConfidentValue::deterministic(Value::Bool(b)));
+}
+
 fn insert_text_array(fields: &mut HashMap<String, ConfidentValue>, key: &str, items: &[String]) {
     let arr: Vec<ConfidentValue> = items
         .iter()
@@ -408,6 +546,12 @@ fn repo_to_record(r: &ResolvedRepo) -> ConfidentValue {
     insert_number(&mut fields, "budget_per_task_usd", r.budget_per_task_usd);
     insert_number(&mut fields, "warden_max_retries", r.warden_max_retries);
     insert_text_array(&mut fields, "labels_extra", &r.labels_extra);
+    insert_text(&mut fields, "workdir_root", &r.workdir_root);
+    insert_text(&mut fields, "branch_prefix", &r.branch_prefix);
+    insert_text(&mut fields, "commit_template", &r.commit_template);
+    insert_text(&mut fields, "fix_commit_template", &r.fix_commit_template);
+    insert_number(&mut fields, "max_iterations", r.max_iterations);
+    insert_bool(&mut fields, "auto_approve", r.auto_approve);
     ConfidentValue::deterministic(Value::Record(fields))
 }
 
@@ -809,5 +953,166 @@ mod tests {
         let missing = std::path::PathBuf::from("/nonexistent/forge-t357/not-a-file.toml");
         let err = load(&missing).expect_err("missing file should error");
         assert!(err.contains("cannot resolve config path"));
+    }
+
+    // ── T8.5 (#360) — dev-cycle templating defaults ────────────────
+
+    #[test]
+    fn defaults_templating_uses_built_in_constants_when_absent() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [org]
+            name = "ncmlabs"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.defaults_workdir_root, DEFAULT_WORKDIR_ROOT);
+        assert_eq!(cfg.defaults_branch_prefix, DEFAULT_BRANCH_PREFIX);
+        assert_eq!(cfg.defaults_commit_template, DEFAULT_COMMIT_TEMPLATE);
+        assert_eq!(
+            cfg.defaults_fix_commit_template,
+            DEFAULT_FIX_COMMIT_TEMPLATE
+        );
+        assert_eq!(cfg.defaults_max_iterations, DEFAULT_MAX_ITERATIONS);
+        assert!(!cfg.defaults_auto_approve);
+    }
+
+    #[test]
+    fn defaults_templating_honors_authored_values() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            workdir_root        = "/var/forge/work"
+            branch_prefix       = "ncmlabs/clone"
+            commit_template     = "feat({issue_id}) — {title}"
+            fix_commit_template = "chore({issue_id}): retry {iteration}"
+            max_iterations      = 5
+            auto_approve        = true
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.defaults_workdir_root, "/var/forge/work");
+        assert_eq!(cfg.defaults_branch_prefix, "ncmlabs/clone");
+        assert_eq!(cfg.defaults_commit_template, "feat({issue_id}) — {title}");
+        assert_eq!(
+            cfg.defaults_fix_commit_template,
+            "chore({issue_id}): retry {iteration}"
+        );
+        assert_eq!(cfg.defaults_max_iterations, 5.0);
+        assert!(cfg.defaults_auto_approve);
+    }
+
+    #[test]
+    fn per_repo_templating_overrides_defaults() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            workdir_root    = "/var/forge/work"
+            branch_prefix   = "clone-dev"
+            commit_template = "feat({issue_id}): default"
+            max_iterations  = 3
+            auto_approve    = false
+
+            [repos."acme/alpha"]
+            workdir_root    = "/var/forge/alpha"
+            branch_prefix   = "alpha"
+            commit_template = "alpha({issue_id}): {title}"
+            max_iterations  = 7
+            auto_approve    = true
+
+            [repos."acme/beta"]
+            # inherits everything
+            "#,
+        )
+        .expect("parse");
+        let alpha = cfg.repos.iter().find(|r| r.slug == "acme/alpha").unwrap();
+        let beta = cfg.repos.iter().find(|r| r.slug == "acme/beta").unwrap();
+
+        // alpha overrides win
+        assert_eq!(alpha.workdir_root, "/var/forge/alpha");
+        assert_eq!(alpha.branch_prefix, "alpha");
+        assert_eq!(alpha.commit_template, "alpha({issue_id}): {title}");
+        assert_eq!(alpha.max_iterations, 7.0);
+        assert!(alpha.auto_approve);
+
+        // beta inherits resolved defaults
+        assert_eq!(beta.workdir_root, "/var/forge/work");
+        assert_eq!(beta.branch_prefix, "clone-dev");
+        assert_eq!(beta.commit_template, "feat({issue_id}): default");
+        assert_eq!(beta.max_iterations, 3.0);
+        assert!(!beta.auto_approve);
+    }
+
+    #[test]
+    fn per_repo_inherits_built_in_when_defaults_section_absent() {
+        // Neither [defaults] nor per-repo override sets templating fields:
+        // each repo must still resolve to the built-in constants so
+        // agents.forge can run unconfigured.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [repos."acme/orphan"]
+            "#,
+        )
+        .expect("parse");
+        let orphan = cfg.repos.first().expect("one repo");
+        assert_eq!(orphan.workdir_root, DEFAULT_WORKDIR_ROOT);
+        assert_eq!(orphan.branch_prefix, DEFAULT_BRANCH_PREFIX);
+        assert_eq!(orphan.commit_template, DEFAULT_COMMIT_TEMPLATE);
+        assert_eq!(orphan.fix_commit_template, DEFAULT_FIX_COMMIT_TEMPLATE);
+        assert_eq!(orphan.max_iterations, DEFAULT_MAX_ITERATIONS);
+        assert!(!orphan.auto_approve);
+    }
+
+    #[test]
+    fn to_forge_record_emits_templating_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            workdir_root    = "/var/forge/work"
+            commit_template = "feat({issue_id}): {title}"
+            auto_approve    = true
+
+            [repos."acme/alpha"]
+            branch_prefix = "alpha"
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        // Top-level defaults_* present.
+        for key in [
+            "defaults_workdir_root",
+            "defaults_branch_prefix",
+            "defaults_commit_template",
+            "defaults_fix_commit_template",
+            "defaults_max_iterations",
+            "defaults_auto_approve",
+        ] {
+            assert!(fields.contains_key(key), "missing field {key}");
+        }
+        // Per-repo record carries the merged templating fields.
+        let repos = fields.get("repos").expect("repos field");
+        match &repos.value {
+            Value::Array(items) => {
+                let r = match &items[0].value {
+                    Value::Record(r) => r,
+                    _ => panic!("repo item should be a Record"),
+                };
+                for key in [
+                    "workdir_root",
+                    "branch_prefix",
+                    "commit_template",
+                    "fix_commit_template",
+                    "max_iterations",
+                    "auto_approve",
+                ] {
+                    assert!(r.contains_key(key), "missing repo field {key}");
+                }
+            }
+            _ => panic!("repos should be an Array"),
+        }
     }
 }

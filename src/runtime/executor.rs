@@ -2148,6 +2148,56 @@ impl TaskExecutor {
                         }
                     }
 
+                    // text.replace(s, find, replacement) — substitute every
+                    // occurrence of `find` in `s` with `replacement`. Added
+                    // for T8.5 (#360): templates loaded from TOML are inert
+                    // text (parse-time `{var}` interpolation doesn't apply
+                    // to runtime-loaded strings), so dev-cycle uses chained
+                    // text.replace calls to render commit messages with
+                    // {issue_id}/{title}/{body} substitutions. Empty `find`
+                    // is a no-op (matches Rust's str::replace semantics:
+                    // empty needles otherwise insert between every char).
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "text" && method.node == "replace" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let s = arg_vals
+                                .first()
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_default();
+                            let find = arg_vals
+                                .get(1)
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_default();
+                            let replacement = arg_vals
+                                .get(2)
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_default();
+                            let out = if find.is_empty() {
+                                s
+                            } else {
+                                s.replace(&find, &replacement)
+                            };
+                            return Ok(ConfidentValue::deterministic(Value::Text(out)));
+                        }
+                    }
+
+                    // text.short_id() — 8-char lowercase hex prefix of a v4
+                    // UUID. Added for T8.5 (#360): used to suffix dev-cycle
+                    // workdirs so two concurrent invocations with the same
+                    // {repo_slug}/{issue_id} can't collide on disk. ~16M
+                    // distinct values per (repo, issue) pair — adequate for
+                    // a single-host swarm; never load-bearing for security.
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "text" && method.node == "short_id" {
+                            let id = uuid::Uuid::new_v4().simple().to_string();
+                            let short = id[..8].to_string();
+                            return Ok(ConfidentValue::deterministic(Value::Text(short)));
+                        }
+                    }
+
                     // proc.exit(code) — signal process exit. See issue #258.
                     // Raises RuntimeError::Exit, which the generated CLI dispatch
                     // (src/build.rs) translates to std::process::exit(code). Non-CLI

@@ -162,6 +162,11 @@ pure apply_completion
 # returns a safe default RepoConfig when the repo is not listed.
 # ================================================================
 
+# T8.5 (#360) — RepoConfig.workdir_root/branch_prefix/commit_template/
+# fix_commit_template/max_iterations/auto_approve carry the per-repo
+# dev-cycle overrides. The Rust loader merges [defaults] with per-repo
+# blocks so workflow code reads each field directly without per-call
+# inheritance logic.
 type RepoConfig
   slug: Text
   slack_channel: Text
@@ -170,6 +175,12 @@ type RepoConfig
   budget_per_task_usd: Number
   warden_max_retries: Number
   labels_extra: Text[]
+  workdir_root: Text
+  branch_prefix: Text
+  commit_template: Text
+  fix_commit_template: Text
+  max_iterations: Number
+  auto_approve: Bool
 
 type CloneDevConfig
   org_name: Text
@@ -192,6 +203,12 @@ type CloneDevConfig
   label_routing_suffixes: Text[]
   label_routing_targets: Text[]
   label_routing_triage_target: Text
+  defaults_workdir_root: Text
+  defaults_branch_prefix: Text
+  defaults_commit_template: Text
+  defaults_fix_commit_template: Text
+  defaults_max_iterations: Number
+  defaults_auto_approve: Bool
   repos: RepoConfig[]
 
 # T8.3 (#358) — `label_routing_*` flat sibling fields above carry the
@@ -207,4 +224,4 @@ pure repo_config_for
     for r in cfg.repos
       if r.slug == slug
         give r
-    give RepoConfig(slug: "", slack_channel: cfg.slack_default_channel, test_cmd: "", model_override: "", budget_per_task_usd: -1.0, warden_max_retries: -1.0, labels_extra: [])
+    give RepoConfig(slug: "", slack_channel: cfg.slack_default_channel, test_cmd: "", model_override: "", budget_per_task_usd: -1.0, warden_max_retries: -1.0, labels_extra: [], workdir_root: cfg.defaults_workdir_root, branch_prefix: cfg.defaults_branch_prefix, commit_template: cfg.defaults_commit_template, fix_commit_template: cfg.defaults_fix_commit_template, max_iterations: cfg.defaults_max_iterations, auto_approve: cfg.defaults_auto_approve)
