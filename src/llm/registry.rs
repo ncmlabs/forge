@@ -603,8 +603,7 @@ mod tests {
 
         // Build a minimal ForgeConfig with two named providers so the
         // overlay's chain references resolve.
-        let toml = format!(
-            r#"
+        let toml = r#"
 [llm]
 default = "sonnet"
 
@@ -613,9 +612,8 @@ type = "mock"
 
 [providers."gpt-4o"]
 type = "mock"
-"#
-        );
-        let config: crate::config::ForgeConfig = toml::from_str(&toml).expect("config parse");
+"#;
+        let config: crate::config::ForgeConfig = toml::from_str(toml).expect("config parse");
 
         // Set the env var across the build, then unset to avoid leaking
         // into other tests that share this process.
