@@ -58,11 +58,12 @@ fn reason_task(name: &str) -> Spanned<TopLevel> {
             // result = reason "{input}"
             spanned(Stmt::Bind(
                 spanned("result".to_string()),
-                spanned(Expr::Reason(Box::new(spanned(Expr::Template(vec![
-                    spanned(TemplatePart::Interp(Box::new(spanned(Expr::Ident(
-                        "input".to_string(),
-                    ))))),
-                ]))))),
+                spanned(Expr::Reason(ReasonExpr {
+                    prompt: Box::new(spanned(Expr::Template(vec![spanned(
+                        TemplatePart::Interp(Box::new(spanned(Expr::Ident("input".to_string())))),
+                    )]))),
+                    phase: None,
+                })),
             )),
             // give result
             spanned(Stmt::Give(

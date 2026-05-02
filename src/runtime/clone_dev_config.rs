@@ -84,18 +84,13 @@ pub struct LabelsSection {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct LlmSection {
+    // T8.6 (#361) — routing is now a free-form phase→provider table with an
+    // optional `fallback` sub-table for chains. Parsing as a raw `toml::Table`
+    // lets us accept arbitrary phase keys (`classify`, `plan`, `implement`,
+    // `review`, `ops_investigate`, plus the legacy `fast/balanced/high`)
+    // without locking the schema. Validation happens in `from_raw`.
     #[serde(default)]
-    pub routing: LlmRouting,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct LlmRouting {
-    #[serde(default)]
-    pub fast: String,
-    #[serde(default)]
-    pub balanced: String,
-    #[serde(default)]
-    pub high: String,
+    pub routing: toml::value::Table,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -198,9 +193,21 @@ pub struct CloneDevConfig {
     pub github_token: String,
     pub github_labels_triage: Vec<String>,
     pub github_labels_blocked: Vec<String>,
+    // Back-compat with T8.2 (#357) — these three keys remain part of the
+    // FORGE record schema declared in workflows/clone-dev/shared/types.forge.
+    // Post-#361 they are pulled from the same `[llm.routing]` map as any
+    // other phase key, so authoring `fast = "x"` and authoring `plan = "y"`
+    // sit side-by-side in TOML.
     pub llm_routing_fast: String,
     pub llm_routing_balanced: String,
     pub llm_routing_high: String,
+    // T8.6 (#361) — the full phase→provider primary table and the optional
+    // phase→fallback-chain table. Used by the runtime to overlay routing
+    // onto the ProviderRegistry; not currently surfaced into the FORGE
+    // record (the executor consults the registry directly per `reason
+    // "..." for <phase>`).
+    pub llm_routing: HashMap<String, String>,
+    pub llm_routing_fallback: HashMap<String, Vec<String>>,
     pub warden_max_retries: f64,
     pub warden_escalate_after_seconds: f64,
     pub budget_per_task_usd: f64,
@@ -278,6 +285,23 @@ impl CloneDevConfig {
 
     fn from_raw(raw: CloneDevConfigRaw) -> Self {
         let defaults = raw.defaults;
+
+        // ── T8.6 (#361) — split [llm.routing] into a primary phase→provider
+        // map and an optional phase→fallback-chain table.
+        //
+        // Authored shape:
+        //   [llm.routing]
+        //   plan      = "sonnet"
+        //   implement = "gpt-4o"
+        //   [llm.routing.fallback]
+        //   plan      = ["sonnet", "gpt-4o"]
+        //
+        // Anything that isn't a string-valued top-level key or the named
+        // `fallback` sub-table is silently skipped. We don't error on
+        // malformed entries so older/newer authored configs degrade
+        // gracefully instead of crashing the runtime — the warden surfaces
+        // unresolvable provider names later.
+        let (llm_routing, llm_routing_fallback) = parse_llm_routing(&raw.llm.routing);
 
         // BTreeMap iteration is deterministic — suffixes[i] always pairs
         // with targets[i] regardless of TOML authoring order.
@@ -369,9 +393,11 @@ impl CloneDevConfig {
             github_token: resolve_env(&raw.github.token_env),
             github_labels_triage: raw.labels.triage,
             github_labels_blocked: raw.labels.blocked,
-            llm_routing_fast: raw.llm.routing.fast,
-            llm_routing_balanced: raw.llm.routing.balanced,
-            llm_routing_high: raw.llm.routing.high,
+            llm_routing_fast: llm_routing.get("fast").cloned().unwrap_or_default(),
+            llm_routing_balanced: llm_routing.get("balanced").cloned().unwrap_or_default(),
+            llm_routing_high: llm_routing.get("high").cloned().unwrap_or_default(),
+            llm_routing,
+            llm_routing_fallback,
             warden_max_retries: raw.warden.max_retries.unwrap_or(DEFAULT_WARDEN_MAX_RETRIES),
             warden_escalate_after_seconds: raw
                 .warden
@@ -393,6 +419,41 @@ impl CloneDevConfig {
             defaults_auto_approve,
             repos,
         }
+    }
+
+    /// Resolve the ordered provider chain for a routing phase (#361).
+    /// Order: `[primary, ...fallback_chain]`. Returns an empty chain when
+    /// the phase has no entry — callers should fall back to runtime defaults.
+    pub fn routing(&self, phase: &str) -> Vec<String> {
+        let mut chain = Vec::new();
+        if let Some(primary) = self.llm_routing.get(phase) {
+            chain.push(primary.clone());
+        }
+        if let Some(fallbacks) = self.llm_routing_fallback.get(phase) {
+            for name in fallbacks {
+                if !chain.contains(name) {
+                    chain.push(name.clone());
+                }
+            }
+        }
+        chain
+    }
+
+    /// Materialize every configured phase into a `phase → chain` table for
+    /// the ProviderRegistry overlay (#361). Phases that only appear in the
+    /// fallback table (no primary) are still emitted so explicit fallback-
+    /// only configs still route somewhere.
+    pub fn routing_table(&self) -> HashMap<String, Vec<String>> {
+        let mut keys: std::collections::BTreeSet<String> =
+            self.llm_routing.keys().cloned().collect();
+        keys.extend(self.llm_routing_fallback.keys().cloned());
+        keys.into_iter()
+            .map(|phase| {
+                let chain = self.routing(&phase);
+                (phase, chain)
+            })
+            .filter(|(_, chain)| !chain.is_empty())
+            .collect()
     }
 
     // Build the FORGE-facing Value matching the CloneDevConfig record
@@ -505,6 +566,39 @@ impl CloneDevConfig {
         );
         Value::Record(fields)
     }
+}
+
+/// Split `[llm.routing]` raw TOML into (primary, fallback) maps (#361).
+/// Top-level string entries become `primary[phase] = provider_name`. The
+/// nested `fallback` sub-table, when present, is read as `phase → [provider,
+/// ...]`. Non-conforming values are skipped without erroring.
+fn parse_llm_routing(
+    table: &toml::value::Table,
+) -> (HashMap<String, String>, HashMap<String, Vec<String>>) {
+    let mut primary = HashMap::new();
+    let mut fallback = HashMap::new();
+    for (k, v) in table {
+        if k == "fallback" {
+            if let Some(sub) = v.as_table() {
+                for (phase, chain) in sub {
+                    if let Some(arr) = chain.as_array() {
+                        let names: Vec<String> = arr
+                            .iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect();
+                        if !names.is_empty() {
+                            fallback.insert(phase.clone(), names);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if let Some(name) = v.as_str() {
+            primary.insert(k.clone(), name.to_string());
+        }
+    }
+    (primary, fallback)
 }
 
 fn resolve_env(name: &str) -> String {
@@ -1114,5 +1208,146 @@ mod tests {
             }
             _ => panic!("repos should be an Array"),
         }
+    }
+
+    // ── T8.6 (#361) — phase-keyed [llm.routing] ──────────────────────
+
+    #[test]
+    fn routing_phase_keyed_round_trips() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            classify        = "claude-haiku"
+            plan            = "sonnet"
+            implement       = "gpt-4o"
+            review          = "sonnet"
+            ops_investigate = "ollama-local"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(
+            cfg.llm_routing.get("classify"),
+            Some(&"claude-haiku".into())
+        );
+        assert_eq!(cfg.llm_routing.get("plan"), Some(&"sonnet".into()));
+        assert_eq!(cfg.llm_routing.get("implement"), Some(&"gpt-4o".into()));
+        assert_eq!(
+            cfg.llm_routing.get("ops_investigate"),
+            Some(&"ollama-local".into())
+        );
+        assert!(cfg.llm_routing_fallback.is_empty());
+    }
+
+    #[test]
+    fn routing_back_compat_with_fast_balanced_high() {
+        // Pre-#361 configs only used fast/balanced/high. Post-#361 those
+        // keys live in the same primary table as any other phase, and the
+        // back-compat scalars on CloneDevConfig still resolve to them.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            fast     = "claude-haiku"
+            balanced = "claude-haiku"
+            high     = "claude-opus"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.llm_routing_fast, "claude-haiku");
+        assert_eq!(cfg.llm_routing_balanced, "claude-haiku");
+        assert_eq!(cfg.llm_routing_high, "claude-opus");
+        // And those entries are also visible in the unified routing map so
+        // a future caller can iterate every configured phase.
+        assert_eq!(cfg.llm_routing.get("fast"), Some(&"claude-haiku".into()));
+        assert_eq!(cfg.llm_routing.get("high"), Some(&"claude-opus".into()));
+    }
+
+    #[test]
+    fn routing_resolves_chain_with_fallback_table() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            plan      = "sonnet"
+            implement = "gpt-4o"
+
+            [llm.routing.fallback]
+            plan      = ["sonnet", "gpt-4o", "ollama-local"]
+            implement = ["gpt-4o", "sonnet"]
+            "#,
+        )
+        .expect("parse");
+
+        // Primary first, then fallback entries appended without dups.
+        assert_eq!(
+            cfg.routing("plan"),
+            vec!["sonnet".to_string(), "gpt-4o".into(), "ollama-local".into()]
+        );
+        // For implement, primary 'gpt-4o' equals the first fallback entry —
+        // dedup keeps the chain at 2 entries.
+        assert_eq!(
+            cfg.routing("implement"),
+            vec!["gpt-4o".to_string(), "sonnet".into()]
+        );
+    }
+
+    #[test]
+    fn routing_unknown_phase_returns_empty_chain() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            plan = "sonnet"
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.routing("does_not_exist").is_empty());
+    }
+
+    #[test]
+    fn routing_table_emits_every_configured_phase() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            plan      = "sonnet"
+            implement = "gpt-4o"
+
+            [llm.routing.fallback]
+            review = ["sonnet"]
+            "#,
+        )
+        .expect("parse");
+        let table = cfg.routing_table();
+        // plan + implement carry primary; review is fallback-only and still
+        // surfaces because operators may want a chain even without a primary.
+        assert_eq!(table.len(), 3);
+        assert_eq!(table.get("plan").unwrap(), &vec!["sonnet".to_string()]);
+        assert_eq!(table.get("implement").unwrap(), &vec!["gpt-4o".to_string()]);
+        assert_eq!(table.get("review").unwrap(), &vec!["sonnet".to_string()]);
+    }
+
+    #[test]
+    fn routing_silently_skips_malformed_entries() {
+        // Non-string values for primary keys and non-array fallback values
+        // are dropped rather than rejecting the whole config — keeps a
+        // newer config readable by older runtimes (forward-compat).
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            plan = "sonnet"
+            broken_number = 42
+            broken_array = ["a", "b"]
+
+            [llm.routing.fallback]
+            plan = ["sonnet", "gpt-4o"]
+            broken_str = "not-a-list"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.llm_routing.get("plan"), Some(&"sonnet".into()));
+        assert!(!cfg.llm_routing.contains_key("broken_number"));
+        assert!(!cfg.llm_routing.contains_key("broken_array"));
+        assert_eq!(
+            cfg.llm_routing_fallback.get("plan"),
+            Some(&vec!["sonnet".into(), "gpt-4o".into()])
+        );
+        assert!(!cfg.llm_routing_fallback.contains_key("broken_str"));
     }
 }

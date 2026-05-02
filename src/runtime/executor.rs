@@ -2452,6 +2452,7 @@ impl TaskExecutor {
                                             cost_usd: resp.cost_usd,
                                             confidence: 1.0,
                                             agent_name: self.agent_name.as_deref(),
+                                            phase: None,
                                         });
                                     }
 
@@ -2536,6 +2537,7 @@ impl TaskExecutor {
                                             cost_usd: resp.cost_usd,
                                             confidence: best_score,
                                             agent_name: self.agent_name.as_deref(),
+                                            phase: None,
                                         });
                                     }
 
@@ -3292,9 +3294,10 @@ impl TaskExecutor {
                 }
 
                 // ── LLM expressions ───────────────────────────────────────────
-                Expr::Reason(prompt_expr) => {
-                    let prompt = self.eval_expr(prompt_expr, env).await?;
+                Expr::Reason(reason) => {
+                    let prompt = self.eval_expr(&reason.prompt, env).await?;
                     let prompt_text = format!("{}", prompt.value);
+                    let phase = reason.phase.as_ref().map(|s| s.node.clone());
 
                     if let Some(ref tracer) = self.tracer {
                         tracer.llm_request("reason", &prompt_text);
@@ -3302,7 +3305,17 @@ impl TaskExecutor {
 
                     let request = CompletionRequest::simple(&prompt_text);
                     let hint = crate::llm::CapabilityHint {
-                        quality: Some(crate::llm::QualityTier::Balanced),
+                        // When a phase is declared, it overrides the historical
+                        // QualityTier hint — the runtime consults [llm.routing]
+                        // to pick a provider chain. Bare `reason` calls keep
+                        // the legacy Balanced tier so existing programs are
+                        // unaffected.
+                        quality: if phase.is_some() {
+                            None
+                        } else {
+                            Some(crate::llm::QualityTier::Balanced)
+                        },
+                        phase: phase.clone(),
                         ..Default::default()
                     };
                     let response = self
@@ -3322,6 +3335,7 @@ impl TaskExecutor {
                             cost_usd: response.cost_usd,
                             confidence,
                             agent_name: self.agent_name.as_deref(),
+                            phase: phase.as_deref(),
                         });
                     }
 
@@ -3340,6 +3354,7 @@ impl TaskExecutor {
                     labels.join(", "),
                     input.value,
                 );
+                    let phase = classify.phase.as_ref().map(|s| s.node.clone());
 
                     if let Some(ref tracer) = self.tracer {
                         tracer.llm_request("classify", &prompt);
@@ -3347,7 +3362,12 @@ impl TaskExecutor {
 
                     let request = CompletionRequest::simple(&prompt).with_temperature(0.0);
                     let hint = crate::llm::CapabilityHint {
-                        quality: Some(crate::llm::QualityTier::Fast),
+                        quality: if phase.is_some() {
+                            None
+                        } else {
+                            Some(crate::llm::QualityTier::Fast)
+                        },
+                        phase: phase.clone(),
                         ..Default::default()
                     };
                     let response = self
@@ -3367,6 +3387,7 @@ impl TaskExecutor {
                             cost_usd: response.cost_usd,
                             confidence,
                             agent_name: self.agent_name.as_deref(),
+                            phase: phase.as_deref(),
                         });
                     }
 

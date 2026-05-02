@@ -56,6 +56,14 @@ pub struct CostAggregator {
     /// WakeService-side threading is a follow-up; until then this surface stays
     /// empty rather than mis-attributing.
     pub by_schedule: HashMap<(String, String), OpStats>,
+    /// Per-routing-phase aggregation (issue #361). Keyed by phase name
+    /// (`plan`, `implement`, `classify`, `review`, `ops_investigate`, …).
+    /// Empty until `reason "..." for <phase>` calls start emitting events.
+    pub by_phase: HashMap<String, OpStats>,
+    /// Per-`(phase, provider)` aggregation (issue #361). Surfaces in the
+    /// observer cost dashboard so operators can see, e.g., that `plan` ran
+    /// 80% on `sonnet` and 20% on `gpt-4o` after a fallback episode.
+    pub by_phase_provider: HashMap<(String, String), OpStats>,
     /// Count of `schedule_skipped_budget` events per `(agent, schedule)` — the
     /// "saved by budget gate" tally (issue #336). Accurate, no threading needed.
     pub budget_gate_skips: HashMap<(String, String), u64>,
@@ -83,6 +91,8 @@ impl CostAggregator {
             by_provider_model: HashMap::new(),
             by_agent: HashMap::new(),
             by_schedule: HashMap::new(),
+            by_phase: HashMap::new(),
+            by_phase_provider: HashMap::new(),
             budget_gate_skips: HashMap::new(),
             concurrent_skips: HashMap::new(),
             confidence_buckets: [0; 10],
@@ -144,6 +154,24 @@ impl CostAggregator {
                 .entry((agent.to_string(), schedule.to_string()))
                 .or_default()
                 .record(tokens_in, tokens_out, cost_usd, confidence);
+        }
+
+        // By phase + (phase, provider) — issue #361. Populated only when the
+        // call-site declared `for <phase>`; bare `reason`/`classify` calls
+        // (and skill/embedding events) still record the totals above but
+        // skip these slices, leaving them honestly empty.
+        if let Some(phase) = event["phase"].as_str() {
+            self.by_phase
+                .entry(phase.to_string())
+                .or_default()
+                .record(tokens_in, tokens_out, cost_usd, confidence);
+
+            if let Some(provider) = event["provider"].as_str() {
+                self.by_phase_provider
+                    .entry((phase.to_string(), provider.to_string()))
+                    .or_default()
+                    .record(tokens_in, tokens_out, cost_usd, confidence);
+            }
         }
     }
 
@@ -209,6 +237,25 @@ impl CostAggregator {
             })
             .collect();
 
+        let by_phase: serde_json::Map<String, serde_json::Value> = self
+            .by_phase
+            .iter()
+            .map(|(k, v)| (k.clone(), v.to_json()))
+            .collect();
+
+        let by_phase_provider: Vec<serde_json::Value> = self
+            .by_phase_provider
+            .iter()
+            .map(|((phase, provider), stats)| {
+                let mut v = stats.to_json();
+                if let serde_json::Value::Object(ref mut m) = v {
+                    m.insert("phase".into(), serde_json::json!(phase));
+                    m.insert("provider".into(), serde_json::json!(provider));
+                }
+                v
+            })
+            .collect();
+
         let budget_gate_skips: Vec<serde_json::Value> = self
             .budget_gate_skips
             .iter()
@@ -245,6 +292,8 @@ impl CostAggregator {
             "by_provider_model": by_provider_model,
             "by_agent": by_agent,
             "by_schedule": by_schedule,
+            "by_phase": by_phase,
+            "by_phase_provider": by_phase_provider,
             "budget_gate_skips": budget_gate_skips,
             "concurrent_skips": concurrent_skips,
             "confidence_histogram": self.confidence_buckets,
@@ -333,6 +382,100 @@ mod tests {
         assert!(agg.by_schedule.is_empty());
         // Totals still record so the general cost tiles stay accurate.
         assert_eq!(agg.total_calls, 1);
+    }
+
+    // ── #361 — per-phase slices ──────────────────────────────────────
+
+    #[test]
+    fn by_phase_populates_when_phase_present() {
+        let mut agg = CostAggregator::new();
+        let event = serde_json::json!({
+            "event": "llm_response",
+            "agent": "implementer",
+            "phase": "implement",
+            "tokens_in": 200,
+            "tokens_out": 300,
+            "cost_usd": 0.012,
+            "confidence": 0.7,
+            "operation": "reason",
+            "provider": "gpt-4o",
+            "model": "gpt-4o",
+        });
+        agg.record_llm_event(&event);
+        let phase_stats = agg.by_phase.get("implement").expect("by_phase populated");
+        assert_eq!(phase_stats.calls, 1);
+        assert_eq!(phase_stats.tokens_in, 200);
+        let pair = agg
+            .by_phase_provider
+            .get(&("implement".to_string(), "gpt-4o".to_string()))
+            .expect("by_phase_provider populated");
+        assert_eq!(pair.calls, 1);
+        assert_eq!(pair.cost_usd, 0.012);
+    }
+
+    #[test]
+    fn by_phase_stays_empty_without_phase_field() {
+        // Bare reason calls and skill/embedding events lack `phase`. Totals
+        // and the older slices still update; only the phase slices skip.
+        let mut agg = CostAggregator::new();
+        let event = serde_json::json!({
+            "event": "llm_response",
+            "agent": "anonymous",
+            "tokens_in": 50,
+            "tokens_out": 25,
+            "cost_usd": 0.001,
+            "confidence": 0.8,
+            "operation": "reason",
+            "provider": "anthropic",
+            "model": "claude-haiku",
+        });
+        agg.record_llm_event(&event);
+        assert!(agg.by_phase.is_empty());
+        assert!(agg.by_phase_provider.is_empty());
+        assert_eq!(agg.total_calls, 1);
+        assert!(agg.by_provider_model.contains_key("anthropic/claude-haiku"));
+    }
+
+    #[test]
+    fn by_phase_provider_splits_when_chain_falls_through() {
+        // Realistic clone-dev shape: plan ran twice, first time on sonnet,
+        // second time fell through to gpt-4o. Dashboard needs to see both
+        // attribution rows.
+        let mut agg = CostAggregator::new();
+        let sonnet_event = serde_json::json!({
+            "event": "llm_response",
+            "phase": "plan",
+            "provider": "sonnet",
+            "model": "claude-sonnet-4",
+            "tokens_in": 100, "tokens_out": 100,
+            "cost_usd": 0.005, "confidence": 0.9,
+        });
+        let gpt_event = serde_json::json!({
+            "event": "llm_response",
+            "phase": "plan",
+            "provider": "gpt-4o",
+            "model": "gpt-4o",
+            "tokens_in": 100, "tokens_out": 100,
+            "cost_usd": 0.008, "confidence": 0.85,
+        });
+        agg.record_llm_event(&sonnet_event);
+        agg.record_llm_event(&gpt_event);
+
+        let by_phase = agg.by_phase.get("plan").expect("plan in by_phase");
+        assert_eq!(by_phase.calls, 2);
+        assert!(
+            (by_phase.cost_usd - 0.013).abs() < 1e-9,
+            "summed cost ≈ 0.013, got {}",
+            by_phase.cost_usd
+        );
+
+        let snap = agg.snapshot();
+        let rows = snap["by_phase_provider"]
+            .as_array()
+            .expect("by_phase_provider is array");
+        assert_eq!(rows.len(), 2);
+        let phases: Vec<&str> = rows.iter().filter_map(|r| r["phase"].as_str()).collect();
+        assert!(phases.iter().all(|p| *p == "plan"));
     }
 
     #[test]

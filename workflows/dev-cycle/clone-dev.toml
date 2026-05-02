@@ -21,6 +21,28 @@ bot_token_env   = "SLACK_BOT_TOKEN"
 [github]
 token_env = "GITHUB_TOKEN"
 
+# ── [llm.routing] (T8.6, #361) ────────────────────────────────────
+# Phase → primary provider. Provider IDs reference [providers.*] in
+# workflows/clone-dev/forge.config.toml. Mixed providers per the
+# track plan: Anthropic for plan/review (deeper reasoning), OpenAI
+# for implement (throughput), local Ollama for ops_investigate (no
+# egress). When the mastermind classifies an inbound task, the
+# `classify` chain runs first.
+[llm.routing]
+classify        = "sonnet"
+plan            = "sonnet"
+implement       = "gpt-4o"
+review          = "sonnet"
+ops_investigate = "ollama-local"
+
+# Optional per-phase fallback chains. Tried in order when the
+# primary provider above errors (timeout / 5xx). Cost is charged
+# to whichever provider actually served the response.
+[llm.routing.fallback]
+plan      = ["sonnet", "gpt-4o"]
+implement = ["gpt-4o", "sonnet"]
+review    = ["sonnet", "gpt-4o"]
+
 [defaults]
 # Built-in dev-cycle defaults — keep in sync with the constants in
 # src/runtime/clone_dev_config.rs (DEFAULT_WORKDIR_ROOT etc.). Each

@@ -183,14 +183,55 @@ fn parse_array_types() {
 fn parse_reason_expression() {
     let prog = parse_task_with("x = reason \"think about this\"");
     match bind_expr(first_stmt(&prog)) {
-        Expr::Reason(inner) => match &inner.node {
-            Expr::Template(parts) => match &parts[0].node {
-                TemplatePart::Text(t) => assert_eq!(t, "think about this"),
-                _ => panic!("expected text"),
-            },
-            _ => panic!("expected template"),
-        },
+        Expr::Reason(reason) => {
+            assert!(reason.phase.is_none(), "bare reason has no phase");
+            match &reason.prompt.node {
+                Expr::Template(parts) => match &parts[0].node {
+                    TemplatePart::Text(t) => assert_eq!(t, "think about this"),
+                    _ => panic!("expected text"),
+                },
+                _ => panic!("expected template"),
+            }
+        }
         other => panic!("expected Reason, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_reason_with_phase_clause() {
+    // Issue #361: trailing `for <phase>` attaches a routing key. The phase
+    // ident must accept names that collide with reserved words (`classify`,
+    // `plan`) — the position is unambiguous after `for`.
+    let cases = [
+        ("plan", "plan"),
+        ("implement", "implement"),
+        ("classify", "classify"),
+        ("ops_investigate", "ops_investigate"),
+    ];
+    for (input, expected) in cases {
+        let src = format!("x = reason \"draft\" for {}", input);
+        let prog = parse_task_with(&src);
+        let phase = match bind_expr(first_stmt(&prog)) {
+            Expr::Reason(reason) => reason
+                .phase
+                .as_ref()
+                .map(|p| p.node.clone())
+                .unwrap_or_default(),
+            other => panic!("expected Reason, got {:?}", other),
+        };
+        assert_eq!(phase, expected, "phase for {input}");
+    }
+}
+
+#[test]
+fn parse_classify_with_phase_clause() {
+    let prog = parse_task_with("x = classify message into [\"a\", \"b\"] for review");
+    match bind_expr(first_stmt(&prog)) {
+        Expr::Classify(c) => {
+            assert_eq!(c.phase.as_ref().unwrap().node, "review");
+            assert_eq!(c.labels.len(), 2);
+        }
+        other => panic!("expected Classify, got {:?}", other),
     }
 }
 

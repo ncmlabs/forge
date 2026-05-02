@@ -30,6 +30,9 @@ pub struct LLMResponseInfo<'a> {
     pub cost_usd: f32,
     pub confidence: f32,
     pub agent_name: Option<&'a str>,
+    /// Routing phase declared at the call-site (#361). Drives the per-phase
+    /// slices in `cost_aggregator`. None for bare `reason`/`classify` calls.
+    pub phase: Option<&'a str>,
 }
 
 impl Tracer {
@@ -122,6 +125,9 @@ impl Tracer {
         });
         if let Some(agent) = info.agent_name {
             data["agent"] = serde_json::json!(agent);
+        }
+        if let Some(phase) = info.phase {
+            data["phase"] = serde_json::json!(phase);
         }
         self.emit("llm_response", data);
     }
