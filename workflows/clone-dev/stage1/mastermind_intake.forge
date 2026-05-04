@@ -1,0 +1,148 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev Stage 1 — mastermind_intake (T9.1, #362)
+# ================================================================
+# Conversational classifier for fuzzy Slack-mention intake. Front
+# door of Stage 1; sits parallel to the existing structured-inbound
+# mastermind in workflows/clone-dev/shared/mastermind.forge.
+#
+# Follows the four invariants from
+# examples/agents/mastermind-pattern/README.md:
+#   1. Classification via `reason ... for classify` — LLM suggests,
+#      explicit `if classification ==` branching commits to a route.
+#   2. Typed routing event — emits InvestigationRequested(domain, ...)
+#      so T9.2 (#363) investigators filter `where domain == "<self>"`.
+#   3. Correlation — `correlate on DevOpsRequest.thread_ts mode: wake`
+#      keys one persistent agent instance per Slack thread, rehydrated
+#      from redb on each turn (CorrelationDriver, #334).
+#   4. Single warden — registered in workflows/clone-dev/main.forge's
+#      `org_warden manages [...]` block.
+#
+# Lifecycle: one instance per Slack thread_ts.
+#   - First mention on a new thread → fresh agent spawned, memory
+#     initialized in `on start`.
+#   - Subsequent mentions on the same thread → CorrelationDriver
+#     match → rehydrate from redb → handler sees prior turn_count
+#     and history.
+#
+# Stitch-back: when a T9.2 investigator emits Finding(thread_ts: ...),
+# the second `correlate on Finding.thread_ts` block wakes the right
+# intake instance, which posts the finding back into the Slack thread
+# via slack_adapter's PostMessage event.
+#
+# Cross-references:
+#   - DevOpsRequest, InvestigationRequested, Finding declared in
+#     workflows/clone-dev/shared/events.forge.
+#   - PostMessage consumed by examples/agents/slack-adapter/agents.forge
+#     (auto-routes to reply_thread when thread_ts != "").
+#   - DevOpsRequest producer: T9.5 (#366) slack_devops_monitor (future).
+#     Until then, the /devops_request smoke endpoint in main.forge stands
+#     in for direct testing.
+#   - `for classify` resolves through [llm.routing].classify per T8.6
+#     (#361); see workflows/dev-cycle/clone-dev.toml:32.
+# ================================================================
+
+use
+  llm.reason
+
+# ── Confidence-fallback tasks ──────────────────────────────────
+# The `when .sure / .unsure / else` triple lives inside dedicated
+# tasks so the agent handler can branch on a clean Text value. Low-
+# confidence on the primary classify falls through to the
+# `clarification_needed` route, which pulls a follow-up question via
+# `ask_clarification`.
+
+task classify_request
+  needs text: Text
+  gives Text
+  do
+    result = reason "Classify this DevOps request into exactly one of: investigation, small_task, dev_task, clarification_needed. Text: {text}. Reply with the category name only." for classify
+    when result.sure -> give result
+    when result.unsure -> give "clarification_needed"
+    else -> give "clarification_needed"
+
+task classify_domain
+  needs text: Text
+  gives Text
+  do
+    result = reason "Pick one domain for this investigation: code, ops, security. Text: {text}. Reply with the domain only." for classify
+    when result.sure -> give result
+    when result.unsure -> give "ops"
+    else -> give "ops"
+
+# `for classify` keeps this on the same Stage-1 phase chain as the
+# other two reason calls in this agent. Without an explicit phase,
+# the routing chain falls through to a provider that may not be
+# available (e.g., ops_investigate's ollama-local) and crashes the
+# handler — surfaced during the T9.1 real-LLM smoke run.
+task ask_clarification
+  needs text: Text
+  gives Text
+  do
+    result = reason "Ask one focused clarifying question about this request: {text}" for classify
+    when result.sure -> give result
+    when result.unsure -> give "Could you give a bit more detail about what you're seeing?"
+    else -> give "Could you give a bit more detail about what you're seeing?"
+
+# ── Agent ──────────────────────────────────────────────────────
+
+agent mastermind_intake
+  memory persistent
+    thread_ts: Text
+    channel: Text
+    user: Text
+    turn_count: Number
+    history: Text[]
+    last_classification: Text
+    last_domain: Text
+  correlate on DevOpsRequest.thread_ts
+    mode: wake
+  correlate on Finding.thread_ts
+    mode: wake
+
+  on start
+    memory.turn_count = 0
+    memory.last_classification = "none"
+    memory.last_domain = ""
+    say "[mastermind_intake] ready"
+
+  on DevOpsRequest(channel: Text, user: Text, text: Text, thread_ts: Text, message_ts: Text)
+    memory.thread_ts = thread_ts
+    memory.channel = channel
+    memory.user = user
+    memory.turn_count = memory.turn_count + 1
+    classification = classify_request(text)
+    memory.last_classification = classification
+    say "[mastermind_intake] thread={thread_ts} turn={memory.turn_count} classification={classification}"
+    if classification == "investigation"
+      domain_raw = classify_domain(text)
+      domain = "ops"
+      if domain_raw == "code"
+        domain = "code"
+      if domain_raw == "security"
+        domain = "security"
+      memory.last_domain = domain
+      memory.history = memory.history + ["turn{memory.turn_count}: investigation/{domain}"]
+      emit InvestigationRequested(thread_ts: thread_ts, domain: domain, context: text, channel: channel)
+    if classification == "small_task"
+      memory.history = memory.history + ["turn{memory.turn_count}: small_task"]
+      emit PostMessage(channel: channel, text: "[stub] small_task path is not yet implemented; T9.x will land it.", thread_ts: thread_ts)
+    if classification == "dev_task"
+      memory.history = memory.history + ["turn{memory.turn_count}: dev_task"]
+      emit PostMessage(channel: channel, text: "I think this should become a tracked issue. T9.3/T9.4 will draft and create it once landed.", thread_ts: thread_ts)
+    if classification == "clarification_needed"
+      question = ask_clarification(text)
+      memory.history = memory.history + ["turn{memory.turn_count}: clarify"]
+      emit PostMessage(channel: channel, text: question, thread_ts: thread_ts)
+
+  # Stitch-back: a Finding for this thread → post the summary into
+  # the same Slack thread via slack_adapter. memory.channel was set
+  # on the inbound DevOpsRequest handler that opened this thread.
+  on Finding(thread_ts: Text, domain: Text, summary: Text, evidence: Text[], confidence: Number, suggested_action: Text)
+    memory.history = memory.history + ["finding/{domain}/{suggested_action}"]
+    emit PostMessage(channel: memory.channel, text: "{summary} (confidence={confidence}, suggested={suggested_action})", thread_ts: thread_ts)
+
+  if stuck for 3 turns
+    say "[mastermind_intake] stuck. escalating."
+    escalate to lead
