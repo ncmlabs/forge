@@ -71,11 +71,16 @@ task classify_domain
     when result.unsure -> give "ops"
     else -> give "ops"
 
+# `for classify` keeps this on the same Stage-1 phase chain as the
+# other two reason calls in this agent. Without an explicit phase,
+# the routing chain falls through to a provider that may not be
+# available (e.g., ops_investigate's ollama-local) and crashes the
+# handler — surfaced during the T9.1 real-LLM smoke run.
 task ask_clarification
   needs text: Text
   gives Text
   do
-    result = reason "Ask one focused clarifying question about this request: {text}"
+    result = reason "Ask one focused clarifying question about this request: {text}" for classify
     when result.sure -> give result
     when result.unsure -> give "Could you give a bit more detail about what you're seeing?"
     else -> give "Could you give a bit more detail about what you're seeing?"
