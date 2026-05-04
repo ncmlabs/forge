@@ -80,3 +80,35 @@ event TaskRouted
   outcome: Text
   matched_suffix: Text
   diagnostic: Text
+
+# T9.1 (#362): Stage-1 fuzzy intake. Produced by T9.5 slack_devops_monitor
+# (#366) and consumed by mastermind_intake (workflows/clone-dev/stage1/).
+# thread_ts is the correlation key; one mastermind_intake instance per
+# Slack thread, rehydrated via CorrelationDriver (#334) on each turn.
+event DevOpsRequest
+  channel: Text
+  user: Text
+  text: Text
+  thread_ts: Text
+  message_ts: Text
+
+# T9.1 (#362): domain dispatch from mastermind_intake to the T9.2 (#363)
+# investigators. Each investigator subscribes with `where domain == "<self>"`.
+# thread_ts threads through so the eventual Finding can stitch back into
+# the same Slack thread.
+event InvestigationRequested
+  thread_ts: Text
+  domain: Text
+  context: Text
+  channel: Text
+
+# T9.1 (#362) declares the contract; T9.2 (#363) populates it. mastermind_intake
+# correlates on Finding.thread_ts to wake the right thread instance and post
+# the investigator's reply back into the originating Slack thread.
+event Finding
+  thread_ts: Text
+  domain: Text
+  summary: Text
+  evidence: Text[]
+  confidence: Number
+  suggested_action: Text
