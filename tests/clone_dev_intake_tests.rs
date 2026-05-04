@@ -119,7 +119,10 @@ fn build_intake_registry(classification: &str, domain: &str) -> Arc<ProviderRegi
     let mock = MockProvider::new("mock-classify")
         .with_response("Classify this DevOps request", classification)
         .with_response("Pick one domain", domain)
-        .with_response("Ask one focused clarifying", "Could you share a screenshot or log line?")
+        .with_response(
+            "Ask one focused clarifying",
+            "Could you share a screenshot or log line?",
+        )
         .with_default("mock fallback");
 
     let mut registry = ProviderRegistry::new("mock-classify");
@@ -170,9 +173,12 @@ async fn fire_and_drain_one(
     let (events_tx, mut events_rx) = tokio::sync::broadcast::channel::<String>(512);
     let tracer = forge::tracer::Tracer::with_live(events_tx.clone());
 
-    let executor =
-        TaskExecutor::new(program, build_intake_registry(classification, domain), Some(tracer.clone()))
-            .with_config(forge::config::ForgeConfig::default_mock_config());
+    let executor = TaskExecutor::new(
+        program,
+        build_intake_registry(classification, domain),
+        Some(tracer.clone()),
+    )
+    .with_config(forge::config::ForgeConfig::default_mock_config());
 
     let event_bus = EventBus::new_shared(executor.tracer().cloned());
     let instance_registry = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
@@ -233,9 +239,12 @@ async fn fire_two_turns_same_thread(
     let (events_tx, mut events_rx) = tokio::sync::broadcast::channel::<String>(1024);
     let tracer = forge::tracer::Tracer::with_live(events_tx.clone());
 
-    let executor =
-        TaskExecutor::new(program, build_intake_registry(classification, domain), Some(tracer.clone()))
-            .with_config(forge::config::ForgeConfig::default_mock_config());
+    let executor = TaskExecutor::new(
+        program,
+        build_intake_registry(classification, domain),
+        Some(tracer.clone()),
+    )
+    .with_config(forge::config::ForgeConfig::default_mock_config());
 
     let event_bus = EventBus::new_shared(executor.tracer().cloned());
     let instance_registry = Arc::new(tokio::sync::RwLock::new(InstanceRegistry::new()));
@@ -343,8 +352,13 @@ async fn investigation_path_routes_to_ops_and_stitches_finding_back_into_thread(
     // correctly, routes, and the investigator's reply lands in the
     // same thread." This single-turn variant proves the full classify
     // → investigate → finding → stitch-back loop in one shot.
-    let frames =
-        fire_and_drain_one("investigation", "ops", "T1", "logs are spiking on api-gateway").await;
+    let frames = fire_and_drain_one(
+        "investigation",
+        "ops",
+        "T1",
+        "logs are spiking on api-gateway",
+    )
+    .await;
 
     // 1. mastermind_intake emitted InvestigationRequested for the ops domain.
     assert!(
@@ -356,7 +370,9 @@ async fn investigation_path_routes_to_ops_and_stitches_finding_back_into_thread(
     //    and emitted Finding back.
     let says = say_lines(&frames);
     assert!(
-        says.iter().any(|s| s.starts_with("ECHO|") && s.contains("thread_ts=T1") && s.contains("domain=ops")),
+        says.iter().any(|s| s.starts_with("ECHO|")
+            && s.contains("thread_ts=T1")
+            && s.contains("domain=ops")),
         "echo_investigator should print ECHO line; says={says:#?}"
     );
     assert!(
@@ -426,7 +442,8 @@ async fn clarification_classification_asks_a_question_in_thread() {
     );
     let says = say_lines(&frames);
     assert!(
-        says.iter().any(|s| s.contains("classification=clarification_needed")),
+        says.iter()
+            .any(|s| s.contains("classification=clarification_needed")),
         "intake should log clarification classification; says={says:#?}"
     );
 }
