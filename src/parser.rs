@@ -1016,9 +1016,27 @@ fn build_session_method_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
 
 fn build_reason_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
     let span = to_span(&pair);
-    let inner = pair.into_inner().next().unwrap();
-    let arg = build_string_arg(inner)?;
-    Ok(Spanned::new(Expr::Reason(Box::new(arg)), span))
+    let mut inner = pair.into_inner();
+    let prompt_pair = inner.next().unwrap();
+    let prompt = build_string_arg(prompt_pair)?;
+    let phase = inner.next().map(build_phase_clause).transpose()?;
+    Ok(Spanned::new(
+        Expr::Reason(crate::ast::ReasonExpr {
+            prompt: Box::new(prompt),
+            phase,
+        }),
+        span,
+    ))
+}
+
+// Extract the inner `phase_ident` from a `phase_clause` Pair. The outer pair
+// is a `phase_clause` whose only meaningful inner child is the phase ident.
+fn build_phase_clause(pair: Pair) -> anyhow::Result<Spanned<String>> {
+    let ident_pair = pair
+        .into_inner()
+        .find(|p| p.as_rule() == Rule::phase_ident)
+        .ok_or_else(|| anyhow::anyhow!("phase_clause missing phase_ident"))?;
+    Ok(spanned(ident_pair.as_str().to_string(), &ident_pair))
 }
 
 fn build_search_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
@@ -1048,10 +1066,12 @@ fn build_classify_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
             labels.push(spanned(text.to_string(), &child));
         }
     }
+    let phase = inner.next().map(build_phase_clause).transpose()?;
     Ok(Spanned::new(
         Expr::Classify(ClassifyExpr {
             input: Box::new(input),
             labels,
+            phase,
         }),
         span,
     ))

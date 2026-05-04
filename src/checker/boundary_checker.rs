@@ -498,7 +498,10 @@ fn check_refs_in_expr(
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
             }
         }
-        Expr::Reason(inner) | Expr::Recall(inner) | Expr::Exec(inner) => {
+        Expr::Reason(reason) => {
+            check_refs_in_expr(&reason.prompt, boundary, registry, file, diagnostics);
+        }
+        Expr::Recall(inner) | Expr::Exec(inner) => {
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
         }
         Expr::Command(cmd_expr) => {

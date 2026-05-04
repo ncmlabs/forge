@@ -245,6 +245,7 @@ impl SkillExecutor {
                 cost_usd: response.cost_usd,
                 confidence,
                 agent_name: None,
+                phase: None,
             });
         }
 
@@ -288,6 +289,7 @@ impl SkillExecutor {
                     cost_usd: response.cost_usd,
                     confidence,
                     agent_name: None,
+                    phase: None,
                 });
             }
 

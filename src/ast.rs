@@ -549,9 +549,9 @@ pub enum Expr {
     Call(CallExpr),
     /// Constructor: `Failure("msg", retry: true)`
     Constructor(ConstructorExpr),
-    /// `reason "prompt"`
-    Reason(Box<Spanned<Expr>>),
-    /// `classify expr into ["a", "b"]`
+    /// `reason "prompt"` or `reason "prompt" for <phase>` (#361)
+    Reason(ReasonExpr),
+    /// `classify expr into ["a", "b"]` or `... for <phase>` (#361)
     Classify(ClassifyExpr),
     /// `search "query"`
     Search(Box<Spanned<Expr>>),
@@ -660,6 +660,17 @@ pub struct ConstructorExpr {
 pub struct ClassifyExpr {
     pub input: Box<Spanned<Expr>>,
     pub labels: Vec<Spanned<String>>,
+    /// Optional routing phase (#361). When set, the executor consults the
+    /// configured `[llm.routing]` table to dispatch to a specific provider
+    /// chain instead of the runtime default.
+    pub phase: Option<Spanned<String>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReasonExpr {
+    pub prompt: Box<Spanned<Expr>>,
+    /// Optional routing phase (#361). See `ClassifyExpr::phase`.
+    pub phase: Option<Spanned<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

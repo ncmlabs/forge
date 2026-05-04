@@ -201,8 +201,8 @@ impl CostWalker {
 
     fn walk_expr(&mut self, expr: &Spanned<Expr>, context: &str, multiplier: u32) {
         match &expr.node {
-            Expr::Reason(inner) => {
-                let tokens_in = estimate_prompt_tokens(inner) * multiplier;
+            Expr::Reason(reason) => {
+                let tokens_in = estimate_prompt_tokens(&reason.prompt) * multiplier;
                 let tokens_out = 1000 * multiplier;
                 self.add_op("reason", context.to_string(), tokens_in, tokens_out);
             }

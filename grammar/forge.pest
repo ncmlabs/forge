@@ -780,8 +780,16 @@ session_hook_kind = { "progress" | "complete" }
 session_emit_hook = { "emit" ~ _s ~ ident ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
 env_map      = { "{" ~ _s_opt ~ env_entry ~ (_s_opt ~ "," ~ _s_opt ~ env_entry)* ~ _s_opt ~ "}" }
 env_entry    = { ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
-reason_expr   = { "reason" ~ _s ~ string_arg }
-classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list }
+// `for <phase>` clause (issue #361, T8.6) — optional trailing tag attaching a
+// routing phase key to a `reason`/`classify` call-site. Phase names like
+// `classify` collide with the `keyword` exclusion that gates `ident`, so we
+// admit a permissive identifier shape here. The position after `for` inside
+// `reason_expr`/`classify_expr` is unambiguous, so allowing keywords carries
+// no parser conflict.
+phase_ident   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+phase_clause  = { "for" ~ _s ~ phase_ident }
+reason_expr   = { "reason" ~ _s ~ string_arg ~ (_s ~ phase_clause)? }
+classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list ~ (_s ~ phase_clause)? }
 search_expr   = { "search" ~ _s ~ string_arg }
 recall_expr   = { "recall" ~ _s ~ string_arg }
 try_or_expr   = { "try" ~ _s ~ and_expr ~ _s ~ "or" ~ _s ~ expr }

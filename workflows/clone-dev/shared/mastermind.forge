@@ -73,7 +73,7 @@ agent mastermind
     memory.task_counter = memory.task_counter + 1
     task_id = "T{memory.task_counter}"
     memory.last_kind = kind
-    decision = reason "Classify this clone-dev request. kind={kind} title={title}. Valid routes: dev-cycle (default), observe (read-only), ignore. Reply with route name only."
+    decision = reason "Classify this clone-dev request. kind={kind} title={title}. Valid routes: dev-cycle (default), observe (read-only), ignore. Reply with route name only." for classify
     target = "planner"
     if kind == "github_issue"
       target = "planner"

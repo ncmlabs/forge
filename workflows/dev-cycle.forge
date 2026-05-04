@@ -108,7 +108,7 @@ task draft_plan
   needs issue: Issue
   gives Text
   do
-    result = reason "You are a senior engineer planning work on FORGE. Given this issue, produce a concise implementation plan with numbered steps.\n\nTitle: {issue.title}\nAcceptance criteria: {issue.acceptance_criteria}"
+    result = reason "You are a senior engineer planning work on FORGE. Given this issue, produce a concise implementation plan with numbered steps.\n\nTitle: {issue.title}\nAcceptance criteria: {issue.acceptance_criteria}" for plan
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Manual planning required."
@@ -118,7 +118,7 @@ task check_acceptance
   gives Text
   do
     failure_text = report.failures
-    result = classify failure_text into ["blocking", "minor", "none"]
+    result = classify failure_text into ["blocking", "minor", "none"] for review
     when result.sure -> give result
     when result.unsure -> give "needs_human_review"
     else -> give "inconclusive"
@@ -127,7 +127,7 @@ task draft_changelog_entry
   needs issue: Issue, branch: Text
   gives Text
   do
-    result = reason "Write a Keep-a-Changelog entry.\n\nIssue: {issue.title}\nBranch: {branch}\nUse one of: Added, Changed, Fixed. Then a one-line description."
+    result = reason "Write a Keep-a-Changelog entry.\n\nIssue: {issue.title}\nBranch: {branch}\nUse one of: Added, Changed, Fixed. Then a one-line description." for review
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Changed: {issue.title}"
@@ -136,7 +136,7 @@ task draft_pr_description
   needs issue: Issue, changelog: Text
   gives Text
   do
-    result = reason "Write a concise PR description.\n\nIssue: {issue.title}\nAcceptance criteria: {issue.acceptance_criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Test plan section."
+    result = reason "Write a concise PR description.\n\nIssue: {issue.title}\nAcceptance criteria: {issue.acceptance_criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Test plan section." for review
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Summary: {issue.title}"
@@ -261,7 +261,7 @@ agent implementer
     requires lifecycle == in_progress on fail: silent
     memory.iteration = memory.iteration + 1
     say "Iteration {memory.iteration}: diagnosing failures"
-    diagnosis = reason "Diagnose test failures (attempt {memory.iteration}) for issue {issue_id}.\n\nPlan:\n{memory.plan}\n\nFailures:\n{failures}\n\nProvide root cause and fix approach."
+    diagnosis = reason "Diagnose test failures (attempt {memory.iteration}) for issue {issue_id}.\n\nPlan:\n{memory.plan}\n\nFailures:\n{failures}\n\nProvide root cause and fix approach." for implement
     when diagnosis.sure -> say "Diagnosis: {diagnosis}"
     else -> say "Diagnosis uncertain: {diagnosis}"
     memory.last_diagnosis = diagnosis

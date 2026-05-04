@@ -150,6 +150,7 @@ fn ast_confidence_aware_task() {
                         sp("cancel".into()),
                         sp("other".into()),
                     ],
+                    phase: None,
                 })),
             )),
             sp(Stmt::When(Box::new(when_block))),
@@ -296,14 +297,17 @@ fn ast_flow_with_stages() {
                 })],
                 body: vec![sp(Stmt::Bind(
                     sp("draft".into()),
-                    sp(Expr::Reason(Box::new(sp(Expr::Template(vec![
-                        sp(TemplatePart::Text(
-                            "synthesize these sources into a report: ".into(),
-                        )),
-                        sp(TemplatePart::Interp(Box::new(sp(Expr::GlobAccess(
-                            Box::new(sp(Expr::Ident("gather".into()))),
-                        ))))),
-                    ]))))),
+                    sp(Expr::Reason(ReasonExpr {
+                        prompt: Box::new(sp(Expr::Template(vec![
+                            sp(TemplatePart::Text(
+                                "synthesize these sources into a report: ".into(),
+                            )),
+                            sp(TemplatePart::Interp(Box::new(sp(Expr::GlobAccess(
+                                Box::new(sp(Expr::Ident("gather".into()))),
+                            ))))),
+                        ]))),
+                        phase: None,
+                    })),
                 ))],
             }),
             sp(StageDecl {
@@ -315,13 +319,16 @@ fn ast_flow_with_stages() {
                 body: vec![
                     sp(Stmt::Bind(
                         sp("checked".into()),
-                        sp(Expr::Reason(Box::new(sp(Expr::Template(vec![
-                            sp(TemplatePart::Text("fact-check this: ".into())),
-                            sp(TemplatePart::Interp(Box::new(sp(Expr::FieldAccess(
-                                Box::new(sp(Expr::Ident("synthesize".into()))),
-                                sp("draft".into()),
-                            ))))),
-                        ]))))),
+                        sp(Expr::Reason(ReasonExpr {
+                            prompt: Box::new(sp(Expr::Template(vec![
+                                sp(TemplatePart::Text("fact-check this: ".into())),
+                                sp(TemplatePart::Interp(Box::new(sp(Expr::FieldAccess(
+                                    Box::new(sp(Expr::Ident("synthesize".into()))),
+                                    sp("draft".into()),
+                                ))))),
+                            ]))),
+                            phase: None,
+                        })),
                     )),
                     sp(Stmt::Give(
                         sp(Expr::Constructor(ConstructorExpr {

@@ -21,6 +21,7 @@ var ForgeCosts = (function () {
     by_agent: {},
     by_provider_model: {},
     by_schedule: [],        // issue #336 — (agent, schedule) cost attribution
+    by_phase_provider: [],  // issue #361 — (phase, provider) cost attribution
     budget_gate_skips: [],  // issue #336 — "saved by budget gate" tallies
     concurrent_skips: [],   // issue #336 — schedule_skipped_concurrent counts
     confidence_histogram: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -32,7 +33,7 @@ var ForgeCosts = (function () {
   var costUsd, costCalls, tokensIn, tokensOut;
   var throughputIn, throughputOut, uptimeEl, tpsEl;
   var opTable, agentTable, providerTable;
-  var scheduleTable, budgetSkipTable;
+  var scheduleTable, budgetSkipTable, phaseProviderTable;
   var confChart, sseStatus;
 
   // ── Intervals & subscriptions ──────────────────────────────────
@@ -223,6 +224,29 @@ var ForgeCosts = (function () {
     scheduleTable.innerHTML = rows.join('');
   }
 
+  // Issue #361 — per-phase × per-provider attribution. Rows sort by cost
+  // so the heaviest phase/provider combo bubbles to the top, mirroring
+  // the byProvider and bySchedule layouts.
+  function renderPhaseProviderTable() {
+    if (!phaseProviderTable) return;
+    if (!state.by_phase_provider || state.by_phase_provider.length === 0) {
+      phaseProviderTable.innerHTML = '<tr><td colspan="4" class="text-center opacity-40 py-4">'
+        + 'No phase-tagged spend yet — annotate <code>reason "..." for &lt;phase&gt;</code> to populate.</td></tr>';
+      return;
+    }
+    var rows = state.by_phase_provider.slice().sort(function (a, b) {
+      return (b.cost_usd || 0) - (a.cost_usd || 0);
+    }).map(function (s) {
+      return '<tr>'
+        + '<td class="font-mono text-sm">' + ForgeAPI.escapeHtml(s.phase || '?') + '</td>'
+        + '<td class="font-mono text-sm">' + ForgeAPI.escapeHtml(s.provider || '?') + '</td>'
+        + '<td class="text-right">' + (s.calls || 0) + '</td>'
+        + '<td class="text-right font-mono">' + ForgeAPI.formatCost(s.cost_usd || 0) + '</td>'
+        + '</tr>';
+    });
+    phaseProviderTable.innerHTML = rows.join('');
+  }
+
   function renderBudgetSkipTable() {
     if (!budgetSkipTable) return;
     if (!state.budget_gate_skips || state.budget_gate_skips.length === 0) {
@@ -247,6 +271,7 @@ var ForgeCosts = (function () {
     renderAgentTable();
     renderProviderTable();
     renderScheduleTable();
+    renderPhaseProviderTable();
     renderBudgetSkipTable();
     renderConfidenceChart();
   }
@@ -266,6 +291,7 @@ var ForgeCosts = (function () {
         state.by_agent = data.by_agent || {};
         state.by_provider_model = data.by_provider_model || {};
         state.by_schedule = data.by_schedule || [];
+        state.by_phase_provider = data.by_phase_provider || [];
         state.budget_gate_skips = data.budget_gate_skips || [];
         state.concurrent_skips = data.concurrent_skips || [];
         state.confidence_histogram = data.confidence_histogram || state.confidence_histogram;
@@ -333,6 +359,27 @@ var ForgeCosts = (function () {
     pmS.tokens_out += to;
     pmS.cost_usd += cost;
 
+    // By phase × provider (issue #361). Live-update only when the event
+    // carries a phase key; otherwise the table stays empty rather than
+    // misattributing untagged calls.
+    if (ev.phase) {
+      var phaseProvider = state.by_phase_provider.find(function (s) {
+        return s.phase === ev.phase && s.provider === ev.provider;
+      });
+      if (phaseProvider) {
+        phaseProvider.calls = (phaseProvider.calls || 0) + 1;
+        phaseProvider.tokens_in = (phaseProvider.tokens_in || 0) + ti;
+        phaseProvider.tokens_out = (phaseProvider.tokens_out || 0) + to;
+        phaseProvider.cost_usd = (phaseProvider.cost_usd || 0) + cost;
+      } else {
+        state.by_phase_provider.push({
+          phase: ev.phase,
+          provider: ev.provider,
+          calls: 1, tokens_in: ti, tokens_out: to, cost_usd: cost,
+        });
+      }
+    }
+
     // Update SSE status indicator
     if (sseStatus) {
       sseStatus.textContent = 'Live';
@@ -377,6 +424,7 @@ var ForgeCosts = (function () {
     agentTable = document.getElementById('cost-by-agent');
     providerTable = document.getElementById('cost-by-provider');
     scheduleTable = document.getElementById('cost-by-schedule');
+    phaseProviderTable = document.getElementById('cost-by-phase-provider');
     budgetSkipTable = document.getElementById('cost-budget-skips');
     confChart = document.getElementById('confidence-chart');
     sseStatus = document.getElementById('cost-sse-status');

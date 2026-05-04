@@ -195,7 +195,7 @@ task draft_plan
   needs issue: Issue
   gives Text
   do
-    result = reason "You are a senior engineer planning work on a GitHub repo. Given this issue, produce a concise implementation plan with numbered steps.\n\nTitle: {issue.title}\nAcceptance criteria: {issue.criteria}"
+    result = reason "You are a senior engineer planning work on a GitHub repo. Given this issue, produce a concise implementation plan with numbered steps.\n\nTitle: {issue.title}\nAcceptance criteria: {issue.criteria}" for plan
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Manual planning required."
@@ -205,7 +205,7 @@ task check_acceptance
   gives Text
   do
     failure_text = report.failures
-    result = classify failure_text into ["blocking", "minor", "none"]
+    result = classify failure_text into ["blocking", "minor", "none"] for review
     when result.sure -> give result
     when result.unsure -> give "needs_human_review"
     else -> give "inconclusive"
@@ -214,7 +214,7 @@ task draft_changelog_entry
   needs issue: Issue, branch: Text
   gives Text
   do
-    result = reason "Write a Keep-a-Changelog entry.\n\nIssue: {issue.title}\nBranch: {branch}\nUse one of: Added, Changed, Fixed. Then a one-line description."
+    result = reason "Write a Keep-a-Changelog entry.\n\nIssue: {issue.title}\nBranch: {branch}\nUse one of: Added, Changed, Fixed. Then a one-line description." for review
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Changed: {issue.title}"
@@ -223,7 +223,7 @@ task draft_pr_description
   needs issue: Issue, changelog: Text
   gives Text
   do
-    result = reason "Write a concise PR description.\n\nIssue: {issue.title}\nAcceptance criteria: {issue.criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Test plan section."
+    result = reason "Write a concise PR description.\n\nIssue: {issue.title}\nAcceptance criteria: {issue.criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Test plan section." for review
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Summary: {issue.title}"
@@ -232,7 +232,7 @@ task diagnose_failures
   needs failures: Text, plan: Text, iteration: Number
   gives Text
   do
-    result = reason "You are diagnosing test failures (attempt {iteration}).\n\nOriginal plan:\n{plan}\n\nTest output:\n{failures}\n\nProvide a concise diagnosis: 1) Root cause of each failure 2) Which plan step is affected 3) Recommended fix approach."
+    result = reason "You are diagnosing test failures (attempt {iteration}).\n\nOriginal plan:\n{plan}\n\nTest output:\n{failures}\n\nProvide a concise diagnosis: 1) Root cause of each failure 2) Which plan step is affected 3) Recommended fix approach." for implement
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Diagnosis inconclusive — failures: {failures}"
@@ -250,7 +250,7 @@ task characterize_pr_diff
   gives Text
   do
     prompt = "Summarize this PR diff in 2-3 sentences. Focus on: what was changed, why (infer from title), and which area of the codebase is affected. Be specific about file types and modules.\n\nTitle: {title}\nDiff (truncated):\n{diff_text}"
-    result = reason prompt
+    result = reason prompt for review
     when result.sure -> give "{result}"
     when result.unsure -> give "{result}"
     else -> give "Diff characterization unavailable"
@@ -270,7 +270,7 @@ task assess_with_history
     if prior_decisions == ""
       give "needs_human"
     analysis_prompt = "You are a code reviewer deciding whether a PR should be approved based on historical patterns from this repository.\n\nCurrent PR:\n- Branch: {branch}\n- Diff characterization: {characterization}\n\nSimilar prior PR decisions from this repository:\n{prior_decisions}\n\nRules:\n- auto_approve: Current PR closely matches >=2 prior PRs that were approved, with similar scope, area, and patterns\n- auto_reject: Current PR matches >=2 prior PRs that were rejected for the same structural reason\n- needs_human: Not enough similar history, mixed signals, novel pattern, or insufficient confidence\n\nAnalyze the evidence and classify."
-    result = classify analysis_prompt into ["auto_approve", "needs_human", "auto_reject"]
+    result = classify analysis_prompt into ["auto_approve", "needs_human", "auto_reject"] for review
     when result.sure -> give "{result}"
     when result.unsure -> give "needs_human"
     else -> give "needs_human"
@@ -410,7 +410,7 @@ agent planner
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[planner] Extracting lesson for {task_id} (outcome={outcome})"
     lesson_prompt = "You are the planner for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nOriginal acceptance criteria:\n{memory.criteria}\n\nThe plan you produced:\n{memory.plan_text}\n\nWrite a one- to three-sentence lesson of the form 'this plan shape -> this outcome'. Focus on what a future planner should repeat or avoid for similar issues. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for plan
     when lesson.sure -> say "[planner] Lesson: {lesson}"
     else -> say "[planner] Lesson uncertain: {lesson}"
     cat = "lesson-planner-{memory.repo_slug}"
@@ -502,7 +502,7 @@ agent implementer
     when clone_result.sure -> say "[implementer] Repo cloned and branch {branch} created"
     else -> say "[implementer] Clone/checkout issue: {clone_result}"
     impl_prompt = "You are implementing a code change for a GitHub issue.\n\nIssue: {issue_id}\nPlan:\n{plan}\nAcceptance criteria:\n{memory.criteria}\n\nGenerate the implementation as a shell script that creates or modifies files using cat heredocs. Output ONLY the shell commands, no markdown fencing, no explanations. Keep changes minimal and focused."
-    code = reason impl_prompt
+    code = reason impl_prompt for implement
     when code.sure -> say "[implementer] Implementation generated"
     else -> say "[implementer] Implementation generation uncertain"
     apply_result = command "cd {memory.workdir} && sh -c '{code}'" timeout 30s
@@ -530,7 +530,7 @@ agent implementer
       escalate to lead
       give "escalated"
     fix_prompt = "Fix the test failures for issue {issue_id}.\n\nOriginal plan:\n{memory.plan}\n\nDiagnosis of current failures:\n{diagnosis}\n\nRaw test output:\n{failures}\n\nGenerate ONLY shell commands (cat heredocs, sed, etc.) to fix the issues. No markdown, no explanations."
-    fix_code = reason fix_prompt
+    fix_code = reason fix_prompt for implement
     when fix_code.sure -> say "[implementer] Fix generated"
     else -> say "[implementer] Fix generation uncertain"
     apply_result = command "cd {memory.workdir} && sh -c '{fix_code}'" timeout 30s
@@ -546,7 +546,7 @@ agent implementer
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[implementer] Extracting lesson for {task_id} (outcome={outcome}, iterations={memory.iteration})"
     lesson_prompt = "You are the implementer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nFix iterations used: {memory.iteration}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nPlan executed:\n{memory.plan}\n\nIteration log (diagnoses across fix attempts):\n{memory.iteration_log}\n\nWrite a one- to three-sentence lesson of the form 'this error pattern -> this fix' (or 'this pattern -> first-try pass'). Focus on what a future implementer should reuse or avoid. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for implement
     when lesson.sure -> say "[implementer] Lesson: {lesson}"
     else -> say "[implementer] Lesson uncertain: {lesson}"
     cat = "lesson-implementer-{memory.repo_slug}"
@@ -630,7 +630,7 @@ agent tester
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[tester] Extracting lesson for {task_id} (outcome={outcome}, first_try={ci_passed_first_try})"
     lesson_prompt = "You are the tester for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nTest runs on this task: {memory.test_runs}\nci_passed_first_try: {ci_passed_first_try}\nFinal acceptance result: {memory.acceptance_result}\nLast test output (truncated):\n{memory.last_test_output}\n\nWrite a one- to three-sentence lesson of the form 'this coverage gap -> this miss' (or 'this coverage pattern -> this pass'). Focus on what the test signal revealed that future tasks can reuse. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for review
     when lesson.sure -> say "[tester] Lesson: {lesson}"
     else -> say "[tester] Lesson uncertain: {lesson}"
     cat = "lesson-tester-{memory.repo_slug}"
@@ -791,7 +791,7 @@ agent reviewer
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[reviewer] Extracting lesson for {task_id} (outcome={outcome}, rounds={review_rounds})"
     lesson_prompt = "You are the reviewer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nReview rounds: {review_rounds}\nKnowledge-store verdict: {memory.review_verdict}\nDiff characterization:\n{memory.diff_characterization}\n\nWrite a one- to three-sentence lesson of the form 'this objection -> this response' (or 'this diff shape -> this verdict path'). Focus on what review pattern future tasks should expect. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for review
     when lesson.sure -> say "[reviewer] Lesson: {lesson}"
     else -> say "[reviewer] Lesson uncertain: {lesson}"
     cat = "lesson-reviewer-{memory.repo_slug}"
@@ -844,7 +844,7 @@ agent release_manager
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[release_manager] Extracting lesson for {task_id} (outcome={outcome})"
     lesson_prompt = "You are the release manager for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nBranch: {memory.branch}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nWrite a one- to three-sentence lesson of the form 'this PR shape -> this merge path'. Focus on what the release signal says about how this kind of change should be shipped next time. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for review
     when lesson.sure -> say "[release_manager] Lesson: {lesson}"
     else -> say "[release_manager] Lesson uncertain: {lesson}"
     cat = "lesson-release-{memory.repo_slug}"

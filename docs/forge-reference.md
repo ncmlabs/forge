@@ -875,9 +875,16 @@ try external_service(request) or use_cached_result(request_id)
 
 ### reason
 
-**Syntax:** `reason <template_string>`
+**Syntax:** `reason <template_string> [for <phase>]`
 
 Sends a prompt to the LLM and returns a Text response with confidence metadata.
+
+The optional `for <phase>` clause (issue #361) attaches a routing phase key
+to the call-site. When set, the runtime consults the configured `[llm.routing]`
+table (in `clone-dev.toml` for the clone-developer track) and dispatches to
+the configured provider chain. The phase identifier accepts any name —
+including reserved words like `classify` — since the position after `for`
+is unambiguous.
 
 **Examples:**
 ```
@@ -885,14 +892,17 @@ reason "Analyze the sentiment of: {input}"
 
 reason "Is this a valid email address? {email}"
 
-reason "Summarize the key points from: {document}"
+reason "Draft an implementation plan for {issue.title}" for plan
+
+reason "Investigate ops query: {q}" for ops_investigate
 ```
 
 ### classify
 
-**Syntax:** `classify <expr> into [label1, label2, label3]`
+**Syntax:** `classify <expr> into [label1, label2, label3] [for <phase>]`
 
 Classifies the input expression into one of the provided string labels.
+Accepts the same trailing `for <phase>` clause as `reason`.
 
 **Examples:**
 ```
@@ -901,6 +911,8 @@ classify user_feedback into ["bug", "feature_request", "documentation"]
 classify sentiment_score into ["positive", "neutral", "negative"]
 
 classify document into ["technical", "marketing", "legal", "other"]
+
+classify request into ["dev-cycle", "observe", "ignore"] for classify
 ```
 
 ### search
