@@ -1,0 +1,81 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev Stage 1 — code_investigator (T9.2, #363)
+# ================================================================
+# Specialist agent that handles `domain == "code"` investigations
+# emitted by mastermind_intake (T9.1). One narrow competence:
+# trace a code question into evidence and a Finding, with a tight
+# skill allow-list.
+#
+# Allow-list (#363 DoD):
+#   - skill.github.* — issue/PR/code lookups via the github skill
+#     (skills/github/SKILL.md). Real evidence comes from
+#     `skill.github.list_issues(repo, "--search ...")` since the
+#     catalog has no dedicated `search_code` capability today.
+#   - skill.exec.ripgrep — declared as forward-compat once the exec
+#     skill catalog lands. No call site uses it in this iteration,
+#     but the intent is documented in the agent's permissions.
+#
+# Lifecycle: one instance per Slack thread_ts. CorrelationDriver
+# (#334) wakes the same instance for follow-up Findings if the
+# intake re-asks within the same thread.
+#
+# Cross-references:
+#   - InvestigationRequested / Finding declared in
+#     workflows/clone-dev/shared/events.forge.
+#   - WardenEscalation declared in
+#     examples/agents/slack-adapter/agents.forge:66 — slack_adapter
+#     consumes it and posts to the configured human channel.
+#   - `for code_investigate` resolves through [llm.routing] in
+#     workflows/dev-cycle/clone-dev.toml (T8.6 #361).
+# ================================================================
+
+use
+  llm.reason
+  skill.github
+
+# Routing note: domain-tagged InvestigationRequested events reach the
+# right specialist via `subscribe ... where domain == "<self>"` alone.
+# A `correlate on InvestigationRequested.thread_ts` block would wake
+# every investigator on every event regardless of domain (correlate
+# bypasses the subscribe filter), so it's intentionally omitted here.
+# Multi-turn follow-ups become a refinement once each domain has its
+# own correlation key.
+
+agent code_investigator
+  memory persistent
+    thread_ts: Text
+    domain: Text
+    channel: Text
+    last_context: Text
+    last_summary: Text
+    last_evidence: Text[]
+  allows skill.github.*, skill.exec.ripgrep
+  subscribe InvestigationRequested where domain == "code"
+
+  on start
+    memory.thread_ts = ""
+    memory.domain = "code"
+    memory.channel = ""
+    memory.last_context = ""
+    memory.last_summary = ""
+    say "[code_investigator] ready"
+
+  on InvestigationRequested(thread_ts: Text, domain: Text, context: Text, channel: Text)
+    memory.thread_ts = thread_ts
+    memory.domain = domain
+    memory.channel = channel
+    memory.last_context = context
+    say "[code_investigator] thread={thread_ts} investigating: {context}"
+    plan = reason "Plan a code investigation for: {context}. List the symbols and files most likely to be involved." for code_investigate
+    raw = skill.github.list_issues("ncmlabs/forge", "--search \"{context}\"")
+    memory.last_evidence = [plan, raw]
+    summary = reason "Summarize the code investigation. Plan: {plan}. Search results: {raw}. Output one paragraph for a Slack reply." for code_investigate
+    memory.last_summary = summary
+    emit Finding(thread_ts: thread_ts, domain: "code", summary: summary, evidence: memory.last_evidence, confidence: 0.7, suggested_action: "review")
+
+  if stuck for 3 turns
+    say "[code_investigator] stuck. escalating to slack_adapter."
+    emit WardenEscalation(agent_id: "code_investigator", cause: "stuck>3", detail: memory.last_context, channel: memory.channel)
+    escalate to investigators_ward

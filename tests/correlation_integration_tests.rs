@@ -50,6 +50,7 @@ fn slack_specialist_decl() -> AgentDecl {
         ],
         memory_persistent: true,
         knowledge: None,
+        allows: Vec::new(),
         timers: Vec::new(),
         schedules: Vec::new(),
         correlates: vec![sp(CorrelateField {

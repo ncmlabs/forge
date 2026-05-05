@@ -263,6 +263,7 @@ mod tests {
             memory: Vec::new(),
             memory_persistent: false,
             knowledge: None,
+            allows: Vec::new(),
             timers: Vec::new(),
             schedules: Vec::new(),
             correlates: Vec::new(),

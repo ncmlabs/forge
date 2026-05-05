@@ -51,6 +51,7 @@ fn ping_agent(name: &str) -> AgentDecl {
         memory: vec![],
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![],
         schedules: vec![],
         correlates: vec![],

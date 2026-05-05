@@ -195,6 +195,12 @@ pub struct AgentDecl {
     pub memory: Vec<Spanned<FieldDef>>,
     pub memory_persistent: bool,
     pub knowledge: Option<Spanned<KnowledgeDecl>>,
+    /// Per-agent skill allow-list (issue #363 / T9.2). Empty = unrestricted.
+    /// Patterns are dotted skill paths, optionally suffixed with `.*` for
+    /// single-segment glob (e.g. `skill.github.*` matches `skill.github.create_pr`
+    /// but not `skill.github.foo.bar`). The allows_checker pass enforces this
+    /// against `skill.X.Y(...)` call sites in handler bodies.
+    pub allows: Vec<Spanned<String>>,
     pub timers: Vec<Spanned<TimerField>>,
     pub schedules: Vec<Spanned<ScheduleField>>,
     pub correlates: Vec<Spanned<CorrelateField>>,

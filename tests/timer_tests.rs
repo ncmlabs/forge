@@ -56,6 +56,7 @@ fn simple_agent_with_timers(
         memory: vec![],
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers,
         schedules: vec![],
         correlates: vec![],

@@ -29,19 +29,24 @@ token_env = "GITHUB_TOKEN"
 # egress). When the mastermind classifies an inbound task, the
 # `classify` chain runs first.
 [llm.routing]
-classify        = "sonnet"
-plan            = "sonnet"
-implement       = "gpt-4o"
-review          = "sonnet"
-ops_investigate = "ollama-local"
+classify             = "sonnet"
+plan                 = "sonnet"
+implement            = "gpt-4o"
+review               = "sonnet"
+ops_investigate      = "ollama-local"
+code_investigate     = "sonnet"     # T9.2 (#363) — code_investigator
+security_investigate = "sonnet"     # T9.2 (#363) — security_investigator
 
 # Optional per-phase fallback chains. Tried in order when the
 # primary provider above errors (timeout / 5xx). Cost is charged
 # to whichever provider actually served the response.
 [llm.routing.fallback]
-plan      = ["sonnet", "gpt-4o"]
-implement = ["gpt-4o", "sonnet"]
-review    = ["sonnet", "gpt-4o"]
+plan                 = ["sonnet", "gpt-4o"]
+implement            = ["gpt-4o", "sonnet"]
+review               = ["sonnet", "gpt-4o"]
+ops_investigate      = ["sonnet"]
+code_investigate     = ["gpt-4o"]
+security_investigate = ["gpt-4o"]
 
 [defaults]
 # Built-in dev-cycle defaults — keep in sync with the constants in

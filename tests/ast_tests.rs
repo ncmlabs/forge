@@ -426,6 +426,7 @@ fn ast_agent() {
         ],
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![],
         schedules: vec![],
         correlates: vec![],
@@ -998,6 +999,7 @@ fn ast_agent_v3() {
         ],
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![sp(TimerField {
             name: sp("reconnect_window".into()),
             duration: sp(Duration {
