@@ -303,7 +303,10 @@ fn parse_probe_summary(s: &str) -> Option<(String, String, usize, usize)> {
     Some((thread?, kind?, labels_count?, evidence_count?))
 }
 
-fn probe_summaries_for(frames: &[serde_json::Value], thread: &str) -> Vec<(String, String, usize, usize)> {
+fn probe_summaries_for(
+    frames: &[serde_json::Value],
+    thread: &str,
+) -> Vec<(String, String, usize, usize)> {
     say_lines(frames)
         .iter()
         .filter_map(|s| parse_probe_summary(s))
@@ -333,12 +336,21 @@ fn probe_evidence_lines(frames: &[serde_json::Value], thread: &str) -> Vec<Strin
 #[tokio::test]
 async fn single_finding_emits_one_proposal() {
     let mut h = boot(true).await;
-    fire(&h, "T-single", "ops", "latency spike on api-gateway", 0.5, "answer").await;
+    fire(
+        &h,
+        "T-single",
+        "ops",
+        "latency spike on api-gateway",
+        0.5,
+        "answer",
+    )
+    .await;
 
     let frames = drain_frames(&mut h.rx, QUIET_WINDOW_PAD).await;
     let count = proposal_emits(&frames, "solution_proposer");
     assert_eq!(
-        count, 1,
+        count,
+        1,
         "single finding should produce exactly one ProposalReady; got {count} (say={:?})",
         say_lines(&frames)
     );
@@ -356,26 +368,56 @@ async fn single_finding_emits_one_proposal() {
 #[tokio::test]
 async fn two_findings_same_thread_aggregate_to_one_proposal() {
     let mut h = boot(true).await;
-    fire(&h, "T-aggr", "ops", "latency spike on api-gateway", 0.5, "answer").await;
+    fire(
+        &h,
+        "T-aggr",
+        "ops",
+        "latency spike on api-gateway",
+        0.5,
+        "answer",
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    fire(&h, "T-aggr", "code", "retry budget exhausted in handler", 0.7, "review").await;
+    fire(
+        &h,
+        "T-aggr",
+        "code",
+        "retry budget exhausted in handler",
+        0.7,
+        "review",
+    )
+    .await;
 
     let frames = drain_frames(&mut h.rx, QUIET_WINDOW_PAD).await;
     let count = proposal_emits(&frames, "solution_proposer");
     assert_eq!(
-        count, 1,
+        count,
+        1,
         "two findings on same thread should debounce to one ProposalReady; got {count} (say={:?})",
         say_lines(&frames)
     );
     let summaries = probe_summaries_for(&frames, "T-aggr");
-    assert_eq!(summaries.len(), 1, "expected one probe summary; saw {summaries:?}");
+    assert_eq!(
+        summaries.len(),
+        1,
+        "expected one probe summary; saw {summaries:?}"
+    );
     let (_, _, _labels_count, evidence_count) = &summaries[0];
-    assert_eq!(*evidence_count, 2, "evidence_refs should carry both findings");
+    assert_eq!(
+        *evidence_count, 2,
+        "evidence_refs should carry both findings"
+    );
 
     let evidence = probe_evidence_lines(&frames, "T-aggr");
     let joined = evidence.join("|");
-    assert!(joined.contains("ops:"), "evidence missing ops domain: {evidence:?}");
-    assert!(joined.contains("code:"), "evidence missing code domain: {evidence:?}");
+    assert!(
+        joined.contains("ops:"),
+        "evidence missing ops domain: {evidence:?}"
+    );
+    assert!(
+        joined.contains("code:"),
+        "evidence missing code domain: {evidence:?}"
+    );
 }
 
 // DoD: "for `propose_issue` kind, fills `suggested_labels` with the right
@@ -388,7 +430,12 @@ async fn propose_issue_kind_carries_suggested_labels() {
 
     let frames = drain_frames(&mut h.rx, QUIET_WINDOW_PAD).await;
     let summaries = probe_summaries_for(&frames, "T-prop");
-    assert_eq!(summaries.len(), 1, "expected 1 proposal; say={:?}", say_lines(&frames));
+    assert_eq!(
+        summaries.len(),
+        1,
+        "expected 1 proposal; say={:?}",
+        say_lines(&frames)
+    );
     let (_, kind, labels_count, _) = &summaries[0];
     assert_eq!(kind, "propose_issue");
     assert_eq!(*labels_count, 2, "two labels expected from the mock CSV");
@@ -411,10 +458,18 @@ async fn answer_kind_has_empty_labels() {
 
     let frames = drain_frames(&mut h.rx, QUIET_WINDOW_PAD).await;
     let summaries = probe_summaries_for(&frames, "T-ans");
-    assert_eq!(summaries.len(), 1, "expected 1 proposal; say={:?}", say_lines(&frames));
+    assert_eq!(
+        summaries.len(),
+        1,
+        "expected 1 proposal; say={:?}",
+        say_lines(&frames)
+    );
     let (_, kind, labels_count, _) = &summaries[0];
     assert_eq!(kind, "answer");
-    assert_eq!(*labels_count, 0, "answer kind should leave suggested_labels empty");
+    assert_eq!(
+        *labels_count, 0,
+        "answer kind should leave suggested_labels empty"
+    );
 
     let labels = probe_label_lines(&frames, "T-ans");
     assert!(
