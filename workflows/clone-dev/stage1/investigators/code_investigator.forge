@@ -9,10 +9,15 @@
 # skill allow-list.
 #
 # Allow-list (#363 DoD):
-#   - skill.github.* — issue/PR/code lookups via the github skill
-#     (skills/github/SKILL.md). Real evidence comes from
-#     `skill.github.list_issues(repo, "--search ...")` since the
-#     catalog has no dedicated `search_code` capability today.
+#   - skill.github.* — issue/PR lookups via the github skill
+#     (skills/github/SKILL.md). The catalog has no `search_code`
+#     capability today and the agentic-loop shell-call layer mishandles
+#     multi-word quoted `--search` filters (verified live: the loop
+#     bails out after 10 turns), so this iteration grounds the Finding
+#     in the most recent open issues via the known-working short-flag
+#     filter `--state open --limit 10`. The summary `reason` call
+#     correlates those issues with the user's context. A future
+#     deterministic `search_code` skill would replace this leg.
 #   - skill.exec.ripgrep — declared as forward-compat once the exec
 #     skill catalog lands. No call site uses it in this iteration,
 #     but the intent is documented in the agent's permissions.
@@ -69,9 +74,9 @@ agent code_investigator
     memory.last_context = context
     say "[code_investigator] thread={thread_ts} investigating: {context}"
     plan = reason "Plan a code investigation for: {context}. List the symbols and files most likely to be involved." for code_investigate
-    raw = skill.github.list_issues("ncmlabs/forge", "--search \"{context}\"")
-    memory.last_evidence = [plan, raw]
-    summary = reason "Summarize the code investigation. Plan: {plan}. Search results: {raw}. Output one paragraph for a Slack reply." for code_investigate
+    recent = skill.github.list_issues("ncmlabs/forge", "--state open --limit 10")
+    memory.last_evidence = [plan, recent]
+    summary = reason "Summarize the code investigation. User question: {context}. Plan: {plan}. Recently-open repo issues: {recent}. Pick the 1-2 issues most likely related and explain why; if none look related, say so. Output one short paragraph for a Slack reply." for code_investigate
     memory.last_summary = summary
     emit Finding(thread_ts: thread_ts, domain: "code", summary: summary, evidence: memory.last_evidence, confidence: 0.7, suggested_action: "review")
 
