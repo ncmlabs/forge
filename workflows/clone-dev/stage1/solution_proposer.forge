@@ -131,7 +131,12 @@ agent solution_proposer
       avg = memory.confidence_sum / memory.findings_count
       memory.last_kind = kind
       memory.last_content = content
-      say "[solution_proposer] thread={memory.thread_ts} emitting ProposalReady kind={kind} count={memory.findings_count}"
+      say "[solution_proposer] thread={memory.thread_ts} emitting ProposalReady kind={kind} count={memory.findings_count} labels_count={labels.length} confidence={avg}"
+      say "[solution_proposer] proposal content: {content}"
+      for lbl in labels
+        say "[solution_proposer] label: {lbl}"
+      for ev in memory.evidence_refs
+        say "[solution_proposer] evidence: {ev}"
       emit ProposalReady(thread_ts: memory.thread_ts, kind: kind, content: content, suggested_labels: labels, evidence_refs: memory.evidence_refs, confidence: avg)
       memory.findings_count = 0
       memory.confidence_sum = 0
