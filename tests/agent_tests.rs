@@ -43,6 +43,7 @@ fn simple_agent(
         memory: memory_fields,
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![],
         schedules: vec![],
         correlates: vec![],

@@ -34,7 +34,15 @@
 #       via #334). Routes investigation requests by domain to the
 #       T9.2 (#363) investigators.
 #
-# Single `org_warden` supervises all eleven agents.
+#   stage1/investigators/{code,ops,security}_investigator.forge
+#     • T9.2 (#363): three domain specialists, each with an explicit
+#       skill `allows` clause. Subscribe InvestigationRequested filtered
+#       by domain; emit Finding(thread_ts, domain, summary, evidence,
+#       confidence, suggested_action) which mastermind_intake stitches
+#       back into the originating Slack thread.
+#
+# `org_warden` supervises the eleven core agents; `investigators_ward`
+# adds bounded supervision for the three T9.2 specialists.
 #
 # HTTP surface (one port):
 #   GET  /health                     → liveness probe
@@ -58,6 +66,9 @@
 #     -s workflows/clone-dev/shared/events.forge \
 #     -s workflows/clone-dev/shared/mastermind.forge \
 #     -s workflows/clone-dev/stage1/mastermind_intake.forge \
+#     -s workflows/clone-dev/stage1/investigators/code_investigator.forge \
+#     -s workflows/clone-dev/stage1/investigators/ops_investigator.forge \
+#     -s workflows/clone-dev/stage1/investigators/security_investigator.forge \
 #     -s workflows/clone-dev/stage2/label_router.forge \
 #     -s workflows/clone-dev/stage2/triage_specialist.forge \
 #     -s workflows/dev-cycle/agents.forge \
@@ -90,6 +101,19 @@ warden org_warden
     after 3: escalate
   max_retries 3 per 1h then escalate
 
+# ── Warden: Investigators (#363, T9.2) ──────────────────────────
+# Bounded supervision for the three Stage-1 specialists. The per-
+# turn `if stuck for 3 turns` block inside each investigator handles
+# the soft escalation path (emits WardenEscalation, escalates to this
+# warden); this declaration handles the hard cases (crash / timeout)
+# uniformly across all three.
+warden investigators_ward
+  manages [code_investigator, ops_investigator, security_investigator]
+  on stuck: escalate, self
+  on crash: restart, self
+  on timeout: restart, self
+  max_retries 3 per 1h then escalate
+
 # ── System ───────────────────────────────────────────────────────
 # Linear pipeline with mastermind as the intake and slack_adapter as
 # a sink (all user-visible output flows through it). Mastery agents
@@ -99,6 +123,9 @@ system clone_dev_system
   use
     mm: mastermind
     intake: mastermind_intake
+    code_inv: code_investigator
+    ops_inv: ops_investigator
+    sec_inv: security_investigator
     plan: planner
     impl: implementer
     test: tester

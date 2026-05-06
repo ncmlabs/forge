@@ -2386,6 +2386,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
     let mut memory = Vec::new();
     let mut memory_persistent = false;
     let mut knowledge = None;
+    let mut allows: Vec<Spanned<String>> = Vec::new();
     let mut timers = Vec::new();
     let mut schedules = Vec::new();
     let mut correlates = Vec::new();
@@ -2406,6 +2407,13 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             }
             Rule::knowledge_block => {
                 knowledge = Some(build_knowledge_block(child)?);
+            }
+            Rule::allows_clause => {
+                for pat_pair in child.into_inner() {
+                    if pat_pair.as_rule() == Rule::skill_pattern {
+                        allows.push(spanned(pat_pair.as_str().to_string(), &pat_pair));
+                    }
+                }
             }
             Rule::memory_block => {
                 // Detect optional "persistent" keyword: grammar puts it on the
@@ -2500,6 +2508,7 @@ fn build_agent_decl(pair: Pair) -> anyhow::Result<Spanned<TopLevel>> {
             memory,
             memory_persistent,
             knowledge,
+            allows,
             timers,
             schedules,
             correlates,

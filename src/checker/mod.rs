@@ -1,6 +1,7 @@
 // FORGE checker coordinator
 // See issues #16 (pure), #17 (states), #18 (requires), #21 (boundary), #24 (warden), #26 (uncertain)
 
+pub mod allows_checker;
 pub mod boundary_checker;
 pub mod correlate_checker;
 pub mod pure_checker;
@@ -45,6 +46,10 @@ pub fn check_all(program: &Program, file: &str) -> Vec<Diagnostic> {
 
     // Pass 9: webhook block validation (Principle I/IX — honesty + boundary separation)
     diagnostics.extend(webhook_checker::check(program, file));
+
+    // Pass 10: per-agent skill allow-list enforcement (#363 / T9.2 —
+    // Principle IX boundary separation per-agent).
+    diagnostics.extend(allows_checker::check(program, file));
 
     // boundary_checker::check() is called separately from main.rs (multi-program signature)
     diagnostics

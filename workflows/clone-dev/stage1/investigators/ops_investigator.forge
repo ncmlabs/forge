@@ -1,0 +1,58 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev Stage 1 — ops_investigator (T9.2, #363)
+# ================================================================
+# Specialist agent for `domain == "ops"` investigations. The DoD's
+# host-skills catalog (logs / metrics / alerts) hasn't shipped yet,
+# so this iteration is `reason`-only — the LLM produces a summary
+# from the raw context and the Finding's `evidence` carries that
+# reasoning trail. The allow-list reserves `skill.host.*` for the
+# day those skills land; `skill.host.*` is declared but never
+# called, which is harmless under the allow-list checker (#363).
+#
+# Allow-list:
+#   - skill.host.* — TBD: skill.host catalog defined in T9.x.
+#     Forward-compat declaration; uncalled in this iteration.
+#
+# See workflows/clone-dev/stage1/investigators/code_investigator.forge
+# for cross-reference notes (events, warden, routing).
+# ================================================================
+
+use
+  llm.reason
+
+agent ops_investigator
+  memory persistent
+    thread_ts: Text
+    domain: Text
+    channel: Text
+    last_context: Text
+    last_summary: Text
+    last_evidence: Text[]
+  allows skill.host.*
+  subscribe InvestigationRequested where domain == "ops"
+
+  on start
+    memory.thread_ts = ""
+    memory.domain = "ops"
+    memory.channel = ""
+    memory.last_context = ""
+    memory.last_summary = ""
+    say "[ops_investigator] ready"
+
+  on InvestigationRequested(thread_ts: Text, domain: Text, context: Text, channel: Text)
+    memory.thread_ts = thread_ts
+    memory.domain = domain
+    memory.channel = channel
+    memory.last_context = context
+    say "[ops_investigator] thread={thread_ts} investigating: {context}"
+    summary = reason "Investigate the ops issue: {context}. Identify likely causes (load, deploys, dependency outages, config drift) and suggest the next check. One paragraph." for ops_investigate
+    memory.last_summary = summary
+    memory.last_evidence = [summary]
+    emit Finding(thread_ts: thread_ts, domain: "ops", summary: summary, evidence: memory.last_evidence, confidence: 0.5, suggested_action: "answer")
+
+  if stuck for 3 turns
+    say "[ops_investigator] stuck. escalating to slack_adapter."
+    emit WardenEscalation(agent_id: "ops_investigator", cause: "stuck>3", detail: memory.last_context, channel: memory.channel)
+    escalate to investigators_ward
