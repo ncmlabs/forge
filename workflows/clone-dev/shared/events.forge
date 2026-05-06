@@ -112,3 +112,23 @@ event Finding
   evidence: Text[]
   confidence: Number
   suggested_action: Text
+
+# T9.3 (#364): aggregated proposal emitted by solution_proposer once a
+# Finding-batch on a thread quiesces (2s quiet-window). T10.1 will consume
+# this for the Slack-side approval gate. mastermind_intake's per-Finding
+# stitch-back to Slack remains parallel — this event feeds the future
+# approval flow, not the existing visibility surface.
+#
+# kind ∈ {answer, small_action, propose_issue}. suggested_labels is only
+# populated when kind == propose_issue (Stage-2 routing vocabulary —
+# clone-dev:plan, clone-dev:impl, clone-dev:review, clone-dev:security,
+# clone-dev:ops — matched against [labels.routing] in clone-dev.toml).
+# evidence_refs carries one "<domain>: <summary>" entry per buffered
+# Finding so the approval message can show the underlying context.
+event ProposalReady
+  thread_ts: Text
+  kind: Text
+  content: Text
+  suggested_labels: Text[]
+  evidence_refs: Text[]
+  confidence: Number

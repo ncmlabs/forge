@@ -1,0 +1,150 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev Stage 1 — solution_proposer (T9.3, #364)
+# ================================================================
+# Aggregator that turns a per-thread batch of T9.2 (#363) Findings
+# into a single ProposalReady for the future Gate-1 (T10.1) approval
+# flow. Sits parallel to mastermind_intake's per-Finding stitch-back
+# (which keeps posting raw findings to Slack for visibility) — this
+# agent is additive, not a replacement.
+#
+# Pattern:
+#   Finding(thread_ts, domain, summary, evidence, confidence,
+#           suggested_action)
+#     → buffer into memory keyed by thread_ts (correlate on
+#       Finding.thread_ts mode: wake)
+#     → reset a 2s `quiet_window` timer on every arrival
+#     → on quiet_window.expired with non-empty buffer, draft via
+#       `reason ... for plan` and emit ProposalReady(kind, content,
+#       suggested_labels, evidence_refs, confidence)
+#
+# Why timer + correlate, not a per-batch `pool` or `every`:
+#   - Investigators emit at unpredictable cadence; the quiet-window
+#     debounce gives "fire 2s after the last Finding" without a fixed
+#     period.
+#   - `correlate on Finding.thread_ts mode: wake` ensures one persistent
+#     proposer instance per Slack thread, rehydrated from redb each
+#     turn (CorrelationDriver, #334) — same lifecycle shape as the
+#     other Stage-1 agents.
+#
+# kind contract (LLM-decided, output line `KIND|||CONTENT|||LABELS_CSV`):
+#   - `answer`         → user wants the summary back; no action.
+#   - `small_action`   → low-risk one-shot (e.g., flag flip).
+#   - `propose_issue`  → file a tracked issue for Stage-2; LABELS_CSV
+#                        is populated from the fixed clone-dev:* vocab.
+#
+# Cross-references:
+#   - Finding / ProposalReady / WardenEscalation declared in
+#     workflows/clone-dev/shared/events.forge
+#     and examples/agents/slack-adapter/agents.forge:66 (WardenEscalation).
+#   - `for plan` resolves through [llm.routing].plan in
+#     workflows/dev-cycle/clone-dev.toml:33 (T8.6, #361).
+#   - Suffix vocab below mirrors the keys driving label_router
+#     (workflows/clone-dev/stage2/label_router.forge); keep in sync if
+#     [labels.routing] gains/loses suffixes.
+# ================================================================
+
+use
+  llm.reason
+
+# ── Helpers ────────────────────────────────────────────────────
+
+# Split "a,b,c" into ["a", "b", "c"], dropping empties so a trailing
+# comma or an empty CSV (kind ≠ propose_issue) yields []. Mirrors
+# label_router.forge's parallel-array idiom.
+pure parse_labels_csv
+  needs csv: Text
+  gives Text[]
+  do
+    result = []
+    if csv.length == 0
+      give result
+    parts = csv.split(",")
+    for p in parts
+      if p.length > 0
+        result = result + [p]
+    give result
+
+# Drafts the Gate-1 proposal from the running findings blob. Output
+# contract: a single line `KIND|||CONTENT|||LABELS_CSV`. Triple-pipe
+# delimiter (mirrors examples/agents/pr-history-miner/main.forge:211)
+# avoids collision with `|` characters that may appear inside
+# investigator summaries.
+task draft_proposal
+  needs blob: Text
+  gives Text
+  do
+    result = reason "Draft a Gate-1 proposal from these Findings:{blob}\nPick exactly one kind: answer | small_action | propose_issue. 'answer' = user just needs the summary back. 'small_action' = a low-risk one-step fix (e.g., flag flip). 'propose_issue' = file a tracked issue for Stage-2 to handle. Then write 1-3 short sentences of content. Then if and only if kind == propose_issue, list 1-2 labels from this fixed set, comma-separated: clone-dev:plan, clone-dev:impl, clone-dev:review, clone-dev:security, clone-dev:ops. Output exactly one line, no leading prose: KIND|||CONTENT|||LABELS (LABELS empty when kind != propose_issue)." for plan
+    when result.sure -> give result
+    when result.unsure -> give "answer|||Could not determine a confident proposal — review buffered findings.|||"
+    else -> give "answer|||Could not determine a confident proposal — review buffered findings.|||"
+
+# ── Agent ──────────────────────────────────────────────────────
+
+agent solution_proposer
+  memory persistent
+    thread_ts: Text
+    findings_count: Number
+    confidence_sum: Number
+    findings_blob: Text
+    evidence_refs: Text[]
+    last_kind: Text
+    last_content: Text
+  timer quiet_window: 2s
+  correlate on Finding.thread_ts
+    mode: wake
+
+  on start
+    memory.findings_count = 0
+    memory.confidence_sum = 0
+    memory.findings_blob = ""
+    memory.evidence_refs = []
+    memory.last_kind = "none"
+    memory.last_content = ""
+    start quiet_window
+    say "[solution_proposer] ready"
+
+  on Finding(thread_ts: Text, domain: Text, summary: Text, evidence: Text[], confidence: Number, suggested_action: Text)
+    memory.thread_ts = thread_ts
+    memory.findings_count = memory.findings_count + 1
+    memory.confidence_sum = memory.confidence_sum + confidence
+    memory.findings_blob = memory.findings_blob + "\n[{domain}] action={suggested_action} :: {summary}"
+    memory.evidence_refs = memory.evidence_refs + ["{domain}: {summary}"]
+    say "[solution_proposer] thread={thread_ts} buffered domain={domain} count={memory.findings_count}"
+    reset quiet_window
+
+  on quiet_window.expired
+    if memory.findings_count > 0
+      decision = draft_proposal(memory.findings_blob)
+      parts = decision.split("|||")
+      kind = "answer"
+      content = "Could not parse proposal."
+      labels_csv = ""
+      if parts.length >= 1
+        kind = parts[0]
+      if parts.length >= 2
+        content = parts[1]
+      if parts.length >= 3
+        labels_csv = parts[2]
+      labels = parse_labels_csv(labels_csv)
+      avg = memory.confidence_sum / memory.findings_count
+      memory.last_kind = kind
+      memory.last_content = content
+      say "[solution_proposer] thread={memory.thread_ts} emitting ProposalReady kind={kind} count={memory.findings_count} labels_count={labels.length} confidence={avg}"
+      say "[solution_proposer] proposal content: {content}"
+      for lbl in labels
+        say "[solution_proposer] label: {lbl}"
+      for ev in memory.evidence_refs
+        say "[solution_proposer] evidence: {ev}"
+      emit ProposalReady(thread_ts: memory.thread_ts, kind: kind, content: content, suggested_labels: labels, evidence_refs: memory.evidence_refs, confidence: avg)
+      memory.findings_count = 0
+      memory.confidence_sum = 0
+      memory.findings_blob = ""
+      memory.evidence_refs = []
+    reset quiet_window
+
+  if stuck for 3 turns
+    say "[solution_proposer] stuck. escalating."
+    emit WardenEscalation(agent_id: "solution_proposer", cause: "stuck>3", detail: memory.last_content, channel: "")
+    escalate to investigators_ward
