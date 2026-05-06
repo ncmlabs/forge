@@ -41,8 +41,17 @@
 #       confidence, suggested_action) which mastermind_intake stitches
 #       back into the originating Slack thread.
 #
+#   stage1/solution_proposer.forge
+#     • T9.3 (#364): Finding aggregator. correlate on Finding.thread_ts
+#       + 2s quiet-window timer; once the batch quiesces, calls
+#       `reason for plan` and emits ProposalReady(kind, content,
+#       suggested_labels, evidence_refs, confidence) for the future
+#       Gate-1 (T10.1) approval flow. Additive — intake's per-Finding
+#       Slack stitch-back is unchanged.
+#
 # `org_warden` supervises the eleven core agents; `investigators_ward`
-# adds bounded supervision for the three T9.2 specialists.
+# adds bounded supervision for the three T9.2 specialists plus the
+# T9.3 proposer (same risk profile: reason-only, narrow scope).
 #
 # HTTP surface (one port):
 #   GET  /health                     → liveness probe
@@ -69,6 +78,7 @@
 #     -s workflows/clone-dev/stage1/investigators/code_investigator.forge \
 #     -s workflows/clone-dev/stage1/investigators/ops_investigator.forge \
 #     -s workflows/clone-dev/stage1/investigators/security_investigator.forge \
+#     -s workflows/clone-dev/stage1/solution_proposer.forge \
 #     -s workflows/clone-dev/stage2/label_router.forge \
 #     -s workflows/clone-dev/stage2/triage_specialist.forge \
 #     -s workflows/dev-cycle/agents.forge \
@@ -108,7 +118,7 @@ warden org_warden
 # warden); this declaration handles the hard cases (crash / timeout)
 # uniformly across all three.
 warden investigators_ward
-  manages [code_investigator, ops_investigator, security_investigator]
+  manages [code_investigator, ops_investigator, security_investigator, solution_proposer]
   on stuck: escalate, self
   on crash: restart, self
   on timeout: restart, self
@@ -126,6 +136,7 @@ system clone_dev_system
     code_inv: code_investigator
     ops_inv: ops_investigator
     sec_inv: security_investigator
+    proposer: solution_proposer
     plan: planner
     impl: implementer
     test: tester
