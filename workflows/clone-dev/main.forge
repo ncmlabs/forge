@@ -195,3 +195,12 @@ endpoint cross_project(source_task_id: Text, target_repo: Text, description: Tex
 endpoint devops_request(channel: Text, user: Text, text: Text, thread_ts: Text, message_ts: Text) -> Text
   emit DevOpsRequest(channel: channel, user: user, text: text, thread_ts: thread_ts, message_ts: message_ts)
   give "DevOpsRequest queued (thread_ts={thread_ts} user={user})"
+
+# T9.4 (#365) — smoke endpoint that stands in for the future T10.1
+# Gate-1 approval flow. Operator passes the human-approved fields
+# (repo / title / body) directly; suggested_labels is hardcoded to
+# ["clone-dev:plan"] for the smoke. issue_creator picks it up via the
+# `subscribe ProposalApproved where kind == "propose_issue"` filter.
+endpoint smoke_propose_approved(thread_ts: Text, channel: Text, repo: Text, title: Text, body: Text) -> Text
+  emit ProposalApproved(thread_ts: thread_ts, channel: channel, kind: "propose_issue", repo: repo, title: title, body: body, suggested_labels: ["clone-dev:plan"], evidence_refs: [])
+  give "ProposalApproved queued (repo={repo} title={title})"
