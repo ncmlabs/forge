@@ -132,3 +132,56 @@ event ProposalReady
   suggested_labels: Text[]
   evidence_refs: Text[]
   confidence: Number
+
+# T9.4 (#365) declares the contract that issue_creator subscribes to;
+# T10.1 will produce it once the Gate-1 approval flow lands. Carries
+# repo / title / channel beyond ProposalReady's set because those are
+# populated from the human approver's input in the Slack approval UI
+# (T9.3's proposer doesn't know which target repo or final title to
+# use — that is the human's call at the gate).
+event ProposalApproved
+  thread_ts: Text
+  channel: Text
+  kind: Text
+  repo: Text
+  title: Text
+  body: Text
+  suggested_labels: Text[]
+  evidence_refs: Text[]
+
+# T9.4 (#365): audit record after issue_creator successfully calls
+# skill.github.create_labeled_issue. thread_ts threads back to the
+# originating Slack thread so observers can stitch context.
+event IssueCreated
+  thread_ts: Text
+  repo: Text
+  issue_url: Text
+  labels: Text[]
+  creator: Text
+
+# T9.4 (#365) internal scaffolding for issue_creator's state machine.
+# FORGE's `when` is single-inline-statement; multi-emit success and
+# multi-emit failure paths each route through one internal event so
+# every handler stays flat (do → for → leaf). Not part of the public
+# stage1 contract — subscribed to only by issue_creator itself.
+event IssueCreatorSucceeded
+  thread_ts: Text
+  channel: Text
+  repo: Text
+  issue_url: Text
+  labels: Text[]
+
+event IssueCreatorRetry
+  thread_ts: Text
+  channel: Text
+  repo: Text
+  title: Text
+  body: Text
+  composite_labels_csv: Text
+  full_labels: Text[]
+
+event IssueCreatorExhausted
+  thread_ts: Text
+  channel: Text
+  repo: Text
+  title: Text

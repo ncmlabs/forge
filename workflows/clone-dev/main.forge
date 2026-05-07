@@ -49,9 +49,18 @@
 #       Gate-1 (T10.1) approval flow. Additive — intake's per-Finding
 #       Slack stitch-back is unchanged.
 #
+#   stage1/issue_creator.forge
+#     • T9.4 (#365): consumes ProposalApproved (kind == propose_issue)
+#       from the Gate-1 flow (T10.1, future), calls
+#       skill.github.create_labeled_issue, emits IssueCreated for
+#       audit, and posts a confirmation back into the originating
+#       Slack thread via PostMessage. One-retry policy: two sequential
+#       skill calls before WardenEscalation.
+#
 # `org_warden` supervises the eleven core agents; `investigators_ward`
-# adds bounded supervision for the three T9.2 specialists plus the
-# T9.3 proposer (same risk profile: reason-only, narrow scope).
+# adds bounded supervision for the T9.2 specialists, the T9.3 proposer,
+# and the T9.4 issue_creator (same risk profile: narrow scope, single
+# external skill call).
 #
 # HTTP surface (one port):
 #   GET  /health                     → liveness probe
@@ -79,6 +88,7 @@
 #     -s workflows/clone-dev/stage1/investigators/ops_investigator.forge \
 #     -s workflows/clone-dev/stage1/investigators/security_investigator.forge \
 #     -s workflows/clone-dev/stage1/solution_proposer.forge \
+#     -s workflows/clone-dev/stage1/issue_creator.forge \
 #     -s workflows/clone-dev/stage2/label_router.forge \
 #     -s workflows/clone-dev/stage2/triage_specialist.forge \
 #     -s workflows/dev-cycle/agents.forge \
@@ -118,7 +128,7 @@ warden org_warden
 # warden); this declaration handles the hard cases (crash / timeout)
 # uniformly across all three.
 warden investigators_ward
-  manages [code_investigator, ops_investigator, security_investigator, solution_proposer]
+  manages [code_investigator, ops_investigator, security_investigator, solution_proposer, issue_creator]
   on stuck: escalate, self
   on crash: restart, self
   on timeout: restart, self
@@ -137,6 +147,7 @@ system clone_dev_system
     ops_inv: ops_investigator
     sec_inv: security_investigator
     proposer: solution_proposer
+    issuer: issue_creator
     plan: planner
     impl: implementer
     test: tester

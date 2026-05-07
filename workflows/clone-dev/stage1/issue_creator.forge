@@ -1,0 +1,100 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev Stage 1 — issue_creator (T9.4, #365)
+# ================================================================
+# Hand-off from the Stage-1 approval gate to the Stage-2 pipeline.
+# When a ProposalApproved event arrives with kind == "propose_issue",
+# this agent calls skill.github.create_labeled_issue, emits IssueCreated
+# for audit, and posts a confirmation back into the originating Slack
+# thread. The Stage-2 label_router (workflows/clone-dev/stage2/) picks
+# up the new GithubIssueOpened webhook event and routes it to the right
+# specialist.
+#
+# Producer of ProposalApproved: T10.1 Gate-1 approval flow (not yet
+# shipped). T9.4 declares the contract; tests fire the event directly.
+#
+# State machine (FORGE `when` is single-inline-statement, so multi-step
+# success and failure paths fan out via internal events instead of
+# nested if/else):
+#
+#   ProposalApproved(propose_issue) ──► attempt 1
+#     ├── sure   ──► IssueCreatorSucceeded ──► IssueCreated + PostMessage
+#     └── unsure ──► IssueCreatorRetry      ──► attempt 2
+#                       ├── sure   ──► IssueCreatorSucceeded ──► …
+#                       └── unsure ──► IssueCreatorExhausted ──► WardenEscalation + escalate
+#
+# Two attempts cover the DoD's "retry once, then escalate". The
+# internal events are declared in shared/events.forge alongside the
+# public ones; only issue_creator subscribes to them.
+#
+# Cross-references:
+#   - ProposalApproved / IssueCreated / IssueCreator{Succeeded,Retry,
+#     Exhausted} declared in workflows/clone-dev/shared/events.forge.
+#   - PostMessage / WardenEscalation declared in
+#     examples/agents/slack-adapter/agents.forge — slack_adapter
+#     consumes both and routes to Slack.
+#   - skill.github.create_labeled_issue defined in
+#     skills/github/SKILL.md (4-arg form: repo, title, body, labels_csv).
+# ================================================================
+
+use
+  skill.github
+
+agent issue_creator
+  memory persistent
+    thread_ts: Text
+    channel: Text
+    repo: Text
+    last_issue_url: Text
+    last_title: Text
+  allows skill.github.create_labeled_issue
+  subscribe ProposalApproved where kind == "propose_issue"
+  subscribe IssueCreatorSucceeded
+  subscribe IssueCreatorRetry
+  subscribe IssueCreatorExhausted
+
+  on start
+    memory.thread_ts = ""
+    memory.channel = ""
+    memory.repo = ""
+    memory.last_issue_url = ""
+    memory.last_title = ""
+    say "[issue_creator] ready"
+
+  on ProposalApproved(thread_ts: Text, channel: Text, kind: Text, repo: Text, title: Text, body: Text, suggested_labels: Text[], evidence_refs: Text[])
+    memory.thread_ts = thread_ts
+    memory.channel = channel
+    memory.repo = repo
+    memory.last_title = title
+    composite_labels_csv = "clone-dev"
+    for lbl in suggested_labels
+      if lbl.length > 0
+        composite_labels_csv = composite_labels_csv + "," + lbl
+    full_labels = ["clone-dev"] + suggested_labels
+    say "[issue_creator] thread={thread_ts} repo={repo} title={title} labels={composite_labels_csv}"
+    url1 = skill.github.create_labeled_issue(repo, title, body, composite_labels_csv)
+    when url1.sure -> emit IssueCreatorSucceeded(thread_ts: thread_ts, channel: channel, repo: repo, issue_url: url1, labels: full_labels)
+    else -> emit IssueCreatorRetry(thread_ts: thread_ts, channel: channel, repo: repo, title: title, body: body, composite_labels_csv: composite_labels_csv, full_labels: full_labels)
+
+  on IssueCreatorRetry(thread_ts: Text, channel: Text, repo: Text, title: Text, body: Text, composite_labels_csv: Text, full_labels: Text[])
+    say "[issue_creator] thread={thread_ts} first attempt unsure; retrying"
+    url2 = skill.github.create_labeled_issue(repo, title, body, composite_labels_csv)
+    when url2.sure -> emit IssueCreatorSucceeded(thread_ts: thread_ts, channel: channel, repo: repo, issue_url: url2, labels: full_labels)
+    else -> emit IssueCreatorExhausted(thread_ts: thread_ts, channel: channel, repo: repo, title: title)
+
+  on IssueCreatorSucceeded(thread_ts: Text, channel: Text, repo: Text, issue_url: Text, labels: Text[])
+    memory.last_issue_url = issue_url
+    say "[issue_creator] thread={thread_ts} created {issue_url}"
+    emit IssueCreated(thread_ts: thread_ts, repo: repo, issue_url: issue_url, labels: labels, creator: "clone-dev")
+    emit PostMessage(channel: channel, text: "Issue created: {issue_url}", thread_ts: thread_ts)
+
+  on IssueCreatorExhausted(thread_ts: Text, channel: Text, repo: Text, title: Text)
+    say "[issue_creator] thread={thread_ts} retry failed; escalating"
+    emit WardenEscalation(agent_id: "issue_creator", cause: "github_create_failed", detail: "repo={repo} title={title}", channel: channel)
+    escalate to investigators_ward
+
+  if stuck for 3 turns
+    say "[issue_creator] stuck. escalating."
+    emit WardenEscalation(agent_id: "issue_creator", cause: "stuck>3", detail: memory.last_title, channel: memory.channel)
+    escalate to investigators_ward
