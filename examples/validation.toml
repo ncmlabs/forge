@@ -332,7 +332,7 @@ merge = true
 manifest = "workflows/dev-cycle/forge.project.toml"
 
 [[cases]]
-name = "clone-dev top-level assembly (#356, T8.1; T8.3 #358; T9.1 #362; T9.2 #363; T9.3 #364)"
+name = "clone-dev top-level assembly (#356, T8.1; T8.3 #358; T9.1 #362; T9.2 #363; T9.3 #364; T9.4 #365)"
 paths = [
   "workflows/clone-dev/main.forge",
   "workflows/clone-dev/shared/types.forge",
@@ -343,6 +343,7 @@ paths = [
   "workflows/clone-dev/stage1/investigators/ops_investigator.forge",
   "workflows/clone-dev/stage1/investigators/security_investigator.forge",
   "workflows/clone-dev/stage1/solution_proposer.forge",
+  "workflows/clone-dev/stage1/issue_creator.forge",
   "workflows/clone-dev/stage2/label_router.forge",
   "workflows/clone-dev/stage2/triage_specialist.forge",
   "workflows/dev-cycle/agents.forge",
