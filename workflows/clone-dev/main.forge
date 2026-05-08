@@ -49,9 +49,18 @@
 #       Gate-1 (T10.1) approval flow. Additive — intake's per-Finding
 #       Slack stitch-back is unchanged.
 #
+#   stage1/issue_creator.forge
+#     • T9.4 (#365): consumes ProposalApproved (kind == propose_issue)
+#       from the Gate-1 flow (T10.1, future), calls
+#       skill.github.create_labeled_issue, emits IssueCreated for
+#       audit, and posts a confirmation back into the originating
+#       Slack thread via PostMessage. One-retry policy: two sequential
+#       skill calls before WardenEscalation.
+#
 # `org_warden` supervises the eleven core agents; `investigators_ward`
-# adds bounded supervision for the three T9.2 specialists plus the
-# T9.3 proposer (same risk profile: reason-only, narrow scope).
+# adds bounded supervision for the T9.2 specialists, the T9.3 proposer,
+# and the T9.4 issue_creator (same risk profile: narrow scope, single
+# external skill call).
 #
 # HTTP surface (one port):
 #   GET  /health                     → liveness probe
@@ -79,6 +88,7 @@
 #     -s workflows/clone-dev/stage1/investigators/ops_investigator.forge \
 #     -s workflows/clone-dev/stage1/investigators/security_investigator.forge \
 #     -s workflows/clone-dev/stage1/solution_proposer.forge \
+#     -s workflows/clone-dev/stage1/issue_creator.forge \
 #     -s workflows/clone-dev/stage2/label_router.forge \
 #     -s workflows/clone-dev/stage2/triage_specialist.forge \
 #     -s workflows/dev-cycle/agents.forge \
@@ -118,7 +128,7 @@ warden org_warden
 # warden); this declaration handles the hard cases (crash / timeout)
 # uniformly across all three.
 warden investigators_ward
-  manages [code_investigator, ops_investigator, security_investigator, solution_proposer]
+  manages [code_investigator, ops_investigator, security_investigator, solution_proposer, issue_creator]
   on stuck: escalate, self
   on crash: restart, self
   on timeout: restart, self
@@ -137,6 +147,7 @@ system clone_dev_system
     ops_inv: ops_investigator
     sec_inv: security_investigator
     proposer: solution_proposer
+    issuer: issue_creator
     plan: planner
     impl: implementer
     test: tester
@@ -184,3 +195,12 @@ endpoint cross_project(source_task_id: Text, target_repo: Text, description: Tex
 endpoint devops_request(channel: Text, user: Text, text: Text, thread_ts: Text, message_ts: Text) -> Text
   emit DevOpsRequest(channel: channel, user: user, text: text, thread_ts: thread_ts, message_ts: message_ts)
   give "DevOpsRequest queued (thread_ts={thread_ts} user={user})"
+
+# T9.4 (#365) — smoke endpoint that stands in for the future T10.1
+# Gate-1 approval flow. Operator passes the human-approved fields
+# (repo / title / body) directly; suggested_labels is hardcoded to
+# ["clone-dev:plan"] for the smoke. issue_creator picks it up via the
+# `subscribe ProposalApproved where kind == "propose_issue"` filter.
+endpoint smoke_propose_approved(thread_ts: Text, channel: Text, repo: Text, title: Text, body: Text) -> Text
+  emit ProposalApproved(thread_ts: thread_ts, channel: channel, kind: "propose_issue", repo: repo, title: title, body: body, suggested_labels: ["clone-dev:plan"], evidence_refs: [])
+  give "ProposalApproved queued (repo={repo} title={title})"
