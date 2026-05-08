@@ -57,6 +57,11 @@ pub struct SlackSection {
     pub signing_secret_env: String,
     #[serde(default)]
     pub default_channel: String,
+    // T9.5 (#366) — channel ID the slack_devops_monitor watches for
+    // @-mentions. Channel IDs (`C…`) are non-secret, so this is a raw
+    // value rather than an env-indirection.
+    #[serde(default)]
+    pub devops_channel: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -189,6 +194,9 @@ pub struct CloneDevConfig {
     pub org_name: String,
     pub slack_bot_token: String,
     pub slack_default_channel: String,
+    // T9.5 (#366) — channel ID polled by slack_devops_monitor for
+    // inbound DevOps mentions.
+    pub slack_devops_channel: String,
     pub slack_signing_secret: String,
     pub github_token: String,
     pub github_labels_triage: Vec<String>,
@@ -389,6 +397,7 @@ impl CloneDevConfig {
             org_name: raw.org.name,
             slack_bot_token: resolve_env(&raw.slack.bot_token_env),
             slack_default_channel: raw.slack.default_channel,
+            slack_devops_channel: raw.slack.devops_channel,
             slack_signing_secret: resolve_env(&raw.slack.signing_secret_env),
             github_token: resolve_env(&raw.github.token_env),
             github_labels_triage: raw.labels.triage,
@@ -467,6 +476,11 @@ impl CloneDevConfig {
             &mut fields,
             "slack_default_channel",
             &self.slack_default_channel,
+        );
+        insert_text(
+            &mut fields,
+            "slack_devops_channel",
+            &self.slack_devops_channel,
         );
         insert_text(
             &mut fields,
@@ -718,6 +732,7 @@ mod tests {
 
             [slack]
             default_channel = "C_default"
+            devops_channel  = "C_devops"
 
             [github]
             # no token_env set — should resolve to empty
@@ -747,6 +762,7 @@ mod tests {
         .expect("parse");
         assert_eq!(cfg.org_name, "ncmlabs");
         assert_eq!(cfg.slack_default_channel, "C_default");
+        assert_eq!(cfg.slack_devops_channel, "C_devops");
         assert_eq!(cfg.github_token, "");
         assert_eq!(cfg.github_labels_triage, vec!["needs-triage".to_string()]);
         assert_eq!(cfg.llm_routing_high, "claude-opus");
@@ -880,6 +896,55 @@ mod tests {
         )
         .expect("parse");
         assert_eq!(cfg.slack_bot_token, "");
+    }
+
+    // ── T9.5 (#366) — devops_channel surface ────────────────────────
+
+    #[test]
+    fn parses_slack_devops_channel() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [slack]
+            devops_channel = "C_devops"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.slack_devops_channel, "C_devops");
+    }
+
+    #[test]
+    fn slack_devops_channel_defaults_to_empty() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [org]
+            name = "ncmlabs"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.slack_devops_channel, "");
+    }
+
+    #[test]
+    fn to_forge_record_emits_slack_devops_channel() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [slack]
+            devops_channel = "C_devops"
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        let dev = fields
+            .get("slack_devops_channel")
+            .expect("slack_devops_channel field");
+        match &dev.value {
+            Value::Text(s) => assert_eq!(s, "C_devops"),
+            _ => panic!("slack_devops_channel should be Text"),
+        }
     }
 
     #[test]

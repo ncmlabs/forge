@@ -332,12 +332,13 @@ merge = true
 manifest = "workflows/dev-cycle/forge.project.toml"
 
 [[cases]]
-name = "clone-dev top-level assembly (#356, T8.1; T8.3 #358; T9.1 #362; T9.2 #363; T9.3 #364; T9.4 #365)"
+name = "clone-dev top-level assembly (#356, T8.1; T8.3 #358; T9.1 #362; T9.2 #363; T9.3 #364; T9.4 #365; T9.5 #366)"
 paths = [
   "workflows/clone-dev/main.forge",
   "workflows/clone-dev/shared/types.forge",
   "workflows/clone-dev/shared/events.forge",
   "workflows/clone-dev/shared/mastermind.forge",
+  "workflows/clone-dev/stage1/slack_devops_monitor.forge",
   "workflows/clone-dev/stage1/mastermind_intake.forge",
   "workflows/clone-dev/stage1/investigators/code_investigator.forge",
   "workflows/clone-dev/stage1/investigators/ops_investigator.forge",

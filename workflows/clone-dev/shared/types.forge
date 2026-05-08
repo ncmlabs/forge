@@ -186,6 +186,7 @@ type CloneDevConfig
   org_name: Text
   slack_bot_token: Text
   slack_default_channel: Text
+  slack_devops_channel: Text
   slack_signing_secret: Text
   github_token: Text
   github_labels_triage: Text[]
