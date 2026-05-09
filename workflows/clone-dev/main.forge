@@ -75,6 +75,17 @@
 #       Slack thread via PostMessage. One-retry policy: two sequential
 #       skill calls before WardenEscalation.
 #
+#   ../dev-cycle/gate_two.forge
+#     • T10.2 (#368): human-in-the-loop approval bridge between the
+#       planner (emits PlanReady) and the implementer (subscribes
+#       ImplementationApproved). Same shape as gate_one keyed on
+#       issue_id; auto-bypass via [gates] start_implementation =
+#       false; on reject emits ImplementationRejected which the
+#       planner consumes for a bounded re-plan loop ([defaults]
+#       max_plan_revisions). Approval card routes to
+#       config.slack.approval_channel when set, else falls back to
+#       PlanReady.channel.
+#
 # `org_warden` supervises the eleven core agents; `investigators_ward`
 # adds bounded supervision for the T9.2 specialists, the T9.3 proposer,
 # and the T9.4 issue_creator (same risk profile: narrow scope, single
@@ -112,6 +123,7 @@
 #     -s workflows/clone-dev/stage2/label_router.forge \
 #     -s workflows/clone-dev/stage2/triage_specialist.forge \
 #     -s workflows/dev-cycle/agents.forge \
+#     -s workflows/dev-cycle/gate_two.forge \
 #     -s examples/agents/slack-adapter/agents.forge \
 #     workflows/clone-dev/main.forge --port 3300
 #
@@ -127,7 +139,7 @@
 # was copied verbatim).
 
 warden org_warden
-  manages [mastermind, mastermind_intake, slack_devops_monitor, planner, implementer, tester, reviewer, release_manager, triage_specialist, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
+  manages [mastermind, mastermind_intake, slack_devops_monitor, planner, gate_two, implementer, tester, reviewer, release_manager, triage_specialist, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
   on stuck: nudge, self
     after 3: escalate
   on timeout: restart, self
@@ -171,13 +183,14 @@ system clone_dev_system
     gate: gate_one
     issuer: issue_creator
     plan: planner
+    gate2: gate_two
     impl: implementer
     test: tester
     review: reviewer
     release: release_manager
     triage: triage_specialist
     slack: slack_adapter
-  mm >> plan >> impl >> test >> review
+  mm >> plan >> gate2 >> impl >> test >> review
 
 # ── Endpoints ────────────────────────────────────────────────────
 

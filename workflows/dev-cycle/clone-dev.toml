@@ -17,6 +17,9 @@ name = "dev-cycle-standalone"
 [slack]
 default_channel = ""
 bot_token_env   = "SLACK_BOT_TOKEN"
+# T10.2 (#368) — channel ID gate_two posts plan-approval cards into.
+# Empty ⇒ fall back to PlanReady.channel (per-issue routing).
+approval_channel = ""
 
 [github]
 token_env    = "GITHUB_TOKEN"
@@ -25,7 +28,7 @@ token_env    = "GITHUB_TOKEN"
 # step and only emit ProposalRejected if no default is configured.
 default_repo = "ncmlabs/forge"
 
-# ── [gates] (T10.1, #367) ─────────────────────────────────────────
+# ── [gates] (T10.1, #367; T10.2, #368) ────────────────────────────
 # Gate-1 (create-issue) toggles consumed by gate_one.
 #   create_issue              = false → auto-approve every propose_issue
 #                                       proposal (decision_by = "auto").
@@ -33,9 +36,23 @@ default_repo = "ncmlabs/forge"
 #                                       sit before gate_one escalates
 #                                       via warden + emits ProposalRejected
 #                                       (reason="timeout").
+# Gate-2 (start-implementation) toggles consumed by gate_two.
+#   start_implementation              = false → auto-emit
+#                                               ImplementationApproved
+#                                               for every PlanReady
+#                                               (decision_by =
+#                                               "auto (policy)").
+#   start_implementation_timeout_mins        → minutes a pending plan
+#                                               approval may sit before
+#                                               gate_two escalates via
+#                                               warden + emits
+#                                               ImplementationRejected
+#                                               (decision_by="system").
 [gates]
-create_issue              = true
-create_issue_timeout_mins = 30
+create_issue                      = true
+create_issue_timeout_mins         = 30
+start_implementation              = true
+start_implementation_timeout_mins = 30
 
 # ── [llm.routing] (T8.6, #361) ────────────────────────────────────
 # Phase → primary provider. Provider IDs reference [providers.*] in
@@ -75,3 +92,7 @@ fix_commit_template = "fix({issue_id}): iteration {iteration}"
 max_iterations      = 3
 auto_approve        = false
 test_cmd            = "cargo test --quiet"
+# T10.2 (#368) — bound on planner re-plan attempts triggered by
+# gate_two's ImplementationRejected feedback. Beyond this, the
+# planner escalates rather than emit yet another PlanReady.
+max_plan_revisions  = 3

@@ -48,7 +48,7 @@ event IssueAssigned
   issue_id: Text
   assignee: Text
 
-event PlanApproved
+event PlanReady
   issue_id: Text
   plan: Text
 
@@ -220,7 +220,7 @@ agent planner
     plan_text = draft_plan(memory.current_issue)
     memory.plan_text = plan_text
     say "Plan drafted for {issue_id}"
-    emit PlanApproved(issue_id: issue_id, plan: plan_text)
+    emit PlanReady(issue_id: issue_id, plan: plan_text)
 
   if stuck for 5 turns
     say "Planner stuck. Escalating."
@@ -240,7 +240,7 @@ agent implementer
     max_iterations: Number
     iteration_log: Text
     last_diagnosis: Text
-  subscribe PlanApproved
+  subscribe PlanReady
   subscribe TestsFailed
 
   on plan_ready(issue_id: Text, plan: Text)
