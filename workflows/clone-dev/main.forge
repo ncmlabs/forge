@@ -28,6 +28,14 @@
 #       fall-through agent for unmapped / multi-labeled / unlabeled
 #       inbound issues.
 #
+#   stage1/slack_devops_monitor.forge
+#     • T9.5 (#366): polls config.slack.devops_channel for @-mentions
+#       via skill.slack.detect_mentions and emits DevOpsRequest. The
+#       production input that replaces the smoke endpoint stand-in;
+#       the /devops_request endpoint is kept as a parallel ops/test
+#       injection path so integration tests can drive the consumer
+#       half without a Slack workspace.
+#
 #   stage1/mastermind_intake.forge
 #     • T9.1 (#362): conversational classifier for fuzzy Slack-mention
 #       intake. One persistent instance per Slack thread_ts (correlated
@@ -83,6 +91,7 @@
 #     -s workflows/clone-dev/shared/types.forge \
 #     -s workflows/clone-dev/shared/events.forge \
 #     -s workflows/clone-dev/shared/mastermind.forge \
+#     -s workflows/clone-dev/stage1/slack_devops_monitor.forge \
 #     -s workflows/clone-dev/stage1/mastermind_intake.forge \
 #     -s workflows/clone-dev/stage1/investigators/code_investigator.forge \
 #     -s workflows/clone-dev/stage1/investigators/ops_investigator.forge \
@@ -107,7 +116,7 @@
 # was copied verbatim).
 
 warden org_warden
-  manages [mastermind, mastermind_intake, planner, implementer, tester, reviewer, release_manager, triage_specialist, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
+  manages [mastermind, mastermind_intake, slack_devops_monitor, planner, implementer, tester, reviewer, release_manager, triage_specialist, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
   on stuck: nudge, self
     after 3: escalate
   on timeout: restart, self
@@ -142,6 +151,7 @@ warden investigators_ward
 system clone_dev_system
   use
     mm: mastermind
+    monitor: slack_devops_monitor
     intake: mastermind_intake
     code_inv: code_investigator
     ops_inv: ops_investigator
@@ -187,8 +197,10 @@ endpoint cross_project(source_task_id: Text, target_repo: Text, description: Tex
   emit CrossProjectRequested(source_task_id: source_task_id, target_repo: target_repo, description: description, labels: labels)
   give "CrossProjectRequested queued (source={source_task_id} target_repo={target_repo})"
 
-# T9.1 (#362) — smoke endpoint for the Stage-1 mastermind_intake.
-# Stands in for the future T9.5 (#366) slack_devops_monitor by emitting
+# T9.1 (#362) — parallel injection path next to the T9.5 (#366)
+# slack_devops_monitor (workflows/clone-dev/stage1/). Lets ops drive
+# the Stage-1 pipeline without a Slack workspace and lets integration
+# tests assert on the consumer half in isolation by emitting
 # DevOpsRequest directly. mastermind_intake correlates on thread_ts so
 # repeating calls with the same thread_ts route to the same agent
 # instance (multi-turn conversation).

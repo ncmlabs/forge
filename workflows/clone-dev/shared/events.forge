@@ -185,3 +185,22 @@ event IssueCreatorExhausted
   channel: Text
   repo: Text
   title: Text
+
+# T9.5 (#366) internal scaffolding for slack_devops_monitor's poll
+# handler. The `when payload.sure -> <single statement>` constraint
+# forces the multi-statement parse + iterate + emit + memory-mutate
+# work onto a separate handler — same pattern issue_creator's
+# IssueCreator{Succeeded,Retry,Exhausted} use. Not part of the public
+# stage1 contract — subscribed to only by slack_devops_monitor itself.
+event SlackMonitorPayload
+  payload: Text
+
+# T9.5 (#366) per-mention fan-out from slack_devops_monitor's payload
+# parser to the dedup + emit + memory-update stage. Splitting in two
+# avoids nesting `if msg_ts.length > 0 / if not already` deeper than
+# FORGE's 3-level grammar limit allows inside a single handler.
+event SlackMentionParsed
+  msg_ts: Text
+  thread_ts: Text
+  user: Text
+  text: Text

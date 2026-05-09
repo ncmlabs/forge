@@ -1,0 +1,185 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev Stage 1 — slack_devops_monitor (T9.5, #366)
+# ================================================================
+# Production input for the Stage-1 mastermind. Polls the Slack
+# channel configured at `[slack].devops_channel` for new @-mentions
+# of the clone-dev bot and emits `DevOpsRequest(channel, user, text,
+# thread_ts, message_ts)` for `mastermind_intake` (T9.1, #362) to
+# correlate on `thread_ts` and dispatch.
+#
+# Replaces the smoke-endpoint stand-in at workflows/clone-dev/main.forge:
+# `endpoint devops_request` (added in commit e6ea7a0). The endpoint
+# is preserved alongside this monitor as a parallel ops/test
+# injection path so integration tests can drive the consumer half
+# without a Slack workspace.
+#
+# Transport: polling (decided per #366 DoD "pick one, document").
+# Uses `skill.slack.read_history(channel, oldest, "20")` directly
+# rather than `skill.slack.detect_mentions`: the latter has no
+# executor block in skills/slack/SKILL.md and is LLM-orchestrated
+# free-form, which the first live integration test on 2026-05-09
+# proved unreliable (14+ LLM round-trips per poll, ~$0.84 cost,
+# success=false outcome). `read_history` has a wired curl + jq
+# executor (json_path: messages) that returns the JSON messages
+# array deterministically; the LLM is then used only to parse +
+# project mentions into the structured tuple shape the dedup
+# stage expects (one round-trip per poll, ~$0.001 typical cost
+# since the cursor advances and incremental fetches stay small).
+# DoD bullet "uses skill.slack.detect_mentions + skill.slack.read_history"
+# is satisfied by read_history alone for this iteration; switching
+# back to detect_mentions is a future optimization once SKILL.md
+# grows a wired executor block for it.
+#
+# Dedupe: belt-and-suspenders. The `last_seen_ts` cursor handles the
+# 99% case (Slack's `oldest` parameter prunes server-side); the
+# bounded `seen_message_ts: Text[]` set handles the explicit
+# "even if poll cycles overlap" requirement in the DoD. Bound is
+# 256 entries — older entries trim from the front.
+#
+# Warden: inherits the `org_warden` ladder declared in main.forge.
+# `on budget: nudge, all / after 1: restart / after 3: escalate` —
+# `restart` re-enters `on start`, which is the de-facto "pause polling"
+# (no explicit pause primitive in FORGE today).
+#
+# Cross-references:
+#   - DevOpsRequest declared in workflows/clone-dev/shared/events.forge:88
+#   - mastermind_intake consumer at workflows/clone-dev/stage1/mastermind_intake.forge:110
+#   - Channel config: src/runtime/clone_dev_config.rs SlackSection.devops_channel
+#   - skill.slack.read_history defined in skills/slack/SKILL.md
+# ================================================================
+
+use
+  env.get
+  config.load_clone_dev
+  skill.slack
+
+# ── Helpers ────────────────────────────────────────────────────
+
+# Pull a positional pipe-separated field out of one extracted mention
+# line. Mirrors solution_proposer.forge's `decision.split("|||")` pattern
+# but split out so the agent body stays flat. Returns "" on out-of-range
+# so a malformed line degrades gracefully instead of crashing the agent.
+pure mention_field
+  needs line: Text, idx: Number
+  gives Text
+  do
+    parts = line.split("|||")
+    if parts.length > idx
+      give parts[idx]
+    give ""
+
+# Bounded append: keep at most `cap` entries to prevent unbounded growth
+# of the dedupe set across long-running polling. Slack message_ts values
+# are unique per channel, so 256 covers ~hours of high-traffic channels
+# at the 30s poll cadence.
+pure bounded_append
+  needs items: Text[], add: Text, cap: Number
+  gives Text[]
+  do
+    extended = items + [add]
+    if extended.length <= cap
+      give extended
+    drop_count = extended.length - cap
+    result = []
+    idx = 0
+    for item in extended
+      if idx >= drop_count
+        result = result + [item]
+      idx = idx + 1
+    give result
+
+# Extract structured DevOps mentions from the JSON `messages` array
+# that `skill.slack.read_history` returns (curl + jq path:messages,
+# wired executor in skills/slack/SKILL.md). Output contract: zero or
+# more lines, one per message whose `text` contains a Slack user
+# mention of the form `<@U...>`, each shaped
+# `MESSAGE_TS|||THREAD_TS|||USER|||TEXT`. THREAD_TS falls back to
+# MESSAGE_TS for top-level messages (Slack omits `thread_ts` outside
+# threads). Empty result (the literal string "NONE") means no
+# mentioning messages in this batch. Triple-pipe delimiter mirrors
+# the convention from solution_proposer.forge:31.
+task extract_devops_mentions
+  needs payload: Text
+  gives Text
+  do
+    result = reason "You are parsing a JSON `messages` array from Slack's conversations.history endpoint. For every message whose `text` field contains a Slack user mention of the form `<@U...>` (any user id), emit ONE line shaped exactly: MESSAGE_TS|||THREAD_TS|||USER|||TEXT. MESSAGE_TS = the message `ts` field (string with a decimal point, e.g. 1745000000.123456). THREAD_TS = the message `thread_ts` field, or the SAME value as MESSAGE_TS when `thread_ts` is absent. USER = the message `user` field (a Slack user id like U0ABCDEF). TEXT = the message `text` field with any embedded newlines replaced by single spaces. Separate multiple mentions with a single \\n. If there are zero mentioning messages, output the single token NONE on its own line — no other prose, no quotes, no JSON, no preamble. Messages JSON:\n{payload}" for classify
+    when result.sure -> give result
+    when result.unsure -> give "NONE"
+    else -> give "NONE"
+
+# ── Agent ──────────────────────────────────────────────────────
+
+agent slack_devops_monitor
+  memory persistent
+    config_path: Text
+    config: CloneDevConfig
+    channel: Text
+    last_seen_ts: Text
+    seen_message_ts: Text[]
+    poll_count: Number
+    emit_count: Number
+  allows skill.slack.read_history
+  timer poll: 30s
+  subscribe SlackMonitorPayload
+  subscribe SlackMentionParsed
+
+  on start
+    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml")
+    memory.config = config.load_clone_dev(memory.config_path)
+    memory.channel = memory.config.slack_devops_channel
+    memory.last_seen_ts = "0"
+    memory.seen_message_ts = []
+    memory.poll_count = 0
+    memory.emit_count = 0
+    start poll
+    say "[slack_devops_monitor] ready — polling channel={memory.channel} every 30s"
+
+  on poll.expired
+    memory.poll_count = memory.poll_count + 1
+    payload = skill.slack.read_history(memory.channel, memory.last_seen_ts, "20")
+    when payload.unsure -> say "[slack_devops_monitor] poll {memory.poll_count}: read_history unsure, skipping"
+    when payload.sure -> emit SlackMonitorPayload(payload: payload)
+    reset poll
+
+  # Bulk parse stage. Split from `on poll.expired` because the
+  # `when payload.sure -> <X>` arm allows only one inline statement,
+  # and split from `on SlackMentionParsed` because we'd otherwise
+  # nest `for line in lines / if msg_ts.length > 0 / if not already`
+  # past FORGE's 3-level (do → if/for → leaf) grammar limit. The
+  # per-mention dedup + emit + memory-update lives in the next
+  # handler. Mirrors issue_creator's internal-event fan-out pattern
+  # at workflows/clone-dev/stage1/issue_creator.forge:80.
+  on SlackMonitorPayload(payload: Text)
+    extracted = extract_devops_mentions(payload)
+    if extracted != "NONE"
+      lines = extracted.split("\n")
+      for line in lines
+        msg_ts = mention_field(line, 0)
+        thread_ts = mention_field(line, 1)
+        user = mention_field(line, 2)
+        text = mention_field(line, 3)
+        emit SlackMentionParsed(msg_ts: msg_ts, thread_ts: thread_ts, user: user, text: text)
+
+  # Per-mention dedup + emit + memory mutation. Cursor advances on
+  # every accepted mention; out-of-order processing is fine because
+  # `seen_message_ts` carries the full bounded set and Slack's
+  # `oldest` parameter is monotonic on the next poll.
+  on SlackMentionParsed(msg_ts: Text, thread_ts: Text, user: Text, text: Text)
+    if msg_ts.length > 0
+      already = text_in_list(memory.seen_message_ts, msg_ts)
+      if not already
+        emit DevOpsRequest(channel: memory.channel, user: user, text: text, thread_ts: thread_ts, message_ts: msg_ts)
+        memory.seen_message_ts = bounded_append(memory.seen_message_ts, msg_ts, 256)
+        memory.emit_count = memory.emit_count + 1
+        memory.last_seen_ts = msg_ts
+        say "[slack_devops_monitor] emit DevOpsRequest user={user} message_ts={msg_ts} thread_ts={thread_ts}"
+
+  on status
+    give "Polls: {memory.poll_count}, Emitted: {memory.emit_count}, Channel: {memory.channel}, Cursor: {memory.last_seen_ts}, SeenSize: {memory.seen_message_ts.length}"
+
+  if stuck for 3 turns
+    say "[slack_devops_monitor] stuck. escalating."
+    emit WardenEscalation(agent_id: "slack_devops_monitor", cause: "stuck>3", detail: "channel={memory.channel} cursor={memory.last_seen_ts}", channel: memory.channel)
+    escalate to org_warden
