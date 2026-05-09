@@ -270,10 +270,7 @@ async fn fire_issue_assigned(h: &Harness, issue_id: &str) {
     let mut fields = HashMap::new();
     fields.insert("issue_id".to_string(), cv_text(issue_id));
     fields.insert("repo".to_string(), cv_text("test-org/test-repo"));
-    fields.insert(
-        "title".to_string(),
-        cv_text("Add a hello-world endpoint"),
-    );
+    fields.insert("title".to_string(), cv_text("Add a hello-world endpoint"));
     fields.insert(
         "body".to_string(),
         cv_text(

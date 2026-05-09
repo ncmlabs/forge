@@ -497,9 +497,8 @@ async fn live_gate_two_posts_real_slack_approval_card() {
     // + slack_adapter only), so the LLM provider can be the mock —
     // no FORGE_LLM_LIVE required.
     let mock_config = ForgeConfig::default_mock_config();
-    let providers = Arc::new(
-        ProviderRegistry::from_config(mock_config).expect("mock registry should build"),
-    );
+    let providers =
+        Arc::new(ProviderRegistry::from_config(mock_config).expect("mock registry should build"));
 
     let _fixture = write_fixture_config("slack", &slack_channel);
     let mut h = boot(providers).await;

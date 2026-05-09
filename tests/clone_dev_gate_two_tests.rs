@@ -336,13 +336,7 @@ fn cv_bool(b: bool) -> ConfidentValue {
     ConfidentValue::deterministic(Value::Bool(b))
 }
 
-async fn fire_plan_ready(
-    h: &Harness,
-    issue_id: &str,
-    repo: &str,
-    branch: &str,
-    channel: &str,
-) {
+async fn fire_plan_ready(h: &Harness, issue_id: &str, repo: &str, branch: &str, channel: &str) {
     let mut fields = HashMap::new();
     fields.insert("issue_id".to_string(), cv_text(issue_id));
     fields.insert("repo".to_string(), cv_text(repo));
@@ -372,13 +366,7 @@ async fn fire_plan_ready(
     bus.publish(&payload);
 }
 
-async fn fire_issue_assigned(
-    h: &Harness,
-    issue_id: &str,
-    repo: &str,
-    title: &str,
-    channel: &str,
-) {
+async fn fire_issue_assigned(h: &Harness, issue_id: &str, repo: &str, title: &str, channel: &str) {
     let mut fields = HashMap::new();
     fields.insert("issue_id".to_string(), cv_text(issue_id));
     fields.insert("repo".to_string(), cv_text(repo));
@@ -469,7 +457,14 @@ async fn plan_ready_approval_emits_post_approval_then_implementation_approved() 
     let _fixture = write_fixture_config("happy", true, 30, "", 3);
 
     let mut h = boot(TEST_HARNESS_BASE, false).await;
-    fire_plan_ready(&h, "ISSUE-123", "test-org/test-repo", "clone-dev/123", "C-issue").await;
+    fire_plan_ready(
+        &h,
+        "ISSUE-123",
+        "test-org/test-repo",
+        "clone-dev/123",
+        "C-issue",
+    )
+    .await;
 
     let frames_before = drain_frames(&mut h.rx, HANDLER_WINDOW).await;
     let says_before = say_lines(&frames_before);
@@ -530,9 +525,7 @@ async fn plan_ready_approval_emits_post_approval_then_implementation_approved() 
     let confirm = says_after
         .iter()
         .find(|s| s.starts_with("[probe] post_message") && s.contains(":white_check_mark:"))
-        .unwrap_or_else(|| {
-            panic!("expected :white_check_mark: confirmation; says={says_after:?}")
-        });
+        .unwrap_or_else(|| panic!("expected :white_check_mark: confirmation; says={says_after:?}"));
     assert!(
         confirm.contains("Implementation approved"),
         "confirmation must mention approval; got: {confirm}"
@@ -548,7 +541,14 @@ async fn plan_ready_rejection_emits_implementation_rejected() {
     let _fixture = write_fixture_config("rejection", true, 30, "", 3);
 
     let mut h = boot(TEST_HARNESS_BASE, false).await;
-    fire_plan_ready(&h, "ISSUE-456", "test-org/test-repo", "clone-dev/456", "C-issue").await;
+    fire_plan_ready(
+        &h,
+        "ISSUE-456",
+        "test-org/test-repo",
+        "clone-dev/456",
+        "C-issue",
+    )
+    .await;
 
     let _ = drain_frames(&mut h.rx, HANDLER_WINDOW).await;
 
@@ -599,7 +599,14 @@ async fn auto_approve_bypass_skips_post_approval() {
     let _fixture = write_fixture_config("autoapprove", false, 30, "", 3);
 
     let mut h = boot(TEST_HARNESS_BASE, false).await;
-    fire_plan_ready(&h, "ISSUE-789", "test-org/test-repo", "clone-dev/789", "C-issue").await;
+    fire_plan_ready(
+        &h,
+        "ISSUE-789",
+        "test-org/test-repo",
+        "clone-dev/789",
+        "C-issue",
+    )
+    .await;
 
     let frames = drain_frames(&mut h.rx, HANDLER_WINDOW).await;
     let says = say_lines(&frames);
@@ -719,7 +726,14 @@ async fn stale_approval_response_ignored() {
     let _fixture = write_fixture_config("stale", true, 30, "", 3);
 
     let mut h = boot(TEST_HARNESS_BASE, false).await;
-    fire_plan_ready(&h, "ISSUE-real", "test-org/test-repo", "clone-dev/real", "C-issue").await;
+    fire_plan_ready(
+        &h,
+        "ISSUE-real",
+        "test-org/test-repo",
+        "clone-dev/real",
+        "C-issue",
+    )
+    .await;
     let _ = drain_frames(&mut h.rx, HANDLER_WINDOW).await;
 
     // Wrong request_id — must be ignored.
@@ -749,7 +763,14 @@ async fn approval_channel_overrides_per_issue_channel() {
     let _fixture = write_fixture_config("channel", true, 30, "C-reviewers", 3);
 
     let mut h = boot(TEST_HARNESS_BASE, false).await;
-    fire_plan_ready(&h, "ISSUE-ch", "test-org/test-repo", "clone-dev/ch", "C-issue").await;
+    fire_plan_ready(
+        &h,
+        "ISSUE-ch",
+        "test-org/test-repo",
+        "clone-dev/ch",
+        "C-issue",
+    )
+    .await;
 
     let frames_before = drain_frames(&mut h.rx, HANDLER_WINDOW).await;
     let says_before = say_lines(&frames_before);
@@ -769,9 +790,7 @@ async fn approval_channel_overrides_per_issue_channel() {
     let confirm = says_after
         .iter()
         .find(|s| s.starts_with("[probe] post_message") && s.contains(":white_check_mark:"))
-        .unwrap_or_else(|| {
-            panic!("expected :white_check_mark: confirmation; says={says_after:?}")
-        });
+        .unwrap_or_else(|| panic!("expected :white_check_mark: confirmation; says={says_after:?}"));
     assert!(
         confirm.contains("channel=C-reviewers"),
         "confirmation must also route to slack_approval_channel; got: {confirm}"
