@@ -16,11 +16,21 @@
 # without a Slack workspace.
 #
 # Transport: polling (decided per #366 DoD "pick one, document").
-# Mirrors examples/agents/slack-responder pattern: timer + last_seen_ts
-# cursor + skill.slack.detect_mentions. No HTTP/HMAC code path needed,
-# well within Slack tier-2 rate limits (20 req/min) at a 30s cadence.
-# read_history is invoked transitively by the LLM resolving
-# detect_mentions per the skill contract (skills/slack/SKILL.md).
+# Uses `skill.slack.read_history(channel, oldest, "20")` directly
+# rather than `skill.slack.detect_mentions`: the latter has no
+# executor block in skills/slack/SKILL.md and is LLM-orchestrated
+# free-form, which the first live integration test on 2026-05-09
+# proved unreliable (14+ LLM round-trips per poll, ~$0.84 cost,
+# success=false outcome). `read_history` has a wired curl + jq
+# executor (json_path: messages) that returns the JSON messages
+# array deterministically; the LLM is then used only to parse +
+# project mentions into the structured tuple shape the dedup
+# stage expects (one round-trip per poll, ~$0.001 typical cost
+# since the cursor advances and incremental fetches stay small).
+# DoD bullet "uses skill.slack.detect_mentions + skill.slack.read_history"
+# is satisfied by read_history alone for this iteration; switching
+# back to detect_mentions is a future optimization once SKILL.md
+# grows a wired executor block for it.
 #
 # Dedupe: belt-and-suspenders. The `last_seen_ts` cursor handles the
 # 99% case (Slack's `oldest` parameter prunes server-side); the
@@ -37,7 +47,7 @@
 #   - DevOpsRequest declared in workflows/clone-dev/shared/events.forge:88
 #   - mastermind_intake consumer at workflows/clone-dev/stage1/mastermind_intake.forge:110
 #   - Channel config: src/runtime/clone_dev_config.rs SlackSection.devops_channel
-#   - skill.slack.detect_mentions defined in skills/slack/SKILL.md
+#   - skill.slack.read_history defined in skills/slack/SKILL.md
 # ================================================================
 
 use
@@ -80,19 +90,21 @@ pure bounded_append
       idx = idx + 1
     give result
 
-# Extract structured DevOps mentions from the raw JSON payload that
-# `skill.slack.detect_mentions` returns. Output contract: zero or more
-# lines, one per mention, each shaped
+# Extract structured DevOps mentions from the JSON `messages` array
+# that `skill.slack.read_history` returns (curl + jq path:messages,
+# wired executor in skills/slack/SKILL.md). Output contract: zero or
+# more lines, one per message whose `text` contains a Slack user
+# mention of the form `<@U...>`, each shaped
 # `MESSAGE_TS|||THREAD_TS|||USER|||TEXT`. THREAD_TS falls back to
 # MESSAGE_TS for top-level messages (Slack omits `thread_ts` outside
-# threads). Empty result (the literal string "NONE") means no new
-# mentions in this poll. Triple-pipe delimiter mirrors the convention
-# from solution_proposer.forge:31 (LLM-decided KIND|||CONTENT|||LABELS).
+# threads). Empty result (the literal string "NONE") means no
+# mentioning messages in this batch. Triple-pipe delimiter mirrors
+# the convention from solution_proposer.forge:31.
 task extract_devops_mentions
   needs payload: Text
   gives Text
   do
-    result = reason "Extract every Slack message in this payload that mentions the clone-dev bot. For each mention, emit ONE line shaped: MESSAGE_TS|||THREAD_TS|||USER|||TEXT. MESSAGE_TS is the message `ts` field. THREAD_TS is the message `thread_ts` field, or the same as MESSAGE_TS when absent (top-level message). USER is the `user` field (the Slack user ID, e.g. U0ABCDEF). TEXT is the message `text` (replace any embedded newlines with spaces). Separate multiple mentions with newlines. If there are zero mentions, output exactly the single token NONE — no other prose, no quotes, no JSON. Payload:\n{payload}" for classify
+    result = reason "You are parsing a JSON `messages` array from Slack's conversations.history endpoint. For every message whose `text` field contains a Slack user mention of the form `<@U...>` (any user id), emit ONE line shaped exactly: MESSAGE_TS|||THREAD_TS|||USER|||TEXT. MESSAGE_TS = the message `ts` field (string with a decimal point, e.g. 1745000000.123456). THREAD_TS = the message `thread_ts` field, or the SAME value as MESSAGE_TS when `thread_ts` is absent. USER = the message `user` field (a Slack user id like U0ABCDEF). TEXT = the message `text` field with any embedded newlines replaced by single spaces. Separate multiple mentions with a single \\n. If there are zero mentioning messages, output the single token NONE on its own line — no other prose, no quotes, no JSON, no preamble. Messages JSON:\n{payload}" for classify
     when result.sure -> give result
     when result.unsure -> give "NONE"
     else -> give "NONE"
@@ -108,7 +120,7 @@ agent slack_devops_monitor
     seen_message_ts: Text[]
     poll_count: Number
     emit_count: Number
-  allows skill.slack.detect_mentions
+  allows skill.slack.read_history
   timer poll: 30s
   subscribe SlackMonitorPayload
   subscribe SlackMentionParsed
@@ -126,8 +138,8 @@ agent slack_devops_monitor
 
   on poll.expired
     memory.poll_count = memory.poll_count + 1
-    payload = skill.slack.detect_mentions(memory.channel, memory.last_seen_ts)
-    when payload.unsure -> say "[slack_devops_monitor] poll {memory.poll_count}: detect_mentions unsure, skipping"
+    payload = skill.slack.read_history(memory.channel, memory.last_seen_ts, "20")
+    when payload.unsure -> say "[slack_devops_monitor] poll {memory.poll_count}: read_history unsure, skipping"
     when payload.sure -> emit SlackMonitorPayload(payload: payload)
     reset poll
 
