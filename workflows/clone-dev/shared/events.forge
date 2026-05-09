@@ -195,6 +195,28 @@ event IssueCreatorExhausted
 event SlackMonitorPayload
   payload: Text
 
+# T10.1 (#367): terminal "no" path produced by gate_one when a
+# propose_issue approval is rejected (reason="human", decision_by =
+# Slack user) or times out (reason="timeout", decision_by="system").
+# No consumer in v1 — emitted for SSE/audit visibility and as a
+# contract for future learning loops that want to observe rejections.
+event ProposalRejected
+  thread_ts: Text
+  channel: Text
+  kind: Text
+  rejection_reason: Text
+  decision_by: Text
+  comment: Text
+
+# T10.1 (#367): placeholder approval signal for future small-action
+# runners. gate_one emits this alongside a stub PostMessage so the
+# shape is fixed before the action runner lands; v1 has no consumer.
+event SmallActionApproved
+  thread_ts: Text
+  channel: Text
+  content: Text
+  evidence_refs: Text[]
+
 # T9.5 (#366) per-mention fan-out from slack_devops_monitor's payload
 # parser to the dedup + emit + memory-update stage. Splitting in two
 # avoids nesting `if msg_ts.length > 0 / if not already` deeper than

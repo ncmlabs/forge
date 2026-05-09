@@ -52,7 +52,11 @@ use
 
 # Split "a,b,c" into ["a", "b", "c"], dropping empties so a trailing
 # comma or an empty CSV (kind ≠ propose_issue) yields []. Mirrors
-# label_router.forge's parallel-array idiom.
+# label_router.forge's parallel-array idiom. Each split chunk is
+# trimmed so a model-emitted "a, b" lands as ["a", "b"] — without
+# the trim, the leading space on " b" propagates into ProposalReady
+# → ProposalApproved.suggested_labels and `gh issue create --label`
+# rejects ' b' as not-found (surfaced by the T10.1 #367 smoke run).
 pure parse_labels_csv
   needs csv: Text
   gives Text[]
@@ -62,8 +66,9 @@ pure parse_labels_csv
       give result
     parts = csv.split(",")
     for p in parts
-      if p.length > 0
-        result = result + [p]
+      trimmed = p.trim()
+      if trimmed.length > 0
+        result = result + [trimmed]
     give result
 
 # Drafts the Gate-1 proposal from the running findings blob. Output
