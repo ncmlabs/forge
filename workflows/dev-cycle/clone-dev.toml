@@ -19,7 +19,23 @@ default_channel = ""
 bot_token_env   = "SLACK_BOT_TOKEN"
 
 [github]
-token_env = "GITHUB_TOKEN"
+token_env    = "GITHUB_TOKEN"
+# T10.1 (#367) — single repo gate_one writes propose_issue approvals
+# into. Empty string = unset; gate_one will skip the issue creation
+# step and only emit ProposalRejected if no default is configured.
+default_repo = "ncmlabs/forge"
+
+# ── [gates] (T10.1, #367) ─────────────────────────────────────────
+# Gate-1 (create-issue) toggles consumed by gate_one.
+#   create_issue              = false → auto-approve every propose_issue
+#                                       proposal (decision_by = "auto").
+#   create_issue_timeout_mins        → minutes a pending approval may
+#                                       sit before gate_one escalates
+#                                       via warden + emits ProposalRejected
+#                                       (reason="timeout").
+[gates]
+create_issue              = true
+create_issue_timeout_mins = 30
 
 # ── [llm.routing] (T8.6, #361) ────────────────────────────────────
 # Phase → primary provider. Provider IDs reference [providers.*] in

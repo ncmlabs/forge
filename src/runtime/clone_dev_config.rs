@@ -68,6 +68,12 @@ pub struct SlackSection {
 pub struct GithubSection {
     #[serde(default)]
     pub token_env: String,
+    // T10.1 (#367) — repo slug used by gate_one when forking a
+    // ProposalReady(kind=propose_issue) into ProposalApproved. Single-repo
+    // assumption for v1; future work can promote to a per-thread repo
+    // resolver.
+    #[serde(default)]
+    pub default_repo: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -120,6 +126,14 @@ pub struct GatesSection {
     pub require_approval_for: Vec<String>,
     #[serde(default)]
     pub auto_approve_labels: Vec<String>,
+    // T10.1 (#367) — Gate-1 (create-issue) toggles. `create_issue =
+    // false` makes gate_one auto-approve every propose_issue proposal
+    // without going through Slack. `create_issue_timeout_mins` is the
+    // window after which a pending approval escalates via warden.
+    #[serde(default)]
+    pub create_issue: Option<bool>,
+    #[serde(default)]
+    pub create_issue_timeout_mins: Option<f64>,
 }
 
 // [defaults] carries the per-repo-style knobs whose values apply to every
@@ -222,6 +236,17 @@ pub struct CloneDevConfig {
     pub budget_per_hour_usd: f64,
     pub gates_require_approval_for: Vec<String>,
     pub gates_auto_approve_labels: Vec<String>,
+    // T10.1 (#367) — gate_one toggles. `gates_create_issue` defaults to
+    // true (gate is on); flip to false to auto-approve every
+    // propose_issue without going through Slack. The timeout is in
+    // minutes; gate_one ticks a 5-minute timer and escalates when the
+    // counter reaches the configured value.
+    pub gates_create_issue: bool,
+    pub gates_create_issue_timeout_mins: f64,
+    // T10.1 (#367) — single-repo destination for gate_one's
+    // propose_issue → ProposalApproved fork. Empty string means no
+    // default; gate_one falls back to skipping the issue creation step.
+    pub github_default_repo: String,
     // T8.3 (#358) — flat sibling fields. FORGE record-of-record is
     // untested today (see workflows/clone-dev/shared/types.forge:154–158);
     // suffixes/targets are parallel arrays so a pure FORGE task can
@@ -283,6 +308,11 @@ const DEFAULT_BRANCH_PREFIX: &str = "clone-dev";
 const DEFAULT_COMMIT_TEMPLATE: &str = "feat({issue_id}): implement per plan";
 const DEFAULT_FIX_COMMIT_TEMPLATE: &str = "fix({issue_id}): iteration {iteration}";
 const DEFAULT_MAX_ITERATIONS: f64 = 3.0;
+// T10.1 (#367) — Gate-1 (create-issue) defaults. Gate is on by default
+// (operators must opt out via `[gates] create_issue = false`); the 30m
+// window matches the dev-cycle reviewer's typical approval cadence.
+const DEFAULT_GATES_CREATE_ISSUE: bool = true;
+const DEFAULT_GATES_CREATE_ISSUE_TIMEOUT_MINS: f64 = 30.0;
 
 impl CloneDevConfig {
     pub fn from_toml_str(s: &str) -> Result<Self, String> {
@@ -416,6 +446,12 @@ impl CloneDevConfig {
             budget_per_hour_usd: raw.budget.per_hour_usd.unwrap_or(INHERIT_F64),
             gates_require_approval_for: raw.gates.require_approval_for,
             gates_auto_approve_labels: raw.gates.auto_approve_labels,
+            gates_create_issue: raw.gates.create_issue.unwrap_or(DEFAULT_GATES_CREATE_ISSUE),
+            gates_create_issue_timeout_mins: raw
+                .gates
+                .create_issue_timeout_mins
+                .unwrap_or(DEFAULT_GATES_CREATE_ISSUE_TIMEOUT_MINS),
+            github_default_repo: raw.github.default_repo,
             label_routing_namespace: raw.labels.namespace,
             label_routing_suffixes,
             label_routing_targets,
@@ -522,6 +558,17 @@ impl CloneDevConfig {
             &mut fields,
             "gates_auto_approve_labels",
             &self.gates_auto_approve_labels,
+        );
+        insert_bool(&mut fields, "gates_create_issue", self.gates_create_issue);
+        insert_number(
+            &mut fields,
+            "gates_create_issue_timeout_mins",
+            self.gates_create_issue_timeout_mins,
+        );
+        insert_text(
+            &mut fields,
+            "github_default_repo",
+            &self.github_default_repo,
         );
         insert_text(
             &mut fields,
@@ -736,6 +783,7 @@ mod tests {
 
             [github]
             # no token_env set — should resolve to empty
+            default_repo = "ncmlabs/forge"
 
             [labels]
             triage  = ["needs-triage"]
@@ -755,8 +803,10 @@ mod tests {
             per_hour_usd = 20.0
 
             [gates]
-            require_approval_for = ["release", "destructive"]
-            auto_approve_labels  = ["docs-only"]
+            require_approval_for     = ["release", "destructive"]
+            auto_approve_labels      = ["docs-only"]
+            create_issue             = false
+            create_issue_timeout_mins = 60
             "#,
         )
         .expect("parse");
@@ -764,6 +814,7 @@ mod tests {
         assert_eq!(cfg.slack_default_channel, "C_default");
         assert_eq!(cfg.slack_devops_channel, "C_devops");
         assert_eq!(cfg.github_token, "");
+        assert_eq!(cfg.github_default_repo, "ncmlabs/forge");
         assert_eq!(cfg.github_labels_triage, vec!["needs-triage".to_string()]);
         assert_eq!(cfg.llm_routing_high, "claude-opus");
         assert_eq!(cfg.warden_max_retries, 5.0);
@@ -772,6 +823,8 @@ mod tests {
         assert_eq!(cfg.budget_per_hour_usd, 20.0);
         assert_eq!(cfg.gates_require_approval_for.len(), 2);
         assert_eq!(cfg.gates_auto_approve_labels, vec!["docs-only".to_string()]);
+        assert!(!cfg.gates_create_issue);
+        assert_eq!(cfg.gates_create_issue_timeout_mins, 60.0);
     }
 
     #[test]
@@ -944,6 +997,65 @@ mod tests {
         match &dev.value {
             Value::Text(s) => assert_eq!(s, "C_devops"),
             _ => panic!("slack_devops_channel should be Text"),
+        }
+    }
+
+    // ── T10.1 (#367) — Gate-1 (create-issue) toggles ──────────────
+
+    #[test]
+    fn gates_create_issue_defaults_when_omitted() {
+        // Older TOML files (pre-#367) don't carry the new keys. Loader
+        // must fall back to the documented defaults so gate_one boots
+        // without operator action.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            require_approval_for = ["release"]
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.gates_create_issue);
+        assert_eq!(
+            cfg.gates_create_issue_timeout_mins,
+            DEFAULT_GATES_CREATE_ISSUE_TIMEOUT_MINS
+        );
+        assert_eq!(cfg.github_default_repo, "");
+    }
+
+    #[test]
+    fn to_forge_record_emits_gate_one_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [github]
+            default_repo = "ncmlabs/forge"
+
+            [gates]
+            create_issue              = false
+            create_issue_timeout_mins = 45
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        let create_issue = fields.get("gates_create_issue").expect("flag field");
+        match &create_issue.value {
+            Value::Bool(b) => assert!(!*b),
+            _ => panic!("gates_create_issue should be Bool"),
+        }
+        let timeout = fields
+            .get("gates_create_issue_timeout_mins")
+            .expect("timeout field");
+        match &timeout.value {
+            Value::Number(n) => assert_eq!(*n, 45.0),
+            _ => panic!("gates_create_issue_timeout_mins should be Number"),
+        }
+        let repo = fields.get("github_default_repo").expect("repo field");
+        match &repo.value {
+            Value::Text(s) => assert_eq!(s, "ncmlabs/forge"),
+            _ => panic!("github_default_repo should be Text"),
         }
     }
 

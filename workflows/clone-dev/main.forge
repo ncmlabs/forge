@@ -57,9 +57,19 @@
 #       Gate-1 (T10.1) approval flow. Additive — intake's per-Finding
 #       Slack stitch-back is unchanged.
 #
+#   stage1/gate_one.forge
+#     • T10.1 (#367): human-in-the-loop approval bridge between T9.3's
+#       ProposalReady and T9.4's ProposalApproved. Forks by kind —
+#       answer/small_action post directly; propose_issue emits
+#       PostApproval to slack_adapter and waits for ApprovalResponse,
+#       then emits ProposalApproved or ProposalRejected. `[gates]
+#       create_issue = false` auto-approves; `create_issue_timeout_mins`
+#       drives a 5-minute reminder timer that escalates via warden
+#       once elapsed.
+#
 #   stage1/issue_creator.forge
 #     • T9.4 (#365): consumes ProposalApproved (kind == propose_issue)
-#       from the Gate-1 flow (T10.1, future), calls
+#       from the T10.1 (#367) Gate-1 flow, calls
 #       skill.github.create_labeled_issue, emits IssueCreated for
 #       audit, and posts a confirmation back into the originating
 #       Slack thread via PostMessage. One-retry policy: two sequential
@@ -97,6 +107,7 @@
 #     -s workflows/clone-dev/stage1/investigators/ops_investigator.forge \
 #     -s workflows/clone-dev/stage1/investigators/security_investigator.forge \
 #     -s workflows/clone-dev/stage1/solution_proposer.forge \
+#     -s workflows/clone-dev/stage1/gate_one.forge \
 #     -s workflows/clone-dev/stage1/issue_creator.forge \
 #     -s workflows/clone-dev/stage2/label_router.forge \
 #     -s workflows/clone-dev/stage2/triage_specialist.forge \
@@ -137,7 +148,7 @@ warden org_warden
 # warden); this declaration handles the hard cases (crash / timeout)
 # uniformly across all three.
 warden investigators_ward
-  manages [code_investigator, ops_investigator, security_investigator, solution_proposer, issue_creator]
+  manages [code_investigator, ops_investigator, security_investigator, solution_proposer, gate_one, issue_creator]
   on stuck: escalate, self
   on crash: restart, self
   on timeout: restart, self
@@ -157,6 +168,7 @@ system clone_dev_system
     ops_inv: ops_investigator
     sec_inv: security_investigator
     proposer: solution_proposer
+    gate: gate_one
     issuer: issue_creator
     plan: planner
     impl: implementer
@@ -208,11 +220,25 @@ endpoint devops_request(channel: Text, user: Text, text: Text, thread_ts: Text, 
   emit DevOpsRequest(channel: channel, user: user, text: text, thread_ts: thread_ts, message_ts: message_ts)
   give "DevOpsRequest queued (thread_ts={thread_ts} user={user})"
 
-# T9.4 (#365) — smoke endpoint that stands in for the future T10.1
+# T9.4 (#365) — smoke endpoint that stands in for the T10.1 (#367)
 # Gate-1 approval flow. Operator passes the human-approved fields
 # (repo / title / body) directly; suggested_labels is hardcoded to
 # ["clone-dev:plan"] for the smoke. issue_creator picks it up via the
 # `subscribe ProposalApproved where kind == "propose_issue"` filter.
+# Kept as a parallel ops/test injection path even after T10.1 ships,
+# so integration tests can drive issue_creator without a Slack
+# workspace and operators can bypass gate_one for emergency runs.
 endpoint smoke_propose_approved(thread_ts: Text, channel: Text, repo: Text, title: Text, body: Text) -> Text
   emit ProposalApproved(thread_ts: thread_ts, channel: channel, kind: "propose_issue", repo: repo, title: title, body: body, suggested_labels: ["clone-dev:plan"], evidence_refs: [])
   give "ProposalApproved queued (repo={repo} title={title})"
+
+# T10.1 (#367) — smoke endpoint that drives gate_one end-to-end. Two
+# emits: DevOpsRequest seeds gate_one's memory.channel via the
+# correlate-on-DevOpsRequest.thread_ts clause, and ProposalReady
+# fires the actual gate logic on the same thread instance. evidence
+# carries a single synthetic ref so the rendered approval body
+# exercises build_issue_body's bullet path.
+endpoint smoke_proposal_ready(thread_ts: Text, channel: Text, kind: Text, content: Text) -> Text
+  emit DevOpsRequest(channel: channel, user: "smoke", text: "smoke", thread_ts: thread_ts, message_ts: thread_ts)
+  emit ProposalReady(thread_ts: thread_ts, kind: kind, content: content, suggested_labels: ["clone-dev:plan"], evidence_refs: ["smoke: synthetic"], confidence: 0.9)
+  give "ProposalReady queued (kind={kind} thread_ts={thread_ts})"

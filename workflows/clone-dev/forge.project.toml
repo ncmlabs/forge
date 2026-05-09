@@ -14,6 +14,7 @@ sources = [
   "stage1/investigators/ops_investigator.forge",
   "stage1/investigators/security_investigator.forge",
   "stage1/solution_proposer.forge",
+  "stage1/gate_one.forge",
   "stage1/issue_creator.forge",
   "stage2/label_router.forge",
   "stage2/triage_specialist.forge",

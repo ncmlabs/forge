@@ -200,6 +200,9 @@ type CloneDevConfig
   budget_per_hour_usd: Number
   gates_require_approval_for: Text[]
   gates_auto_approve_labels: Text[]
+  gates_create_issue: Bool
+  gates_create_issue_timeout_mins: Number
+  github_default_repo: Text
   label_routing_namespace: Text
   label_routing_suffixes: Text[]
   label_routing_targets: Text[]
