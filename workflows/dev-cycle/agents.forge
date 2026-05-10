@@ -731,9 +731,11 @@ agent reviewer
     ci_passed_first_try: Bool
     config_path: Text
     config: CloneDevConfig
+    timeout_ticks: Number
   knowledge store: ".forge-knowledge/pr-history"
     max_entries: 10000
     retention: 365d
+  timer merge_approval_timeout: 300s
   subscribe AcceptanceMet
   subscribe ApprovalResponse
   subscribe TaskCompleted where task_id == memory.issue_id
@@ -755,9 +757,10 @@ agent reviewer
     memory.auto_decision = "disabled"
     memory.review_rounds = 0
     memory.ci_passed_first_try = false
+    memory.timeout_ticks = 0
     memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml")
     memory.config = config.load_clone_dev(memory.config_path)
-    say "[reviewer] ready (config: {memory.config_path})"
+    say "[reviewer] ready (config: {memory.config_path} merge_pr={memory.config.gates_merge_pr} merge_pr_timeout_mins={memory.config.gates_merge_pr_timeout_mins})"
 
   on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, workdir: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text, ci_passed_first_try: Bool)
     requires lifecycle == idle on fail: give "review already in progress"
@@ -824,15 +827,30 @@ agent reviewer
       learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{pr_url} decision:auto_rejected\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
       emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: "Auto-rejected by knowledge store: prior rejection patterns", channel: channel, callback_url: callback_url, test_cmd: test_cmd)
       give "auto-rejected"
+    if repo_cfg.merge_pr == false
+      say "[reviewer] gates.merge_pr=false for {memory.repo_slug} — auto-merging without slack approval"
+      merge_result = skill.github.merge_pr(repo, pr_url)
+      when merge_result.sure -> say "[reviewer] PR merged successfully"
+      else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      merge_msg = "AUTO-MERGED (gates.merge_pr=false): {issue_id} in {repo}. Branch {branch} merged. No slack approval required."
+      emit PostMessage(channel: channel, text: ":robot_face: {merge_msg}", thread_ts: "")
+      cleanup = skill.github.delete_branch(repo, branch)
+      workdir_cleanup = command "rm -rf {workdir}" timeout 10s
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{pr_url} decision:auto_merged_policy\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
+      emit PRMerged(issue_id: issue_id, repo: repo, branch: branch, ci_passed_first_try: memory.ci_passed_first_try, review_rounds: memory.review_rounds)
+      give "auto-merged-policy"
     emit PRReady(issue_id: issue_id, repo: repo, pr_url: pr_url, channel: channel, callback_url: callback_url)
     transition to awaiting_approval
     approval_context = "Branch: {branch}\nChangelog: {entry}\nCI: {ci_result}\n\nKnowledge verdict: {verdict}\nDiff summary: {characterization}\n\nApprove to merge or reject to iterate."
     emit PostApproval(channel: channel, title: "PR for {issue_id} in {repo} ready for review", context: approval_context, callback_url: callback_url, request_id: issue_id, thread_ts: "")
     say "[reviewer] Approval request emitted to slack-adapter"
+    memory.timeout_ticks = 0
+    start merge_approval_timeout
 
   on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
     requires lifecycle == awaiting_approval on fail: give "no pending review"
     requires request_id == memory.issue_id on fail: give "stale response"
+    cancel merge_approval_timeout
     if approved
       say "[reviewer] APPROVED by {comment} — merging PR for {memory.issue_id}"
       merge_result = skill.github.merge_pr(memory.repo, memory.pr_url)
@@ -854,6 +872,30 @@ agent reviewer
       learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:human_rejected\nbranch: {memory.branch}\ndiff_characterization: {memory.diff_characterization}\nverdict_was: {memory.review_verdict}\nhuman_action: rejected by {comment}" category: "pr-decisions-{memory.repo_slug}"
       emit TestsFailed(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, failures: "PR rejected: {comment}", channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
       transition to idle
+
+  # T10.3 (#369) — gate_three timeout. The 5-minute tick deliberately
+  # mirrors gate_two's cadence (gate_two.forge:161-177). The cadence
+  # *after* the tick differs: this handler holds quiet until elapsed_mins
+  # crosses 1x merge_pr_timeout_mins (post one reminder), then escalates
+  # via warden once it crosses 2x. Per the issue DoD: "after timeout,
+  # reviewer posts reminder; after 2x timeout, escalate via warden."
+  on merge_approval_timeout.expired
+    requires lifecycle == awaiting_approval on fail: give "no pending approval"
+    next_ticks = memory.timeout_ticks + 1
+    memory.timeout_ticks = next_ticks
+    elapsed_mins = next_ticks * 5
+    timeout_budget = memory.config.gates_merge_pr_timeout_mins
+    if elapsed_mins >= timeout_budget * 2
+      say "[reviewer] PR-merge approval for {memory.issue_id} hit 2x timeout ({elapsed_mins}m) — escalating to warden"
+      emit WardenEscalation(agent_id: "reviewer", cause: "merge_approval_2x_timeout", detail: "PR approval for {memory.issue_id} timed out after {elapsed_mins}m (2x budget)", channel: memory.channel)
+      emit PostMessage(channel: memory.channel, text: ":hourglass: PR-approval 2x timeout for {memory.issue_id}. Warden notified.", thread_ts: "")
+      transition to idle
+    if elapsed_mins >= timeout_budget
+      say "[reviewer] PR-merge approval reminder for {memory.issue_id}: {elapsed_mins}m elapsed (1x budget reached)"
+      emit PostMessage(channel: memory.channel, text: "REMINDER: PR approval still pending for {memory.issue_id} ({elapsed_mins}m elapsed). Will escalate to warden at {timeout_budget * 2}m.", thread_ts: "")
+      start merge_approval_timeout
+    if elapsed_mins < timeout_budget
+      start merge_approval_timeout
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[reviewer] Extracting lesson for {task_id} (outcome={outcome}, rounds={review_rounds})"
