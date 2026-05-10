@@ -65,7 +65,7 @@ system forge_dev
     review: reviewer
     release: release_manager
     slack: slack_adapter
-  plan >> gate2 >> impl >> test >> review
+  plan >> impl >> test >> review
 
 # ── Endpoints ────────────────────────────────────────────────────
 

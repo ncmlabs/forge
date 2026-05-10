@@ -98,8 +98,7 @@ agent gate_two
     config_path: Text
     config: CloneDevConfig
   timer impl_approval_timeout: 300s
-  correlate on PlanReady.issue_id
-    mode: wake
+  subscribe PlanReady
   subscribe ApprovalResponse
 
   on start

@@ -190,7 +190,7 @@ system clone_dev_system
     release: release_manager
     triage: triage_specialist
     slack: slack_adapter
-  mm >> plan >> gate2 >> impl >> test >> review
+  mm >> plan >> impl >> test >> review
 
 # ── Endpoints ────────────────────────────────────────────────────
 
