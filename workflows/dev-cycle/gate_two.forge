@@ -1,0 +1,182 @@
+#! boundary: server
+
+# ================================================================
+# Dev-Cycle — gate_two (T10.2, #368)
+# ================================================================
+# Human-in-the-loop approval bridge between the planner (emits
+# PlanReady) and the implementer (subscribes ImplementationApproved).
+# Mirrors gate_one's shape — same idle ↔ waiting_approval lifecycle,
+# 5-minute reminder timer, config-driven escalation, auto-approve
+# bypass — keyed on issue_id (the dev-cycle correlation key) instead
+# of thread_ts.
+#
+# Flow:
+#   PlanReady(issue_id, repo, plan, criteria, branch, channel,
+#             callback_url, test_cmd)
+#     → if config.gates_start_implementation == false:
+#         auto-emit ImplementationApproved with
+#         decision_by = "auto (policy)".
+#       else:
+#         emit PostApproval(request_id = "plan-{issue_id}") to
+#         slack_adapter, transition to waiting_approval, start
+#         the 5-minute approval_timeout timer, then on
+#         ApprovalResponse fork into ImplementationApproved or
+#         ImplementationRejected. On timer expiry, increment a
+#         counter until elapsed_mins >=
+#         gates_start_implementation_timeout_mins, then emit
+#         WardenEscalation + ImplementationRejected (decision_by
+#         = "system").
+#
+# Channel routing: prefers config.slack_approval_channel when set
+# (operators can funnel every plan approval into one reviewer
+# channel) and falls back to PlanReady.channel when empty (the
+# pr-review-bot per-issue routing pattern).
+#
+# Correlation: keyed by PlanReady.issue_id. ApprovalResponse has no
+# issue_id field; we filter by request_id == "plan-{memory.issue_id}"
+# (mirrors gate_one's stale-callback filter at gate_one.forge:188).
+#
+# request_id strategy: "plan-{issue_id}" per the issue DoD. Single
+# approval-in-flight invariant per issue — the `requires lifecycle
+# == idle` guard at the top of `on PlanReady` blocks a second
+# PlanReady from clobbering the first while one is in flight.
+#
+# Cross-references:
+#   - PlanReady / ImplementationApproved / ImplementationRejected
+#     declared in workflows/dev-cycle/agents.forge.
+#   - PostApproval / PostMessage / WardenEscalation declared in
+#     examples/agents/slack-adapter/agents.forge.
+#   - ApprovalResponse declared in workflows/dev-cycle/agents.forge.
+#   - Pattern source: workflows/clone-dev/stage1/gate_one.forge.
+#
+# Reserved-keyword landmine (carry-forward from T10.1): never name
+# an event field `reason` — it's a hard FORGE keyword and the
+# parser silently re-attributes the field to the next event.
+# ImplementationRejected uses `comment` and `decision_by` only.
+# ================================================================
+
+use
+  config.load_clone_dev
+
+# ── States ─────────────────────────────────────────────────────
+# Two states mirror gate_one.forge:103-105. `idle` ⇒ ready for the
+# next PlanReady; `waiting_approval` ⇒ a Slack approval card is in
+# flight and the timer is running.
+
+states Gate2Phase
+  idle -> waiting_approval
+  waiting_approval -> idle
+
+# ── Helpers ────────────────────────────────────────────────────
+
+# Channel resolution: config.slack_approval_channel wins when set;
+# otherwise fall back to the per-issue channel from PlanReady.
+pure approval_channel_for
+  needs cfg: CloneDevConfig, fallback: Text
+  gives Text
+  do
+    if cfg.slack_approval_channel.length > 0
+      give cfg.slack_approval_channel
+    give fallback
+
+# ── Agent ──────────────────────────────────────────────────────
+
+agent gate_two
+  lifecycle: Gate2Phase
+  memory persistent
+    issue_id: Text
+    repo: Text
+    plan: Text
+    criteria: Text
+    branch: Text
+    channel: Text
+    approval_channel: Text
+    callback_url: Text
+    test_cmd: Text
+    decision: Text
+    timeout_ticks: Number
+    config_path: Text
+    config: CloneDevConfig
+  timer impl_approval_timeout: 300s
+  subscribe PlanReady
+  subscribe ApprovalResponse
+
+  on start
+    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml")
+    memory.config = config.load_clone_dev(memory.config_path)
+    memory.issue_id = ""
+    memory.repo = ""
+    memory.plan = ""
+    memory.criteria = ""
+    memory.branch = ""
+    memory.channel = ""
+    memory.approval_channel = ""
+    memory.callback_url = ""
+    memory.test_cmd = ""
+    memory.decision = "none"
+    memory.timeout_ticks = 0
+    say "[gate_two] ready (start_implementation={memory.config.gates_start_implementation} timeout_mins={memory.config.gates_start_implementation_timeout_mins})"
+
+  on PlanReady(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
+    requires lifecycle == idle on fail: give "approval already in flight"
+    memory.issue_id = issue_id
+    memory.repo = repo
+    memory.plan = plan
+    memory.criteria = criteria
+    memory.branch = branch
+    memory.channel = channel
+    memory.callback_url = callback_url
+    memory.test_cmd = test_cmd
+    memory.decision = "pending"
+    memory.timeout_ticks = 0
+    memory.approval_channel = approval_channel_for(memory.config, channel)
+    say "[gate_two] issue={issue_id} repo={repo} branch={branch}"
+    if memory.config.gates_start_implementation == false
+      memory.decision = "auto"
+      say "[gate_two] issue={issue_id} auto-approving (gates_start_implementation=false)"
+      emit ImplementationApproved(issue_id: issue_id, repo: repo, plan: plan, criteria: criteria, branch: branch, channel: channel, callback_url: callback_url, test_cmd: test_cmd, decision_by: "auto (policy)")
+    if memory.config.gates_start_implementation == true
+      approval_context = "Issue: {issue_id}\nRepo: {repo}\nBranch: {branch}\n\nPlan:\n{plan}\n\nAcceptance criteria:\n{criteria}"
+      emit PostApproval(channel: memory.approval_channel, title: "Start implementation: {issue_id}", context: approval_context, callback_url: callback_url, request_id: "plan-{issue_id}", thread_ts: "")
+      say "[gate_two] issue={issue_id} approval card sent to {memory.approval_channel} — awaiting decision"
+      transition to waiting_approval
+      start impl_approval_timeout
+
+  on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
+    requires lifecycle == waiting_approval on fail: give "no pending approval"
+    requires request_id == "plan-{memory.issue_id}" on fail: give "stale response"
+    cancel impl_approval_timeout
+    if approved
+      memory.decision = "approved"
+      say "[gate_two] issue={memory.issue_id} approved by {comment}"
+      emit ImplementationApproved(issue_id: memory.issue_id, repo: memory.repo, plan: memory.plan, criteria: memory.criteria, branch: memory.branch, channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd, decision_by: comment)
+      emit PostMessage(channel: memory.approval_channel, text: ":white_check_mark: Implementation approved for {memory.issue_id} by {comment} — starting implementer.", thread_ts: "")
+    if not approved
+      memory.decision = "rejected"
+      say "[gate_two] issue={memory.issue_id} rejected by {comment}"
+      emit ImplementationRejected(issue_id: memory.issue_id, comment: comment, decision_by: comment)
+      emit PostMessage(channel: memory.approval_channel, text: ":x: Plan rejected for {memory.issue_id} by {comment} — revising.", thread_ts: "")
+    transition to idle
+
+  on impl_approval_timeout.expired
+    requires lifecycle == waiting_approval on fail: give "no pending approval"
+    next_ticks = memory.timeout_ticks + 1
+    memory.timeout_ticks = next_ticks
+    elapsed_mins = next_ticks * 5
+    timeout_budget = memory.config.gates_start_implementation_timeout_mins
+    if elapsed_mins >= timeout_budget
+      memory.decision = "timeout"
+      say "[gate_two] issue={memory.issue_id} timeout after {elapsed_mins}m — escalating"
+      emit WardenEscalation(agent_id: "gate_two", cause: "approval_timeout", detail: "plan approval for {memory.issue_id} timed out after {elapsed_mins}m", channel: memory.approval_channel)
+      emit ImplementationRejected(issue_id: memory.issue_id, comment: "no response in {elapsed_mins}m", decision_by: "system")
+      emit PostMessage(channel: memory.approval_channel, text: ":hourglass: Plan-approval timeout for {memory.issue_id}. Escalating.", thread_ts: "")
+      transition to idle
+    if elapsed_mins < timeout_budget
+      say "[gate_two] issue={memory.issue_id} reminder tick={memory.timeout_ticks} elapsed={elapsed_mins}m"
+      emit PostMessage(channel: memory.approval_channel, text: "REMINDER: plan approval still pending for {memory.issue_id} ({elapsed_mins}m elapsed).", thread_ts: "")
+      start impl_approval_timeout
+
+  if stuck for 3 turns
+    say "[gate_two] stuck. escalating."
+    emit WardenEscalation(agent_id: "gate_two", cause: "stuck>3", detail: memory.issue_id, channel: memory.approval_channel)
+    escalate to lead

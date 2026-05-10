@@ -19,6 +19,7 @@ sources = [
   "stage2/label_router.forge",
   "stage2/triage_specialist.forge",
   "../dev-cycle/agents.forge",
+  "../dev-cycle/gate_two.forge",
   "../../examples/agents/slack-adapter/agents.forge",
 ]
 

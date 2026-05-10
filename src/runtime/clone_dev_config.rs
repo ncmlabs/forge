@@ -62,6 +62,12 @@ pub struct SlackSection {
     // value rather than an env-indirection.
     #[serde(default)]
     pub devops_channel: String,
+    // T10.2 (#368) — channel ID gate_two posts plan-approval cards into.
+    // Empty string ⇒ fall back to the issue's per-thread channel from
+    // PlanReady.channel (multi-channel orgs); set to a single ID to
+    // funnel every plan approval into one reviewer channel.
+    #[serde(default)]
+    pub approval_channel: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -134,6 +140,15 @@ pub struct GatesSection {
     pub create_issue: Option<bool>,
     #[serde(default)]
     pub create_issue_timeout_mins: Option<f64>,
+    // T10.2 (#368) — Gate-2 (start-implementation) toggles. Same shape
+    // as create_issue: `start_implementation = false` makes gate_two
+    // auto-approve every PlanReady without going through Slack;
+    // `start_implementation_timeout_mins` drives the escalation
+    // tick counter.
+    #[serde(default)]
+    pub start_implementation: Option<bool>,
+    #[serde(default)]
+    pub start_implementation_timeout_mins: Option<f64>,
 }
 
 // [defaults] carries the per-repo-style knobs whose values apply to every
@@ -167,6 +182,11 @@ pub struct DefaultsSection {
     pub max_iterations: Option<f64>,
     #[serde(default)]
     pub auto_approve: Option<bool>,
+    // T10.2 (#368) — bound on planner re-plan attempts triggered by
+    // gate_two's ImplementationRejected feedback loop. Per-repo
+    // override available below; `None` ⇒ use built-in default.
+    #[serde(default)]
+    pub max_plan_revisions: Option<f64>,
 }
 
 // [repos."<owner>/<name>"]. Any scalar set on a per-repo block wins over
@@ -199,6 +219,9 @@ pub struct RepoOverride {
     pub max_iterations: Option<f64>,
     #[serde(default)]
     pub auto_approve: Option<bool>,
+    // T10.2 (#368) — per-repo override of [defaults].max_plan_revisions.
+    #[serde(default)]
+    pub max_plan_revisions: Option<f64>,
 }
 
 // ── Resolved config (post-merge, env-vars resolved) ──────────────
@@ -243,6 +266,14 @@ pub struct CloneDevConfig {
     // counter reaches the configured value.
     pub gates_create_issue: bool,
     pub gates_create_issue_timeout_mins: f64,
+    // T10.2 (#368) — gate_two toggles, mirroring create_issue semantics.
+    // `gates_start_implementation = false` ⇒ gate_two auto-emits
+    // ImplementationApproved with `decision_by = "auto (policy)"`.
+    pub gates_start_implementation: bool,
+    pub gates_start_implementation_timeout_mins: f64,
+    // T10.2 (#368) — channel ID gate_two posts plan-approval cards into.
+    // Empty ⇒ fall back to PlanReady.channel.
+    pub slack_approval_channel: String,
     // T10.1 (#367) — single-repo destination for gate_one's
     // propose_issue → ProposalApproved fork. Empty string means no
     // default; gate_one falls back to skipping the issue creation step.
@@ -265,6 +296,9 @@ pub struct CloneDevConfig {
     pub defaults_fix_commit_template: String,
     pub defaults_max_iterations: f64,
     pub defaults_auto_approve: bool,
+    // T10.2 (#368) — bound on planner re-plan attempts. Per-repo
+    // override resolves into ResolvedRepo.max_plan_revisions.
+    pub defaults_max_plan_revisions: f64,
     pub repos: Vec<ResolvedRepo>,
 }
 
@@ -287,6 +321,8 @@ pub struct ResolvedRepo {
     pub fix_commit_template: String,
     pub max_iterations: f64,
     pub auto_approve: bool,
+    // T10.2 (#368) — per-repo override of defaults_max_plan_revisions.
+    pub max_plan_revisions: f64,
 }
 
 // Sentinels exposed to FORGE as "inherit default" markers for numeric
@@ -313,6 +349,15 @@ const DEFAULT_MAX_ITERATIONS: f64 = 3.0;
 // window matches the dev-cycle reviewer's typical approval cadence.
 const DEFAULT_GATES_CREATE_ISSUE: bool = true;
 const DEFAULT_GATES_CREATE_ISSUE_TIMEOUT_MINS: f64 = 30.0;
+// T10.2 (#368) — Gate-2 (start-implementation) defaults. Same shape
+// and rationale as Gate-1: opt-out via `[gates] start_implementation
+// = false`, 30-minute escalation window.
+const DEFAULT_GATES_START_IMPLEMENTATION: bool = true;
+const DEFAULT_GATES_START_IMPLEMENTATION_TIMEOUT_MINS: f64 = 30.0;
+// T10.2 (#368) — bound on planner re-plan attempts before escalating.
+// 3 mirrors the implementer's max_iterations default — a planner that
+// cannot satisfy a reviewer in 3 tries needs human attention.
+const DEFAULT_MAX_PLAN_REVISIONS: f64 = 3.0;
 
 impl CloneDevConfig {
     pub fn from_toml_str(s: &str) -> Result<Self, String> {
@@ -377,6 +422,9 @@ impl CloneDevConfig {
         };
         let defaults_max_iterations = defaults.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
         let defaults_auto_approve = defaults.auto_approve.unwrap_or(false);
+        let defaults_max_plan_revisions = defaults
+            .max_plan_revisions
+            .unwrap_or(DEFAULT_MAX_PLAN_REVISIONS);
 
         let mut repos: Vec<ResolvedRepo> = raw
             .repos
@@ -417,6 +465,9 @@ impl CloneDevConfig {
                     .unwrap_or_else(|| defaults_fix_commit_template.clone()),
                 max_iterations: over.max_iterations.unwrap_or(defaults_max_iterations),
                 auto_approve: over.auto_approve.unwrap_or(defaults_auto_approve),
+                max_plan_revisions: over
+                    .max_plan_revisions
+                    .unwrap_or(defaults_max_plan_revisions),
             })
             .collect();
 
@@ -451,6 +502,15 @@ impl CloneDevConfig {
                 .gates
                 .create_issue_timeout_mins
                 .unwrap_or(DEFAULT_GATES_CREATE_ISSUE_TIMEOUT_MINS),
+            gates_start_implementation: raw
+                .gates
+                .start_implementation
+                .unwrap_or(DEFAULT_GATES_START_IMPLEMENTATION),
+            gates_start_implementation_timeout_mins: raw
+                .gates
+                .start_implementation_timeout_mins
+                .unwrap_or(DEFAULT_GATES_START_IMPLEMENTATION_TIMEOUT_MINS),
+            slack_approval_channel: raw.slack.approval_channel,
             github_default_repo: raw.github.default_repo,
             label_routing_namespace: raw.labels.namespace,
             label_routing_suffixes,
@@ -462,6 +522,7 @@ impl CloneDevConfig {
             defaults_fix_commit_template,
             defaults_max_iterations,
             defaults_auto_approve,
+            defaults_max_plan_revisions,
             repos,
         }
     }
@@ -565,6 +626,21 @@ impl CloneDevConfig {
             "gates_create_issue_timeout_mins",
             self.gates_create_issue_timeout_mins,
         );
+        insert_bool(
+            &mut fields,
+            "gates_start_implementation",
+            self.gates_start_implementation,
+        );
+        insert_number(
+            &mut fields,
+            "gates_start_implementation_timeout_mins",
+            self.gates_start_implementation_timeout_mins,
+        );
+        insert_text(
+            &mut fields,
+            "slack_approval_channel",
+            &self.slack_approval_channel,
+        );
         insert_text(
             &mut fields,
             "github_default_repo",
@@ -619,6 +695,11 @@ impl CloneDevConfig {
             &mut fields,
             "defaults_auto_approve",
             self.defaults_auto_approve,
+        );
+        insert_number(
+            &mut fields,
+            "defaults_max_plan_revisions",
+            self.defaults_max_plan_revisions,
         );
         let repo_records: Vec<ConfidentValue> = self.repos.iter().map(repo_to_record).collect();
         fields.insert(
@@ -707,6 +788,7 @@ fn repo_to_record(r: &ResolvedRepo) -> ConfidentValue {
     insert_text(&mut fields, "fix_commit_template", &r.fix_commit_template);
     insert_number(&mut fields, "max_iterations", r.max_iterations);
     insert_bool(&mut fields, "auto_approve", r.auto_approve);
+    insert_number(&mut fields, "max_plan_revisions", r.max_plan_revisions);
     ConfidentValue::deterministic(Value::Record(fields))
 }
 
@@ -1056,6 +1138,143 @@ mod tests {
         match &repo.value {
             Value::Text(s) => assert_eq!(s, "ncmlabs/forge"),
             _ => panic!("github_default_repo should be Text"),
+        }
+    }
+
+    // ── T10.2 (#368) — Gate-2 (start-implementation) toggles ──────
+
+    #[test]
+    fn gates_start_implementation_defaults_when_omitted() {
+        // Older TOML files (pre-#368) don't carry the new keys. Loader
+        // must fall back to the documented defaults so gate_two boots
+        // without operator action.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            require_approval_for = ["release"]
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.gates_start_implementation);
+        assert_eq!(
+            cfg.gates_start_implementation_timeout_mins,
+            DEFAULT_GATES_START_IMPLEMENTATION_TIMEOUT_MINS
+        );
+        assert_eq!(cfg.slack_approval_channel, "");
+        assert_eq!(cfg.defaults_max_plan_revisions, DEFAULT_MAX_PLAN_REVISIONS);
+    }
+
+    #[test]
+    fn gates_start_implementation_honors_authored_values() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [slack]
+            approval_channel = "C_reviewers"
+
+            [gates]
+            start_implementation              = false
+            start_implementation_timeout_mins = 45
+
+            [defaults]
+            max_plan_revisions = 5
+            "#,
+        )
+        .expect("parse");
+        assert!(!cfg.gates_start_implementation);
+        assert_eq!(cfg.gates_start_implementation_timeout_mins, 45.0);
+        assert_eq!(cfg.slack_approval_channel, "C_reviewers");
+        assert_eq!(cfg.defaults_max_plan_revisions, 5.0);
+    }
+
+    #[test]
+    fn per_repo_max_plan_revisions_overrides_default() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            max_plan_revisions = 3
+
+            [repos."acme/alpha"]
+            max_plan_revisions = 7
+
+            [repos."acme/beta"]
+            # inherits
+            "#,
+        )
+        .expect("parse");
+        let alpha = cfg.repos.iter().find(|r| r.slug == "acme/alpha").unwrap();
+        let beta = cfg.repos.iter().find(|r| r.slug == "acme/beta").unwrap();
+        assert_eq!(alpha.max_plan_revisions, 7.0);
+        assert_eq!(beta.max_plan_revisions, 3.0);
+    }
+
+    #[test]
+    fn to_forge_record_emits_gate_two_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [slack]
+            approval_channel = "C_reviewers"
+
+            [gates]
+            start_implementation              = false
+            start_implementation_timeout_mins = 60
+
+            [defaults]
+            max_plan_revisions = 4
+
+            [repos."acme/alpha"]
+            max_plan_revisions = 8
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+
+        let flag = fields
+            .get("gates_start_implementation")
+            .expect("flag field");
+        match &flag.value {
+            Value::Bool(b) => assert!(!*b),
+            _ => panic!("gates_start_implementation should be Bool"),
+        }
+        let timeout = fields
+            .get("gates_start_implementation_timeout_mins")
+            .expect("timeout field");
+        match &timeout.value {
+            Value::Number(n) => assert_eq!(*n, 60.0),
+            _ => panic!("gates_start_implementation_timeout_mins should be Number"),
+        }
+        let channel = fields
+            .get("slack_approval_channel")
+            .expect("approval channel field");
+        match &channel.value {
+            Value::Text(s) => assert_eq!(s, "C_reviewers"),
+            _ => panic!("slack_approval_channel should be Text"),
+        }
+        let max_rev = fields
+            .get("defaults_max_plan_revisions")
+            .expect("max_plan_revisions field");
+        match &max_rev.value {
+            Value::Number(n) => assert_eq!(*n, 4.0),
+            _ => panic!("defaults_max_plan_revisions should be Number"),
+        }
+        // Per-repo override surfaces on the repo record.
+        let repos = fields.get("repos").expect("repos field");
+        match &repos.value {
+            Value::Array(items) => {
+                let r = match &items[0].value {
+                    Value::Record(r) => r,
+                    _ => panic!("repo item should be a Record"),
+                };
+                let v = r.get("max_plan_revisions").expect("repo field");
+                match &v.value {
+                    Value::Number(n) => assert_eq!(*n, 8.0),
+                    _ => panic!("repo.max_plan_revisions should be Number"),
+                }
+            }
+            _ => panic!("repos should be an Array"),
         }
     }
 
