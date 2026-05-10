@@ -48,11 +48,26 @@ default_repo = "ncmlabs/forge"
 #                                               warden + emits
 #                                               ImplementationRejected
 #                                               (decision_by="system").
+# Gate-3 (merge-PR) toggle consumed by the reviewer agent.
+#   merge_pr              = false → reviewer skips the slack approval
+#                                   card and merges directly after CI
+#                                   green + knowledge-store consultation.
+#                                   Sandbox repos opt in via
+#                                   [repos."<owner>/<name>"] merge_pr =
+#                                   false; production repos keep the
+#                                   default (true).
+#   merge_pr_timeout_mins        → minutes a pending PR approval may sit
+#                                   before the reviewer posts a single
+#                                   reminder; at 2x this value the
+#                                   reviewer escalates via warden.
+#                                   Global only — no per-repo override.
 [gates]
 create_issue                      = true
 create_issue_timeout_mins         = 30
 start_implementation              = true
 start_implementation_timeout_mins = 30
+merge_pr                          = true
+merge_pr_timeout_mins             = 30
 
 # ── [llm.routing] (T8.6, #361) ────────────────────────────────────
 # Phase → primary provider. Provider IDs reference [providers.*] in

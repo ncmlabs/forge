@@ -182,6 +182,7 @@ type RepoConfig
   max_iterations: Number
   auto_approve: Bool
   max_plan_revisions: Number
+  merge_pr: Bool
 
 type CloneDevConfig
   org_name: Text
@@ -205,6 +206,8 @@ type CloneDevConfig
   gates_create_issue_timeout_mins: Number
   gates_start_implementation: Bool
   gates_start_implementation_timeout_mins: Number
+  gates_merge_pr: Bool
+  gates_merge_pr_timeout_mins: Number
   slack_approval_channel: Text
   github_default_repo: Text
   label_routing_namespace: Text
@@ -233,4 +236,4 @@ pure repo_config_for
     for r in cfg.repos
       if r.slug == slug
         give r
-    give RepoConfig(slug: "", slack_channel: cfg.slack_default_channel, test_cmd: "", model_override: "", budget_per_task_usd: -1.0, warden_max_retries: -1.0, labels_extra: [], workdir_root: cfg.defaults_workdir_root, branch_prefix: cfg.defaults_branch_prefix, commit_template: cfg.defaults_commit_template, fix_commit_template: cfg.defaults_fix_commit_template, max_iterations: cfg.defaults_max_iterations, auto_approve: cfg.defaults_auto_approve, max_plan_revisions: cfg.defaults_max_plan_revisions)
+    give RepoConfig(slug: "", slack_channel: cfg.slack_default_channel, test_cmd: "", model_override: "", budget_per_task_usd: -1.0, warden_max_retries: -1.0, labels_extra: [], workdir_root: cfg.defaults_workdir_root, branch_prefix: cfg.defaults_branch_prefix, commit_template: cfg.defaults_commit_template, fix_commit_template: cfg.defaults_fix_commit_template, max_iterations: cfg.defaults_max_iterations, auto_approve: cfg.defaults_auto_approve, max_plan_revisions: cfg.defaults_max_plan_revisions, merge_pr: cfg.gates_merge_pr)

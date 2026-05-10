@@ -149,6 +149,17 @@ pub struct GatesSection {
     pub start_implementation: Option<bool>,
     #[serde(default)]
     pub start_implementation_timeout_mins: Option<f64>,
+    // T10.3 (#369) — Gate-3 (merge-PR) toggle. Default true: reviewer
+    // posts a slack approval card and waits for a button click. Flip to
+    // false to auto-merge after CI green + knowledge-store consultation,
+    // skipping the slack approval entirely. Per-repo override is
+    // available via `[repos."<owner>/<name>"] merge_pr = ...`.
+    // `merge_pr_timeout_mins` is global only (no per-repo override) and
+    // drives the reviewer's 1x-reminder / 2x-warden-escalation cadence.
+    #[serde(default)]
+    pub merge_pr: Option<bool>,
+    #[serde(default)]
+    pub merge_pr_timeout_mins: Option<f64>,
 }
 
 // [defaults] carries the per-repo-style knobs whose values apply to every
@@ -222,6 +233,11 @@ pub struct RepoOverride {
     // T10.2 (#368) — per-repo override of [defaults].max_plan_revisions.
     #[serde(default)]
     pub max_plan_revisions: Option<f64>,
+    // T10.3 (#369) — per-repo override of [gates].merge_pr. None ⇒
+    // inherit cfg.gates_merge_pr. Lets sandbox repos opt into auto-merge
+    // while production repos keep the slack approval gate.
+    #[serde(default)]
+    pub merge_pr: Option<bool>,
 }
 
 // ── Resolved config (post-merge, env-vars resolved) ──────────────
@@ -271,6 +287,16 @@ pub struct CloneDevConfig {
     // ImplementationApproved with `decision_by = "auto (policy)"`.
     pub gates_start_implementation: bool,
     pub gates_start_implementation_timeout_mins: f64,
+    // T10.3 (#369) — gate_three (merge-PR) toggle, lives on the reviewer
+    // agent (not a standalone agent like gate_one/gate_two). Default
+    // true keeps the existing slack-approval flow; false makes the
+    // reviewer auto-merge after CI green + knowledge-store consultation
+    // without posting an approval card. `gates_merge_pr_timeout_mins`
+    // drives the reviewer's awaiting_approval timer: 1x → reminder,
+    // 2x → warden escalation. Per-repo override of the bool resolves
+    // into ResolvedRepo.merge_pr; the timeout is global only.
+    pub gates_merge_pr: bool,
+    pub gates_merge_pr_timeout_mins: f64,
     // T10.2 (#368) — channel ID gate_two posts plan-approval cards into.
     // Empty ⇒ fall back to PlanReady.channel.
     pub slack_approval_channel: String,
@@ -323,6 +349,10 @@ pub struct ResolvedRepo {
     pub auto_approve: bool,
     // T10.2 (#368) — per-repo override of defaults_max_plan_revisions.
     pub max_plan_revisions: f64,
+    // T10.3 (#369) — per-repo override of cfg.gates_merge_pr. The
+    // reviewer reads this via repo_config_for(...).merge_pr; when no
+    // per-repo entry exists it inherits the global gate value.
+    pub merge_pr: bool,
 }
 
 // Sentinels exposed to FORGE as "inherit default" markers for numeric
@@ -354,6 +384,14 @@ const DEFAULT_GATES_CREATE_ISSUE_TIMEOUT_MINS: f64 = 30.0;
 // = false`, 30-minute escalation window.
 const DEFAULT_GATES_START_IMPLEMENTATION: bool = true;
 const DEFAULT_GATES_START_IMPLEMENTATION_TIMEOUT_MINS: f64 = 30.0;
+// T10.3 (#369) — Gate-3 (merge-PR) defaults. Gate is on by default
+// so existing flows keep their slack-approval step; sandbox repos can
+// flip the bool per-repo. The 30-minute window matches the other two
+// gates and the dev-cycle reviewer's typical approval cadence — at
+// 30m the reviewer posts a single reminder, at 60m it escalates via
+// warden.
+const DEFAULT_GATES_MERGE_PR: bool = true;
+const DEFAULT_GATES_MERGE_PR_TIMEOUT_MINS: f64 = 30.0;
 // T10.2 (#368) — bound on planner re-plan attempts before escalating.
 // 3 mirrors the implementer's max_iterations default — a planner that
 // cannot satisfy a reviewer in 3 tries needs human attention.
@@ -426,6 +464,16 @@ impl CloneDevConfig {
             .max_plan_revisions
             .unwrap_or(DEFAULT_MAX_PLAN_REVISIONS);
 
+        // T10.3 (#369) — resolve the global gate value once so each
+        // ResolvedRepo can fall back to it when no per-repo override
+        // exists. The bool gate is per-repo overridable; the timeout
+        // is global only.
+        let gates_merge_pr = raw.gates.merge_pr.unwrap_or(DEFAULT_GATES_MERGE_PR);
+        let gates_merge_pr_timeout_mins = raw
+            .gates
+            .merge_pr_timeout_mins
+            .unwrap_or(DEFAULT_GATES_MERGE_PR_TIMEOUT_MINS);
+
         let mut repos: Vec<ResolvedRepo> = raw
             .repos
             .into_iter()
@@ -468,6 +516,7 @@ impl CloneDevConfig {
                 max_plan_revisions: over
                     .max_plan_revisions
                     .unwrap_or(defaults_max_plan_revisions),
+                merge_pr: over.merge_pr.unwrap_or(gates_merge_pr),
             })
             .collect();
 
@@ -510,6 +559,8 @@ impl CloneDevConfig {
                 .gates
                 .start_implementation_timeout_mins
                 .unwrap_or(DEFAULT_GATES_START_IMPLEMENTATION_TIMEOUT_MINS),
+            gates_merge_pr,
+            gates_merge_pr_timeout_mins,
             slack_approval_channel: raw.slack.approval_channel,
             github_default_repo: raw.github.default_repo,
             label_routing_namespace: raw.labels.namespace,
@@ -635,6 +686,12 @@ impl CloneDevConfig {
             &mut fields,
             "gates_start_implementation_timeout_mins",
             self.gates_start_implementation_timeout_mins,
+        );
+        insert_bool(&mut fields, "gates_merge_pr", self.gates_merge_pr);
+        insert_number(
+            &mut fields,
+            "gates_merge_pr_timeout_mins",
+            self.gates_merge_pr_timeout_mins,
         );
         insert_text(
             &mut fields,
@@ -789,6 +846,7 @@ fn repo_to_record(r: &ResolvedRepo) -> ConfidentValue {
     insert_number(&mut fields, "max_iterations", r.max_iterations);
     insert_bool(&mut fields, "auto_approve", r.auto_approve);
     insert_number(&mut fields, "max_plan_revisions", r.max_plan_revisions);
+    insert_bool(&mut fields, "merge_pr", r.merge_pr);
     ConfidentValue::deterministic(Value::Record(fields))
 }
 
@@ -1272,6 +1330,135 @@ mod tests {
                 match &v.value {
                     Value::Number(n) => assert_eq!(*n, 8.0),
                     _ => panic!("repo.max_plan_revisions should be Number"),
+                }
+            }
+            _ => panic!("repos should be an Array"),
+        }
+    }
+
+    // ── T10.3 (#369) — Gate-3 (merge-PR) toggles ──────────────────
+
+    #[test]
+    fn gates_merge_pr_defaults_when_omitted() {
+        // Older TOML files (pre-#369) don't carry the new keys. Loader
+        // must fall back to the documented defaults so the reviewer
+        // boots without operator action and the existing slack-approval
+        // flow stays the default.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            require_approval_for = ["release"]
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.gates_merge_pr);
+        assert_eq!(
+            cfg.gates_merge_pr_timeout_mins,
+            DEFAULT_GATES_MERGE_PR_TIMEOUT_MINS
+        );
+    }
+
+    #[test]
+    fn gates_merge_pr_honors_authored_values() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            merge_pr              = false
+            merge_pr_timeout_mins = 45
+            "#,
+        )
+        .expect("parse");
+        assert!(!cfg.gates_merge_pr);
+        assert_eq!(cfg.gates_merge_pr_timeout_mins, 45.0);
+    }
+
+    #[test]
+    fn per_repo_merge_pr_overrides_gates_value() {
+        // Sandbox repo opts into auto-merge while production repos keep
+        // the slack approval gate. The reviewer reads merge_pr off the
+        // ResolvedRepo, so the override has to win on the per-repo
+        // record while the global default still applies elsewhere.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            merge_pr = true
+
+            [repos."acme/sandbox"]
+            merge_pr = false
+
+            [repos."acme/prod"]
+            # inherits gates.merge_pr = true
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.gates_merge_pr);
+        let sandbox = cfg.repos.iter().find(|r| r.slug == "acme/sandbox").unwrap();
+        let prod = cfg.repos.iter().find(|r| r.slug == "acme/prod").unwrap();
+        assert!(!sandbox.merge_pr, "sandbox should auto-merge");
+        assert!(prod.merge_pr, "prod should keep slack approval");
+    }
+
+    #[test]
+    fn per_repo_merge_pr_inherits_when_gates_false() {
+        // Symmetric inheritance: when the global default is false, a
+        // repo without an explicit override picks up false too.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            merge_pr = false
+
+            [repos."acme/staging"]
+            # inherits gates.merge_pr = false
+            "#,
+        )
+        .expect("parse");
+        let staging = cfg.repos.iter().find(|r| r.slug == "acme/staging").unwrap();
+        assert!(!staging.merge_pr);
+    }
+
+    #[test]
+    fn to_forge_record_emits_gate_three_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            merge_pr              = false
+            merge_pr_timeout_mins = 60
+
+            [repos."acme/sandbox"]
+            merge_pr = true
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        let flag = fields.get("gates_merge_pr").expect("flag field");
+        match &flag.value {
+            Value::Bool(b) => assert!(!*b),
+            _ => panic!("gates_merge_pr should be Bool"),
+        }
+        let timeout = fields
+            .get("gates_merge_pr_timeout_mins")
+            .expect("timeout field");
+        match &timeout.value {
+            Value::Number(n) => assert_eq!(*n, 60.0),
+            _ => panic!("gates_merge_pr_timeout_mins should be Number"),
+        }
+        // Per-repo override surfaces on the repo record (sandbox flips
+        // back to true even though the global default is false).
+        let repos = fields.get("repos").expect("repos field");
+        match &repos.value {
+            Value::Array(items) => {
+                let r = match &items[0].value {
+                    Value::Record(r) => r,
+                    _ => panic!("repo item should be a Record"),
+                };
+                let v = r.get("merge_pr").expect("repo merge_pr field");
+                match &v.value {
+                    Value::Bool(b) => assert!(*b, "sandbox repo override should win"),
+                    _ => panic!("repo.merge_pr should be Bool"),
                 }
             }
             _ => panic!("repos should be an Array"),
