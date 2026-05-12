@@ -210,7 +210,7 @@ endpoint task_blocked(task_id: Text, blocker_id: Text) -> Text
   give "TaskBlocked queued (task={task_id} blocker={blocker_id})"
 
 endpoint task_completed(task_id: Text, repo: Text, outcome: Text) -> Text
-  emit TaskCompleted(task_id: task_id, repo: repo, outcome: outcome, ci_passed_first_try: false, review_rounds: 1, time_to_merge: 0, reverted_within_7d: false)
+  emit TaskCompleted(task_id: task_id, repo: repo, outcome: outcome, ci_passed_first_try: false, review_rounds: 1, time_to_merge: 0, reverted_within_7d: false, approval_asks: 0)
   give "TaskCompleted queued (task={task_id} outcome={outcome})"
 
 endpoint seed_task(task_id: Text, specialist: Text, project: Text) -> Text

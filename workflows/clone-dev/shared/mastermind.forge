@@ -125,7 +125,7 @@ agent mastermind
   # Bridges external PR merges (in linked repos) into our task graph.
   on GithubPrMerged(repo: Text, pr_number: Number, merged_by: Text)
     say "[mastermind] github_pr_merged received for {repo}#{pr_number} by {merged_by}"
-    emit TaskCompleted(task_id: "{repo}#{pr_number}", repo: repo, outcome: "merged", ci_passed_first_try: false, review_rounds: 1, time_to_merge: 0, reverted_within_7d: false)
+    emit TaskCompleted(task_id: "{repo}#{pr_number}", repo: repo, outcome: "merged", ci_passed_first_try: false, review_rounds: 1, time_to_merge: 0, reverted_within_7d: false, approval_asks: 0)
 
   # Webhook translator: Slack message → CloneDevInbound
   on SlackMessageReceived(channel: Text, user: Text, text: Text)
@@ -145,7 +145,7 @@ agent mastermind
       say "[mastermind] {task_id} marked blocked"
 
   # Terminal signal (reuses dev-cycle's TaskCompleted payload).
-  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool, approval_asks: Number)
     newly_free = find_newly_unblocked(memory.task_graph, task_id)
     memory.task_graph = apply_completion(memory.task_graph, task_id)
     say "[mastermind] {task_id} done ({outcome}); freed {newly_free.length} dependent(s)"

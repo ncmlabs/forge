@@ -138,6 +138,7 @@ agent gate_two
     if memory.config.gates_start_implementation == true
       approval_context = "Issue: {issue_id}\nRepo: {repo}\nBranch: {branch}\n\nPlan:\n{plan}\n\nAcceptance criteria:\n{criteria}"
       emit PostApproval(channel: memory.approval_channel, title: "Start implementation: {issue_id}", context: approval_context, callback_url: callback_url, request_id: "plan-{issue_id}", thread_ts: "")
+      emit ApprovalAsked(task_id: issue_id, gate: "gate_two")
       say "[gate_two] issue={issue_id} approval card sent to {memory.approval_channel} — awaiting decision"
       transition to waiting_approval
       start impl_approval_timeout

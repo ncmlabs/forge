@@ -33,6 +33,7 @@ pub struct TaskRecord {
     pub ci_passed_first_try: bool,
     pub time_to_merge: f64,
     pub reverted_within_7d: bool,
+    pub approval_asks: u64,
     pub completed_at: DateTime<Utc>,
 }
 
@@ -46,6 +47,7 @@ impl TaskRecord {
             "ci_passed_first_try": self.ci_passed_first_try,
             "time_to_merge": self.time_to_merge,
             "reverted_within_7d": self.reverted_within_7d,
+            "approval_asks": self.approval_asks,
             "completed_at": self.completed_at.to_rfc3339(),
         })
     }
@@ -125,6 +127,7 @@ fn payload_to_task_record(payload: &EventPayload) -> Option<TaskRecord> {
     let review_rounds = number_field(payload, "review_rounds").unwrap_or(0.0);
     let time_to_merge = number_field(payload, "time_to_merge").unwrap_or(0.0);
     let reverted_within_7d = bool_field(payload, "reverted_within_7d").unwrap_or(false);
+    let approval_asks = number_field(payload, "approval_asks").unwrap_or(0.0);
     Some(TaskRecord {
         task_id,
         repo,
@@ -133,6 +136,7 @@ fn payload_to_task_record(payload: &EventPayload) -> Option<TaskRecord> {
         ci_passed_first_try,
         time_to_merge,
         reverted_within_7d,
+        approval_asks: approval_asks.max(0.0).round() as u64,
         completed_at: Utc::now(),
     })
 }
@@ -185,6 +189,15 @@ mod tests {
     }
 
     fn make_payload(repo: &str, task_id: &str, review_rounds: f64) -> EventPayload {
+        make_payload_with_asks(repo, task_id, review_rounds, 0.0)
+    }
+
+    fn make_payload_with_asks(
+        repo: &str,
+        task_id: &str,
+        review_rounds: f64,
+        approval_asks: f64,
+    ) -> EventPayload {
         let mut fields = HashMap::new();
         fields.insert("task_id".to_string(), det(Value::Text(task_id.to_string())));
         fields.insert("repo".to_string(), det(Value::Text(repo.to_string())));
@@ -199,6 +212,10 @@ mod tests {
         );
         fields.insert("time_to_merge".to_string(), det(Value::Number(1800.0)));
         fields.insert("reverted_within_7d".to_string(), det(Value::Bool(false)));
+        fields.insert(
+            "approval_asks".to_string(),
+            det(Value::Number(approval_asks)),
+        );
         EventPayload {
             event_name: "TaskCompleted".to_string(),
             args: vec![],
@@ -233,6 +250,28 @@ mod tests {
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0]["task_id"].as_str(), Some("t-2"));
         assert_eq!(tasks[1]["task_id"].as_str(), Some("t-3"));
+    }
+
+    #[test]
+    fn approval_asks_round_trips_through_payload() {
+        let mut agg = TaskHistoryAggregator::new(10);
+        agg.record_from_payload(&make_payload_with_asks("repo", "t-1", 1.0, 3.0));
+        agg.record_from_payload(&make_payload_with_asks("repo", "t-2", 0.0, 7.0));
+        let snapshot = agg.snapshot();
+        let tasks = snapshot["tasks_by_project"]["repo"].as_array().unwrap();
+        assert_eq!(tasks[0]["approval_asks"].as_u64(), Some(3));
+        assert_eq!(tasks[1]["approval_asks"].as_u64(), Some(7));
+    }
+
+    #[test]
+    fn approval_asks_defaults_to_zero_when_absent() {
+        let mut agg = TaskHistoryAggregator::new(10);
+        let mut payload = make_payload("repo", "t-1", 0.0);
+        payload.fields.remove("approval_asks");
+        agg.record_from_payload(&payload);
+        let snapshot = agg.snapshot();
+        let tasks = snapshot["tasks_by_project"]["repo"].as_array().unwrap();
+        assert_eq!(tasks[0]["approval_asks"].as_u64(), Some(0));
     }
 
     #[test]

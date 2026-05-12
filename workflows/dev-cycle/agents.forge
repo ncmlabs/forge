@@ -163,6 +163,10 @@ event ReviewDecision
   decision: Text
 
 # T5.1 (#302): outcome-driven learning loop.
+# T11.3 (#372): `approval_asks` counts Gate-2 + Gate-3 human-approval round-trips
+# per task. Distinct from `review_rounds` (which counts reviewer feedback
+# cycles). Mastermind owns the counter and emits the final TaskCompleted
+# carrying the aggregated value — see TaskCompletionRequested in clone-dev.
 event TaskCompleted
   task_id: Text
   repo: Text
@@ -171,6 +175,16 @@ event TaskCompleted
   review_rounds: Number
   time_to_merge: Number
   reverted_within_7d: Bool
+  approval_asks: Number
+
+# T11.3 (#372): emitted alongside every Stage-2 human-approval PostApproval
+# (gate_two start-implementation + reviewer/gate_three merge-PR). The
+# release_manager counts these per issue and seals the total into the
+# final TaskCompleted. Gate-1 (Stage-1 issue triage) does not emit this —
+# it predates task_id allocation and is a separate learning signal.
+event ApprovalAsked
+  task_id: Text
+  gate: Text
 
 event LessonExtracted
   task_id: Text
@@ -474,7 +488,7 @@ agent planner
     say "[planner] Revised plan emitted - handing off to gate_two"
     emit PlanReady(issue_id: memory.issue_id, repo: memory.repo, plan: memory.plan_text, criteria: memory.criteria, branch: memory.branch, channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
 
-  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool, approval_asks: Number)
     say "[planner] Extracting lesson for {task_id} (outcome={outcome})"
     lesson_prompt = "You are the planner for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nOriginal acceptance criteria:\n{memory.criteria}\n\nThe plan you produced:\n{memory.plan_text}\n\nWrite a one- to three-sentence lesson of the form 'this plan shape -> this outcome'. Focus on what a future planner should repeat or avoid for similar issues. Be specific and concrete."
     lesson = reason lesson_prompt for plan
@@ -610,7 +624,7 @@ agent implementer
     say "[implementer] Fix iteration {memory.iteration} for {issue_id} pushed. Re-running tests."
     emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, workdir: memory.workdir, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
-  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool, approval_asks: Number)
     say "[implementer] Extracting lesson for {task_id} (outcome={outcome}, iterations={memory.iteration})"
     lesson_prompt = "You are the implementer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nFix iterations used: {memory.iteration}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nPlan executed:\n{memory.plan}\n\nIteration log (diagnoses across fix attempts):\n{memory.iteration_log}\n\nWrite a one- to three-sentence lesson of the form 'this error pattern -> this fix' (or 'this pattern -> first-try pass'). Focus on what a future implementer should reuse or avoid. Be specific and concrete."
     lesson = reason lesson_prompt for implement
@@ -694,7 +708,7 @@ agent tester
       say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
       emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: test_output, channel: channel, callback_url: callback_url, test_cmd: tcmd)
 
-  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool, approval_asks: Number)
     say "[tester] Extracting lesson for {task_id} (outcome={outcome}, first_try={ci_passed_first_try})"
     lesson_prompt = "You are the tester for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nTest runs on this task: {memory.test_runs}\nci_passed_first_try: {ci_passed_first_try}\nFinal acceptance result: {memory.acceptance_result}\nLast test output (truncated):\n{memory.last_test_output}\n\nWrite a one- to three-sentence lesson of the form 'this coverage gap -> this miss' (or 'this coverage pattern -> this pass'). Focus on what the test signal revealed that future tasks can reuse. Be specific and concrete."
     lesson = reason lesson_prompt for review
@@ -843,6 +857,7 @@ agent reviewer
     transition to awaiting_approval
     approval_context = "Branch: {branch}\nChangelog: {entry}\nCI: {ci_result}\n\nKnowledge verdict: {verdict}\nDiff summary: {characterization}\n\nApprove to merge or reject to iterate."
     emit PostApproval(channel: channel, title: "PR for {issue_id} in {repo} ready for review", context: approval_context, callback_url: callback_url, request_id: issue_id, thread_ts: "")
+    emit ApprovalAsked(task_id: issue_id, gate: "gate_three")
     say "[reviewer] Approval request emitted to slack-adapter"
     memory.timeout_ticks = 0
     start merge_approval_timeout
@@ -897,7 +912,7 @@ agent reviewer
     if elapsed_mins < timeout_budget
       start merge_approval_timeout
 
-  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool, approval_asks: Number)
     say "[reviewer] Extracting lesson for {task_id} (outcome={outcome}, rounds={review_rounds})"
     lesson_prompt = "You are the reviewer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nReview rounds: {review_rounds}\nKnowledge-store verdict: {memory.review_verdict}\nDiff characterization:\n{memory.diff_characterization}\n\nWrite a one- to three-sentence lesson of the form 'this objection -> this response' (or 'this diff shape -> this verdict path'). Focus on what review pattern future tasks should expect. Be specific and concrete."
     lesson = reason lesson_prompt for review
@@ -922,10 +937,13 @@ agent release_manager
     branch: Text
     repo_slug: Text
     last_outcome: Text
+    approval_asks_count: Number
   knowledge store: ".forge-knowledge/pr-history"
     max_entries: 10000
     retention: 365d
   subscribe PRMerged
+  subscribe IssueAssigned
+  subscribe ApprovalAsked where task_id == memory.issue_id
   subscribe TaskCompleted where task_id == memory.issue_id
 
   on start
@@ -936,7 +954,21 @@ agent release_manager
     memory.branch = ""
     memory.repo_slug = ""
     memory.last_outcome = ""
+    memory.approval_asks_count = 0
     say "[release_manager] ready"
+
+  # T11.3 (#372) — early latch on memory.issue_id so the ApprovalAsked
+  # filter (`where task_id == memory.issue_id`) starts matching before
+  # gate-2 fires. Counter resets here on every new issue so a re-run
+  # of the same issue doesn't accumulate stale asks.
+  on IssueAssigned(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text, test_cmd: Text)
+    memory.issue_id = issue_id
+    memory.approval_asks_count = 0
+    say "[release_manager] tracking approval_asks for {issue_id} (reset to 0)"
+
+  on ApprovalAsked(task_id: Text, gate: Text)
+    memory.approval_asks_count = memory.approval_asks_count + 1
+    say "[release_manager] approval_asks for {task_id} = {memory.approval_asks_count} (gate={gate})"
 
   on PRMerged(issue_id: Text, repo: Text, branch: Text, ci_passed_first_try: Bool, review_rounds: Number)
     memory.merged_count = memory.merged_count + 1
@@ -947,10 +979,10 @@ agent release_manager
     memory.repo_slug = slugify_repo(repo)
     memory.last_outcome = "merged"
     say "[release_manager] PR merged for {issue_id} in {repo} (total: {memory.merged_count})"
-    say "[release_manager] Emitting TaskCompleted for {issue_id}"
-    emit TaskCompleted(task_id: issue_id, repo: repo, outcome: "merged", ci_passed_first_try: ci_passed_first_try, review_rounds: review_rounds, time_to_merge: 0, reverted_within_7d: false)
+    say "[release_manager] Emitting TaskCompleted for {issue_id} (approval_asks={memory.approval_asks_count})"
+    emit TaskCompleted(task_id: issue_id, repo: repo, outcome: "merged", ci_passed_first_try: ci_passed_first_try, review_rounds: review_rounds, time_to_merge: 0, reverted_within_7d: false, approval_asks: memory.approval_asks_count)
 
-  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool, approval_asks: Number)
     say "[release_manager] Extracting lesson for {task_id} (outcome={outcome})"
     lesson_prompt = "You are the release manager for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nBranch: {memory.branch}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nWrite a one- to three-sentence lesson of the form 'this PR shape -> this merge path'. Focus on what the release signal says about how this kind of change should be shipped next time. Be specific and concrete."
     lesson = reason lesson_prompt for review
@@ -980,7 +1012,7 @@ agent swarm_mastery_coordinator
     memory.spawned_for_project = ""
     say "[swarm_mastery_coordinator] ready"
 
-  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
+  on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool, approval_asks: Number)
     memory.last_task_id = task_id
     slug = slugify_repo(repo)
     say "[swarm_mastery_coordinator] Attributing task {task_id} signals across 5 specialists (project={slug})"

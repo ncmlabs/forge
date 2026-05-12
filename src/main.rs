@@ -1531,6 +1531,16 @@ async fn serve_program(
         )
         .await;
 
+        // Proof-run JSON sink (#372 / T11.3) — opt-in via FORGE_PROOF_RUN_ID.
+        // Writes one JSON per issue to metrics/proof-runs/<run_id>/ so the
+        // proof retrospective can read approval_asks, time_to_merge,
+        // mastery before/after, etc.
+        let _ = forge::runtime::proof_run_sink::spawn_proof_run_sink(
+            event_bus.clone(),
+            mastery_knowledge_store.clone(),
+        )
+        .await;
+
         let mut server =
             forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
                 .with_event_bus(event_bus)
@@ -1874,6 +1884,13 @@ async fn serve_with_watch(
         forge::runtime::task_history_aggregator::spawn_task_listener(
             event_bus.clone(),
             task_history_aggregator.clone(),
+        )
+        .await;
+
+        // Proof-run JSON sink (#372 / T11.3) — see matching block above.
+        let _ = forge::runtime::proof_run_sink::spawn_proof_run_sink(
+            event_bus.clone(),
+            mastery_knowledge_store.clone(),
         )
         .await;
 
