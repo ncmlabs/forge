@@ -87,6 +87,38 @@ fn ping_agent_with_failing_requires(name: &str) -> AgentDecl {
     decl
 }
 
+/// Agent subscribed to `Ping` with no matching `on Ping` handler.
+fn ping_subscriber_without_ping_handler(name: &str) -> AgentDecl {
+    AgentDecl {
+        exportable: false,
+        name: spanned(name.into()),
+        lifecycle: None,
+        memory: vec![],
+        memory_persistent: false,
+        knowledge: None,
+        allows: Vec::new(),
+        timers: vec![],
+        schedules: vec![],
+        correlates: vec![],
+        webhooks: vec![],
+        subscriptions: vec![spanned(SubscribeDecl {
+            event_name: spanned("Ping".into()),
+            filter: None,
+        })],
+        handlers: vec![spanned(OnHandler {
+            event: spanned("Pong".into()),
+            params: vec![],
+            payload_type: None,
+            requires: vec![],
+            body: vec![spanned(Stmt::Say(spanned(Expr::Template(vec![spanned(
+                TemplatePart::Text("pong".into()),
+            )]))))],
+        })],
+        warden_override: Vec::new(),
+        stuck_policy: None,
+    }
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -192,4 +224,48 @@ async fn blocked_by_requires_emits_handler_completed_without_started() {
         .expect("HandlerCompleted missing");
     assert_eq!(completed.1["status"], "blocked_by_requires");
     assert_eq!(completed.1["duration_ms"], 0);
+}
+
+#[tokio::test]
+async fn subscribed_event_without_matching_handler_is_ignored_without_shutdown_error() {
+    let tracer = Tracer::with_capture();
+    let bus = EventBus::new_shared(None);
+
+    let mut agent = AgentProcess::new(
+        ping_subscriber_without_ping_handler("routed_target"),
+        None,
+        mock_registry(),
+        Some(tracer.clone()),
+        empty_program(),
+        None,
+        None,
+        None,
+    )
+    .with_event_bus(bus.clone())
+    .await;
+
+    {
+        let bus_guard = bus.read().await;
+        bus_guard.publish(&payload("Ping", "upstream"));
+    }
+    bus.write().await.close();
+
+    agent
+        .run()
+        .await
+        .expect("missing routed handler should be a no-op");
+
+    let log = tracer.captured_log();
+    let shutdown = log
+        .iter()
+        .find(|(n, v)| n == "AgentShutdown" && v["agent"] == "routed_target")
+        .expect("AgentShutdown missing");
+    assert_eq!(shutdown.1["reason"], "channel_closed");
+
+    assert!(
+        !log.iter().any(|(n, v)| n == "AgentShutdown"
+            && v["agent"] == "routed_target"
+            && v["reason"] == "error"),
+        "missing handler must not shut down the routed target as an error: {log:#?}"
+    );
 }

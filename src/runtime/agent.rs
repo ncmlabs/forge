@@ -886,6 +886,19 @@ impl AgentProcess {
                                         shutdown_reason = "retire";
                                         break;
                                     }
+                                    // Routed events (system `>>` wiring) may deliver
+                                    // an event to an agent that has no matching
+                                    // subscribe handler. Treat that as a no-op, not a
+                                    // crash — same policy as the timer-dispatch path
+                                    // below (see `handle_timer_fired`). Without this,
+                                    // any pipeline like `mm >> plan >> impl >> ...`
+                                    // crashes downstream agents the moment an
+                                    // upstream agent emits an event the downstream
+                                    // doesn't subscribe to (e.g. planner's
+                                    // PostMessage reaching implementer). Discovered
+                                    // during T11.3 (#372) proof run.
+                                    Err(RuntimeError::Unsupported(msg))
+                                        if msg.contains("no handler") => {}
                                     Err(e) => {
                                         if let Some(t) = self.executor.tracer() {
                                             t.agent_shutdown(&self.decl.name.node, "error");

@@ -3,7 +3,16 @@
 .worktrees/
 .claude/
 .forge-data/
+.forge-knowledge/
 .forge-security-allow
+
+# Workspace-specific clone-dev config (channel IDs, repo overrides).
+# Use `clone-dev.toml.example` as the template.
+clone-dev.toml
+
+# Proof-run artifacts (captured per-run; committed selectively after a run).
+metrics/proof-runs/
+
 docs/superpowers/
 forge-principles.md
 providers.md

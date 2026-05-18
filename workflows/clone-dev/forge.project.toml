@@ -10,6 +10,7 @@ sources = [
   "shared/events.forge",
   "shared/mastermind.forge",
   "stage1/mastermind_intake.forge",
+  "stage1/slack_devops_monitor.forge",
   "stage1/investigators/code_investigator.forge",
   "stage1/investigators/ops_investigator.forge",
   "stage1/investigators/security_investigator.forge",
