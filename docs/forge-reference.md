@@ -2638,7 +2638,7 @@ capabilities:
         error_path: error
 ```
 
-Use `{param}` placeholders for capability arguments and `{env:NAME}` for environment variables. Use `{{` and `}}` for literal braces inside argv templates.
+Use `{param}` placeholders for capability arguments, `{env:NAME}` for environment variables, and `{json:param}` when an argument must be inserted as a JSON string literal inside a larger argv template. Use `{{` and `}}` for literal braces inside argv templates.
 
 The `github` skill ships two parallel issue-creation capabilities:
 

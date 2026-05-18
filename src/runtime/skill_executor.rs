@@ -523,6 +523,14 @@ fn lookup_template_value(
     params: &[String],
     args: &HashMap<String, ConfidentValue>,
 ) -> Result<String, SkillError> {
+    if let Some(inner) = key.strip_prefix("json:") {
+        let value = lookup_template_value(inner, params, args)?;
+        return serde_json::to_string(&value).map_err(|e| SkillError::ExecutionFailed {
+            name: "deterministic_skill".to_string(),
+            reason: format!("could not JSON-escape argument '{}': {}", inner, e),
+        });
+    }
+
     if let Some(env_name) = key.strip_prefix("env:") {
         return std::env::var(env_name).map_err(|_| SkillError::ExecutionFailed {
             name: "deterministic_skill".to_string(),
@@ -718,5 +726,96 @@ mod tests {
 
         assert_eq!(expanded[4], "ncmlabs/b");
         assert_eq!(expanded[6], "clone-dev,from:T7");
+    }
+
+    #[test]
+    fn expand_argv_json_escapes_multiline_markdown() {
+        let argv = vec![
+            "blocks=[{{\"type\":\"section\",\"text\":{{\"type\":\"mrkdwn\",\"text\":{json:text}}}}}]"
+                .to_string(),
+        ];
+        let params: Vec<String> = vec!["text".into()];
+        let text = "Plan:\n1. Run `cargo test`\n2. Quote \"ok\"\n3. Literal braces {issue_id}";
+        let mut args: HashMap<String, ConfidentValue> = HashMap::new();
+        args.insert(
+            "text".into(),
+            ConfidentValue::deterministic(Value::Text(text.into())),
+        );
+
+        let expanded = expand_argv(&argv, &params, &args).expect("argv expands");
+
+        let blocks = expanded[0]
+            .strip_prefix("blocks=")
+            .expect("blocks prefix should remain");
+        let parsed: serde_json::Value =
+            serde_json::from_str(blocks).expect("blocks JSON should parse");
+        assert_eq!(parsed[0]["text"]["text"], text);
+    }
+
+    #[test]
+    fn slack_send_approval_blocks_json_survives_rich_plan_body() {
+        std::env::set_var("SLACK_BOT_TOKEN", "xoxb-test");
+        let skills =
+            crate::runtime::skill_loader::SkillLoader::load_from_dirs(&[std::path::PathBuf::from(
+                "skills/slack",
+            )]);
+        let slack = skills
+            .iter()
+            .find(|skill| skill.manifest.name == "slack")
+            .expect("slack skill should load");
+        let capability = slack
+            .manifest
+            .capabilities
+            .iter()
+            .find(|cap| cap.name == "send_approval")
+            .expect("send_approval capability should exist");
+        let executor = capability
+            .executor
+            .as_ref()
+            .expect("send_approval should be deterministic");
+        let mut args: HashMap<String, ConfidentValue> = HashMap::new();
+        args.insert(
+            "channel".into(),
+            ConfidentValue::deterministic(Value::Text("C0123456789".into())),
+        );
+        args.insert(
+            "text".into(),
+            ConfidentValue::deterministic(Value::Text(
+                "Start implementation: 13\n\n```text\ncargo test -- --nocapture\n```\nQuote: \"ship it\""
+                    .into(),
+            )),
+        );
+        args.insert(
+            "callback_url".into(),
+            ConfidentValue::deterministic(Value::Text(
+                "http://localhost:3300/webhook/approval".into(),
+            )),
+        );
+        args.insert(
+            "request_id".into(),
+            ConfidentValue::deterministic(Value::Text("plan-13".into())),
+        );
+
+        let expanded = expand_argv(&executor.argv, &executor.params, &args)
+            .expect("send_approval argv should expand");
+        let blocks_arg = expanded
+            .iter()
+            .find(|arg| arg.starts_with("blocks="))
+            .expect("send_approval should send blocks");
+        let blocks = blocks_arg
+            .strip_prefix("blocks=")
+            .expect("blocks prefix should remain");
+        let parsed: serde_json::Value =
+            serde_json::from_str(blocks).expect("Slack blocks should be valid JSON");
+
+        assert_eq!(parsed[0]["type"], "section");
+        assert_eq!(parsed[0]["text"]["type"], "mrkdwn");
+        assert_eq!(
+            parsed[0]["text"]["text"],
+            "Start implementation: 13\n\n```text\ncargo test -- --nocapture\n```\nQuote: \"ship it\""
+        );
+        assert_eq!(parsed[1]["type"], "actions");
+        assert_eq!(parsed[1]["elements"][0]["value"], "approved:plan-13");
+        assert_eq!(parsed[1]["elements"][1]["value"], "rejected:plan-13");
     }
 }

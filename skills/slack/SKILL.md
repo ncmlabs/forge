@@ -87,7 +87,7 @@ capabilities:
         - --data-urlencode
         - "text={text}"
         - --data-urlencode
-        - 'blocks=[{{"type":"section","text":{{"type":"mrkdwn","text":"{text}"}}}},{{"type":"actions","block_id":"approval_actions","elements":[{{"type":"button","text":{{"type":"plain_text","text":"Approve"}},"style":"primary","action_id":"approve","value":"approved:{request_id}"}},{{"type":"button","text":{{"type":"plain_text","text":"Reject"}},"style":"danger","action_id":"reject","value":"rejected:{request_id}"}}]}}]'
+        - 'blocks=[{{"type":"section","text":{{"type":"mrkdwn","text":{json:text}}}}},{{"type":"actions","block_id":"approval_actions","elements":[{{"type":"button","text":{{"type":"plain_text","text":"Approve"}},"style":"primary","action_id":"approve","value":"approved:{request_id}"}},{{"type":"button","text":{{"type":"plain_text","text":"Reject"}},"style":"danger","action_id":"reject","value":"rejected:{request_id}"}}]}}]'
       result:
         success_path: ok
         error_path: error
