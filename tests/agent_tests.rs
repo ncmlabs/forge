@@ -1180,6 +1180,65 @@ agent impl_agent
 
 // ── Issue #405: failed apply/no-op commit must block ImplementationReady ─────
 
+#[test]
+fn dev_cycle_implementer_sanitizes_fenced_shell_and_uses_argv() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    assert!(
+        source.contains("pure strip_shell_fences"),
+        "dev-cycle should carry a deterministic fence stripper"
+    );
+    assert!(
+        source.contains("clean_code = strip_shell_fences(code)"),
+        "initial implementation path should strip markdown fences"
+    );
+    assert!(
+        source.contains("command [\"sh\", \"-c\", clean_code] in \"{memory.workdir}\""),
+        "initial implementation path should pass generated shell through argv"
+    );
+    assert!(
+        source.contains("clean_fix_code = strip_shell_fences(fix_code)"),
+        "fix iteration path should strip markdown fences"
+    );
+    assert!(
+        source.contains("command [\"sh\", \"-c\", clean_fix_code] in \"{memory.workdir}\""),
+        "fix iteration path should pass generated shell through argv"
+    );
+    assert!(
+        source.contains("Before writing any file, create its parent directory with mkdir -p"),
+        "implementer prompts should require parent directories before heredocs"
+    );
+}
+
+#[test]
+fn clone_dev_system_uses_subscriptions_not_dev_cycle_arrow_chain() {
+    let source = std::fs::read_to_string("workflows/clone-dev/main.forge").unwrap();
+    assert!(
+        !source.contains("mm >> plan >> impl >> test >> review"),
+        "clone-dev should not forward every planner event into implementer"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_merges_by_branch_not_create_pr_output() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    assert!(
+        !source.contains("skill.github.merge_pr(repo, pr_url)"),
+        "reviewer should not pass the verbose create_pr result into merge_pr"
+    );
+    assert!(
+        !source.contains("skill.github.merge_pr(memory.repo, memory.pr_url)"),
+        "human approval path should not pass the verbose create_pr result into merge_pr"
+    );
+    assert!(
+        source.contains("skill.github.merge_pr(repo, branch)"),
+        "auto-merge paths should merge the PR selected by branch"
+    );
+    assert!(
+        source.contains("skill.github.merge_pr(memory.repo, memory.branch)"),
+        "human approval path should merge the PR selected by branch"
+    );
+}
+
 #[tokio::test]
 async fn implementer_failed_generated_shell_blocks_implementation_ready() {
     let source = r#"
