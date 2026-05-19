@@ -25,9 +25,17 @@ fn empty_program() -> Program {
 
 fn mock_registry() -> Arc<ProviderRegistry> {
     let mock = MockProvider::new("mock").with_default("mock response");
+    mock_registry_with(mock)
+}
+
+fn mock_registry_with(mock: MockProvider) -> Arc<ProviderRegistry> {
     let mut reg = ProviderRegistry::new("mock");
     reg.register("mock", Arc::new(mock));
     Arc::new(reg)
+}
+
+fn shell_path(path: &std::path::Path) -> String {
+    path.display().to_string().replace('\\', "/")
 }
 
 /// Build a minimal agent decl with given handlers and memory fields.
@@ -1168,6 +1176,145 @@ agent impl_agent
         );
         assert_eq!(ctx.event_sink.escalations, vec!["lead"]);
     }
+}
+
+// ── Issue #405: failed apply/no-op commit must block ImplementationReady ─────
+
+#[tokio::test]
+async fn implementer_failed_generated_shell_blocks_implementation_ready() {
+    let source = r#"
+agent implementer
+  memory
+    workdir: Text
+
+  on ImplementationApproved(workdir: Text)
+    memory.workdir = workdir
+    code = reason "Generate failing shell" for implement
+    apply_result = command "cd {memory.workdir} && sh -c '{code}'" timeout 5s
+    when apply_result.sure -> say "applied"
+    else -> give "apply_failed: {apply_result}"
+    commit_result = command "echo SHOULD_NOT_COMMIT" timeout 5s
+    when commit_result.sure -> say "committed"
+    else -> give "commit_failed: {commit_result}"
+    emit ImplementationReady(issue_id: "405")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default("exit 7")),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent
+        .dispatch("ImplementationApproved", params)
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s.contains("apply_failed"))),
+        "failed apply should return a blocking failure, got: {:?}",
+        result
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert!(
+        ctx.event_sink.emitted.is_empty(),
+        "failed apply must not emit ImplementationReady: {:?}",
+        ctx.event_sink.emitted
+    );
+}
+
+#[tokio::test]
+async fn implementer_noop_commit_blocks_implementation_ready() {
+    let source = r#"
+agent implementer
+  memory
+    workdir: Text
+
+  on ImplementationApproved(workdir: Text)
+    memory.workdir = workdir
+    code = reason "Generate no-op shell" for implement
+    apply_result = command "cd {memory.workdir} && sh -c '{code}'" timeout 5s
+    when apply_result.sure -> say "applied"
+    else -> give "apply_failed: {apply_result}"
+    commit_result = command "cd {memory.workdir} && git add -A && if git diff --cached --quiet; then echo 'no staged changes to commit'; exit 42; fi && git commit -m 'test commit' && git push origin issue-405 2>&1" timeout 5s
+    when commit_result.sure -> say "committed"
+    else -> give "commit_push_failed: {commit_result}"
+    emit ImplementationReady(issue_id: "405")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default(":")),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let init = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(workdir.path())
+        .output()
+        .expect("git init failed to spawn");
+    assert!(
+        init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent
+        .dispatch("ImplementationApproved", params)
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s.contains("commit_push_failed"))),
+        "no-op commit should return a blocking failure, got: {:?}",
+        result
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert!(
+        ctx.event_sink.emitted.is_empty(),
+        "no-op commit must not emit ImplementationReady: {:?}",
+        ctx.event_sink.emitted
+    );
 }
 
 // ── T2.1 (#296): Implementer iteration loop tests ──────────────────────────
