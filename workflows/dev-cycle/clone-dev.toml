@@ -101,9 +101,9 @@ security_investigate = ["gpt-4o"]
 # src/runtime/clone_dev_config.rs (DEFAULT_WORKDIR_ROOT etc.). Each
 # can be overridden per-repo via [repos."<owner>/<name>"].
 #
-# For the ncmlabs/forge-playground proof run (#372/#404), this Rust
-# test command assumes the playground repository default branch is
-# `main` and contains Cargo.toml plus src/math.rs and src/routes.rs.
+# For the ncmlabs/forge-playground proof run (#372/#409), the playground
+# repository now owns the TypeScript-specific verification command in
+# `.forge/clone-dev.toml`. Keep this fallback generic for other repos.
 workdir_root        = "/tmp/forge-workdir"
 branch_prefix       = "clone-dev"
 commit_template     = "feat({issue_id}): implement per plan"
