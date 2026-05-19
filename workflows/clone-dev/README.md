@@ -133,6 +133,30 @@ Actions `FORGE_WAKE_SECRET`, Slack signing secret shim, etc.).
 | GET  | `/__forge/events`                      | Live SSE trace |
 | GET  | `/__forge/inspect/{agents,topology,wardens,costs,mastery,schedules}` | Introspection |
 
+## Playground Proof-Run Preflight
+
+The T11.3 proof run targets `ncmlabs/forge-playground` as a Rust crate on its
+`main` branch. The seeded playground issues #13-#22 are Rust-specific, and the
+playground config uses `cargo test --quiet`.
+
+Before starting a run against `ncmlabs/forge-playground`, verify the repository
+default branch and Rust surface:
+
+```bash
+gh repo view ncmlabs/forge-playground --json defaultBranchRef --jq '.defaultBranchRef.name'
+tmp="$(mktemp -d)"
+gh repo clone ncmlabs/forge-playground "$tmp/forge-playground"
+cd "$tmp/forge-playground"
+test "$(git branch --show-current)" = "main"
+test -f Cargo.toml
+test -f src/math.rs
+test -f src/routes.rs
+cargo test --quiet
+```
+
+See [2026-05 Clone-Dev Playground Proof Run](../../docs/proof-runs/2026-05-clone-dev-playground.md)
+for the full preflight.
+
 ## Acceptance (DoD #356)
 
 With the server running on port 3300:
