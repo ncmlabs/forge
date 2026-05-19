@@ -140,7 +140,7 @@ agent slack_adapter
     approval_result = skill.slack.send_approval(channel, body, callback_url, request_id)
     when approval_result.sure -> say "[slack_adapter] approval sent for {request_id}"
     when approval_result.unsure -> say "[slack_adapter] approval unsure for {request_id}"
-    else -> say "[slack_adapter] approval failed for {request_id}"
+    else -> say "[slack_adapter] approval failed for {request_id}: {approval_result}"
     memory.sent_count = memory.sent_count + 1
 
   on PostApprovalResult(channel: Text, request_id: Text, approved: Bool, approver: Text, summary: Text, thread_ts: Text)

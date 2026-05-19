@@ -2022,6 +2022,11 @@ async fn slack_adapter_main_forge_has_seven_events_and_handlers() {
             memory
         );
     }
+
+    assert!(
+        source.contains("approval failed for {request_id}: {approval_result}"),
+        "slack_adapter must log the approval failure reason"
+    );
 }
 
 /// The slack-adapter declares a pool of 1 worker with `strategy: fastest`

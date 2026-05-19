@@ -735,7 +735,7 @@ mod tests {
                 .to_string(),
         ];
         let params: Vec<String> = vec!["text".into()];
-        let text = "Plan:\n1. Run `cargo test`\n2. Quote \"ok\"\n3. Literal braces {issue_id}";
+        let text = "Plan:\n1. Run `cargo test`\n2. Quote \"ok\"\n3. Path C:\\tmp\\forge\n4. Literal braces {issue_id}";
         let mut args: HashMap<String, ConfidentValue> = HashMap::new();
         args.insert(
             "text".into(),
@@ -750,6 +750,117 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(blocks).expect("blocks JSON should parse");
         assert_eq!(parsed[0]["text"]["text"], text);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn slack_send_approval_command_posts_valid_blocks_for_escaped_text() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let fake_curl = tmp.path().join("curl");
+        let curl_log = tmp.path().join("curl-argv.json");
+        std::fs::write(
+            &fake_curl,
+            r#"#!/bin/sh
+python3 - "$@" <<'PY'
+import json
+import os
+import sys
+with open(os.environ["FORGE_FAKE_CURL_LOG"], "w", encoding="utf-8") as fh:
+    json.dump(sys.argv[1:], fh)
+print('{"ok":true,"ts":"123.456"}')
+PY
+"#,
+        )
+        .expect("write fake curl");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&fake_curl)
+                .expect("fake curl metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&fake_curl, permissions).expect("chmod fake curl");
+        }
+
+        std::env::set_var("FORGE_FAKE_CURL_LOG", &curl_log);
+
+        let skills =
+            crate::runtime::skill_loader::SkillLoader::load_from_dirs(&[std::path::PathBuf::from(
+                "skills/slack",
+            )]);
+        let slack = skills
+            .iter()
+            .find(|skill| skill.manifest.name == "slack")
+            .expect("slack skill should load");
+        let capability = slack
+            .manifest
+            .capabilities
+            .iter()
+            .find(|cap| cap.name == "send_approval")
+            .expect("send_approval capability should exist");
+        let mut executor = capability
+            .executor
+            .as_ref()
+            .expect("send_approval should be deterministic")
+            .clone();
+        executor.argv[0] = fake_curl.to_string_lossy().to_string();
+        for arg in &mut executor.argv {
+            *arg = arg.replace("{env:SLACK_BOT_TOKEN}", "xoxb-test");
+        }
+
+        let text =
+            "PR ready\nCI: no pull requests found for branch \"clone-dev/x\"\nPath: C:\\tmp\\forge";
+        let mut args: HashMap<String, ConfidentValue> = HashMap::new();
+        args.insert(
+            "channel".into(),
+            ConfidentValue::deterministic(Value::Text("C0123456789".into())),
+        );
+        args.insert(
+            "text".into(),
+            ConfidentValue::deterministic(Value::Text(text.into())),
+        );
+        args.insert(
+            "callback_url".into(),
+            ConfidentValue::deterministic(Value::Text(
+                "http://localhost:3300/webhook/approval".into(),
+            )),
+        );
+        args.insert(
+            "request_id".into(),
+            ConfidentValue::deterministic(Value::Text("smoke-401".into())),
+        );
+
+        let skill_executor = SkillExecutor::new(
+            std::sync::Arc::new(ProviderRegistry::new("unused")),
+            std::sync::Arc::new(std::sync::Mutex::new(
+                crate::runtime::skill_registry::SkillRegistry::new(),
+            )),
+        );
+        let result = skill_executor
+            .execute_deterministic(slack, "send_approval", &executor, &args)
+            .await
+            .expect("fake Slack command should succeed");
+        assert_eq!(result.value.to_string(), "123.456");
+
+        std::env::remove_var("FORGE_FAKE_CURL_LOG");
+
+        let argv: Vec<String> = serde_json::from_str(
+            &std::fs::read_to_string(&curl_log).expect("fake curl should log argv"),
+        )
+        .expect("fake curl argv should be JSON");
+        let blocks_arg = argv
+            .iter()
+            .find(|arg| arg.starts_with("blocks="))
+            .expect("send_approval should pass blocks data");
+        let blocks = blocks_arg
+            .strip_prefix("blocks=")
+            .expect("blocks prefix should remain");
+        let parsed: serde_json::Value =
+            serde_json::from_str(blocks).expect("Slack blocks should be valid JSON");
+
+        assert_eq!(parsed[0]["text"]["text"], text);
+        assert_eq!(parsed[1]["elements"][0]["value"], "approved:smoke-401");
+        assert_eq!(parsed[1]["elements"][1]["value"], "rejected:smoke-401");
     }
 
     #[test]
