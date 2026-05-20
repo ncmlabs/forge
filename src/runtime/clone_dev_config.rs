@@ -975,14 +975,14 @@ mod tests {
         let cfg = CloneDevConfig::from_toml_str(
             r#"
             [defaults]
-            test_cmd = "npm run typecheck && npm test && npm run build"
+            test_cmd = "npm ci && npm run typecheck && npm test && npm run build"
             "#,
         )
         .expect("parse");
 
         assert_eq!(
             cfg.defaults_test_cmd,
-            "npm run typecheck && npm test && npm run build"
+            "npm ci && npm run typecheck && npm test && npm run build"
         );
 
         let record = cfg.to_forge_record();
@@ -995,7 +995,10 @@ mod tests {
             .expect("defaults_test_cmd field");
         match &value.value {
             Value::Text(cmd) => {
-                assert_eq!(cmd, "npm run typecheck && npm test && npm run build")
+                assert_eq!(
+                    cmd,
+                    "npm ci && npm run typecheck && npm test && npm run build"
+                )
             }
             _ => panic!("defaults_test_cmd should be Text"),
         }

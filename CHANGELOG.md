@@ -58,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
 ### Fixed
+- Clone-dev TypeScript proof-run guidance and regressions now require
+  `npm ci` before typecheck/test/build, and fix iterations with no staged
+  source diff skip the source commit path while re-running tests (#415).
 - Dev-cycle implementer now trims normalized generated shell, rejects empty
   shell bodies after Markdown fence removal, and has runtime regressions proving
   fenced `bash` responses are executed without passing fences to `sh -c` or

@@ -623,10 +623,10 @@ agent implementer
     when apply_result.sure -> say "[implementer] Fix applied"
     else -> give "fix_apply_failed: {apply_result}"
     fix_msg = render_commit_message(memory.fix_commit_template, issue_id, memory.title, memory.criteria, memory.iteration)
-    commit_result = command "cd {memory.workdir} && git add -A && if git diff --cached --quiet; then echo 'no staged changes to commit'; exit 42; fi && git commit -m '{fix_msg}' && git push origin {branch} 2>&1" timeout 60s
-    when commit_result.sure -> say "[implementer] Fix committed and pushed"
+    commit_result = command "cd {memory.workdir} && git add -A && if git diff --cached --quiet; then echo 'no staged source diff after fix; skipping commit'; else git commit -m '{fix_msg}' && git push origin {branch}; fi 2>&1" timeout 60s
+    when commit_result.sure -> say "[implementer] Fix committed, or no source diff was produced"
     else -> give "fix_commit_push_failed: {commit_result}"
-    say "[implementer] Fix iteration {memory.iteration} for {issue_id} pushed. Re-running tests."
+    say "[implementer] Fix iteration {memory.iteration} for {issue_id} ready. Re-running tests."
     emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, workdir: memory.workdir, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
