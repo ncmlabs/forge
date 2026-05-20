@@ -1188,16 +1188,32 @@ fn dev_cycle_implementer_sanitizes_fenced_shell_and_uses_argv() {
         "dev-cycle should carry a deterministic fence stripper"
     );
     assert!(
-        source.contains("clean_code = strip_shell_fences(code)"),
+        source.contains("stripped_code = strip_shell_fences(code)"),
         "initial implementation path should strip markdown fences"
+    );
+    assert!(
+        source.contains("clean_code = stripped_code.trim()"),
+        "initial implementation path should trim normalized shell"
+    );
+    assert!(
+        source.contains("apply_failed: empty generated shell after fence normalization"),
+        "initial implementation path should reject empty normalized shell before execution"
     );
     assert!(
         source.contains("command [\"sh\", \"-c\", clean_code] in \"{memory.workdir}\""),
         "initial implementation path should pass generated shell through argv"
     );
     assert!(
-        source.contains("clean_fix_code = strip_shell_fences(fix_code)"),
+        source.contains("stripped_fix_code = strip_shell_fences(fix_code)"),
         "fix iteration path should strip markdown fences"
+    );
+    assert!(
+        source.contains("clean_fix_code = stripped_fix_code.trim()"),
+        "fix iteration path should trim normalized shell"
+    );
+    assert!(
+        source.contains("fix_apply_failed: empty generated shell after fence normalization"),
+        "fix iteration path should reject empty normalized shell before execution"
     );
     assert!(
         source.contains("command [\"sh\", \"-c\", clean_fix_code] in \"{memory.workdir}\""),
@@ -1206,6 +1222,184 @@ fn dev_cycle_implementer_sanitizes_fenced_shell_and_uses_argv() {
     assert!(
         source.contains("Before writing any file, create its parent directory with mkdir -p"),
         "implementer prompts should require parent directories before heredocs"
+    );
+}
+
+#[tokio::test]
+async fn implementer_normalizes_fenced_shell_before_execution() {
+    let source = r#"
+use
+  llm.reason
+  text.replace
+
+event ImplementationReady
+  issue_id: Text
+
+pure strip_shell_fences
+  needs script: Text
+  gives Text
+  do
+    s1 = text.replace(script, "```bash\n", "")
+    s2 = text.replace(s1, "```sh\n", "")
+    s3 = text.replace(s2, "```shell\n", "")
+    s4 = text.replace(s3, "```\n", "")
+    s5 = text.replace(s4, "```", "")
+    give s5
+
+agent implementer
+  memory
+    workdir: Text
+
+  on ImplementationApproved(workdir: Text)
+    memory.workdir = workdir
+    code = reason "Generate fenced shell" for implement
+    stripped_code = strip_shell_fences(code)
+    clean_code = stripped_code.trim()
+    if clean_code == ""
+      give "apply_failed: empty generated shell after fence normalization"
+    apply_result = command ["sh", "-c", clean_code] in "{memory.workdir}" timeout 5s
+    when apply_result.sure -> say "applied"
+    else -> give "apply_failed: {apply_result}"
+    emit ImplementationReady(issue_id: "414")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let fenced_shell = "```bash\nprintf 'initial ok' > applied.txt\n```";
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default(fenced_shell)),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent
+        .dispatch("ImplementationApproved", params)
+        .await
+        .expect("handler should not crash on fenced shell");
+    assert!(
+        result.is_none(),
+        "fenced shell should be normalized and applied, got: {:?}",
+        result
+    );
+    assert_eq!(
+        std::fs::read_to_string(workdir.path().join("applied.txt")).unwrap(),
+        "initial ok"
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert_eq!(ctx.event_sink.emitted.len(), 1);
+    assert_eq!(ctx.event_sink.emitted[0].name, "ImplementationReady");
+    assert!(
+        ctx.event_sink.escalations.is_empty(),
+        "fenced shell should not trip escalation/restart path: {:?}",
+        ctx.event_sink.escalations
+    );
+}
+
+#[tokio::test]
+async fn implementer_normalizes_fenced_shell_on_fix_iteration() {
+    let source = r#"
+use
+  llm.reason
+  text.replace
+
+event ImplementationReady
+  issue_id: Text
+
+pure strip_shell_fences
+  needs script: Text
+  gives Text
+  do
+    s1 = text.replace(script, "```bash\n", "")
+    s2 = text.replace(s1, "```sh\n", "")
+    s3 = text.replace(s2, "```shell\n", "")
+    s4 = text.replace(s3, "```\n", "")
+    s5 = text.replace(s4, "```", "")
+    give s5
+
+agent implementer
+  memory
+    workdir: Text
+
+  on TestsFailed(workdir: Text)
+    memory.workdir = workdir
+    fix_code = reason "Generate fenced fix shell" for implement
+    stripped_fix_code = strip_shell_fences(fix_code)
+    clean_fix_code = stripped_fix_code.trim()
+    if clean_fix_code == ""
+      give "fix_apply_failed: empty generated shell after fence normalization"
+    apply_result = command ["sh", "-c", clean_fix_code] in "{memory.workdir}" timeout 5s
+    when apply_result.sure -> say "fix applied"
+    else -> give "fix_apply_failed: {apply_result}"
+    emit ImplementationReady(issue_id: "414")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let fenced_shell = "```bash\nprintf 'fix ok' > fixed.txt\n```";
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default(fenced_shell)),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent
+        .dispatch("TestsFailed", params)
+        .await
+        .expect("fix handler should not crash on fenced shell");
+    assert!(
+        result.is_none(),
+        "fenced fix shell should be normalized and applied, got: {:?}",
+        result
+    );
+    assert_eq!(
+        std::fs::read_to_string(workdir.path().join("fixed.txt")).unwrap(),
+        "fix ok"
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert_eq!(ctx.event_sink.emitted.len(), 1);
+    assert_eq!(ctx.event_sink.emitted[0].name, "ImplementationReady");
+    assert!(
+        ctx.event_sink.escalations.is_empty(),
+        "fenced fix shell should not trip escalation/restart path: {:?}",
+        ctx.event_sink.escalations
     );
 }
 
