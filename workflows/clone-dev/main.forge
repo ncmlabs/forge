@@ -167,9 +167,9 @@ warden investigators_ward
   max_retries 3 per 1h then escalate
 
 # ── System ───────────────────────────────────────────────────────
-# Linear pipeline with mastermind as the intake and slack_adapter as
-# a sink (all user-visible output flows through it). Mastery agents
-# observe TaskCompleted out-of-band and don't need explicit wiring.
+# Agents communicate through explicit bus subscriptions. Keeping this
+# system unchained avoids forwarding status events such as PostMessage
+# into the next dev-cycle specialist.
 
 system clone_dev_system
   use
@@ -190,7 +190,6 @@ system clone_dev_system
     release: release_manager
     triage: triage_specialist
     slack: slack_adapter
-  mm >> plan >> impl >> test >> review
 
 # ── Endpoints ────────────────────────────────────────────────────
 

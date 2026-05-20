@@ -1,0 +1,49 @@
+{
+  "run_id": "2026-05-19-run4-final",
+  "target_repo": "ncmlabs/forge-playground",
+  "issue": {
+    "number": 26,
+    "title": "Review dashboard empty, loading, and error states",
+    "url": "https://github.com/ncmlabs/forge-playground/issues/26",
+    "final_state": "CLOSED"
+  },
+  "pull_request": {
+    "number": 36,
+    "url": "https://github.com/ncmlabs/forge-playground/pull/36",
+    "state": "MERGED",
+    "merged_at": "2026-05-19T19:20:50Z",
+    "merge_commit": "237e98a71d247cf4a664f4fda3126cb184df62ca",
+    "head_ref": "clone-dev/26",
+    "base_ref": "main"
+  },
+  "acceptance_metrics": {
+    "approval_asks": 2,
+    "ci_passed_first_try": true,
+    "review_rounds": 1,
+    "time_to_merge_mins": 3.48,
+    "mastery_level_before": "novice",
+    "mastery_level_after": "expert"
+  },
+  "evidence_files": [
+    "clone-dev-final.log",
+    "agents-final.json",
+    "wardens-final.json",
+    "costs-final.json",
+    "mastery-final.json",
+    "issue-26-final-trigger-response.txt",
+    "issue-26-final-plan-approval-response.txt",
+    "issue-26-final-merge-approval-response.txt"
+  ],
+  "defects_found_and_addressed": [
+    "System arrow chain forwarded status events into implementer; replaced with explicit subscriptions.",
+    "Implementer executed fenced Markdown shell; added fence stripping and argv-based shell execution.",
+    "Reviewer passed verbose create_pr output into merge_pr; changed merge selector to branch.",
+    "Implementer prompts omitted parent-directory creation before heredocs; prompts now require mkdir -p."
+  ],
+  "defects_logged_for_follow_up": [
+    "https://github.com/ncmlabs/forge/issues/412",
+    "https://github.com/ncmlabs/forge/issues/413",
+    "https://github.com/ncmlabs/forge/issues/414",
+    "https://github.com/ncmlabs/forge/issues/415"
+  ]
+}

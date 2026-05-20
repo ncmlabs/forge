@@ -332,6 +332,16 @@ pure render_commit_message
     s4 = text.replace(s3, "\{iteration\}", iter_text)
     give s4
 
+pure strip_shell_fences
+  needs script: Text
+  gives Text
+  do
+    s1 = text.replace(script, "```bash\n", "")
+    s2 = text.replace(s1, "```sh\n", "")
+    s3 = text.replace(s2, "```\n", "")
+    s4 = text.replace(s3, "```", "")
+    give s4
+
 # T8.5 (#360): keep memory.auto_decision Text-shaped for downstream
 # observers (debug logs, knowledge-store rows) while letting the
 # config carry the underlying Bool. Encoded as a pure helper so the
@@ -568,11 +578,12 @@ agent implementer
     clone_result = command clone_cmd timeout 60s
     when clone_result.sure -> say "[implementer] Repo cloned and branch {branch} created"
     else -> say "[implementer] Clone/checkout issue: {clone_result}"
-    impl_prompt = "You are implementing a code change for a GitHub issue.\n\nIssue: {issue_id}\nPlan:\n{plan}\nAcceptance criteria:\n{memory.criteria}\n\nGenerate the implementation as a shell script that creates or modifies files using cat heredocs. Output ONLY the shell commands, no markdown fencing, no explanations. Keep changes minimal and focused."
+    impl_prompt = "You are implementing a code change for a GitHub issue.\n\nIssue: {issue_id}\nPlan:\n{plan}\nAcceptance criteria:\n{memory.criteria}\n\nGenerate the implementation as a POSIX shell script that creates or modifies files using cat heredocs. Before writing any file, create its parent directory with mkdir -p when the directory may not already exist. Output ONLY executable shell commands, no markdown fencing, no explanations. Keep changes minimal and focused."
     code = reason impl_prompt for implement
     when code.sure -> say "[implementer] Implementation generated"
     else -> say "[implementer] Implementation generation uncertain"
-    apply_result = command "cd {memory.workdir} && sh -c '{code}'" timeout 30s
+    clean_code = strip_shell_fences(code)
+    apply_result = command ["sh", "-c", clean_code] in "{memory.workdir}" timeout 30s
     when apply_result.sure -> say "[implementer] Changes applied"
     else -> give "apply_failed: {apply_result}"
     commit_msg = render_commit_message(memory.commit_template, issue_id, memory.title, memory.criteria, 0)
@@ -596,11 +607,12 @@ agent implementer
       emit RequestHuman(channel: channel, context: escalate_msg, urgency: "high", thread_ts: "")
       escalate to lead
       give "escalated"
-    fix_prompt = "Fix the test failures for issue {issue_id}.\n\nOriginal plan:\n{memory.plan}\n\nDiagnosis of current failures:\n{diagnosis}\n\nRaw test output:\n{failures}\n\nGenerate ONLY shell commands (cat heredocs, sed, etc.) to fix the issues. No markdown, no explanations."
+    fix_prompt = "Fix the test failures for issue {issue_id}.\n\nOriginal plan:\n{memory.plan}\n\nDiagnosis of current failures:\n{diagnosis}\n\nRaw test output:\n{failures}\n\nGenerate ONLY executable POSIX shell commands (cat heredocs, sed, etc.) to fix the issues. Before writing any file, create its parent directory with mkdir -p when the directory may not already exist. No markdown fences, no explanations."
     fix_code = reason fix_prompt for implement
     when fix_code.sure -> say "[implementer] Fix generated"
     else -> say "[implementer] Fix generation uncertain"
-    apply_result = command "cd {memory.workdir} && sh -c '{fix_code}'" timeout 30s
+    clean_fix_code = strip_shell_fences(fix_code)
+    apply_result = command ["sh", "-c", clean_fix_code] in "{memory.workdir}" timeout 30s
     when apply_result.sure -> say "[implementer] Fix applied"
     else -> give "fix_apply_failed: {apply_result}"
     fix_msg = render_commit_message(memory.fix_commit_template, issue_id, memory.title, memory.criteria, memory.iteration)
@@ -810,7 +822,7 @@ agent reviewer
     emit ReviewDecision(issue_id: issue_id, repo: repo, decision: verdict)
     if verdict == "auto_approve" and memory.auto_decision == "enabled"
       say "[reviewer] AUTO-APPROVED by knowledge store — merging PR for {issue_id}"
-      merge_result = skill.github.merge_pr(repo, pr_url)
+      merge_result = skill.github.merge_pr(repo, branch)
       when merge_result.sure -> say "[reviewer] PR merged successfully"
       else -> say "[reviewer] Merge result uncertain: {merge_result}"
       merge_msg = "AUTO-MERGED: {issue_id} in {repo}. Branch {branch} merged. Approved by knowledge-store."
@@ -829,7 +841,7 @@ agent reviewer
       give "auto-rejected"
     if repo_cfg.merge_pr == false
       say "[reviewer] gates.merge_pr=false for {memory.repo_slug} — auto-merging without slack approval"
-      merge_result = skill.github.merge_pr(repo, pr_url)
+      merge_result = skill.github.merge_pr(repo, branch)
       when merge_result.sure -> say "[reviewer] PR merged successfully"
       else -> say "[reviewer] Merge result uncertain: {merge_result}"
       merge_msg = "AUTO-MERGED (gates.merge_pr=false): {issue_id} in {repo}. Branch {branch} merged. No slack approval required."
@@ -853,7 +865,7 @@ agent reviewer
     cancel merge_approval_timeout
     if approved
       say "[reviewer] APPROVED by {comment} — merging PR for {memory.issue_id}"
-      merge_result = skill.github.merge_pr(memory.repo, memory.pr_url)
+      merge_result = skill.github.merge_pr(memory.repo, memory.branch)
       when merge_result.sure -> say "[reviewer] PR merged successfully"
       else -> say "[reviewer] Merge result uncertain: {merge_result}"
       merge_msg = "MERGED: {memory.issue_id} in {memory.repo}. Branch {memory.branch} merged. Approved by {comment}."
