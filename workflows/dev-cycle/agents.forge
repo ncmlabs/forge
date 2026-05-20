@@ -338,9 +338,10 @@ pure strip_shell_fences
   do
     s1 = text.replace(script, "```bash\n", "")
     s2 = text.replace(s1, "```sh\n", "")
-    s3 = text.replace(s2, "```\n", "")
-    s4 = text.replace(s3, "```", "")
-    give s4
+    s3 = text.replace(s2, "```shell\n", "")
+    s4 = text.replace(s3, "```\n", "")
+    s5 = text.replace(s4, "```", "")
+    give s5
 
 # T8.5 (#360): keep memory.auto_decision Text-shaped for downstream
 # observers (debug logs, knowledge-store rows) while letting the
@@ -582,7 +583,10 @@ agent implementer
     code = reason impl_prompt for implement
     when code.sure -> say "[implementer] Implementation generated"
     else -> say "[implementer] Implementation generation uncertain"
-    clean_code = strip_shell_fences(code)
+    stripped_code = strip_shell_fences(code)
+    clean_code = stripped_code.trim()
+    if clean_code == ""
+      give "apply_failed: empty generated shell after fence normalization"
     apply_result = command ["sh", "-c", clean_code] in "{memory.workdir}" timeout 30s
     when apply_result.sure -> say "[implementer] Changes applied"
     else -> give "apply_failed: {apply_result}"
@@ -611,7 +615,10 @@ agent implementer
     fix_code = reason fix_prompt for implement
     when fix_code.sure -> say "[implementer] Fix generated"
     else -> say "[implementer] Fix generation uncertain"
-    clean_fix_code = strip_shell_fences(fix_code)
+    stripped_fix_code = strip_shell_fences(fix_code)
+    clean_fix_code = stripped_fix_code.trim()
+    if clean_fix_code == ""
+      give "fix_apply_failed: empty generated shell after fence normalization"
     apply_result = command ["sh", "-c", clean_fix_code] in "{memory.workdir}" timeout 30s
     when apply_result.sure -> say "[implementer] Fix applied"
     else -> give "fix_apply_failed: {apply_result}"

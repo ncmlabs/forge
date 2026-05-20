@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
 ### Fixed
+- Dev-cycle implementer now trims normalized generated shell, rejects empty
+  shell bodies after Markdown fence removal, and has runtime regressions proving
+  fenced `bash` responses are executed without passing fences to `sh -c` or
+  tripping the escalation path (#414).
 - System-arrow routing now preserves typed event boundaries: a routed event is
   delivered to the downstream agent only when that agent subscribes to the
   event name. Planner `PostMessage` status events therefore still reach
