@@ -191,6 +191,19 @@ async fn bus_forward_unknown_target() {
 }
 
 #[tokio::test]
+async fn bus_forward_requires_target_subscription_to_payload_event() {
+    let mut bus = EventBus::new(None);
+    let mut rx_status = bus.subscribe("PostMessage", "slack_adapter", None);
+    let mut rx_approved = bus.subscribe("ImplementationApproved", "implementer", None);
+
+    let ok = bus.forward(&payload("PostMessage", "planner"), "implementer");
+    assert!(!ok);
+
+    assert!(rx_status.try_recv().is_err());
+    assert!(rx_approved.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn bus_payload_fields_preserved() {
     let mut bus = EventBus::new(None);
     let mut rx = bus.subscribe("MoveEvent", "agent-b", None);

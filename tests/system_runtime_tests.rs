@@ -323,6 +323,31 @@ async fn event_bus_routing_does_not_forward_to_non_targets() {
     assert!(delivered >= 2);
 }
 
+#[tokio::test]
+async fn planner_post_message_route_does_not_reach_implementer() {
+    use forge::runtime::event_bus::{EventBus, EventPayload};
+
+    let mut bus = EventBus::new(None);
+
+    let mut rx_slack = bus.subscribe("PostMessage", "slack_adapter", None);
+    let mut rx_impl = bus.subscribe("ImplementationApproved", "implementer", None);
+
+    bus.add_route("planner", "implementer");
+
+    let payload = EventPayload {
+        event_name: "PostMessage".to_string(),
+        args: vec![],
+        source_agent: "planner".to_string(),
+        fields: HashMap::new(),
+    };
+
+    let delivered = bus.publish(&payload);
+
+    assert_eq!(delivered, 1);
+    assert_eq!(rx_slack.recv().await.unwrap().event_name, "PostMessage");
+    assert!(rx_impl.try_recv().is_err());
+}
+
 // ── Config Parsing Tests ─────────────────────────────────────────────────────
 
 #[test]
