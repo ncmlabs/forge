@@ -214,6 +214,7 @@ type CloneDevConfig
   label_routing_suffixes: Text[]
   label_routing_targets: Text[]
   label_routing_triage_target: Text
+  defaults_test_cmd: Text
   defaults_workdir_root: Text
   defaults_branch_prefix: Text
   defaults_commit_template: Text
@@ -236,4 +237,22 @@ pure repo_config_for
     for r in cfg.repos
       if r.slug == slug
         give r
-    give RepoConfig(slug: "", slack_channel: cfg.slack_default_channel, test_cmd: "", model_override: "", budget_per_task_usd: -1.0, warden_max_retries: -1.0, labels_extra: [], workdir_root: cfg.defaults_workdir_root, branch_prefix: cfg.defaults_branch_prefix, commit_template: cfg.defaults_commit_template, fix_commit_template: cfg.defaults_fix_commit_template, max_iterations: cfg.defaults_max_iterations, auto_approve: cfg.defaults_auto_approve, max_plan_revisions: cfg.defaults_max_plan_revisions, merge_pr: cfg.gates_merge_pr)
+      repo_slug = text.replace(r.slug, "/", "-")
+      if repo_slug == slug
+        give r
+    give RepoConfig(slug: "", slack_channel: cfg.slack_default_channel, test_cmd: cfg.defaults_test_cmd, model_override: "", budget_per_task_usd: -1.0, warden_max_retries: -1.0, labels_extra: [], workdir_root: cfg.defaults_workdir_root, branch_prefix: cfg.defaults_branch_prefix, commit_template: cfg.defaults_commit_template, fix_commit_template: cfg.defaults_fix_commit_template, max_iterations: cfg.defaults_max_iterations, auto_approve: cfg.defaults_auto_approve, max_plan_revisions: cfg.defaults_max_plan_revisions, merge_pr: cfg.gates_merge_pr)
+
+# GitHub's native `issues` webhook sends nested repository / issue /
+# label objects. Mastermind normalizes this provider shape into the
+# flat `GithubIssueOpened` clone-dev event before deterministic routing.
+type GithubWebhookRepository
+  full_name: Text
+
+type GithubWebhookLabel
+  name: Text
+
+type GithubWebhookIssue
+  number: Number
+  title: Text
+  body: Text
+  labels: GithubWebhookLabel[]

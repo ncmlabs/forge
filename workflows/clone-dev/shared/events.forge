@@ -23,6 +23,11 @@ event CloneDevInbound
 # Webhook-carried events. The WebhookDriver (#335) populates these
 # fields from the POST JSON body; HMAC secrets are registered via
 # `forge wake rotate --agent mastermind --trigger <name>`.
+event GithubIssuesWebhook
+  action: Text
+  repository: GithubWebhookRepository
+  issue: GithubWebhookIssue
+
 event GithubIssueOpened
   repo: Text
   issue_number: Number

@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
 ### Fixed
+- Clone-dev GitHub issue wake path now accepts real nested GitHub
+  `issues.opened` payloads, flattens label objects into the internal
+  `GithubIssueOpened` routing event, and resolves `test_cmd` from
+  `clone-dev.toml` defaults or per-repo config instead of hard-coding
+  `cargo test`. Adds a fixture-backed TypeScript playground regression
+  proving `IssueAssigned` receives `npm run typecheck && npm test &&
+  npm run build` (#412).
 - Clone-dev playground proof-run guidance now pins `ncmlabs/forge-playground` as
   a Rust target on default branch `main`, with a documented preflight for the
   Rust seed issues #13-#22. This closes the mismatch that made #372's first run

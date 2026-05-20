@@ -316,6 +316,7 @@ pub struct CloneDevConfig {
     // resolve into ResolvedRepo (below). agents.forge consults the
     // resolved RepoConfig, which falls back to these scalars via
     // repo_config_for in shared/types.forge.
+    pub defaults_test_cmd: String,
     pub defaults_workdir_root: String,
     pub defaults_branch_prefix: String,
     pub defaults_commit_template: String,
@@ -567,6 +568,7 @@ impl CloneDevConfig {
             label_routing_suffixes,
             label_routing_targets,
             label_routing_triage_target,
+            defaults_test_cmd: defaults.test_cmd,
             defaults_workdir_root,
             defaults_branch_prefix,
             defaults_commit_template,
@@ -723,6 +725,7 @@ impl CloneDevConfig {
             "label_routing_triage_target",
             &self.label_routing_triage_target,
         );
+        insert_text(&mut fields, "defaults_test_cmd", &self.defaults_test_cmd);
         insert_text(
             &mut fields,
             "defaults_workdir_root",
@@ -965,6 +968,37 @@ mod tests {
         assert_eq!(cfg.gates_auto_approve_labels, vec!["docs-only".to_string()]);
         assert!(!cfg.gates_create_issue);
         assert_eq!(cfg.gates_create_issue_timeout_mins, 60.0);
+    }
+
+    #[test]
+    fn defaults_test_cmd_is_exposed_for_forge_fallbacks() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            test_cmd = "npm run typecheck && npm test && npm run build"
+            "#,
+        )
+        .expect("parse");
+
+        assert_eq!(
+            cfg.defaults_test_cmd,
+            "npm run typecheck && npm test && npm run build"
+        );
+
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        let value = fields
+            .get("defaults_test_cmd")
+            .expect("defaults_test_cmd field");
+        match &value.value {
+            Value::Text(cmd) => {
+                assert_eq!(cmd, "npm run typecheck && npm test && npm run build")
+            }
+            _ => panic!("defaults_test_cmd should be Text"),
+        }
     }
 
     #[test]
@@ -1501,6 +1535,7 @@ mod tests {
         // Top-level scalars present
         assert!(fields.contains_key("org_name"));
         assert!(fields.contains_key("slack_default_channel"));
+        assert!(fields.contains_key("defaults_test_cmd"));
         assert!(fields.contains_key("warden_max_retries"));
         // repos array present and shaped
         let repos = fields.get("repos").expect("repos field");
