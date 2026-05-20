@@ -44,7 +44,7 @@ pub struct EventBus {
     subscribers: HashMap<String, Vec<Subscriber>>,
     /// Routing table for system wiring: source_agent → list of target agents.
     /// When an event is published by a source agent, it is also forwarded
-    /// to all target agents in the routing table.
+    /// to target agents that subscribe to that event name.
     routes: HashMap<String, Vec<String>>,
     tracer: Option<Tracer>,
     channel_capacity: usize,
@@ -99,7 +99,7 @@ impl EventBus {
     }
 
     /// Publish an event to all subscribers matching the event name.
-    /// Also applies routing rules to forward events to downstream agents.
+    /// Also applies routing rules to downstream agents with matching event subscriptions.
     /// Filter evaluation is agent-side — the bus delivers to all name-matched subscribers.
     /// Returns the number of successful deliveries.
     pub fn publish(&self, payload: &EventPayload) -> usize {
@@ -152,29 +152,31 @@ impl EventBus {
         delivered
     }
 
-    /// Forward an event to a specific agent by ID.
-    /// Returns true if the agent was found and the event was delivered.
+    /// Forward an event to a specific agent by ID through a matching event subscription.
+    /// Returns true if the agent subscribed to this event and the event was delivered.
     pub fn forward(&self, payload: &EventPayload, target_agent: &str) -> bool {
-        for subs in self.subscribers.values() {
-            for sub in subs {
-                if sub.agent_id == target_agent {
-                    match sub.sender.try_send(payload.clone()) {
-                        Ok(()) => {
-                            if let Some(ref t) = self.tracer {
-                                t.event_delivered(&payload.event_name, target_agent);
-                            }
-                            return true;
+        let Some(subs) = self.subscribers.get(&payload.event_name) else {
+            return false;
+        };
+
+        for sub in subs {
+            if sub.agent_id == target_agent {
+                match sub.sender.try_send(payload.clone()) {
+                    Ok(()) => {
+                        if let Some(ref t) = self.tracer {
+                            t.event_delivered(&payload.event_name, target_agent);
                         }
-                        Err(_) => {
-                            if let Some(ref t) = self.tracer {
-                                t.event_delivery_failed(
-                                    &payload.event_name,
-                                    target_agent,
-                                    "forward failed",
-                                );
-                            }
-                            return false;
+                        return true;
+                    }
+                    Err(_) => {
+                        if let Some(ref t) = self.tracer {
+                            t.event_delivery_failed(
+                                &payload.event_name,
+                                target_agent,
+                                "forward failed",
+                            );
                         }
+                        return false;
                     }
                 }
             }

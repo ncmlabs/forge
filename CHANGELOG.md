@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
 ### Fixed
+- System-arrow routing now preserves typed event boundaries: a routed event is
+  delivered to the downstream agent only when that agent subscribes to the
+  event name. Planner `PostMessage` status events therefore still reach
+  `slack_adapter` but no longer enter `implementer` through its unrelated
+  `ImplementationApproved` subscription (#413).
 - Clone-dev GitHub issue wake path now accepts real nested GitHub
   `issues.opened` payloads, flattens label objects into the internal
   `GithubIssueOpened` routing event, and resolves `test_cmd` from
