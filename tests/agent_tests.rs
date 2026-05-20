@@ -1220,6 +1220,10 @@ fn dev_cycle_implementer_sanitizes_fenced_shell_and_uses_argv() {
         "fix iteration path should pass generated shell through argv"
     );
     assert!(
+        source.contains("no staged source diff after fix; skipping commit"),
+        "fix iteration path should skip source commits when only local dependency state changed"
+    );
+    assert!(
         source.contains("Before writing any file, create its parent directory with mkdir -p"),
         "implementer prompts should require parent directories before heredocs"
     );
@@ -1568,6 +1572,80 @@ agent implementer
         "no-op commit must not emit ImplementationReady: {:?}",
         ctx.event_sink.emitted
     );
+}
+
+#[tokio::test]
+async fn implementer_noop_fix_iteration_retries_tests_without_commit() {
+    let source = r#"
+use
+  llm.reason
+
+event ImplementationReady
+  issue_id: Text
+
+agent implementer
+  memory
+    workdir: Text
+
+  on TestsFailed(workdir: Text)
+    memory.workdir = workdir
+    fix_code = reason "Generate dependency-only fix shell" for implement
+    apply_result = command ["sh", "-c", fix_code] in "{memory.workdir}" timeout 5s
+    when apply_result.sure -> say "fix applied"
+    else -> give "fix_apply_failed: {apply_result}"
+    commit_result = command "cd {memory.workdir} && git add -A && if git diff --cached --quiet; then echo 'no staged source diff after fix; skipping commit'; else git commit -m 'test commit' && git push origin issue-415; fi 2>&1" timeout 5s
+    when commit_result.sure -> say "commit skipped or pushed"
+    else -> give "fix_commit_push_failed: {commit_result}"
+    emit ImplementationReady(issue_id: "415")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default(":")),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let init = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(workdir.path())
+        .output()
+        .expect("git init failed to spawn");
+    assert!(
+        init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent.dispatch("TestsFailed", params).await.unwrap();
+    assert!(
+        result.is_none(),
+        "dependency-only fix should not fail the commit path, got: {:?}",
+        result
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert_eq!(ctx.event_sink.emitted.len(), 1);
+    assert_eq!(ctx.event_sink.emitted[0].name, "ImplementationReady");
 }
 
 // ── T2.1 (#296): Implementer iteration loop tests ──────────────────────────

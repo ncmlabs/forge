@@ -20,7 +20,7 @@ const EVENTS_PATH: &str = "workflows/clone-dev/shared/events.forge";
 const MASTERMIND_PATH: &str = "workflows/clone-dev/shared/mastermind.forge";
 const ROUTER_PATH: &str = "workflows/clone-dev/stage2/label_router.forge";
 
-const TYPESCRIPT_TEST_CMD: &str = "npm run typecheck && npm test && npm run build";
+const TYPESCRIPT_TEST_CMD: &str = "npm ci && npm run typecheck && npm test && npm run build";
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 

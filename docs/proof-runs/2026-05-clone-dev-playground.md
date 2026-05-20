@@ -89,7 +89,7 @@ The relevant default is:
 
 ```toml
 [defaults]
-test_cmd = "npm run typecheck && npm test && npm run build"
+test_cmd = "npm ci && npm run typecheck && npm test && npm run build"
 ```
 
 That command is intentionally TypeScript-specific and must stay aligned with
