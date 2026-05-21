@@ -64,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the declared webhook handler instead of returning `404 unknown webhook`.
   Added a composed clone-dev HTTP regression that proves a nested
   GitHub `issues.opened` payload reaches `IssueAssigned` with the
-  TypeScript playground `test_cmd` (#412).
+  TypeScript playground `test_cmd`; GitHub webhook `ping` handshakes are now
+  accepted without publishing into the typed issue event (#412).
 - Clone-dev TypeScript proof-run guidance and regressions now require
   `npm ci` before typecheck/test/build, and fix iterations with no staged
   source diff skip the source commit path while re-running tests (#415).
