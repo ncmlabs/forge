@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
 ### Fixed
+- Clone-dev implementer repair loops now allow the configured number of
+  `max_iterations` repair attempts before escalating, so a third TypeScript
+  failure can still receive the minimal import fix instead of stopping after
+  diagnosis. Added coverage for duplicate `path` imports plus missing Vitest
+  `beforeAll` imports in the playground proof-run shape (#424).
 - Clone-dev reviewer closeout now carries real issue context into PR drafting,
   repairs existing PR bodies before any merge path, includes a deterministic
   `Closes <repo>#<issue>` reference, and explicitly closes the source issue
