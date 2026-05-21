@@ -1437,6 +1437,110 @@ fn dev_cycle_reviewer_merges_by_branch_not_create_pr_output() {
     );
 }
 
+#[test]
+fn dev_cycle_reviewer_pr_closeout_is_deterministic() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    let normalized = source.replace("\r\n", "\n");
+    assert!(
+        !normalized.contains("Issue(id: issue_id, title: \"close #{issue_id}\", criteria: \"\")"),
+        "reviewer must not draft closeout from placeholder issue context"
+    );
+    for expected in [
+        "pure close_reference",
+        "pure pr_body_needs_fallback",
+        "pure fallback_pr_body",
+        "pure normalize_pr_body",
+        "Closes {repo}#{issue_id}",
+        "## Summary",
+        "## Verification",
+        "{test_cmd}",
+    ] {
+        assert!(
+            normalized.contains(expected),
+            "reviewer closeout should include deterministic {expected}"
+        );
+    }
+    assert!(
+        normalized.contains("title: Text\n  plan: Text\n  criteria: Text\n  branch: Text"),
+        "ImplementationReady/AcceptanceMet should carry task context into reviewer"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_repairs_pr_body_before_any_merge_path() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    let update_idx = source
+        .find("skill.github.update_pr(repo, branch")
+        .expect("reviewer must repair existing PRs by branch");
+    for needle in [
+        "skill.github.merge_pr(repo, branch)",
+        "skill.github.merge_pr(memory.repo, memory.branch)",
+    ] {
+        let merge_idx = source.find(needle).expect("merge path should exist");
+        assert!(
+            update_idx < merge_idx,
+            "PR body repair must happen before merge path {needle}"
+        );
+    }
+    assert!(
+        source.contains("else -> give \"pr_body_repair_failed"),
+        "reviewer should stop if PR body repair is not sure"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_closes_source_issue_after_merge() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    assert!(
+        source
+            .matches("skill.github.close_issue(repo, issue_id)")
+            .count()
+            >= 2,
+        "auto merge paths should close the source issue after merge"
+    );
+    assert!(
+        source.contains("skill.github.close_issue(memory.repo, memory.issue_id)"),
+        "human approval merge path should close the source issue after merge"
+    );
+}
+
+#[tokio::test]
+async fn dev_cycle_pr_body_fallback_replaces_low_signal_llm_draft() {
+    let agents = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    let source = format!(
+        r#"{agents}
+
+fn main
+  body = normalize_pr_body("I need more context before I can write this.", "Document operator workflow", "- README explains setup", "1. Update README\n2. Run checks", "npm test", "passed", "Closes ncmlabs/forge-playground#25")
+  say body
+"#
+    );
+    let program = forge::parser::parse(&source).expect("dev-cycle helpers should parse");
+    let executor = forge::runtime::executor::TaskExecutor::new(program, mock_registry(), None);
+    executor.run().await.expect("fallback helper should run");
+    let output = executor.outputs().join("\n");
+    assert!(
+        output.contains("## Summary"),
+        "fallback body should include Summary, got: {output}"
+    );
+    assert!(
+        output.contains("## Verification"),
+        "fallback body should include Verification, got: {output}"
+    );
+    assert!(
+        output.contains("npm test"),
+        "fallback body should include configured test command, got: {output}"
+    );
+    assert!(
+        output.contains("Closes ncmlabs/forge-playground#25"),
+        "fallback body should include closing reference, got: {output}"
+    );
+    assert!(
+        !output.contains("I need more context"),
+        "fallback body must replace low-signal draft, got: {output}"
+    );
+}
+
 #[tokio::test]
 async fn implementer_failed_generated_shell_blocks_implementation_ready() {
     let source = r#"

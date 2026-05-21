@@ -75,6 +75,7 @@ event IssueAssigned
 event PlanReady
   issue_id: Text
   repo: Text
+  title: Text
   plan: Text
   criteria: Text
   branch: Text
@@ -89,6 +90,7 @@ event PlanReady
 event ImplementationApproved
   issue_id: Text
   repo: Text
+  title: Text
   plan: Text
   criteria: Text
   branch: Text
@@ -110,6 +112,9 @@ event ImplementationRejected
 event ImplementationReady
   issue_id: Text
   repo: Text
+  title: Text
+  plan: Text
+  criteria: Text
   branch: Text
   workdir: Text
   channel: Text
@@ -128,6 +133,9 @@ event TestsFailed
 event AcceptanceMet
   issue_id: Text
   repo: Text
+  title: Text
+  plan: Text
+  criteria: Text
   branch: Text
   workdir: Text
   report: Text
@@ -254,7 +262,7 @@ task draft_pr_description
   needs issue: Issue, changelog: Text
   gives Text
   do
-    result = reason "Write a concise PR description.\n\nIssue: {issue.title}\nAcceptance criteria: {issue.criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Test plan section." for review
+    result = reason "Write a concise PR description using only the facts below. Do not ask for more context.\n\nIssue: {issue.title}\nAcceptance criteria:\n{issue.criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Verification section." for review
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Summary: {issue.title}"
@@ -356,6 +364,54 @@ pure bool_to_decision
     if enabled
       give "enabled"
     give "disabled"
+
+pure close_reference
+  needs repo: Text, issue_id: Text
+  gives Text
+  do
+    give "Closes {repo}#{issue_id}"
+
+pure pr_body_needs_fallback
+  needs draft: Text
+  gives Bool
+  do
+    lower = draft.lower()
+    trimmed = draft.trim()
+    if trimmed == ""
+      give true
+    if lower.contains("need more context")
+      give true
+    if lower.contains("could you provide")
+      give true
+    if not lower.contains("summary")
+      give true
+    has_test_plan = lower.contains("test plan")
+    has_verification = lower.contains("verification")
+    if not has_test_plan and not has_verification
+      give true
+    give false
+
+pure ensure_close_reference
+  needs body: Text, close_ref: Text
+  gives Text
+  do
+    if body.contains(close_ref)
+      give body
+    give "{body}\n\n{close_ref}"
+
+pure fallback_pr_body
+  needs title: Text, criteria: Text, plan: Text, test_cmd: Text, report: Text, close_ref: Text
+  gives Text
+  do
+    give "## Summary\n\nAutomated clone-dev implementation for: {title}\n\nAcceptance criteria:\n{criteria}\n\nPlan executed:\n{plan}\n\n## Verification\n\nResult: {report}\n\nCommand:\n```sh\n{test_cmd}\n```\n\n{close_ref}"
+
+pure normalize_pr_body
+  needs draft: Text, title: Text, criteria: Text, plan: Text, test_cmd: Text, report: Text, close_ref: Text
+  gives Text
+  do
+    if pr_body_needs_fallback(draft)
+      give fallback_pr_body(title, criteria, plan, test_cmd, report, close_ref)
+    give ensure_close_reference(draft, close_ref)
 
 # T5.2 (#303): mastery scoring.
 pure compute_swarm_score
@@ -460,7 +516,7 @@ agent planner
     memory.branch = branch
     emit PostMessage(channel: channel, text: "Plan drafted for {issue_id} in {repo}:\n{plan_text}", thread_ts: "")
     say "[planner] Plan drafted - handing off to gate_two"
-    emit PlanReady(issue_id: issue_id, repo: repo, plan: plan_text, criteria: body, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+    emit PlanReady(issue_id: issue_id, repo: repo, title: title, plan: plan_text, criteria: body, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
   # T10.2 (#368) — revise loop. gate_two emits this on rejection or
   # timeout; we re-plan with the rejection comment as additional
@@ -483,7 +539,7 @@ agent planner
     else -> say "[planner] Revised plan uncertain — proceeding with raw output"
     emit PostMessage(channel: memory.channel, text: "Revised plan ({memory.revision_count}/{memory.max_plan_revisions}) for {memory.issue_id}:\n{memory.plan_text}", thread_ts: "")
     say "[planner] Revised plan emitted - handing off to gate_two"
-    emit PlanReady(issue_id: memory.issue_id, repo: memory.repo, plan: memory.plan_text, criteria: memory.criteria, branch: memory.branch, channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
+    emit PlanReady(issue_id: memory.issue_id, repo: memory.repo, title: memory.title, plan: memory.plan_text, criteria: memory.criteria, branch: memory.branch, channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[planner] Extracting lesson for {task_id} (outcome={outcome})"
@@ -554,12 +610,12 @@ agent implementer
     memory.fix_commit_template = ""
     say "[implementer] ready (config: {memory.config_path})"
 
-  on ImplementationApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
+  on ImplementationApproved(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
     memory.issue_id = issue_id
     memory.repo = repo
     memory.plan = plan
     memory.criteria = criteria
-    memory.title = "close issue {issue_id}"
+    memory.title = title
     memory.branch = branch
     memory.channel = channel
     memory.callback_url = callback_url
@@ -595,7 +651,7 @@ agent implementer
     when commit_result.sure -> say "[implementer] Changes committed and pushed"
     else -> give "commit_push_failed: {commit_result}"
     emit PostMessage(channel: channel, text: "Implementation pushed for {issue_id} on branch {branch}. Running tests next.", thread_ts: "")
-    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, workdir: memory.workdir, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+    emit ImplementationReady(issue_id: issue_id, repo: repo, title: memory.title, plan: memory.plan, criteria: memory.criteria, branch: branch, workdir: memory.workdir, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
   on TestsFailed(issue_id: Text, repo: Text, branch: Text, failures: Text, channel: Text, callback_url: Text, test_cmd: Text)
     memory.iteration = memory.iteration + 1
@@ -627,7 +683,7 @@ agent implementer
     when commit_result.sure -> say "[implementer] Fix committed, or no source diff was produced"
     else -> give "fix_commit_push_failed: {commit_result}"
     say "[implementer] Fix iteration {memory.iteration} for {issue_id} ready. Re-running tests."
-    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, workdir: memory.workdir, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+    emit ImplementationReady(issue_id: issue_id, repo: repo, title: memory.title, plan: memory.plan, criteria: memory.criteria, branch: branch, workdir: memory.workdir, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[implementer] Extracting lesson for {task_id} (outcome={outcome}, iterations={memory.iteration})"
@@ -651,6 +707,9 @@ agent tester
     issue_id: Text
     repo: Text
     branch: Text
+    title: Text
+    plan: Text
+    criteria: Text
     workdir: Text
     channel: Text
     callback_url: Text
@@ -669,6 +728,9 @@ agent tester
     memory.issue_id = ""
     memory.repo = ""
     memory.branch = ""
+    memory.title = ""
+    memory.plan = ""
+    memory.criteria = ""
     memory.workdir = ""
     memory.channel = ""
     memory.callback_url = ""
@@ -679,11 +741,14 @@ agent tester
     memory.repo_slug = ""
     say "[tester] ready"
 
-  on ImplementationReady(issue_id: Text, repo: Text, branch: Text, workdir: Text, channel: Text, callback_url: Text, test_cmd: Text)
+  on ImplementationReady(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, workdir: Text, channel: Text, callback_url: Text, test_cmd: Text)
     if memory.issue_id != issue_id
       memory.test_runs = 0
     memory.issue_id = issue_id
     memory.repo = repo
+    memory.title = title
+    memory.plan = plan
+    memory.criteria = criteria
     memory.branch = branch
     memory.workdir = workdir
     memory.channel = channel
@@ -700,7 +765,7 @@ agent tester
     else -> say "[tester] Tests completed with failures"
     memory.last_test_output = test_output
     report = TestReport(passed: false, failures: test_output, coverage: 0)
-    issue = Issue(id: issue_id, title: branch, criteria: "all tests pass")
+    issue = Issue(id: issue_id, title: title, criteria: criteria)
     acceptance = check_acceptance(issue, report)
     memory.acceptance_result = acceptance
     tcmd = memory.test_cmd
@@ -708,7 +773,7 @@ agent tester
     if acceptance == "none" or acceptance == "minor"
       say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met (first_try: {first_try})"
       emit PostMessage(channel: channel, text: "Tests passed for {issue_id} on {branch}. Moving to review.", thread_ts: "")
-      emit AcceptanceMet(issue_id: issue_id, repo: repo, branch: branch, workdir: workdir, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd, ci_passed_first_try: first_try)
+      emit AcceptanceMet(issue_id: issue_id, repo: repo, title: memory.title, plan: memory.plan, criteria: memory.criteria, branch: branch, workdir: workdir, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd, ci_passed_first_try: first_try)
     if acceptance == "blocking" or acceptance == "needs_human_review" or acceptance == "inconclusive"
       say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
       emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: test_output, channel: channel, callback_url: callback_url, test_cmd: tcmd)
@@ -735,6 +800,9 @@ agent reviewer
     issue_id: Text
     repo: Text
     branch: Text
+    title: Text
+    plan: Text
+    criteria: Text
     workdir: Text
     channel: Text
     callback_url: Text
@@ -763,6 +831,9 @@ agent reviewer
     memory.issue_id = ""
     memory.repo = ""
     memory.branch = ""
+    memory.title = ""
+    memory.plan = ""
+    memory.criteria = ""
     memory.workdir = ""
     memory.channel = ""
     memory.callback_url = ""
@@ -781,12 +852,15 @@ agent reviewer
     memory.config = config.load_clone_dev(memory.config_path)
     say "[reviewer] ready (config: {memory.config_path} merge_pr={memory.config.gates_merge_pr} merge_pr_timeout_mins={memory.config.gates_merge_pr_timeout_mins})"
 
-  on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, workdir: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text, ci_passed_first_try: Bool)
+  on AcceptanceMet(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, workdir: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text, ci_passed_first_try: Bool)
     requires lifecycle == idle on fail: give "review already in progress"
     if memory.issue_id != issue_id
       memory.review_rounds = 0
     memory.issue_id = issue_id
     memory.repo = repo
+    memory.title = title
+    memory.plan = plan
+    memory.criteria = criteria
     memory.branch = branch
     memory.workdir = workdir
     memory.channel = channel
@@ -799,17 +873,22 @@ agent reviewer
     auto_decision = bool_to_decision(repo_cfg.auto_approve)
     memory.auto_decision = auto_decision
     say "[reviewer] Drafting changelog for {issue_id} (auto_decision: {auto_decision})"
-    issue = Issue(id: issue_id, title: "close #{issue_id}", criteria: "")
+    issue = Issue(id: issue_id, title: title, criteria: criteria)
     entry = draft_changelog_entry(issue, branch)
     memory.changelog_entry = entry
     say "[reviewer] Drafting PR description"
-    body = draft_pr_description(issue, entry)
+    draft_body = draft_pr_description(issue, entry)
+    close_ref = close_reference(repo, issue_id)
+    body = normalize_pr_body(draft_body, title, criteria, plan, test_cmd, report, close_ref)
     memory.pr_body = body
     say "[reviewer] Creating PR in {repo} from {branch}"
     pr_url = skill.github.create_pr(repo, branch, "feat({issue_id}): automated implementation", body)
     when pr_url.sure -> say "[reviewer] PR created: {pr_url}"
     else -> say "[reviewer] PR creation uncertain: {pr_url}"
     memory.pr_url = pr_url
+    repair_result = skill.github.update_pr(repo, branch, "feat({issue_id}): automated implementation", body)
+    when repair_result.sure -> say "[reviewer] PR body repaired/verified for {branch}"
+    else -> give "pr_body_repair_failed: reviewer could not repair PR body for {issue_id} in {repo} on branch {branch}: {repair_result}"
     ci_result = skill.github.check_ci(repo, branch)
     when ci_result.sure -> say "[reviewer] CI status: {ci_result}"
     else -> say "[reviewer] CI check uncertain: {ci_result}"
@@ -832,6 +911,9 @@ agent reviewer
       merge_result = skill.github.merge_pr(repo, branch)
       when merge_result.sure -> say "[reviewer] PR merged successfully"
       else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      close_result = skill.github.close_issue(repo, issue_id)
+      when close_result.sure -> say "[reviewer] Source issue {issue_id} closed"
+      else -> say "[reviewer] Source issue close uncertain: {close_result}"
       merge_msg = "AUTO-MERGED: {issue_id} in {repo}. Branch {branch} merged. Approved by knowledge-store."
       emit PostApprovalResult(channel: channel, request_id: issue_id, approved: true, approver: "knowledge-store", summary: merge_msg, thread_ts: "")
       cleanup = skill.github.delete_branch(repo, branch)
@@ -851,6 +933,9 @@ agent reviewer
       merge_result = skill.github.merge_pr(repo, branch)
       when merge_result.sure -> say "[reviewer] PR merged successfully"
       else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      close_result = skill.github.close_issue(repo, issue_id)
+      when close_result.sure -> say "[reviewer] Source issue {issue_id} closed"
+      else -> say "[reviewer] Source issue close uncertain: {close_result}"
       merge_msg = "AUTO-MERGED (gates.merge_pr=false): {issue_id} in {repo}. Branch {branch} merged. No slack approval required."
       emit PostMessage(channel: channel, text: ":robot_face: {merge_msg}", thread_ts: "")
       cleanup = skill.github.delete_branch(repo, branch)
@@ -875,6 +960,9 @@ agent reviewer
       merge_result = skill.github.merge_pr(memory.repo, memory.branch)
       when merge_result.sure -> say "[reviewer] PR merged successfully"
       else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      close_result = skill.github.close_issue(memory.repo, memory.issue_id)
+      when close_result.sure -> say "[reviewer] Source issue {memory.issue_id} closed"
+      else -> say "[reviewer] Source issue close uncertain: {close_result}"
       merge_msg = "MERGED: {memory.issue_id} in {memory.repo}. Branch {memory.branch} merged. Approved by {comment}."
       emit PostApprovalResult(channel: memory.channel, request_id: memory.issue_id, approved: true, approver: comment, summary: merge_msg, thread_ts: "")
       cleanup = skill.github.delete_branch(memory.repo, memory.branch)

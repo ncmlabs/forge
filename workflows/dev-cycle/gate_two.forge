@@ -11,7 +11,7 @@
 # of thread_ts.
 #
 # Flow:
-#   PlanReady(issue_id, repo, plan, criteria, branch, channel,
+#   PlanReady(issue_id, repo, title, plan, criteria, branch, channel,
 #             callback_url, test_cmd)
 #     → if config.gates_start_implementation == false:
 #         auto-emit ImplementationApproved with
@@ -86,6 +86,7 @@ agent gate_two
   memory persistent
     issue_id: Text
     repo: Text
+    title: Text
     plan: Text
     criteria: Text
     branch: Text
@@ -106,6 +107,7 @@ agent gate_two
     memory.config = config.load_clone_dev(memory.config_path)
     memory.issue_id = ""
     memory.repo = ""
+    memory.title = ""
     memory.plan = ""
     memory.criteria = ""
     memory.branch = ""
@@ -117,10 +119,11 @@ agent gate_two
     memory.timeout_ticks = 0
     say "[gate_two] ready (start_implementation={memory.config.gates_start_implementation} timeout_mins={memory.config.gates_start_implementation_timeout_mins})"
 
-  on PlanReady(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
+  on PlanReady(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
     requires lifecycle == idle on fail: give "approval already in flight"
     memory.issue_id = issue_id
     memory.repo = repo
+    memory.title = title
     memory.plan = plan
     memory.criteria = criteria
     memory.branch = branch
@@ -134,9 +137,9 @@ agent gate_two
     if memory.config.gates_start_implementation == false
       memory.decision = "auto"
       say "[gate_two] issue={issue_id} auto-approving (gates_start_implementation=false)"
-      emit ImplementationApproved(issue_id: issue_id, repo: repo, plan: plan, criteria: criteria, branch: branch, channel: channel, callback_url: callback_url, test_cmd: test_cmd, decision_by: "auto (policy)")
+      emit ImplementationApproved(issue_id: issue_id, repo: repo, title: title, plan: plan, criteria: criteria, branch: branch, channel: channel, callback_url: callback_url, test_cmd: test_cmd, decision_by: "auto (policy)")
     if memory.config.gates_start_implementation == true
-      approval_context = "Issue: {issue_id}\nRepo: {repo}\nBranch: {branch}\n\nPlan:\n{plan}\n\nAcceptance criteria:\n{criteria}"
+      approval_context = "Issue: {issue_id}\nTitle: {title}\nRepo: {repo}\nBranch: {branch}\n\nPlan:\n{plan}\n\nAcceptance criteria:\n{criteria}"
       emit PostApproval(channel: memory.approval_channel, title: "Start implementation: {issue_id}", context: approval_context, callback_url: callback_url, request_id: "plan-{issue_id}", thread_ts: "")
       say "[gate_two] issue={issue_id} approval card sent to {memory.approval_channel} — awaiting decision"
       transition to waiting_approval
@@ -149,7 +152,7 @@ agent gate_two
     if approved
       memory.decision = "approved"
       say "[gate_two] issue={memory.issue_id} approved by {comment}"
-      emit ImplementationApproved(issue_id: memory.issue_id, repo: memory.repo, plan: memory.plan, criteria: memory.criteria, branch: memory.branch, channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd, decision_by: comment)
+      emit ImplementationApproved(issue_id: memory.issue_id, repo: memory.repo, title: memory.title, plan: memory.plan, criteria: memory.criteria, branch: memory.branch, channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd, decision_by: comment)
       emit PostMessage(channel: memory.approval_channel, text: ":white_check_mark: Implementation approved for {memory.issue_id} by {comment} — starting implementer.", thread_ts: "")
     if not approved
       memory.decision = "rejected"

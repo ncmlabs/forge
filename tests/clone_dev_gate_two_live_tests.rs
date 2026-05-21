@@ -75,7 +75,7 @@ agent gate_probe
     memory.last_plan_a = ""
     memory.last_plan_b = ""
 
-  on PlanReady(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
+  on PlanReady(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
     memory.plan_count = memory.plan_count + 1
     if memory.plan_count == 1
       memory.last_plan_a = plan
@@ -83,7 +83,7 @@ agent gate_probe
       memory.last_plan_b = plan
     say "[probe] plan_ready#{memory.plan_count} issue={issue_id} plan={plan}"
 
-  on ImplementationApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
+  on ImplementationApproved(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
     say "[probe] approved issue={issue_id} decision_by={decision_by}"
 
   on ImplementationRejected(issue_id: Text, comment: Text, decision_by: Text)

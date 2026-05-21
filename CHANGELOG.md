@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
 ### Fixed
+- Clone-dev reviewer closeout now carries real issue context into PR drafting,
+  repairs existing PR bodies before any merge path, includes a deterministic
+  `Closes <repo>#<issue>` reference, and explicitly closes the source issue
+  after merge as a fallback so seeded issues cannot remain open after a
+  successful PR merge (#421).
 - Clone-dev GitHub issue wake ingestion now uses the same canonical
   wake-secret store for `forge wake` and `forge serve`, so signed
   `/wake/mastermind/github_issue_opened` requests registered by the CLI reach

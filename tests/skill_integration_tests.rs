@@ -94,7 +94,7 @@ fn skill_loader_parses_repo_reference_cli_skills() {
     for (path, expected_name, expected_capabilities) in [
         ("skills/claude-code/SKILL.md", "claude", 4usize),
         ("skills/codex/SKILL.md", "codex", 4usize),
-        ("skills/github/SKILL.md", "github", 13usize),
+        ("skills/github/SKILL.md", "github", 14usize),
     ] {
         let skill = SkillLoader::parse_skill_md(Path::new(path)).unwrap();
         assert_eq!(skill.manifest.name, expected_name);
@@ -167,7 +167,7 @@ fn skill_loader_discovers_multiple_skills() {
 fn skill_loader_parses_github_skill() {
     let skill = SkillLoader::parse_skill_md(Path::new("skills/github/SKILL.md")).unwrap();
     assert_eq!(skill.manifest.name, "github");
-    assert_eq!(skill.manifest.capabilities.len(), 13);
+    assert_eq!(skill.manifest.capabilities.len(), 14);
     assert!(
         skill.manifest.legacy_signature.is_none(),
         "typed skill should not have legacy signature"
@@ -194,6 +194,7 @@ fn skill_loader_parses_github_skill() {
         "list_prs",
         "create_branch",
         "create_pr",
+        "update_pr",
         "check_ci",
         "get_pr",
         "get_pr_reviews",
@@ -266,6 +267,7 @@ fn github_skill_registers_all_capabilities() {
         "skill.github.list_issues",
         "skill.github.create_branch",
         "skill.github.create_pr",
+        "skill.github.update_pr",
         "skill.github.check_ci",
         "skill.github.merge_pr",
         "skill.github.delete_branch",
@@ -931,6 +933,63 @@ fn create_labeled_issue_loads_with_four_text_inputs_and_command_executor() {
             "body".to_string(),
             "labels_csv".to_string()
         ]
+    );
+}
+
+#[test]
+fn update_pr_loads_with_four_text_inputs_and_command_executor() {
+    let skill = SkillLoader::parse_skill_md(Path::new("skills/github/SKILL.md")).unwrap();
+    let cap = skill
+        .manifest
+        .capabilities
+        .iter()
+        .find(|c| c.name == "update_pr")
+        .expect("update_pr capability must be declared");
+    assert_eq!(
+        cap.signature.inputs.len(),
+        4,
+        "expected (repo, selector, title, body)"
+    );
+    for (i, ty) in cap.signature.inputs.iter().enumerate() {
+        assert!(
+            matches!(ty, forge::types::ForgeType::Text),
+            "input {} must be Text, got {:?}",
+            i,
+            ty
+        );
+    }
+    assert!(
+        matches!(cap.signature.output, forge::types::ForgeType::Text),
+        "output must be Text"
+    );
+    let executor = cap
+        .executor
+        .as_ref()
+        .expect("update_pr must have a deterministic command executor");
+    assert!(
+        matches!(
+            executor.kind,
+            forge::runtime::skill::SkillExecutorKind::Command
+        ),
+        "executor kind must be Command"
+    );
+    assert_eq!(
+        executor.params,
+        vec![
+            "repo".to_string(),
+            "selector".to_string(),
+            "title".to_string(),
+            "body".to_string()
+        ]
+    );
+    let joined = executor.argv.join(" ");
+    assert!(
+        joined.contains("pr edit")
+            && joined.contains("{selector}")
+            && joined.contains("--body")
+            && joined.contains("{body}"),
+        "argv must repair PR title/body through gh pr edit, got: {:?}",
+        executor.argv
     );
 }
 
