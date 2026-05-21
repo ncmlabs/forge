@@ -271,7 +271,7 @@ task diagnose_failures
   needs failures: Text, plan: Text, iteration: Number
   gives Text
   do
-    result = reason "You are diagnosing test failures (attempt {iteration}).\n\nOriginal plan:\n{plan}\n\nTest output:\n{failures}\n\nProvide a concise diagnosis: 1) Root cause of each failure 2) Which plan step is affected 3) Recommended fix approach." for implement
+    result = reason "You are diagnosing test failures (repair attempt {iteration}).\n\nOriginal plan:\n{plan}\n\nTest output:\n{failures}\n\nProvide a concise diagnosis: 1) Root cause of each failure 2) Which file and plan step are affected 3) The smallest source edit that should fix the current failure. If the failure is a TypeScript import or missing test-runner symbol error, call out the exact import line to consolidate or extend. Prefer repairing the failing file over rewriting fixtures, seed data, or unrelated tests." for implement
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Diagnosis inconclusive — failures: {failures}"
@@ -661,13 +661,13 @@ agent implementer
     memory.last_diagnosis = diagnosis
     memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\n{diagnosis}"
     say "[implementer] Diagnosis: {diagnosis}"
-    if memory.iteration >= memory.max_iterations
+    if memory.iteration > memory.max_iterations
       say "[implementer] Max iterations ({memory.max_iterations}) reached for {issue_id}. Escalating."
       escalate_msg = "ESCALATION: Issue {issue_id} in {repo} failed after {memory.max_iterations} fix attempts. Branch: {branch}. Iteration count: {memory.iteration}. Last diagnosis: {diagnosis}. Last failure output: {failures}"
       emit RequestHuman(channel: channel, context: escalate_msg, urgency: "high", thread_ts: "")
       escalate to lead
       give "escalated"
-    fix_prompt = "Fix the test failures for issue {issue_id}.\n\nOriginal plan:\n{memory.plan}\n\nDiagnosis of current failures:\n{diagnosis}\n\nRaw test output:\n{failures}\n\nGenerate ONLY executable POSIX shell commands (cat heredocs, sed, etc.) to fix the issues. Before writing any file, create its parent directory with mkdir -p when the directory may not already exist. No markdown fences, no explanations."
+    fix_prompt = "Fix the test failures for issue {issue_id} with the smallest targeted source edit.\n\nOriginal plan:\n{memory.plan}\n\nDiagnosis of current failures:\n{diagnosis}\n\nRaw test output:\n{failures}\n\nRules:\n- Edit the file named by the current compiler/test error when one is present.\n- Preserve existing tests and seed data unless the failing assertion proves they are wrong.\n- For TypeScript duplicate import errors, consolidate imports instead of adding another import for the same identifier.\n- For missing Vitest globals such as beforeAll, afterAll, beforeEach, afterEach, describe, expect, or it, add the missing symbol to the existing vitest import list.\n- Do not rewrite unrelated files to mask a local import or typecheck error.\n\nGenerate ONLY executable POSIX shell commands (cat heredocs, sed, etc.) to fix the issues. Before writing any file, create its parent directory with mkdir -p when the directory may not already exist. No markdown fences, no explanations."
     fix_code = reason fix_prompt for implement
     when fix_code.sure -> say "[implementer] Fix generated"
     else -> say "[implementer] Fix generation uncertain"

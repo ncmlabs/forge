@@ -1105,7 +1105,7 @@ agent impl_agent
 
   on TestsFailed(issue_id: Text, failures: Text)
     memory.iteration = memory.iteration + 1
-    if memory.iteration >= 3
+    if memory.iteration > 3
       say "escalating"
       escalate to lead
       give "escalated"
@@ -1147,12 +1147,13 @@ agent impl_agent
         p
     };
 
-    // Two iterations — each emits exactly one ImplementationReady, nothing else
+    // Three iterations — each emits exactly one ImplementationReady, nothing else
+    agent.dispatch("TestsFailed", params()).await.unwrap();
     agent.dispatch("TestsFailed", params()).await.unwrap();
     agent.dispatch("TestsFailed", params()).await.unwrap();
     {
         let ctx = agent.context().lock().unwrap();
-        assert_eq!(ctx.event_sink.emitted.len(), 2);
+        assert_eq!(ctx.event_sink.emitted.len(), 3);
         for evt in &ctx.event_sink.emitted {
             assert_eq!(
                 evt.name, "ImplementationReady",
@@ -1162,7 +1163,7 @@ agent impl_agent
         assert!(ctx.event_sink.escalations.is_empty());
     }
 
-    // Third iteration — escalates, no ImplementationReady emitted
+    // Fourth failure — the three configured repair attempts are consumed.
     let result = agent.dispatch("TestsFailed", params()).await.unwrap();
     assert!(
         matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated"))
@@ -1171,8 +1172,8 @@ agent impl_agent
         let ctx = agent.context().lock().unwrap();
         assert_eq!(
             ctx.event_sink.emitted.len(),
-            2,
-            "iteration 3 must not emit (give exits before emit)"
+            3,
+            "failure after the third repair must not emit"
         );
         assert_eq!(ctx.event_sink.escalations, vec!["lead"]);
     }
@@ -1226,6 +1227,14 @@ fn dev_cycle_implementer_sanitizes_fenced_shell_and_uses_argv() {
     assert!(
         source.contains("Before writing any file, create its parent directory with mkdir -p"),
         "implementer prompts should require parent directories before heredocs"
+    );
+    assert!(
+        source.contains("For TypeScript duplicate import errors, consolidate imports"),
+        "fix prompt should tell implementer to repair duplicate TypeScript imports locally"
+    );
+    assert!(
+        source.contains("add the missing symbol to the existing vitest import list"),
+        "fix prompt should tell implementer to extend existing Vitest imports"
     );
 }
 
@@ -1752,6 +1761,178 @@ agent implementer
     assert_eq!(ctx.event_sink.emitted[0].name, "ImplementationReady");
 }
 
+#[tokio::test]
+async fn final_allowed_repair_attempt_handles_typescript_import_failure_locally() {
+    let source = r#"
+use
+  llm.reason
+  text.replace
+
+event ImplementationReady
+  issue_id: Text
+
+event RequestHuman
+  channel: Text
+  context: Text
+  urgency: Text
+  thread_ts: Text
+
+pure strip_shell_fences
+  needs script: Text
+  gives Text
+  do
+    s1 = text.replace(script, "```bash\n", "")
+    s2 = text.replace(s1, "```sh\n", "")
+    s3 = text.replace(s2, "```shell\n", "")
+    s4 = text.replace(s3, "```\n", "")
+    s5 = text.replace(s4, "```", "")
+    give s5
+
+agent implementer
+  memory
+    iteration: Number
+    max_iterations: Number
+    workdir: Text
+    plan: Text
+    last_diagnosis: Text
+    iteration_log: Text
+
+  on start
+    memory.iteration = 2
+    memory.max_iterations = 3
+    memory.plan = "repair TypeScript proof-run test"
+    memory.last_diagnosis = ""
+    memory.iteration_log = ""
+
+  on TestsFailed(workdir: Text, failures: Text)
+    memory.workdir = workdir
+    memory.iteration = memory.iteration + 1
+    diagnosis = reason "diagnose {failures}" for implement
+    memory.last_diagnosis = diagnosis
+    memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\n{diagnosis}"
+    if memory.iteration > memory.max_iterations
+      emit RequestHuman(channel: "C", context: "ESCALATION: Last failure output: {failures}", urgency: "high", thread_ts: "")
+      escalate to lead
+      give "escalated"
+    fix_code = reason "fix {failures}" for implement
+    stripped_fix_code = strip_shell_fences(fix_code)
+    clean_fix_code = stripped_fix_code.trim()
+    if clean_fix_code == ""
+      give "fix_apply_failed: empty generated shell after fence normalization"
+    apply_result = command ["sh", "-c", clean_fix_code] in "{memory.workdir}" timeout 5s
+    when apply_result.sure -> say "fix applied"
+    else -> give "fix_apply_failed: {apply_result}"
+    emit ImplementationReady(issue_id: "424")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let repair_shell = r#"node <<'NODE'
+const fs = require('fs');
+const file = 'tests/api.test.ts';
+let src = fs.readFileSync(file, 'utf8');
+src = src.replace(
+  'import { afterEach, beforeEach, describe, expect, it } from "vitest";',
+  'import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";'
+);
+src = src.replace("import * as path from 'path';\n", "");
+fs.writeFileSync(file, src);
+NODE"#;
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_responses_sequence(vec![
+            "root cause: duplicate path import and missing beforeAll in tests/api.test.ts"
+                .to_string(),
+            repair_shell.to_string(),
+        ])),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(workdir.path().join("tests")).unwrap();
+    std::fs::create_dir_all(workdir.path().join("data")).unwrap();
+    let api_test = r#"import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildServer } from "../src/server/app.js";
+import { ProofRunStore } from "../src/server/store.js";
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+const seedPath = path.resolve(__dirname, '../data/proof-runs.seed.json');
+const dataPath = path.resolve(__dirname, '../data/proof-runs.json');
+
+beforeAll(() => {
+  fs.copyFileSync(seedPath, dataPath);
+});
+"#;
+    std::fs::write(workdir.path().join("tests/api.test.ts"), api_test).unwrap();
+    std::fs::write(
+        workdir.path().join("data/proof-runs.seed.json"),
+        r#"{"runs":[]}"#,
+    )
+    .unwrap();
+    let seed_before =
+        std::fs::read_to_string(workdir.path().join("data/proof-runs.seed.json")).unwrap();
+
+    agent.dispatch("start", HashMap::new()).await.unwrap();
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+    params.insert(
+        "failures".into(),
+        ConfidentValue::deterministic(Value::Text(
+            "tests/api.test.ts(3,8): error TS2300: Duplicate identifier 'path'.\n\
+tests/api.test.ts(9,13): error TS2300: Duplicate identifier 'path'.\n\
+tests/api.test.ts(14,1): error TS2304: Cannot find name 'beforeAll'."
+                .into(),
+        )),
+    );
+
+    let result = agent.dispatch("TestsFailed", params).await.unwrap();
+    assert!(
+        result.is_none(),
+        "final allowed repair attempt should apply a fix, got: {:?}",
+        result
+    );
+    let fixed = std::fs::read_to_string(workdir.path().join("tests/api.test.ts")).unwrap();
+    assert!(
+        fixed.contains(
+            "import { afterEach, beforeAll, beforeEach, describe, expect, it } from \"vitest\";"
+        ),
+        "Vitest import should include beforeAll, got: {fixed}"
+    );
+    assert!(
+        !fixed.contains("import * as path from 'path';"),
+        "duplicate path import should be removed, got: {fixed}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workdir.path().join("data/proof-runs.seed.json")).unwrap(),
+        seed_before,
+        "repair must not rewrite unrelated seed data"
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert_eq!(ctx.event_sink.emitted.len(), 1);
+    assert_eq!(ctx.event_sink.emitted[0].name, "ImplementationReady");
+    assert!(ctx.event_sink.escalations.is_empty());
+}
+
 // ── T2.1 (#296): Implementer iteration loop tests ──────────────────────────
 
 /// T2.1: iteration_log accumulates a diagnosis entry per TestsFailed dispatch.
@@ -1845,7 +2026,7 @@ agent impl_agent
 
   on TestsFailed(issue_id: Text, failures: Text)
     memory.iteration = memory.iteration + 1
-    if memory.iteration >= memory.max_iterations
+    if memory.iteration > memory.max_iterations
       escalate to lead
       give "escalated"
     emit ImplementationReady(issue_id: issue_id)
@@ -1887,15 +2068,16 @@ agent impl_agent
     // Fire on start to initialize max_iterations = 2
     agent.dispatch("start", HashMap::new()).await.unwrap();
 
-    // Iteration 1 — below cap, should emit
+    // Iterations 1 and 2 — both configured repair attempts should emit.
+    agent.dispatch("TestsFailed", params()).await.unwrap();
     agent.dispatch("TestsFailed", params()).await.unwrap();
     {
         let ctx = agent.context().lock().unwrap();
-        assert_eq!(ctx.event_sink.emitted.len(), 1, "iteration 1 should emit");
+        assert_eq!(ctx.event_sink.emitted.len(), 2, "two repairs should emit");
         assert!(ctx.event_sink.escalations.is_empty());
     }
 
-    // Iteration 2 — hits cap (>= 2), should escalate
+    // Third failure — the two configured repair attempts are consumed.
     let result = agent.dispatch("TestsFailed", params()).await.unwrap();
     assert!(
         matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated")),
@@ -1905,8 +2087,8 @@ agent impl_agent
         let ctx = agent.context().lock().unwrap();
         assert_eq!(
             ctx.event_sink.emitted.len(),
-            1,
-            "iteration 2 must not emit (give exits before emit)"
+            2,
+            "failure after the configured repairs must not emit"
         );
         assert_eq!(ctx.event_sink.escalations, vec!["lead"]);
     }
@@ -1931,7 +2113,7 @@ agent impl_agent
     memory.iteration = memory.iteration + 1
     memory.last_diagnosis = "root cause: {failures}"
     memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\nroot cause: {failures}"
-    if memory.iteration >= memory.max_iterations
+    if memory.iteration > memory.max_iterations
       escalate to lead
       give "escalated"
     emit ImplementationReady(issue_id: issue_id)
@@ -1973,7 +2155,9 @@ agent impl_agent
     // Fire on start to initialize max_iterations = 1
     agent.dispatch("start", HashMap::new()).await.unwrap();
 
-    // Cap at 1 — first dispatch escalates
+    // Cap at 1 — first dispatch uses the one allowed repair.
+    agent.dispatch("TestsFailed", params()).await.unwrap();
+    // Next failure escalates with the accumulated state preserved.
     let result = agent.dispatch("TestsFailed", params()).await.unwrap();
     assert!(
         matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated"))
@@ -1983,13 +2167,13 @@ agent impl_agent
         // Verify memory has the full iteration state for escalation message
         let iteration = ctx.memory.get("iteration").unwrap();
         assert!(
-            matches!(&iteration.value, Value::Number(n) if *n == 1.0),
-            "iteration count must be 1"
+            matches!(&iteration.value, Value::Number(n) if *n == 2.0),
+            "iteration count must be 2"
         );
         let log = ctx.memory.get("iteration_log").unwrap();
         assert!(
-            matches!(&log.value, Value::Text(s) if s.contains("--- Iteration 1 ---")),
-            "iteration_log must contain the iteration marker"
+            matches!(&log.value, Value::Text(s) if s.contains("--- Iteration 1 ---") && s.contains("--- Iteration 2 ---")),
+            "iteration_log must contain both iteration markers"
         );
         let diag = ctx.memory.get("last_diagnosis").unwrap();
         assert!(
