@@ -145,6 +145,12 @@ pub struct ForgeStorage {
 pub type SharedStorage = Arc<ForgeStorage>;
 
 impl ForgeStorage {
+    /// Database file used for wake-webhook HMAC secrets.
+    ///
+    /// Keep this aligned between `forge wake` and `forge serve`: webhook
+    /// registration is operator-facing CLI state, not per-server runtime data.
+    pub const WAKE_SECRETS_DB: &'static str = "store.redb";
+
     /// Resolve the storage root directory using the following precedence:
     /// 1. `FORGE_STORAGE_ROOT` env var
     /// 2. `[storage] root` from config
@@ -183,6 +189,15 @@ impl ForgeStorage {
         let root = Self::resolve_root(config, knowledge_store_path);
         std::fs::create_dir_all(&root).map_err(StorageError::Io)?;
         Self::open(&root.join(filename))
+    }
+
+    /// Open the canonical wake-secret store used by both `forge wake` and
+    /// `forge serve` for `/wake/{agent}/{trigger}` HMAC lookups.
+    pub fn open_wake_from_config(
+        config: Option<&StorageConfig>,
+        knowledge_store_path: Option<&str>,
+    ) -> Result<Self, StorageError> {
+        Self::open_from_config(config, knowledge_store_path, Self::WAKE_SECRETS_DB)
     }
 
     /// Open (or create) a redb database at the given path.
