@@ -177,6 +177,48 @@ async fn tampered_body_returns_401_and_traces_rejection() {
 }
 
 #[tokio::test]
+async fn github_ping_returns_202_and_does_not_publish_typed_webhook() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Arc::new(ForgeStorage::open(&dir.path().join("db.redb")).unwrap());
+    storage
+        .upsert_wake_secret("mastermind", "github_issue_opened", "ping-fixture")
+        .unwrap();
+    let driver = WebhookDriver::new(vec![reg(
+        "mastermind",
+        "github_issue_opened",
+        "GithubIssuesWebhook",
+        ScheduleMode::Spawn,
+    )]);
+    let rl = Arc::new(WebhookRateLimiter::default_for_webhooks());
+    let (base, mut events) = start_test_server(driver, storage, rl).await;
+
+    let body = br#"{"zen":"Avoid administrative distraction.","hook_id":12345}"#;
+    let sig = format!("sha256={}", hmac_hex("ping-fixture", body));
+    let res = reqwest::Client::new()
+        .post(format!("{base}/wake/mastermind/github_issue_opened"))
+        .header("Content-Type", "application/json")
+        .header("X-GitHub-Event", "ping")
+        .header("X-Hub-Signature-256", sig)
+        .body(body.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 202);
+
+    assert!(
+        next_event(&mut events, "webhook_ping_ignored", Duration::from_secs(1))
+            .await
+            .is_some()
+    );
+    assert!(
+        next_event(&mut events, "webhook_received", Duration::from_millis(200))
+            .await
+            .is_none(),
+        "ping must not publish the typed webhook event"
+    );
+}
+
+#[tokio::test]
 async fn unknown_secret_returns_404() {
     let dir = tempfile::tempdir().unwrap();
     let storage = Arc::new(ForgeStorage::open(&dir.path().join("db.redb")).unwrap());

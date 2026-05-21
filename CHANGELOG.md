@@ -58,6 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
 ### Fixed
+- Clone-dev GitHub issue wake ingestion now uses the same canonical
+  wake-secret store for `forge wake` and `forge serve`, so signed
+  `/wake/mastermind/github_issue_opened` requests registered by the CLI reach
+  the declared webhook handler instead of returning `404 unknown webhook`.
+  Added a composed clone-dev HTTP regression that proves a nested
+  GitHub `issues.opened` payload reaches `IssueAssigned` with the
+  TypeScript playground `test_cmd`; GitHub webhook `ping` handshakes are now
+  accepted without publishing into the typed issue event (#412).
 - Clone-dev TypeScript proof-run guidance and regressions now require
   `npm ci` before typecheck/test/build, and fix iterations with no staged
   source diff skip the source commit path while re-running tests (#415).

@@ -1490,6 +1490,27 @@ async fn handle_wake_webhook(
         }
     };
 
+    // GitHub sends a `ping` payload when a webhook is created. That body is
+    // intentionally not shaped like the later `issues` payloads, so accept the
+    // verified handshake without publishing it into the typed FORGE event.
+    if headers
+        .get("x-github-event")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|event| event.eq_ignore_ascii_case("ping"))
+    {
+        emit_wake_event(
+            &state,
+            "webhook_ping_ignored",
+            serde_json::json!({
+                "agent": agent_name,
+                "trigger": trigger_name,
+                "provider": "github",
+                "bytes_len": body.len(),
+            }),
+        );
+        return (StatusCode::ACCEPTED, "accepted").into_response();
+    }
+
     // 6. If `mode: wake`, rehydrate the target agent before publishing so the
     // rehydrated specialist is subscribed when the event fans out.
     let mut rehydrated = false;

@@ -636,7 +636,7 @@ fn open_forge_storage(
     let storage = forge::runtime::storage::ForgeStorage::open_from_config(
         config.storage.as_ref(),
         None,
-        "store.redb",
+        forge::runtime::storage::ForgeStorage::WAKE_SECRETS_DB,
     )
     .map_err(|e| anyhow::anyhow!("failed to open storage: {}", e))?;
     Ok(Arc::new(storage))
@@ -1405,6 +1405,16 @@ async fn serve_program(
                 executor
             }
         };
+        let wake_storage = match forge::runtime::storage::ForgeStorage::open_wake_from_config(
+            config.storage.as_ref(),
+            None,
+        ) {
+            Ok(storage) => Some(std::sync::Arc::new(storage)),
+            Err(e) => {
+                eprintln!("Warning: could not open wake storage: {e}");
+                None
+            }
+        };
 
         // Build embedding provider if [embeddings] is configured (#50)
         let executor = if let Some(ref embed_config) = config.embeddings {
@@ -1548,6 +1558,8 @@ async fn serve_program(
         }
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage.clone());
+        }
+        if let Some(storage) = wake_storage {
             server = server.with_wake_storage(storage);
         }
         if let Some(topo) = topology {
@@ -1757,6 +1769,16 @@ async fn serve_with_watch(
                 executor
             }
         };
+        let wake_storage = match forge::runtime::storage::ForgeStorage::open_wake_from_config(
+            config.storage.as_ref(),
+            None,
+        ) {
+            Ok(storage) => Some(std::sync::Arc::new(storage)),
+            Err(e) => {
+                eprintln!("Warning: could not open wake storage: {e}");
+                None
+            }
+        };
 
         // Build embedding provider if [embeddings] is configured (#50)
         let executor = if let Some(ref embed_config) = config.embeddings {
@@ -1896,6 +1918,8 @@ async fn serve_with_watch(
         }
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage.clone());
+        }
+        if let Some(storage) = wake_storage {
             server = server.with_wake_storage(storage);
         }
         if let Some(topo) = topology {
