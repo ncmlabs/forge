@@ -78,7 +78,7 @@ agent gate_probe
   subscribe PostApproval
   subscribe PostMessage
 
-  on ImplementationApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
+  on ImplementationApproved(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
     say "[probe] approved issue={issue_id} decision_by={decision_by}"
 
   on ImplementationRejected(issue_id: Text, comment: Text, decision_by: Text)
@@ -309,6 +309,7 @@ async fn fire_plan_ready(h: &Harness, issue_id: &str, repo: &str, branch: &str, 
     let mut fields = HashMap::new();
     fields.insert("issue_id".to_string(), cv_text(issue_id));
     fields.insert("repo".to_string(), cv_text(repo));
+    fields.insert("title".to_string(), cv_text("Live smoke title"));
     fields.insert(
         "plan".to_string(),
         cv_text("1. Add a /hello GET endpoint.\n2. Write a unit test.\n3. Wire the route."),

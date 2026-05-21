@@ -17,6 +17,13 @@ capabilities:
   - name: create_pr
     inputs: [Text, Text, Text, Text]
     output: Text
+  - name: update_pr
+    inputs: [Text, Text, Text, Text]
+    output: Text
+    params: [repo, selector, title, body]
+    executor:
+      kind: command
+      argv: [gh, pr, edit, "{selector}", -R, "{repo}", --title, "{title}", --body, "{body}"]
   - name: create_labeled_issue
     inputs: [Text, Text, Text, Text]
     output: Text
@@ -148,6 +155,17 @@ gh pr create -R "$repo" --head "$branch" --title "$title" --body "$body"
 To target a different base branch, append `--base "development"`.
 
 Return the PR URL printed by `gh` on success.
+
+### `update_pr(repo, selector, title, body)`
+
+Update an existing pull request selected by branch name, PR number, or URL.
+Use this after create/reuse flows to repair stale PR bodies before merge.
+
+```bash
+gh pr edit "$selector" -R "$repo" --title "$title" --body "$body"
+```
+
+Return the `gh` output on success.
 
 ### `create_labeled_issue(repo, title, body, labels_csv)`
 

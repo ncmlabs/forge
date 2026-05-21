@@ -110,7 +110,7 @@ agent gate_probe
   subscribe PostMessage
   subscribe WardenEscalation
 
-  on ImplementationApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
+  on ImplementationApproved(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
     memory.last_issue = issue_id
     say "[probe] approved issue={issue_id} repo={repo} branch={branch} decision_by={decision_by}"
 
@@ -154,12 +154,12 @@ agent gate_probe
   on start
     memory.plan_ready_count = 0
 
-  on PlanReady(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
+  on PlanReady(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
     memory.last_issue = issue_id
     memory.plan_ready_count = memory.plan_ready_count + 1
     say "[probe] plan_ready issue={issue_id} count={memory.plan_ready_count}"
 
-  on ImplementationApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
+  on ImplementationApproved(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
     memory.last_issue = issue_id
     say "[probe] approved issue={issue_id} repo={repo} branch={branch} decision_by={decision_by}"
 
@@ -340,6 +340,7 @@ async fn fire_plan_ready(h: &Harness, issue_id: &str, repo: &str, branch: &str, 
     let mut fields = HashMap::new();
     fields.insert("issue_id".to_string(), cv_text(issue_id));
     fields.insert("repo".to_string(), cv_text(repo));
+    fields.insert("title".to_string(), cv_text("Test title"));
     fields.insert(
         "plan".to_string(),
         cv_text("1. Do thing.\n2. Test thing.\n3. Ship thing."),
