@@ -24,6 +24,13 @@ capabilities:
     executor:
       kind: command
       argv: [gh, pr, edit, "{selector}", -R, "{repo}", --title, "{title}", --body, "{body}"]
+  - name: get_pr_for_branch
+    inputs: [Text, Text]
+    output: Text
+    params: [repo, branch]
+    executor:
+      kind: command
+      argv: [gh, pr, view, "{branch}", -R, "{repo}", --json, "number,url,state,headRefName,baseRefName,title,body"]
   - name: create_labeled_issue
     inputs: [Text, Text, Text, Text]
     output: Text
@@ -166,6 +173,16 @@ gh pr edit "$selector" -R "$repo" --title "$title" --body "$body"
 ```
 
 Return the `gh` output on success.
+
+### `get_pr_for_branch(repo, branch)`
+
+Fetch the pull request associated with a branch selector.
+
+```bash
+gh pr view "$branch" -R "$repo" --json number,url,state,headRefName,baseRefName,title,body
+```
+
+Return the JSON output on success. Use this after uncertain PR creation to recover the existing PR URL and current body.
 
 ### `create_labeled_issue(repo, title, body, labels_csv)`
 

@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
 ### Fixed
+- Clone-dev reviewer Gate 3 now checkpoints repaired PR and CI state before
+  expensive PR-history review, skips diff characterization on trusted green
+  human-approval paths, and can recover an existing branch PR after restart to
+  emit approval or escalate deterministically with recovered PR context (#426).
 - Clone-dev implementer repair loops now allow the configured number of
   `max_iterations` repair attempts before escalating, so a third TypeScript
   failure can still receive the minimal import fix instead of stopping after
