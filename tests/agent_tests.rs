@@ -1513,6 +1513,54 @@ fn dev_cycle_reviewer_closes_source_issue_after_merge() {
     );
 }
 
+#[test]
+fn dev_cycle_reviewer_checkpoints_before_expensive_history() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    let checkpoint_idx = source
+        .find("memory.review_checkpoint = \"pr_ready\"")
+        .expect("reviewer should checkpoint PR/CI readiness");
+    let history_idx = source
+        .find("say \"[reviewer] Consulting PR history")
+        .expect("reviewer should still have history consultation path");
+    assert!(
+        checkpoint_idx < history_idx,
+        "reviewer must persist PR/CI readiness before expensive history work"
+    );
+    assert!(
+        source.contains("skill.github.get_pr_for_branch(repo, branch)"),
+        "reviewer should recover the concrete PR state after create/update"
+    );
+    assert!(
+        source.contains("trusted_green_review_path("),
+        "reviewer should have a fast Gate-3 path for trusted green reviews"
+    );
+    assert!(
+        source.contains("Trusted green path skipped PR history and emitted Gate 3 approval"),
+        "trusted green path should emit approval before diff characterization"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_recovers_pending_gate_three_on_start() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    assert!(
+        source.contains("memory persistent"),
+        "reviewer memory must persist across warden restarts"
+    );
+    for expected in [
+        "restored_checkpoint == \"pr_ready\"",
+        "skill.github.get_pr_for_branch(memory.repo, memory.branch)",
+        "skill.github.check_ci(memory.repo, memory.branch)",
+        "Recovered Gate 3 approval request emitted",
+        "reviewer_recovery_ci_blocked",
+    ] {
+        assert!(
+            source.contains(expected),
+            "reviewer recovery path missing {expected}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn dev_cycle_pr_body_fallback_replaces_low_signal_llm_draft() {
     let agents = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();

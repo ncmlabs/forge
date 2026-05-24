@@ -94,7 +94,7 @@ fn skill_loader_parses_repo_reference_cli_skills() {
     for (path, expected_name, expected_capabilities) in [
         ("skills/claude-code/SKILL.md", "claude", 4usize),
         ("skills/codex/SKILL.md", "codex", 4usize),
-        ("skills/github/SKILL.md", "github", 14usize),
+        ("skills/github/SKILL.md", "github", 15usize),
     ] {
         let skill = SkillLoader::parse_skill_md(Path::new(path)).unwrap();
         assert_eq!(skill.manifest.name, expected_name);
@@ -167,7 +167,7 @@ fn skill_loader_discovers_multiple_skills() {
 fn skill_loader_parses_github_skill() {
     let skill = SkillLoader::parse_skill_md(Path::new("skills/github/SKILL.md")).unwrap();
     assert_eq!(skill.manifest.name, "github");
-    assert_eq!(skill.manifest.capabilities.len(), 14);
+    assert_eq!(skill.manifest.capabilities.len(), 15);
     assert!(
         skill.manifest.legacy_signature.is_none(),
         "typed skill should not have legacy signature"
@@ -195,6 +195,7 @@ fn skill_loader_parses_github_skill() {
         "create_branch",
         "create_pr",
         "update_pr",
+        "get_pr_for_branch",
         "check_ci",
         "get_pr",
         "get_pr_reviews",
@@ -268,6 +269,7 @@ fn github_skill_registers_all_capabilities() {
         "skill.github.create_branch",
         "skill.github.create_pr",
         "skill.github.update_pr",
+        "skill.github.get_pr_for_branch",
         "skill.github.check_ci",
         "skill.github.merge_pr",
         "skill.github.delete_branch",
