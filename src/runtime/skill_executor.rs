@@ -17,6 +17,12 @@ use crate::runtime::skill_registry::SharedSkillRegistry;
 use crate::tracer::LLMResponseInfo;
 use crate::tracer::Tracer;
 
+const SLACK_SECTION_TEXT_LIMIT: usize = 3000;
+const SLACK_APPROVAL_SECTION_CHUNK: usize = 2900;
+const SLACK_MESSAGE_BLOCK_LIMIT: usize = 50;
+const SLACK_APPROVAL_TRUNCATION_NOTE: &str =
+    "_Approval body truncated for Slack Block Kit limits._";
+
 /// Executes skills by running an agentic loop:
 /// LLM reads skill instructions + args -> requests tool calls ->
 /// tools execute -> results returned to LLM -> repeat until done.
@@ -203,11 +209,9 @@ impl SkillExecutor {
                     });
                 }
 
-                let text = apply_result_mapping(
-                    executor.result.as_ref(),
-                    &stdout,
-                    &format!("{}.{}", skill.manifest.name, method),
-                )?;
+                let name = format!("{}.{}", skill.manifest.name, method);
+                let text = apply_result_mapping(executor.result.as_ref(), &stdout, &name)
+                    .map_err(|err| augment_skill_error(err, &name, &stdout, &argv))?;
                 Ok(ConfidentValue::from_skill(
                     Value::Text(text),
                     skill.manifest.default_confidence,
@@ -538,6 +542,30 @@ fn lookup_template_value(
         });
     }
 
+    if let Some(spec) = key.strip_prefix("slack_approval_blocks:") {
+        let (text_key, request_id_key) =
+            spec.split_once(':')
+                .ok_or_else(|| SkillError::ExecutionFailed {
+                    name: "deterministic_skill".to_string(),
+                    reason: "slack_approval_blocks requires text and request_id keys".to_string(),
+                })?;
+        let text = lookup_template_value(text_key, params, args)?;
+        let request_id = lookup_template_value(request_id_key, params, args)?;
+        return build_slack_approval_blocks(&text, &request_id);
+    }
+
+    if let Some(spec) = key.strip_prefix("slack_approval_fallback:") {
+        let (text_key, request_id_key) =
+            spec.split_once(':')
+                .ok_or_else(|| SkillError::ExecutionFailed {
+                    name: "deterministic_skill".to_string(),
+                    reason: "slack_approval_fallback requires text and request_id keys".to_string(),
+                })?;
+        let text = lookup_template_value(text_key, params, args)?;
+        let request_id = lookup_template_value(request_id_key, params, args)?;
+        return Ok(slack_approval_fallback_text(&text, &request_id));
+    }
+
     if let Some(value) = args.get(key) {
         return Ok(value.value.to_string());
     }
@@ -595,6 +623,170 @@ fn apply_result_mapping(
     }
 
     Ok(stdout.trim().to_string())
+}
+
+fn augment_skill_error(err: SkillError, name: &str, stdout: &str, argv: &[String]) -> SkillError {
+    if name != "slack.send_approval" {
+        return err;
+    }
+
+    match err {
+        SkillError::ExecutionFailed { name, reason } => SkillError::ExecutionFailed {
+            name,
+            reason: format!(
+                "{}; slack_response={}; block_payload_summary={}",
+                reason,
+                stdout.trim(),
+                summarize_slack_approval_blocks(argv)
+            ),
+        },
+        other => other,
+    }
+}
+
+fn build_slack_approval_blocks(text: &str, request_id: &str) -> Result<String, SkillError> {
+    let mut sections = split_slack_section_text(text, SLACK_APPROVAL_SECTION_CHUNK);
+    if sections.is_empty() {
+        sections.push("Approval required.".to_string());
+    }
+
+    let max_sections = SLACK_MESSAGE_BLOCK_LIMIT - 1;
+    if sections.len() > max_sections {
+        sections.truncate(max_sections);
+        let note_len = SLACK_APPROVAL_TRUNCATION_NOTE.chars().count() + 2;
+        let keep = SLACK_APPROVAL_SECTION_CHUNK.saturating_sub(note_len);
+        let mut last = truncate_chars(sections.last().map(String::as_str).unwrap_or(""), keep);
+        last.push_str("\n\n");
+        last.push_str(SLACK_APPROVAL_TRUNCATION_NOTE);
+        if let Some(slot) = sections.last_mut() {
+            *slot = last;
+        }
+    }
+
+    let mut blocks = Vec::with_capacity(sections.len() + 1);
+    for section in sections {
+        blocks.push(serde_json::json!({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": section,
+            },
+        }));
+    }
+    blocks.push(serde_json::json!({
+        "type": "actions",
+        "block_id": "approval_actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Approve"},
+                "style": "primary",
+                "action_id": "approve",
+                "value": format!("approved:{request_id}"),
+            },
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Reject"},
+                "style": "danger",
+                "action_id": "reject",
+                "value": format!("rejected:{request_id}"),
+            },
+        ],
+    }));
+
+    serde_json::to_string(&blocks).map_err(|e| SkillError::ExecutionFailed {
+        name: "deterministic_skill".to_string(),
+        reason: format!("could not build Slack approval blocks: {e}"),
+    })
+}
+
+fn split_slack_section_text(text: &str, chunk_size: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let chunk_size = chunk_size.min(SLACK_SECTION_TEXT_LIMIT);
+    for ch in text.chars() {
+        if current.chars().count() >= chunk_size {
+            chunks.push(current);
+            current = String::new();
+        }
+        current.push(ch);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+fn truncate_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
+}
+
+fn slack_approval_fallback_text(text: &str, request_id: &str) -> String {
+    let first_line = text
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("Approval required");
+    let summary = truncate_chars(first_line.trim(), 180);
+    format!("{summary} (request_id: {request_id})")
+}
+
+fn summarize_slack_approval_blocks(argv: &[String]) -> String {
+    let Some(blocks_arg) = argv.iter().find(|arg| arg.starts_with("blocks=")) else {
+        return "blocks_arg=missing".to_string();
+    };
+    let blocks_json = blocks_arg.trim_start_matches("blocks=");
+    let Ok(blocks) = serde_json::from_str::<serde_json::Value>(blocks_json) else {
+        return format!(
+            "blocks_arg=invalid_json chars={}",
+            blocks_json.chars().count()
+        );
+    };
+    let Some(array) = blocks.as_array() else {
+        return "blocks_arg=not_array".to_string();
+    };
+
+    let mut section_count = 0usize;
+    let mut max_section_chars = 0usize;
+    let mut total_section_chars = 0usize;
+    let mut action_values = Vec::new();
+    let mut truncated = false;
+
+    for block in array {
+        if block.get("type").and_then(|v| v.as_str()) == Some("section") {
+            section_count += 1;
+            if let Some(text) = block
+                .get("text")
+                .and_then(|v| v.get("text"))
+                .and_then(|v| v.as_str())
+            {
+                let chars = text.chars().count();
+                max_section_chars = max_section_chars.max(chars);
+                total_section_chars += chars;
+                if text.contains(SLACK_APPROVAL_TRUNCATION_NOTE) {
+                    truncated = true;
+                }
+            }
+        }
+        if block.get("type").and_then(|v| v.as_str()) == Some("actions") {
+            if let Some(elements) = block.get("elements").and_then(|v| v.as_array()) {
+                for element in elements {
+                    if let Some(value) = element.get("value").and_then(|v| v.as_str()) {
+                        action_values.push(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    format!(
+        "blocks={} sections={} max_section_chars={} total_section_chars={} truncated={} action_values={}",
+        array.len(),
+        section_count,
+        max_section_chars,
+        total_section_chars,
+        truncated,
+        action_values.join("|")
+    )
 }
 
 fn extract_json_path<'a>(
@@ -752,6 +944,61 @@ mod tests {
         assert_eq!(parsed[0]["text"]["text"], text);
     }
 
+    fn expand_slack_send_approval(text: &str, request_id: &str) -> Vec<String> {
+        std::env::set_var("SLACK_BOT_TOKEN", "xoxb-test");
+        let skills =
+            crate::runtime::skill_loader::SkillLoader::load_from_dirs(&[std::path::PathBuf::from(
+                "skills/slack",
+            )]);
+        let slack = skills
+            .iter()
+            .find(|skill| skill.manifest.name == "slack")
+            .expect("slack skill should load");
+        let capability = slack
+            .manifest
+            .capabilities
+            .iter()
+            .find(|cap| cap.name == "send_approval")
+            .expect("send_approval capability should exist");
+        let executor = capability
+            .executor
+            .as_ref()
+            .expect("send_approval should be deterministic");
+        let mut args: HashMap<String, ConfidentValue> = HashMap::new();
+        args.insert(
+            "channel".into(),
+            ConfidentValue::deterministic(Value::Text("C0123456789".into())),
+        );
+        args.insert(
+            "text".into(),
+            ConfidentValue::deterministic(Value::Text(text.into())),
+        );
+        args.insert(
+            "callback_url".into(),
+            ConfidentValue::deterministic(Value::Text(
+                "http://localhost:3300/webhook/approval".into(),
+            )),
+        );
+        args.insert(
+            "request_id".into(),
+            ConfidentValue::deterministic(Value::Text(request_id.into())),
+        );
+
+        expand_argv(&executor.argv, &executor.params, &args)
+            .expect("send_approval argv should expand")
+    }
+
+    fn approval_blocks_from_argv(expanded: &[String]) -> serde_json::Value {
+        let blocks_arg = expanded
+            .iter()
+            .find(|arg| arg.starts_with("blocks="))
+            .expect("send_approval should send blocks");
+        let blocks = blocks_arg
+            .strip_prefix("blocks=")
+            .expect("blocks prefix should remain");
+        serde_json::from_str(blocks).expect("Slack blocks should be valid JSON")
+    }
+
     #[cfg(unix)]
     #[tokio::test(flavor = "current_thread")]
     async fn slack_send_approval_command_posts_valid_blocks_for_escaped_text() {
@@ -865,7 +1112,120 @@ PY
 
     #[test]
     fn slack_send_approval_blocks_json_survives_rich_plan_body() {
-        std::env::set_var("SLACK_BOT_TOKEN", "xoxb-test");
+        let body =
+            "Start implementation: 13\n\n```text\ncargo test -- --nocapture\n```\nQuote: \"ship it\"";
+        let expanded = expand_slack_send_approval(body, "plan-13");
+        let parsed = approval_blocks_from_argv(&expanded);
+
+        assert_eq!(parsed[0]["type"], "section");
+        assert_eq!(parsed[0]["text"]["type"], "mrkdwn");
+        assert_eq!(parsed[0]["text"]["text"], body);
+        assert_eq!(parsed[1]["type"], "actions");
+        assert_eq!(parsed[1]["elements"][0]["value"], "approved:plan-13");
+        assert_eq!(parsed[1]["elements"][1]["value"], "rejected:plan-13");
+    }
+
+    #[test]
+    fn slack_send_approval_splits_issue_428_gate_two_plan_body() {
+        let issue_33_body = r#"Issue: 33
+Title: Make JSON store writes resilient to corrupt data files
+Repo: ncmlabs/forge-playground
+Branch: clone-dev/33
+
+Plan:
+1. Inspect the local JSON store and reproduce malformed JSON behavior.
+2. Preserve the API contract while returning a structured 500 response.
+3. Implement temp-file-and-rename writes so partial writes cannot corrupt the store.
+4. Add tests for quoted errors like "Unexpected token } in JSON at position 42".
+5. Run `npm run typecheck`, `npm test`, and `npm run build`.
+
+Acceptance criteria:
+- [ ] Malformed JSON produces a structured API 500 response with a safe error code.
+- [ ] Writes use a temp-file-and-rename flow so partial writes do not corrupt the store.
+- [ ] Tests cover malformed JSON read behavior.
+- [ ] Tests cover successful status update still persists after the write change.
+"#;
+        let quote_heavy_plan = format!(
+            "{}\n{}",
+            issue_33_body,
+            "Review note: quote \"safe_error_code\" and path `data/tasks.json`.\n".repeat(120)
+        );
+
+        let expanded = expand_slack_send_approval(&quote_heavy_plan, "plan-33");
+        let parsed = approval_blocks_from_argv(&expanded);
+        let blocks = parsed.as_array().expect("blocks should be an array");
+
+        assert!(
+            blocks.len() > 2,
+            "long approval body should split into sections"
+        );
+        assert!(blocks.len() <= SLACK_MESSAGE_BLOCK_LIMIT);
+        for block in blocks.iter().filter(|b| b["type"] == "section") {
+            let text = block["text"]["text"].as_str().expect("section text");
+            assert!(
+                text.chars().count() <= SLACK_SECTION_TEXT_LIMIT,
+                "section had {} chars",
+                text.chars().count()
+            );
+        }
+
+        let all_text = blocks
+            .iter()
+            .filter_map(|b| b["text"]["text"].as_str())
+            .collect::<String>();
+        assert!(all_text.contains("Malformed JSON produces a structured API 500 response"));
+        assert!(all_text.contains("quote \"safe_error_code\""));
+        assert_eq!(
+            blocks.last().unwrap()["elements"][0]["value"],
+            "approved:plan-33"
+        );
+        assert_eq!(
+            blocks.last().unwrap()["elements"][1]["value"],
+            "rejected:plan-33"
+        );
+    }
+
+    #[test]
+    fn slack_send_approval_truncates_before_block_limit() {
+        let body = "Approval paragraph with \"quotes\" and `code`.\n".repeat(5000);
+        let expanded = expand_slack_send_approval(&body, "plan-too-long");
+        let parsed = approval_blocks_from_argv(&expanded);
+        let blocks = parsed.as_array().expect("blocks should be an array");
+
+        assert_eq!(blocks.len(), SLACK_MESSAGE_BLOCK_LIMIT);
+        let last_section = &blocks[SLACK_MESSAGE_BLOCK_LIMIT - 2];
+        let text = last_section["text"]["text"]
+            .as_str()
+            .expect("last section text");
+        assert!(text.contains(SLACK_APPROVAL_TRUNCATION_NOTE));
+        assert!(text.chars().count() <= SLACK_SECTION_TEXT_LIMIT);
+        assert_eq!(
+            blocks.last().unwrap()["elements"][0]["value"],
+            "approved:plan-too-long"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn slack_send_approval_invalid_blocks_error_includes_response_and_summary() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let fake_curl = tmp.path().join("curl");
+        std::fs::write(
+            &fake_curl,
+            r#"#!/bin/sh
+printf '%s\n' '{"ok":false,"error":"invalid_blocks","response_metadata":{"messages":["section text too long"]}}'
+"#,
+        )
+        .expect("write fake curl");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&fake_curl)
+                .expect("fake curl metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&fake_curl, permissions).expect("chmod fake curl");
+        }
+
         let skills =
             crate::runtime::skill_loader::SkillLoader::load_from_dirs(&[std::path::PathBuf::from(
                 "skills/slack",
@@ -880,10 +1240,16 @@ PY
             .iter()
             .find(|cap| cap.name == "send_approval")
             .expect("send_approval capability should exist");
-        let executor = capability
+        let mut executor = capability
             .executor
             .as_ref()
-            .expect("send_approval should be deterministic");
+            .expect("send_approval should be deterministic")
+            .clone();
+        executor.argv[0] = fake_curl.to_string_lossy().to_string();
+        for arg in &mut executor.argv {
+            *arg = arg.replace("{env:SLACK_BOT_TOKEN}", "xoxb-test");
+        }
+
         let mut args: HashMap<String, ConfidentValue> = HashMap::new();
         args.insert(
             "channel".into(),
@@ -892,8 +1258,7 @@ PY
         args.insert(
             "text".into(),
             ConfidentValue::deterministic(Value::Text(
-                "Start implementation: 13\n\n```text\ncargo test -- --nocapture\n```\nQuote: \"ship it\""
-                    .into(),
+                "Start implementation: 33\n\nQuote: \"safe_error_code\"".into(),
             )),
         );
         args.insert(
@@ -904,29 +1269,27 @@ PY
         );
         args.insert(
             "request_id".into(),
-            ConfidentValue::deterministic(Value::Text("plan-13".into())),
+            ConfidentValue::deterministic(Value::Text("plan-33".into())),
         );
 
-        let expanded = expand_argv(&executor.argv, &executor.params, &args)
-            .expect("send_approval argv should expand");
-        let blocks_arg = expanded
-            .iter()
-            .find(|arg| arg.starts_with("blocks="))
-            .expect("send_approval should send blocks");
-        let blocks = blocks_arg
-            .strip_prefix("blocks=")
-            .expect("blocks prefix should remain");
-        let parsed: serde_json::Value =
-            serde_json::from_str(blocks).expect("Slack blocks should be valid JSON");
-
-        assert_eq!(parsed[0]["type"], "section");
-        assert_eq!(parsed[0]["text"]["type"], "mrkdwn");
-        assert_eq!(
-            parsed[0]["text"]["text"],
-            "Start implementation: 13\n\n```text\ncargo test -- --nocapture\n```\nQuote: \"ship it\""
+        let skill_executor = SkillExecutor::new(
+            std::sync::Arc::new(ProviderRegistry::new("unused")),
+            std::sync::Arc::new(std::sync::Mutex::new(
+                crate::runtime::skill_registry::SkillRegistry::new(),
+            )),
         );
-        assert_eq!(parsed[1]["type"], "actions");
-        assert_eq!(parsed[1]["elements"][0]["value"], "approved:plan-13");
-        assert_eq!(parsed[1]["elements"][1]["value"], "rejected:plan-13");
+        let err = skill_executor
+            .execute_deterministic(slack, "send_approval", &executor, &args)
+            .await
+            .expect_err("fake Slack invalid_blocks should fail");
+        let msg = err.to_string();
+
+        assert!(msg.contains("invalid_blocks"));
+        assert!(msg.contains(
+            r#"slack_response={"ok":false,"error":"invalid_blocks","response_metadata":{"messages":["section text too long"]}}"#
+        ));
+        assert!(msg.contains("block_payload_summary=blocks=2 sections=1"));
+        assert!(msg.contains("max_section_chars="));
+        assert!(msg.contains("action_values=approved:plan-33|rejected:plan-33"));
     }
 }

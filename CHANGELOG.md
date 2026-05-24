@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Slack approval cards now split long approval bodies into multiple Block Kit
+  sections, cap oversized cards before Slack's block limit, and include the
+  exact Slack API response plus a compact block-payload summary when
+  `slack.send_approval` fails. This fixes Gate 2 / Gate 3 `invalid_blocks`
+  failures for quote-heavy clone-dev approval bodies (#428).
 - Reset the clone-dev playground proof-run guidance around `ncmlabs/forge-playground`
   as a TypeScript proof-run tracker instead of the earlier Rust/Go scaffolds.
   The preflight now verifies the Node app, the repo-local clone-dev config owns
