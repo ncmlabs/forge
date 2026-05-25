@@ -1882,17 +1882,23 @@ agent implementer
         })
         .expect("no agent");
 
-    let repair_shell = r#"node <<'NODE'
-const fs = require('fs');
-const file = 'tests/api.test.ts';
-let src = fs.readFileSync(file, 'utf8');
-src = src.replace(
-  'import { afterEach, beforeEach, describe, expect, it } from "vitest";',
-  'import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";'
-);
-src = src.replace("import * as path from 'path';\n", "");
-fs.writeFileSync(file, src);
-NODE"#;
+    let repair_shell = r#"printf '%s\n' \
+'import { mkdtemp, rm } from "node:fs/promises";' \
+'import os from "node:os";' \
+'import path from "node:path";' \
+'import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";' \
+'import { buildServer } from "../src/server/app.js";' \
+'import { ProofRunStore } from "../src/server/store.js";' \
+'' \
+'import * as fs from "fs";' \
+'' \
+'const seedPath = path.resolve(__dirname, "../data/proof-runs.seed.json");' \
+'const dataPath = path.resolve(__dirname, "../data/proof-runs.json");' \
+'' \
+'beforeAll(() => {' \
+'  fs.copyFileSync(seedPath, dataPath);' \
+'});' \
+> tests/api.test.ts"#;
     let agent = AgentProcess::new(
         agent_decl,
         None,
