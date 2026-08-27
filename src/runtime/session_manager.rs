@@ -1219,12 +1219,10 @@ impl SessionManager {
             Value::Record(f) => f,
             _ => return None,
         };
-        let meta = match fields.get("metadata") {
-            Some(cv) => match &cv.value {
-                Value::Record(m) => m,
-                _ => return None,
-            },
-            None => return None,
+        let cv = fields.get("metadata")?;
+        let meta = match &cv.value {
+            Value::Record(m) => m,
+            _ => return None,
         };
         meta.get("verification")
             .and_then(|cv| VerificationResult::from_value(&cv.value))
