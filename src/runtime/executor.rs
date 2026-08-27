@@ -849,12 +849,10 @@ impl TaskExecutor {
             Value::Record(f) => f,
             _ => return None,
         };
-        let meta = match fields.get("metadata") {
-            Some(cv) => match &cv.value {
-                Value::Record(m) => m,
-                _ => return None,
-            },
-            None => return None,
+        let cv = fields.get("metadata")?;
+        let meta = match &cv.value {
+            Value::Record(m) => m,
+            _ => return None,
         };
         meta.get("verification")
             .and_then(|cv| VerificationResult::from_value(&cv.value))
@@ -3932,11 +3930,8 @@ fn match_pattern(
                             for (i, sub_pat) in sub_pats.iter().enumerate() {
                                 let key = format!("_{}", i);
                                 if let Some(val) = inner_fields.get(&key) {
-                                    if let Some(mut sub_bindings) = match_pattern(sub_pat, val) {
-                                        bindings.append(&mut sub_bindings);
-                                    } else {
-                                        return None;
-                                    }
+                                    let mut sub_bindings = match_pattern(sub_pat, val)?;
+                                    bindings.append(&mut sub_bindings);
                                 }
                             }
                         }
