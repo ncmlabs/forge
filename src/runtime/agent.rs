@@ -571,8 +571,15 @@ impl AgentProcess {
         }
         let handler_started_at = std::time::Instant::now();
 
-        // Execute handler body with timeout detection
-        let handler_timeout = std::time::Duration::from_secs(60);
+        // Execute handler body with timeout detection.
+        // The historical 60s cap kills long LLM `reason`/`web` generations on
+        // slow local servers (e.g. the newspaper editor agent) — overridable
+        // via FORGE_HANDLER_TIMEOUT_SECS (default unchanged for compat).
+        let handler_timeout = std::env::var("FORGE_HANDLER_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(std::time::Duration::from_secs)
+            .unwrap_or_else(|| std::time::Duration::from_secs(60));
         let exec_future = self.executor.exec_stmts(&handler.node.body, &mut env);
         let result = match tokio::time::timeout(handler_timeout, exec_future).await {
             Ok(Ok(_)) => None,
