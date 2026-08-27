@@ -1,6 +1,5 @@
 /// Tests for file.read inside agent event handlers — issue #435
 use forge::checker::boundary_checker;
-use forge::compose;
 use forge::parser::parse;
 
 fn errors_for(src: &str) -> Vec<String> {
