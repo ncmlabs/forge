@@ -9,6 +9,17 @@ use crate::ast::{
 };
 use crate::diagnostic::Diagnostic;
 
+/// Built-in capability namespaces that are always valid and should not be
+/// treated as undefined variables or cross-boundary references.
+const BUILTIN_NAMESPACES: &[&str] = &[
+    "file", "web", "data", "llm", "html", "markdown", "env", "config", "text", "proc", "skill",
+    "pool", "command", "timer", "clock",
+];
+
+fn is_builtin_namespace(name: &str) -> bool {
+    BUILTIN_NAMESPACES.contains(&name)
+}
+
 // ── Public API ─────────────────────────────────────────────
 
 pub fn check(programs: &[(&Program, &str)]) -> Vec<Diagnostic> {
@@ -682,6 +693,12 @@ fn check_name_ref(
     file: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    // Skip check for built-in capability namespaces - they are always valid
+    // and should not be treated as undefined variables or cross-boundary refs.
+    if is_builtin_namespace(name) {
+        return;
+    }
+
     match file_boundary {
         BoundaryKind::Client => {
             if registry.server_symbols.contains(name) {

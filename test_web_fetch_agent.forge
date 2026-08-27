@@ -1,0 +1,12 @@
+#! boundary: server
+
+use
+  web.fetch
+
+exportable agent dbg
+  on start
+    r = try web.fetch("http://example.com") or "FALLBACK"
+    say "R={r}"
+
+fn main
+  a = spawn dbg as "dbg"
