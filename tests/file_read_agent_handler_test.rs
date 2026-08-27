@@ -1,12 +1,11 @@
 /// Tests for file.read inside agent event handlers — issue #435
-
 use forge::checker::boundary_checker;
 use forge::compose;
 use forge::parser::parse;
 
 fn errors_for(src: &str) -> Vec<String> {
     let program = parse(src).expect("Failed to parse");
-    let diagnostics = boundary_checker::check(&[( &program, "test.forge")]);
+    let diagnostics = boundary_checker::check(&[(&program, "test.forge")]);
     diagnostics.into_iter().map(|d| d.message).collect()
 }
 
