@@ -249,6 +249,24 @@ task check_acceptance
     when result.unsure -> give "needs_human_review"
     else -> give "inconclusive"
 
+# Issue #431: deterministic gate between the configured test command and the
+# LLM acceptance classifier. A non-zero command exit code must NEVER be
+# downgraded by `check_acceptance` — the gate returns "command_failed"
+# immediately and the tester emits TestsFailed with the raw output.
+# `check_acceptance` only runs after the command exits 0.
+task tester_gate
+  needs exit_code: Number, output_text: Text
+  gives Text
+  do
+    if exit_code != 0
+      give "command_failed"
+    report = TestReport(passed: true, failures: output_text, coverage: 0)
+    issue_placeholder = Issue(id: "gate", title: "", criteria: "")
+    gate_acceptance = check_acceptance(issue_placeholder, report)
+    when gate_acceptance.sure -> give gate_acceptance
+    when gate_acceptance.unsure -> give gate_acceptance
+    else -> give "inconclusive"
+
 task draft_changelog_entry
   needs issue: Issue, branch: Text
   gives Text
@@ -809,19 +827,24 @@ agent tester
     when test_output.sure -> say "[tester] Tests completed (exit 0)"
     else -> say "[tester] Tests completed with failures"
     memory.last_test_output = test_output
-    report = TestReport(passed: false, failures: test_output, coverage: 0)
-    issue = Issue(id: issue_id, title: title, criteria: criteria)
-    acceptance = check_acceptance(issue, report)
-    memory.acceptance_result = acceptance
     tcmd = memory.test_cmd
     first_try = memory.test_runs == 1
-    if acceptance == "none" or acceptance == "minor"
-      say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met (first_try: {first_try})"
-      emit PostMessage(channel: channel, text: "Tests passed for {issue_id} on {branch}. Moving to review.", thread_ts: "")
-      emit AcceptanceMet(issue_id: issue_id, repo: repo, title: memory.title, plan: memory.plan, criteria: memory.criteria, branch: branch, workdir: workdir, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd, ci_passed_first_try: first_try)
-    if acceptance == "blocking" or acceptance == "needs_human_review" or acceptance == "inconclusive"
-      say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
-      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: test_output, channel: channel, callback_url: callback_url, test_cmd: tcmd)
+    gate = tester_gate(test_output.exit_code, "{test_output.stdout}")
+    if gate == "command_failed"
+      say "[tester] Tests FAILED (command exit != 0) — sending raw failure output to implementer (first_try: {first_try})"
+      emit PostMessage(channel: channel, text: "Test command failed for {issue_id} on {branch}. Fix iteration starting.", thread_ts: "")
+      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: "{test_output.stdout}", channel: channel, callback_url: callback_url, test_cmd: tcmd)
+    if gate != "command_failed"
+      say "[tester] Tests classified ({gate}) — routing on acceptance result"
+      acceptance = gate
+      memory.acceptance_result = acceptance
+      if acceptance == "none" or acceptance == "minor"
+        say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met (first_try: {first_try})"
+        emit PostMessage(channel: channel, text: "Tests passed for {issue_id} on {branch}. Moving to review.", thread_ts: "")
+        emit AcceptanceMet(issue_id: issue_id, repo: repo, title: memory.title, plan: memory.plan, criteria: memory.criteria, branch: branch, workdir: workdir, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd, ci_passed_first_try: first_try)
+      if acceptance == "blocking" or acceptance == "needs_human_review" or acceptance == "inconclusive"
+        say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
+        emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: "{test_output.stdout}", channel: channel, callback_url: callback_url, test_cmd: tcmd)
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[tester] Extracting lesson for {task_id} (outcome={outcome}, first_try={ci_passed_first_try})"
