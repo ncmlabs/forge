@@ -284,10 +284,8 @@ impl ForgeConfig {
             Some(std::path::PathBuf::from("forge.config.toml")),
             dirs::home_dir().map(|d| d.join(".forge/config.toml")),
         ];
-        let mut found_any = false;
         for path in search_paths.iter().flatten() {
             if path.exists() {
-                found_any = true;
                 if let Ok(config) = Self::load(path) {
                     return Ok(Self::apply_env_overrides(config));
                 }
@@ -296,7 +294,6 @@ impl ForgeConfig {
                 return Self::load(path);
             }
         }
-        let _ = found_any;
 
         // 3. No config anywhere: mock fallback ONLY on explicit selection.
         if explicit_mock {
