@@ -201,8 +201,53 @@ impl ForgeStorage {
     }
 
     /// Open (or create) a redb database at the given path.
+    ///
+    /// #448: wrapped in a hard wall-clock timeout so a wedged store (e.g. a
+    /// previous run killed mid-write) fails fast with actionable guidance
+    /// instead of hanging `forge send` forever. redb's own error kinds are
+    /// reclassified:
+    /// - `UpgradeRequired(found)` → `VersionMismatch` (store format written
+    ///   by another binary): names the recovery options.
+    /// - invalid-data / corrupted magic → `NotADatabase`: the file is not a
+    ///   redb store at all (truncated writes leave zero-length tails, wrong
+    ///   file at path, etc.).
+    ///
+    /// On timeout the open worker thread is intentionally left running
+    /// (detached) — joining it would reintroduce the hang. If it eventually
+    /// completes it may hold the file lock; a subsequent process will then
+    /// see `DatabaseAlreadyOpen` and fail fast too, which is still strictly
+    /// better than an indefinite wedge.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
-        let db = Database::create(path).map_err(|e| StorageError::Open(Box::new(e)))?;
+        let path_s = path.display().to_string();
+        let (tx, rx) = std::sync::mpsc::channel::<Result<Database, StorageError>>();
+        let worker_path = path.to_path_buf();
+        let worker = std::thread::Builder::new()
+            .name("forge-store-open".to_string())
+            .spawn(move || {
+                let result = match Database::create(&worker_path) {
+                    Ok(db) => Ok(db),
+                    Err(e) => Err(classify_open_error(&worker_path.display().to_string(), e)),
+                };
+                let _ = tx.send(result);
+            });
+        let db = match worker {
+            Err(_) => {
+                return Err(StorageError::Io(std::io::Error::other(
+                    "failed to spawn storage-open worker thread",
+                )));
+            }
+            Ok(_handle) => {
+                match rx.recv_timeout(std::time::Duration::from_secs(STORE_OPEN_TIMEOUT_SECS)) {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        return Err(StorageError::OpenTimedOut {
+                            path: path_s,
+                            timeout_secs: STORE_OPEN_TIMEOUT_SECS,
+                        });
+                    }
+                }
+            }
+        };
 
         // Ensure both tables exist by running an empty write transaction.
         let txn = db
@@ -755,6 +800,25 @@ impl ForgeStorage {
 #[derive(Debug)]
 pub enum StorageError {
     Open(Box<redb::DatabaseError>),
+    /// #448: opening the store did not complete within the open timeout —
+    /// treat the store as wedged and fail fast instead of hanging the CLI.
+    OpenTimedOut {
+        path: String,
+        timeout_secs: u64,
+    },
+    /// #448: the on-disk store was written by an incompatible file-format
+    /// version (typically an older binary). Fail-fast with expected-vs-found
+    /// versions and actionable recovery guidance instead of an opaque abort.
+    VersionMismatch {
+        path: String,
+        found: u8,
+        hint: String,
+    },
+    /// #448: the store file is not a redb database at all (magic mismatch) —
+    /// usually a truncated/clobbered write or the wrong file at the path.
+    NotADatabase {
+        path: String,
+    },
     Transaction(Box<redb::TransactionError>),
     Table(Box<redb::TableError>),
     Commit(Box<redb::CommitError>),
@@ -764,10 +828,66 @@ pub enum StorageError {
     Json(serde_json::Error),
 }
 
+/// Maximum wall-clock time allowed for opening the redb store (#448). A
+/// healthy open takes milliseconds (or a fast repair); anything longer means
+/// the store is wedged (e.g. killed mid-write) and the caller should get a
+/// hard error, possibly paired with `forge store recover`, rather than an
+/// indefinite hang.
+const STORE_OPEN_TIMEOUT_SECS: u64 = 10;
+
+/// Reclassify a raw redb open error into an actionable `StorageError` (#448).
+fn classify_open_error(path: &str, e: redb::DatabaseError) -> StorageError {
+    match &e {
+        // Old file format — written by a different forge binary. redb's own
+        // Display already names expected-vs-found; add the recovery options.
+        redb::DatabaseError::UpgradeRequired(found) => StorageError::VersionMismatch {
+            path: path.to_string(),
+            found: *found,
+            hint: "either run the older binary that created this store, or rotate it: \
+                   `mv <store> <store>.bak-$(date +%s)` and let forge create a fresh one"
+                .to_string(),
+        },
+        // Magic-number mismatch / invalid data: not a redb store at all.
+        // redb surfaces this as StorageError::Io with ErrorKind::InvalidData
+        // from the magic check in TransactionalMemory::new. Match the kind,
+        // not a Display string (formatting is an implementation detail).
+        redb::DatabaseError::Storage(ref inner)
+            if match inner {
+                redb::StorageError::Corrupted(_) => true,
+                redb::StorageError::Io(io) => io.kind() == std::io::ErrorKind::InvalidData,
+                _ => false,
+            } =>
+        {
+            StorageError::NotADatabase {
+                path: path.to_string(),
+            }
+        }
+        // Everything else (lock conflicts, genuine corruption after repair
+        // attempts, …) keeps redb's own diagnostic.
+        _ => StorageError::Open(Box::new(e)),
+    }
+}
+
 impl std::fmt::Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StorageError::Open(e) => write!(f, "storage open: {e}"),
+            StorageError::OpenTimedOut { path, timeout_secs } => write!(
+                f,
+                "opening storage '{path}' timed out after {timeout_secs}s — the store is \
+                 likely wedged (previous process killed mid-write). Rotate or remove the \
+                 store: `mv <dir> .forge-data.bak-$(date +%s)`, or run `forge store recover`"
+            ),
+            StorageError::VersionMismatch { path, found, hint } => write!(
+                f,
+                "storage '{path}' uses an incompatible file-format version (found v{found}) \
+                 written by another forge binary — {hint}"
+            ),
+            StorageError::NotADatabase { path } => write!(
+                f,
+                "storage '{path}' is not a redb database file (magic mismatch) — it may be \
+                 truncated or clobbered; rotate it: `mv <dir> .forge-data.bak-$(date +%s)`"
+            ),
             StorageError::Transaction(e) => write!(f, "storage transaction: {e}"),
             StorageError::Table(e) => write!(f, "storage table: {e}"),
             StorageError::Commit(e) => write!(f, "storage commit: {e}"),
