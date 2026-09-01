@@ -203,7 +203,8 @@ impl ForgeConfig {
         Ok(config)
     }
 
-    /// Resolve the config file path that would be used by `load_or_default`.
+    /// Resolve the config file path that would be used by
+    /// `try_load_or_default` / `load_or_default`.
     pub fn resolve_path() -> Option<std::path::PathBuf> {
         // 1. Explicit override
         if let Ok(path) = std::env::var("FORGE_CONFIG") {
@@ -232,24 +233,53 @@ impl ForgeConfig {
         None
     }
 
-    pub fn load_or_default() -> Self {
-        let quiet = std::env::var("FORGE_LOG_LEVEL")
-            .map(|v| v == "quiet")
-            .unwrap_or(false);
+    /// Load config with the #447 no-silent-fallback contract:
+    ///
+    /// - A resolvable config file (env override / cwd / ~/.forge) always
+    ///   wins and is returned as-is.
+    /// - A config file that exists but fails to parse/load is a hard error —
+    ///   a broken production config must never degrade to mock.
+    /// - No config file at all falls back to mock **only when mock is
+    ///   explicitly selected** (`FORGE_MOCK=1` or `FORGE_PROVIDER=mock`);
+    ///   otherwise it is a hard error naming the searched paths, so a
+    ///   broken launch can never print `mock response` and look like a
+    ///   successful real-provider run.
+    pub fn try_load_or_default() -> Result<Self, ConfigError> {
         let explicit_mock = std::env::var("FORGE_MOCK")
             .map(|v| v == "1")
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || std::env::var("FORGE_PROVIDER")
+                .map(|v| v == "mock")
+                .unwrap_or(false);
 
-        // Check env overrides for config path
+        // 1. Explicit env-override config path
         for var in ["FORGE_CONFIG", "FORGE_APP_CONFIG"] {
             if let Ok(path) = std::env::var(var) {
-                if let Ok(config) = Self::load(Path::new(&path)) {
-                    return Self::apply_env_overrides(config);
+                // A pinned env path that does not exist is a hard error in
+                // production; only fall back to mock when explicitly asked.
+                if !std::path::Path::new(&path).exists() {
+                    if explicit_mock {
+                        // fall through to mock below
+                        break;
+                    }
+                    return Err(ConfigError::FileNotFound(
+                        path.clone(),
+                        "FORGE_* config override points to a missing file".to_string(),
+                    ));
+                }
+                match Self::load(Path::new(&path)) {
+                    Ok(config) => return Ok(Self::apply_env_overrides(config)),
+                    Err(e) => {
+                        if explicit_mock {
+                            break;
+                        }
+                        return Err(e);
+                    }
                 }
             }
         }
 
-        // Search standard paths
+        // 2. Standard search paths
         let search_paths = [
             Some(std::path::PathBuf::from("forge.config.toml")),
             dirs::home_dir().map(|d| d.join(".forge/config.toml")),
@@ -257,17 +287,39 @@ impl ForgeConfig {
         for path in search_paths.iter().flatten() {
             if path.exists() {
                 if let Ok(config) = Self::load(path) {
-                    return Self::apply_env_overrides(config);
+                    return Ok(Self::apply_env_overrides(config));
                 }
+                // parse failure on an existing standard-path config: hard
+                // error (production config is broken — surface it).
+                return Self::load(path);
             }
         }
 
-        if !quiet && !explicit_mock {
-            eprintln!("warning: no forge.config.toml found, using mock provider");
-            eprintln!("  hint: create forge.config.toml or set FORGE_CONFIG=/path/to/config.toml");
+        // 3. No config anywhere: mock fallback ONLY on explicit selection.
+        if explicit_mock {
+            return Ok(Self::apply_env_overrides(Self::default_mock_config()));
         }
 
-        Self::apply_env_overrides(Self::default_mock_config())
+        Err(ConfigError::NoConfigurationFound {
+            hint: "set FORGE_MOCK=1 (or FORGE_PROVIDER=mock) to explicitly select the mock provider, or point FORGE_CONFIG at a forge.config.toml"
+                .to_string(),
+        })
+    }
+
+    /// Legacy alias kept for ambient subcommands (cost estimate, wake secret
+    /// management) that can run without LLM resolution. Production agent
+    /// entrypoints (check/run/serve/send) must use [`Self::try_load_or_default`]
+    /// so broken launches hard-error instead of silently running on mock (#447).
+    pub fn load_or_default() -> Self {
+        match Self::try_load_or_default() {
+            Ok(config) => config,
+            Err(e) => {
+                // Preserve the historical ambient behavior for non-LLM
+                // subcommands but be LOUD about it.
+                eprintln!("warning: falling back to mock provider config: {e}");
+                Self::apply_env_overrides(Self::default_mock_config())
+            }
+        }
     }
 
     fn apply_env_overrides(mut config: ForgeConfig) -> ForgeConfig {
@@ -464,6 +516,13 @@ pub enum ConfigError {
     UnknownProvider(String),
     #[error("circular fallback chain starting at '{0}'")]
     CircularFallback(String),
+    /// #447: no config file found and mock was not explicitly selected.
+    /// Production runs must hard-error rather than silently degrade to the
+    /// mock provider (indistinguishable `mock response` output).
+    #[error(
+        "no forge.config.toml found — refusing to silently fall back to the mock provider ({hint})"
+    )]
+    NoConfigurationFound { hint: String },
 }
 
 #[cfg(test)]

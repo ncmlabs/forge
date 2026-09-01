@@ -869,7 +869,8 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     let fname = file.display().to_string();
 
     // Load config and skills early — needed for compile-time skill validation
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     let config_clone = config.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
@@ -944,7 +945,8 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     let source_paths = manifest.resolve_sources(base_dir)?;
 
     // Load config and skills early — needed for compile-time skill validation
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     let config_clone = config.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
@@ -1210,7 +1212,8 @@ fn try_build_executor_multi(
     }
 
     // Load config, providers, and skills early — needed for skill-aware validation (#276)
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     let trace_env = std::env::var("FORGE_TRACE")
         .map(|v| v == "1")
         .unwrap_or(false);
@@ -1332,7 +1335,8 @@ fn try_build_executor(
     };
 
     // Load config, providers, and skills early — needed for skill-aware validation (#276)
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let trace_env = std::env::var("FORGE_TRACE")
         .map(|v| v == "1")
@@ -2106,7 +2110,8 @@ async fn run_agent(file: &Path) -> anyhow::Result<()> {
         _ => None,
     });
 
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     let storage = if agent_decl.memory_persistent {
         Some(open_forge_storage(&config)?)
     } else {
@@ -2415,7 +2420,8 @@ async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::R
         _ => None,
     });
 
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     // Always open storage in CLI mode — even non-persistent agents need
     // memory to survive across forge-send invocations
     let storage = Some(open_forge_storage(&config)?);
