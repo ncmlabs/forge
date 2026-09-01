@@ -390,13 +390,16 @@ async fn exec_runs_npx_skills_find() {
         return;
     }
 
-    // Use a simple exec to call npx skills find
+    // Use a command (not exec) so we can raise the timeout: `npx` cold-starts
+    // by resolving/downloading the skills package on fresh CI runners, which
+    // routinely exceeds the default 30s exec budget (observed 3x on
+    // ubuntu/macos runners, 2026-09-01).
     let source = r#"
 task search_skills
   needs query: Text
   gives Text
   do
-    result = exec "npx skills find \"{query}\" 2>&1 | tail -5"
+    result = command "npx skills find \"{query}\" 2>&1 | tail -5" timeout 180s
     when result.sure -> give result
     else -> give "search failed"
 
@@ -432,12 +435,12 @@ fn main
     // Verify trace events
     let events = tracer.captured_events();
     assert!(
-        events.contains(&"exec_call".to_string()),
-        "should trace exec_call"
+        events.contains(&"command_call".to_string()),
+        "should trace command_call"
     );
     assert!(
-        events.contains(&"exec_return".to_string()),
-        "should trace exec_return"
+        events.contains(&"command_return".to_string()),
+        "should trace command_return"
     );
 }
 
