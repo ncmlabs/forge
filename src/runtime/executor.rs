@@ -316,6 +316,37 @@ impl TaskExecutor {
                     Err(e) => ConfidentValue::from_io_error(format!("file.read('{path_s}'): {e}")),
                 }
             }
+            // file.write(path, content) -> Text — write UTF-8 content to a
+            // file at `path` (#438). Creates parent directories
+            // automatically. Returns deterministic "ok" on success so
+            // callers can verify with `when x == "ok"`; on failure returns
+            // zero-confidence Text carrying the OS error, mirroring the
+            // `file.read` / `skill.*` contract so `when sure / else` routes
+            // the failure. Server-only (see boundary_checker.rs).
+            ("file", "write") => {
+                let path_s = text_arg(0);
+                let content = text_arg(1);
+                if path_s.is_empty() {
+                    ConfidentValue::from_io_error("file.write: empty path argument".to_string())
+                } else {
+                    let path = std::path::Path::new(&path_s);
+                    match path
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .map(std::fs::create_dir_all)
+                    {
+                        Some(Err(e)) => ConfidentValue::from_io_error(format!(
+                            "file.write('{path_s}'): cannot create parent dir: {e}"
+                        )),
+                        _ => match std::fs::write(path, &content) {
+                            Ok(()) => ConfidentValue::deterministic(Value::Text("ok".to_string())),
+                            Err(e) => ConfidentValue::from_io_error(format!(
+                                "file.write('{path_s}'): {e}"
+                            )),
+                        },
+                    }
+                }
+            }
             ("toml", "parse") => {
                 let text = text_arg(0);
                 let type_name = text_arg(1);
@@ -2115,7 +2146,10 @@ impl TaskExecutor {
                     if let Expr::Ident(ref ns) = obj_expr.node {
                         if matches!(
                             (ns.as_str(), method.node.as_str()),
-                            ("file", "read") | ("toml", "parse") | ("json", "parse")
+                            ("file", "read")
+                                | ("file", "write")
+                                | ("toml", "parse")
+                                | ("json", "parse")
                         ) {
                             let ns = ns.clone();
                             let method_name = method.node.clone();
