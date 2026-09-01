@@ -197,6 +197,25 @@ enum Command {
         #[command(subcommand)]
         action: WakeAction,
     },
+    /// Inspect / recover persistent redb stores (issue #448)
+    Store {
+        #[command(subcommand)]
+        action: StoreAction,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum StoreAction {
+    /// Health-check every .redb file under the storage root; rotate the
+    /// broken ones to <name>.bak-<timestamp> so the next run starts clean.
+    Recover {
+        /// Storage root directory (default: config storage path or .forge-data)
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Only diagnose, never rename files
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -549,6 +568,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Wake { action } => {
             run_wake_command(action)?;
         }
+        Command::Store { action } => {
+            run_store_command(action)?;
+        }
     }
 
     Ok(())
@@ -557,6 +579,73 @@ async fn main() -> anyhow::Result<()> {
 /// Handle `forge wake <action>` — manages HMAC secrets for `WebhookDriver`
 /// (issue #335). All paths open the unified storage database via the config
 /// loader so they see the same `FORGE_WAKE_SECRETS` table as `forge serve`.
+/// #448: `forge store recover` — health-check every .redb file under the
+/// storage root; rotate broken ones to `<name>.bak-<timestamp>` so the next
+/// run starts clean instead of wedging or dying on an opaque version abort.
+fn run_store_command(action: StoreAction) -> anyhow::Result<()> {
+    match action {
+        StoreAction::Recover { root, dry_run } => {
+            let root = match root {
+                Some(r) => r,
+                None => {
+                    let config = forge::config::ForgeConfig::load_or_default();
+                    std::path::PathBuf::from(
+                        config
+                            .storage
+                            .as_ref()
+                            .map(|s| s.root.clone())
+                            .unwrap_or_else(|| Some(".forge-data".to_string()))
+                            .unwrap_or_else(|| ".forge-data".to_string()),
+                    )
+                }
+            };
+            if !root.exists() {
+                anyhow::bail!("storage root {} does not exist", root.display());
+            }
+
+            let mut broken = 0usize;
+            let mut healthy = 0usize;
+            let mut entries: Vec<_> = std::fs::read_dir(&root)?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().map(|x| x == "redb").unwrap_or(false))
+                .collect();
+            entries.sort();
+
+            for path in entries {
+                print!("checking {} … ", path.display());
+                match forge::runtime::storage::ForgeStorage::open(&path) {
+                    Ok(_) => {
+                        println!("ok");
+                        healthy += 1;
+                    }
+                    Err(e) => {
+                        broken += 1;
+                        println!("BROKEN: {e}");
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_secs();
+                        let backup = path.with_extension(format!("redb.bak-{ts}"));
+                        if dry_run {
+                            println!("  dry-run: would rotate to {}", backup.display());
+                        } else {
+                            std::fs::rename(&path, &backup)?;
+                            println!("  rotated to {}", backup.display());
+                        }
+                    }
+                }
+            }
+
+            if dry_run {
+                println!("dry-run complete: {healthy} healthy, {broken} broken (nothing moved)");
+            } else {
+                println!("done: {healthy} healthy, {broken} rotated");
+            }
+            Ok(())
+        }
+    }
+}
+
 fn run_wake_command(action: WakeAction) -> anyhow::Result<()> {
     use std::io::Read;
     let config = forge::config::ForgeConfig::load_or_default();
