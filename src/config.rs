@@ -450,6 +450,12 @@ impl ForgeConfig {
             if let Some(url) = &config.base_url {
                 config.base_url = Some(expand_env_var(url));
             }
+            // #432: model names get the same treatment so deploy-specific
+            // model selection can live outside committed config files
+            // (e.g. model = "${MODEL_NAME}").
+            if let Some(model) = &config.model {
+                config.model = Some(expand_env_var(model));
+            }
         }
         if let Some(ref mut web) = self.web {
             if let Some(key) = &web.search_api_key {
@@ -620,6 +626,48 @@ mod tests {
     #[test]
     fn expand_env_var_passthrough() {
         assert_eq!(expand_env_var("plain-string"), "plain-string");
+    }
+
+    #[test]
+    fn expand_env_var_model_field() {
+        // #432: ProviderConfig.model supports env expansion like api_key/base_url
+        std::env::set_var("FORGE_TEST_MODEL_9", "my/provider-model");
+        let toml = r#"
+[llm]
+default = "remote"
+
+[providers.remote]
+type = "openai-compat"
+model = "${FORGE_TEST_MODEL_9}"
+api_key = "${FORGE_TEST_KEY_MISSING_OK}"
+"#;
+        let mut config = ForgeConfig::from_toml_str(toml).expect("parse ok");
+        config.resolve_env_vars();
+        assert_eq!(
+            config.providers["remote"].model.as_deref(),
+            Some("my/provider-model"),
+            "model must be expanded from the environment"
+        );
+        std::env::remove_var("FORGE_TEST_MODEL_9");
+    }
+
+    #[test]
+    fn expand_env_var_model_literal_passthrough() {
+        // #432 acceptance: literal model names still work unchanged
+        let toml = r#"
+[llm]
+default = "remote"
+
+[providers.remote]
+type = "openai-compat"
+model = "gpt-4o-mini"
+"#;
+        let mut config = ForgeConfig::from_toml_str(toml).expect("parse ok");
+        config.resolve_env_vars();
+        assert_eq!(
+            config.providers["remote"].model.as_deref(),
+            Some("gpt-4o-mini")
+        );
     }
 
     #[test]
