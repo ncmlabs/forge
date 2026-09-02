@@ -8,10 +8,11 @@ name: FORGE Surface Audit
 # Runs on CI budget, not the user's machine.
 
 on:
-  schedule:
-    # 07:00 UTC Mondays — one hour after the security audit to avoid runner contention.
-    - cron: "0 7 * * 1"
   workflow_dispatch:
+  # schedule (PAUSED 2026-08-31, pre-v0.2.0): the Anthropic key behind `claude -p` has
+  # been out of credit since ~2026-07-20 — every scheduled run failed on
+  # "Credit balance is too low" and burned a runner slot weekly (issue #449).
+  # To re-enable, restore: `- cron: "0 7 * * 1"` together with the LLM rework in #449.
 
 permissions:
   contents: write

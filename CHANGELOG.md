@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-31
+
+### Fixed
+- Release hardening (2026-08-27 merges): built-in capability namespaces in the
+  boundary checker — `file.read` works inside agent `on start` handlers (#439
+  / #435); `FORGE_HANDLER_TIMEOUT_SECS` env override for the agent-handler
+  timeout, default 60s unchanged for compatibility (#443 / #442); stable
+  clippy lint fixes in the runtime (#441 / #440); clone-dev Gate 3 resolves
+  Slack routing before posting merge approvals (#433 / #430); Security Audit
+  workflow gains `issues: write` and bumps 4 vulnerable lockfile crates
+  (#445 / #444). Agent-handler timeout failures no longer surface as
+  "not yet implemented" (`RuntimeError::Unsupported`); executor error
+  plumbing was fixed alongside (#440).
+
 ### Changed
 - Slack approval cards now split long approval bodies into multiple Block Kit
   sections, cap oversized cards before Slack's block limit, and include the
@@ -63,6 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub skill: `list_prs(repo, state, limit)`, `get_pr_reviews(repo, pr_number)`, `get_pr_diff(repo, pr_number)` — three new deterministic executor capabilities for PR history mining and review analysis
 
 ### Fixed
+- Clone-dev reviewer Gate 3 now resolves Slack routing before posting merge
+  approvals: `slack.approval_channel` wins, then the inbound event channel,
+  then `slack.default_channel`, and recovery, timeout, approval, merge, and
+  rejection notifications reuse the same resolved channel instead of emitting
+  `PostApproval(channel: "")` from GitHub issue wake paths (#430).
 - Clone-dev reviewer Gate 3 now checkpoints repaired PR and CI state before
   expensive PR-history review, skips diff characterization on trusted green
   human-approval paths, and can recover an existing branch PR after restart to

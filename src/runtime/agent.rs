@@ -292,6 +292,9 @@ pub struct AgentProcess {
     storage: Option<crate::runtime::storage::SharedStorage>,
     /// Worktree branch name for sandbox cleanup on agent exit (issue #194).
     worktree_branch: Option<String>,
+    /// Parent's `say` output buffer to share, when spawned inline from
+    /// `fn main` (#437) — makes the parent's `outputs()` see child output.
+    shared_output: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 impl AgentProcess {
@@ -453,7 +456,20 @@ impl AgentProcess {
             warden_tx: None,
             storage,
             worktree_branch: None,
+            shared_output: None,
         }
+    }
+
+    /// Share the spawning parent's `say` output buffer (#437).
+    ///
+    /// Used by `Stmt::Spawn` when spawning inline from `fn main` so that
+    /// `TaskExecutor::outputs()` on the parent reflects child `say` output —
+    /// letting `forge run` warn when a whole program produced nothing
+    /// observable.
+    pub fn with_shared_output(mut self, output: Arc<Mutex<Vec<String>>>) -> Self {
+        self.shared_output = Some(output.clone());
+        self.executor = self.executor.with_shared_output(output);
+        self
     }
 
     /// Set working directory for sandbox isolation (issue #194).
@@ -571,8 +587,15 @@ impl AgentProcess {
         }
         let handler_started_at = std::time::Instant::now();
 
-        // Execute handler body with timeout detection
-        let handler_timeout = std::time::Duration::from_secs(60);
+        // Execute handler body with timeout detection.
+        // The historical 60s cap kills long LLM `reason`/`web` generations on
+        // slow local servers (e.g. the newspaper editor agent) — overridable
+        // via FORGE_HANDLER_TIMEOUT_SECS (default unchanged for compat).
+        let handler_timeout = std::env::var("FORGE_HANDLER_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(std::time::Duration::from_secs)
+            .unwrap_or_else(|| std::time::Duration::from_secs(60));
         let exec_future = self.executor.exec_stmts(&handler.node.body, &mut env);
         let result = match tokio::time::timeout(handler_timeout, exec_future).await {
             Ok(Ok(_)) => None,

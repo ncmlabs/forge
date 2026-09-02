@@ -256,6 +256,17 @@ impl CapabilityRegistry {
                 output: ForgeType::Text,
             },
         );
+        // file.write(path, content) -> Text — write UTF-8 content to a file
+        // at `path` (#438). Returns "ok" on success; on failure returns a
+        // zero-confidence Text carrying the OS error so callers route via
+        // `when sure / else`. Server-only (see boundary_checker.rs).
+        caps.insert(
+            "file.write".into(),
+            CapabilitySignature {
+                inputs: vec![ForgeType::Text, ForgeType::Text],
+                output: ForgeType::Text,
+            },
+        );
         // toml.parse(text, type_name) -> Record — schema-driven. The second
         // arg names a `type` declaration visible to the program; the runtime
         // coerces each TOML field to the declared type. Parse / shape errors
