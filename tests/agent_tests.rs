@@ -3579,7 +3579,6 @@ fn main
   spawn talker as "t"
 "#;
     let program = forge::parser::parse(source).expect("parse failed");
-    let mock = MockProvider::new("mock").with_default("mock");
     let executor = forge::runtime::executor::TaskExecutor::new(program, mock_registry(), None);
     executor.run().await.expect("program should run");
 
