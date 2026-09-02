@@ -1,0 +1,6 @@
+# Issue #455: wiki docgen acceptance tests recurse deeply enough to
+# overflow the default 2MiB test-thread stack (debug frames are large).
+# 8MiB covers the deepest verified flow (52/52 wiki tests pass locally).
+# Applies to `cargo test` invocations in this repo, including CI.
+[env]
+RUST_MIN_STACK = "8388608"
