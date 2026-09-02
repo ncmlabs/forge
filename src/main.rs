@@ -936,6 +936,23 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
         }
     }
 
+    // #437: a `forge run` that produced nothing observable is a footgun —
+    // the user can't tell whether the agent ran, failed, or was a no-op.
+    // The shared output buffer (fn main + spawned children) is the
+    // observable-output record; `say` prints unconditionally, so an empty
+    // buffer means the user saw nothing on stdout either.
+    // Background-spawned agents may still be mid-flight when fn main
+    // returns — allow a short grace window for their first `say` to land
+    // before declaring the run output-less.
+    if executor.outputs().is_empty() {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    if executor.outputs().is_empty() {
+        eprintln!(
+            "warning: program completed without any observable output (no `say` in fn main or any spawned agent)"
+        );
+    }
+
     Ok(())
 }
 

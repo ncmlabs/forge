@@ -411,6 +411,18 @@ impl TaskExecutor {
         self
     }
 
+    /// Share the caller's `say` output buffer (#437).
+    ///
+    /// Spawned agents normally get a fresh output buffer, so a `forge run`
+    /// parent that spawns agents and says nothing itself looks like a silent
+    /// no-op to `outputs()` even though the children printed to stdout.
+    /// Passing the parent's Arc here makes `run_program`'s observable-output
+    /// check see the whole tree's output.
+    pub fn with_shared_output(mut self, output: Arc<Mutex<Vec<String>>>) -> Self {
+        self.output = output;
+        self
+    }
+
     /// Attach a skill executor for LLM-mediated skill bridge (issue #40).
     pub fn with_skill_executor(
         mut self,
@@ -1740,12 +1752,24 @@ impl TaskExecutor {
                     // letting fn main act as a supervisor that waits for spawned agents to
                     // retire (issue #273 — composition of fn main + spawn + on start).
                     if self.agent_context.is_some() {
+                        // Background spawn: still share the output buffer so
+                        // child `say` lines land in the shared record (#437).
+                        // Note: a detached child may print after `forge run`
+                        // checks the buffer — the #437 warning only reflects
+                        // output observed at fn-main completion.
+                        let child_process = child_process.with_shared_output(self.output.clone());
                         tokio::spawn(async move {
+                            let mut child_process = child_process;
                             let _ = child_process.run().await;
                         });
                     } else {
                         // Run inline so fn main waits for the child to retire.
                         // Errors are surfaced (unlike background spawn which discards them).
+                        // Share our output buffer so the parent's `outputs()`
+                        // includes child `say` lines (#437 — `forge run`
+                        // must be able to see the whole program's output).
+                        let mut child_process =
+                            child_process.with_shared_output(self.output.clone());
                         child_process.run().await?;
                     }
 

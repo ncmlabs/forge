@@ -3557,3 +3557,36 @@ async fn dev_cycle_tester_passing_test_cmd_still_emits_acceptance_met() {
         "passing test_cmd must not emit TestsFailed, got: {names:?}"
     );
 }
+
+// ── #437: spawned agents share the parent's say-output record ────────────────
+
+/// A `forge run` program whose only output comes from a spawned agent's
+/// `on start` must be observable via TaskExecutor::outputs() — this is what
+/// lets the CLI warn when a whole program prints nothing.
+#[tokio::test]
+async fn spawn_from_fn_main_shares_parent_output_buffer() {
+    let source = r#"
+agent talker
+  memory
+    x: Text
+  on start
+    say "CHILD-SAYS"
+
+  if stuck for 3 turns
+    escalate to human
+
+fn main
+  spawn talker as "t"
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let mock = MockProvider::new("mock").with_default("mock");
+    let executor = forge::runtime::executor::TaskExecutor::new(program, mock_registry(), None);
+    executor.run().await.expect("program should run");
+
+    let outputs = executor.outputs();
+    assert!(
+        outputs.iter().any(|o| o.contains("CHILD-SAYS")),
+        "spawned child's say must land in parent outputs, got: {:?}",
+        outputs
+    );
+}

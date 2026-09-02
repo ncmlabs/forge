@@ -292,6 +292,9 @@ pub struct AgentProcess {
     storage: Option<crate::runtime::storage::SharedStorage>,
     /// Worktree branch name for sandbox cleanup on agent exit (issue #194).
     worktree_branch: Option<String>,
+    /// Parent's `say` output buffer to share, when spawned inline from
+    /// `fn main` (#437) — makes the parent's `outputs()` see child output.
+    shared_output: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 impl AgentProcess {
@@ -453,7 +456,20 @@ impl AgentProcess {
             warden_tx: None,
             storage,
             worktree_branch: None,
+            shared_output: None,
         }
+    }
+
+    /// Share the spawning parent's `say` output buffer (#437).
+    ///
+    /// Used by `Stmt::Spawn` when spawning inline from `fn main` so that
+    /// `TaskExecutor::outputs()` on the parent reflects child `say` output —
+    /// letting `forge run` warn when a whole program produced nothing
+    /// observable.
+    pub fn with_shared_output(mut self, output: Arc<Mutex<Vec<String>>>) -> Self {
+        self.shared_output = Some(output.clone());
+        self.executor = self.executor.with_shared_output(output);
+        self
     }
 
     /// Set working directory for sandbox isolation (issue #194).
