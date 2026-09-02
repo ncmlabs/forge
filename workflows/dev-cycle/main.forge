@@ -13,6 +13,15 @@
 # PostApprovalResult have a handler and the standalone program
 # still renders output to Slack.
 #
+# T10.2 (#368) — gate_two now sits between planner and implementer.
+# Planner emits PlanReady; gate_two posts a Slack approval card and
+# either auto-emits ImplementationApproved (when [gates]
+# start_implementation = false) or waits for an Approve/Reject button
+# click. On reject, gate_two emits ImplementationRejected which the
+# planner consumes for a bounded re-plan loop ([defaults]
+# max_plan_revisions, default 3). The implementer subscribes
+# ImplementationApproved instead of the pre-T10.2 PlanApproved.
+#
 # Target repo: ncmlabs/forge-playground (or any repo via endpoint params)
 # Trigger: POST /dev_cycle?issue_id=...&repo=...&title=...&...
 #
@@ -31,7 +40,7 @@
 # ── Warden: Dev Lead ─────────────────────────────────────────────
 
 warden dev_lead
-  manages [planner, implementer, tester, reviewer, release_manager, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
+  manages [planner, gate_two, implementer, tester, reviewer, release_manager, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
   on stuck: nudge, self
     after 3: escalate
   on timeout: restart, self
@@ -50,6 +59,7 @@ warden dev_lead
 system forge_dev
   use
     plan: planner
+    gate2: gate_two
     impl: implementer
     test: tester
     review: reviewer

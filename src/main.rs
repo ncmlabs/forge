@@ -197,6 +197,25 @@ enum Command {
         #[command(subcommand)]
         action: WakeAction,
     },
+    /// Inspect / recover persistent redb stores (issue #448)
+    Store {
+        #[command(subcommand)]
+        action: StoreAction,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum StoreAction {
+    /// Health-check every .redb file under the storage root; rotate the
+    /// broken ones to <name>.bak-<timestamp> so the next run starts clean.
+    Recover {
+        /// Storage root directory (default: config storage path or .forge-data)
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Only diagnose, never rename files
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -549,6 +568,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Wake { action } => {
             run_wake_command(action)?;
         }
+        Command::Store { action } => {
+            run_store_command(action)?;
+        }
     }
 
     Ok(())
@@ -557,6 +579,73 @@ async fn main() -> anyhow::Result<()> {
 /// Handle `forge wake <action>` — manages HMAC secrets for `WebhookDriver`
 /// (issue #335). All paths open the unified storage database via the config
 /// loader so they see the same `FORGE_WAKE_SECRETS` table as `forge serve`.
+/// #448: `forge store recover` — health-check every .redb file under the
+/// storage root; rotate broken ones to `<name>.bak-<timestamp>` so the next
+/// run starts clean instead of wedging or dying on an opaque version abort.
+fn run_store_command(action: StoreAction) -> anyhow::Result<()> {
+    match action {
+        StoreAction::Recover { root, dry_run } => {
+            let root = match root {
+                Some(r) => r,
+                None => {
+                    let config = forge::config::ForgeConfig::load_or_default();
+                    std::path::PathBuf::from(
+                        config
+                            .storage
+                            .as_ref()
+                            .map(|s| s.root.clone())
+                            .unwrap_or_else(|| Some(".forge-data".to_string()))
+                            .unwrap_or_else(|| ".forge-data".to_string()),
+                    )
+                }
+            };
+            if !root.exists() {
+                anyhow::bail!("storage root {} does not exist", root.display());
+            }
+
+            let mut broken = 0usize;
+            let mut healthy = 0usize;
+            let mut entries: Vec<_> = std::fs::read_dir(&root)?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().map(|x| x == "redb").unwrap_or(false))
+                .collect();
+            entries.sort();
+
+            for path in entries {
+                print!("checking {} … ", path.display());
+                match forge::runtime::storage::ForgeStorage::open(&path) {
+                    Ok(_) => {
+                        println!("ok");
+                        healthy += 1;
+                    }
+                    Err(e) => {
+                        broken += 1;
+                        println!("BROKEN: {e}");
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_secs();
+                        let backup = path.with_extension(format!("redb.bak-{ts}"));
+                        if dry_run {
+                            println!("  dry-run: would rotate to {}", backup.display());
+                        } else {
+                            std::fs::rename(&path, &backup)?;
+                            println!("  rotated to {}", backup.display());
+                        }
+                    }
+                }
+            }
+
+            if dry_run {
+                println!("dry-run complete: {healthy} healthy, {broken} broken (nothing moved)");
+            } else {
+                println!("done: {healthy} healthy, {broken} rotated");
+            }
+            Ok(())
+        }
+    }
+}
+
 fn run_wake_command(action: WakeAction) -> anyhow::Result<()> {
     use std::io::Read;
     let config = forge::config::ForgeConfig::load_or_default();
@@ -636,7 +725,7 @@ fn open_forge_storage(
     let storage = forge::runtime::storage::ForgeStorage::open_from_config(
         config.storage.as_ref(),
         None,
-        "store.redb",
+        forge::runtime::storage::ForgeStorage::WAKE_SECRETS_DB,
     )
     .map_err(|e| anyhow::anyhow!("failed to open storage: {}", e))?;
     Ok(Arc::new(storage))
@@ -780,7 +869,8 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     let fname = file.display().to_string();
 
     // Load config and skills early — needed for compile-time skill validation
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     let config_clone = config.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
@@ -846,6 +936,23 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
         }
     }
 
+    // #437: a `forge run` that produced nothing observable is a footgun —
+    // the user can't tell whether the agent ran, failed, or was a no-op.
+    // The shared output buffer (fn main + spawned children) is the
+    // observable-output record; `say` prints unconditionally, so an empty
+    // buffer means the user saw nothing on stdout either.
+    // Background-spawned agents may still be mid-flight when fn main
+    // returns — allow a short grace window for their first `say` to land
+    // before declaring the run output-less.
+    if executor.outputs().is_empty() {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    if executor.outputs().is_empty() {
+        eprintln!(
+            "warning: program completed without any observable output (no `say` in fn main or any spawned agent)"
+        );
+    }
+
     Ok(())
 }
 
@@ -855,7 +962,8 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     let source_paths = manifest.resolve_sources(base_dir)?;
 
     // Load config and skills early — needed for compile-time skill validation
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     let config_clone = config.clone();
     let registry = forge::llm::registry::ProviderRegistry::from_config(config)
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
@@ -1121,7 +1229,8 @@ fn try_build_executor_multi(
     }
 
     // Load config, providers, and skills early — needed for skill-aware validation (#276)
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     let trace_env = std::env::var("FORGE_TRACE")
         .map(|v| v == "1")
         .unwrap_or(false);
@@ -1243,7 +1352,8 @@ fn try_build_executor(
     };
 
     // Load config, providers, and skills early — needed for skill-aware validation (#276)
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let trace_env = std::env::var("FORGE_TRACE")
         .map(|v| v == "1")
@@ -1405,6 +1515,16 @@ async fn serve_program(
                 executor
             }
         };
+        let wake_storage = match forge::runtime::storage::ForgeStorage::open_wake_from_config(
+            config.storage.as_ref(),
+            None,
+        ) {
+            Ok(storage) => Some(std::sync::Arc::new(storage)),
+            Err(e) => {
+                eprintln!("Warning: could not open wake storage: {e}");
+                None
+            }
+        };
 
         // Build embedding provider if [embeddings] is configured (#50)
         let executor = if let Some(ref embed_config) = config.embeddings {
@@ -1449,10 +1569,13 @@ async fn serve_program(
         // Create shared knowledge store from agent declaration (#309).
         // The same Arc is passed to both the executor (for endpoint recall) and
         // the system runtime (for agent learn), ensuring a single source of truth.
-        let executor = if let Some((store_path, max_entries, retention_days)) =
-            extract_knowledge_config(executor.program())
-        {
-            let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
+        let executor = if let Some(cfg) = extract_knowledge_config(executor.program()) {
+            let ks = KnowledgeStore::new_scoped(
+                &cfg.store_path,
+                cfg.project_id.as_deref(),
+                cfg.max_entries,
+                cfg.retention_days,
+            );
             let shared_ks = Arc::new(Mutex::new(ks));
             executor.with_shared_knowledge_store_arc(shared_ks)
         } else {
@@ -1545,6 +1668,8 @@ async fn serve_program(
         }
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage.clone());
+        }
+        if let Some(storage) = wake_storage {
             server = server.with_wake_storage(storage);
         }
         if let Some(topo) = topology {
@@ -1590,9 +1715,14 @@ async fn serve_program(
 /// Subdirectories use the filename only (e.g., `content/reference/task.md` → `page:task`).
 /// Extract knowledge store config from the first agent declaration in the program.
 /// Returns (store_path, max_entries, retention_days) if found.
-fn extract_knowledge_config(
-    program: &forge::ast::Program,
-) -> Option<(String, Option<usize>, Option<u64>)> {
+struct KnowledgeConfig {
+    store_path: String,
+    project_id: Option<String>,
+    max_entries: Option<usize>,
+    retention_days: Option<u64>,
+}
+
+fn extract_knowledge_config(program: &forge::ast::Program) -> Option<KnowledgeConfig> {
     program
         .items
         .iter()
@@ -1601,16 +1731,16 @@ fn extract_knowledge_config(
             _ => None,
         })
         .and_then(|kd| {
-            let store_path = match &kd.node.store_path.node {
-                Expr::Template(parts) => parts
-                    .iter()
-                    .filter_map(|p| match &p.node {
-                        TemplatePart::Text(t) => Some(t.as_str()),
-                        _ => None,
-                    })
-                    .collect::<String>(),
-                _ => return None,
-            };
+            let store_path = literal_text_from_expr(&kd.node.store_path.node)?;
+            // Per-repo scope (#359 / T8.4): only resolve if the expression is
+            // a plain Text literal at parse time. Templates that reference
+            // `memory.*` or other identifiers are deferred to T8.5, which
+            // wires per-event resolution from clone-dev config.
+            let project_id = kd
+                .node
+                .project_id
+                .as_ref()
+                .and_then(|p| literal_text_from_expr(&p.node));
             let max_entries = kd.node.max_entries.as_ref().map(|m| m.node as usize);
             let retention_days = kd.node.retention.as_ref().map(|r| {
                 let dur = &r.node;
@@ -1621,8 +1751,31 @@ fn extract_knowledge_config(
                     forge::ast::DurationUnit::Seconds => dur.value / (24 * 60 * 60),
                 }
             });
-            Some((store_path, max_entries, retention_days))
+            Some(KnowledgeConfig {
+                store_path,
+                project_id,
+                max_entries,
+                retention_days,
+            })
         })
+}
+
+/// Extract a literal Text value from an Expr if (and only if) the expression
+/// is a `Template` whose parts are all `Text` (no interpolations).
+fn literal_text_from_expr(expr: &forge::ast::Expr) -> Option<String> {
+    match expr {
+        Expr::Template(parts) => {
+            let mut out = String::new();
+            for p in parts {
+                match &p.node {
+                    TemplatePart::Text(t) => out.push_str(t),
+                    _ => return None,
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
 }
 
 fn seed_content_dir(file: &Path, storage: &forge::runtime::storage::ForgeStorage) {
@@ -1726,6 +1879,16 @@ async fn serve_with_watch(
                 executor
             }
         };
+        let wake_storage = match forge::runtime::storage::ForgeStorage::open_wake_from_config(
+            config.storage.as_ref(),
+            None,
+        ) {
+            Ok(storage) => Some(std::sync::Arc::new(storage)),
+            Err(e) => {
+                eprintln!("Warning: could not open wake storage: {e}");
+                None
+            }
+        };
 
         // Build embedding provider if [embeddings] is configured (#50)
         let executor = if let Some(ref embed_config) = config.embeddings {
@@ -1768,10 +1931,13 @@ async fn serve_with_watch(
         };
 
         // Create shared knowledge store from agent declaration (#309).
-        let executor = if let Some((store_path, max_entries, retention_days)) =
-            extract_knowledge_config(executor.program())
-        {
-            let ks = KnowledgeStore::new(&store_path, max_entries, retention_days);
+        let executor = if let Some(cfg) = extract_knowledge_config(executor.program()) {
+            let ks = KnowledgeStore::new_scoped(
+                &cfg.store_path,
+                cfg.project_id.as_deref(),
+                cfg.max_entries,
+                cfg.retention_days,
+            );
             let shared_ks = Arc::new(Mutex::new(ks));
             executor.with_shared_knowledge_store_arc(shared_ks)
         } else {
@@ -1862,6 +2028,8 @@ async fn serve_with_watch(
         }
         if let Some(storage) = inspect_storage {
             server = server.with_inspect_storage(storage.clone());
+        }
+        if let Some(storage) = wake_storage {
             server = server.with_wake_storage(storage);
         }
         if let Some(topo) = topology {
@@ -1959,7 +2127,8 @@ async fn run_agent(file: &Path) -> anyhow::Result<()> {
         _ => None,
     });
 
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     let storage = if agent_decl.memory_persistent {
         Some(open_forge_storage(&config)?)
     } else {
@@ -2268,7 +2437,8 @@ async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::R
         _ => None,
     });
 
-    let config = forge::config::ForgeConfig::load_or_default();
+    let config =
+        forge::config::ForgeConfig::try_load_or_default().map_err(|e| anyhow::anyhow!("{e}"))?;
     // Always open storage in CLI mode — even non-persistent agents need
     // memory to survive across forge-send invocations
     let storage = Some(open_forge_storage(&config)?);

@@ -450,6 +450,7 @@ fn decl_with_schedule(name: &str, schedule: ScheduleField) -> AgentDecl {
         ],
         memory_persistent: true,
         knowledge: None,
+        allows: Vec::new(),
         timers: Vec::new(),
         schedules: vec![sp(schedule)],
         correlates: Vec::new(),

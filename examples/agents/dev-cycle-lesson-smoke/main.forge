@@ -33,7 +33,7 @@ use
 
 # Seed each specialist's memory with the task identity. In the real
 # dev-cycle this population happens across five different events
-# (IssueAssigned, PlanApproved, ImplementationReady, AcceptanceMet,
+# (IssueAssigned, PlanReady, ImplementationApproved, ImplementationReady, AcceptanceMet,
 # PRMerged). For the smoke test we use one synthetic event.
 event SeedTask
   task_id: Text

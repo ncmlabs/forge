@@ -23,11 +23,17 @@ event CloneDevInbound
 # Webhook-carried events. The WebhookDriver (#335) populates these
 # fields from the POST JSON body; HMAC secrets are registered via
 # `forge wake rotate --agent mastermind --trigger <name>`.
+event GithubIssuesWebhook
+  action: Text
+  repository: GithubWebhookRepository
+  issue: GithubWebhookIssue
+
 event GithubIssueOpened
   repo: Text
   issue_number: Number
   title: Text
   body: Text
+  labels: Text[]
 
 event GithubPrMerged
   repo: Text
@@ -66,3 +72,162 @@ event CrossProjectRequested
   target_repo: Text
   description: Text
   labels: Text
+
+# T8.3 (#358): deterministic Stage-2 routing decision. Mastermind's
+# label_router emits this for every GithubIssueOpened — `routed`
+# specialists pick it up and run; `triage` falls through to the
+# triage_specialist stub for human attention. No LLM in the hot path.
+event TaskRouted
+  task_id: Text
+  specialist: Text
+  repo: Text
+  issue_id: Text
+  outcome: Text
+  matched_suffix: Text
+  diagnostic: Text
+
+# T9.1 (#362): Stage-1 fuzzy intake. Produced by T9.5 slack_devops_monitor
+# (#366) and consumed by mastermind_intake (workflows/clone-dev/stage1/).
+# thread_ts is the correlation key; one mastermind_intake instance per
+# Slack thread, rehydrated via CorrelationDriver (#334) on each turn.
+event DevOpsRequest
+  channel: Text
+  user: Text
+  text: Text
+  thread_ts: Text
+  message_ts: Text
+
+# T9.1 (#362): domain dispatch from mastermind_intake to the T9.2 (#363)
+# investigators. Each investigator subscribes with `where domain == "<self>"`.
+# thread_ts threads through so the eventual Finding can stitch back into
+# the same Slack thread.
+event InvestigationRequested
+  thread_ts: Text
+  domain: Text
+  context: Text
+  channel: Text
+
+# T9.1 (#362) declares the contract; T9.2 (#363) populates it. mastermind_intake
+# correlates on Finding.thread_ts to wake the right thread instance and post
+# the investigator's reply back into the originating Slack thread.
+event Finding
+  thread_ts: Text
+  domain: Text
+  summary: Text
+  evidence: Text[]
+  confidence: Number
+  suggested_action: Text
+
+# T9.3 (#364): aggregated proposal emitted by solution_proposer once a
+# Finding-batch on a thread quiesces (2s quiet-window). T10.1 will consume
+# this for the Slack-side approval gate. mastermind_intake's per-Finding
+# stitch-back to Slack remains parallel — this event feeds the future
+# approval flow, not the existing visibility surface.
+#
+# kind ∈ {answer, small_action, propose_issue}. suggested_labels is only
+# populated when kind == propose_issue (Stage-2 routing vocabulary —
+# clone-dev:plan, clone-dev:impl, clone-dev:review, clone-dev:security,
+# clone-dev:ops — matched against [labels.routing] in clone-dev.toml).
+# evidence_refs carries one "<domain>: <summary>" entry per buffered
+# Finding so the approval message can show the underlying context.
+event ProposalReady
+  thread_ts: Text
+  kind: Text
+  content: Text
+  suggested_labels: Text[]
+  evidence_refs: Text[]
+  confidence: Number
+
+# T9.4 (#365) declares the contract that issue_creator subscribes to;
+# T10.1 will produce it once the Gate-1 approval flow lands. Carries
+# repo / title / channel beyond ProposalReady's set because those are
+# populated from the human approver's input in the Slack approval UI
+# (T9.3's proposer doesn't know which target repo or final title to
+# use — that is the human's call at the gate).
+event ProposalApproved
+  thread_ts: Text
+  channel: Text
+  kind: Text
+  repo: Text
+  title: Text
+  body: Text
+  suggested_labels: Text[]
+  evidence_refs: Text[]
+
+# T9.4 (#365): audit record after issue_creator successfully calls
+# skill.github.create_labeled_issue. thread_ts threads back to the
+# originating Slack thread so observers can stitch context.
+event IssueCreated
+  thread_ts: Text
+  repo: Text
+  issue_url: Text
+  labels: Text[]
+  creator: Text
+
+# T9.4 (#365) internal scaffolding for issue_creator's state machine.
+# FORGE's `when` is single-inline-statement; multi-emit success and
+# multi-emit failure paths each route through one internal event so
+# every handler stays flat (do → for → leaf). Not part of the public
+# stage1 contract — subscribed to only by issue_creator itself.
+event IssueCreatorSucceeded
+  thread_ts: Text
+  channel: Text
+  repo: Text
+  issue_url: Text
+  labels: Text[]
+
+event IssueCreatorRetry
+  thread_ts: Text
+  channel: Text
+  repo: Text
+  title: Text
+  body: Text
+  composite_labels_csv: Text
+  full_labels: Text[]
+
+event IssueCreatorExhausted
+  thread_ts: Text
+  channel: Text
+  repo: Text
+  title: Text
+
+# T9.5 (#366) internal scaffolding for slack_devops_monitor's poll
+# handler. The `when payload.sure -> <single statement>` constraint
+# forces the multi-statement parse + iterate + emit + memory-mutate
+# work onto a separate handler — same pattern issue_creator's
+# IssueCreator{Succeeded,Retry,Exhausted} use. Not part of the public
+# stage1 contract — subscribed to only by slack_devops_monitor itself.
+event SlackMonitorPayload
+  payload: Text
+
+# T10.1 (#367): terminal "no" path produced by gate_one when a
+# propose_issue approval is rejected (reason="human", decision_by =
+# Slack user) or times out (reason="timeout", decision_by="system").
+# No consumer in v1 — emitted for SSE/audit visibility and as a
+# contract for future learning loops that want to observe rejections.
+event ProposalRejected
+  thread_ts: Text
+  channel: Text
+  kind: Text
+  rejection_reason: Text
+  decision_by: Text
+  comment: Text
+
+# T10.1 (#367): placeholder approval signal for future small-action
+# runners. gate_one emits this alongside a stub PostMessage so the
+# shape is fixed before the action runner lands; v1 has no consumer.
+event SmallActionApproved
+  thread_ts: Text
+  channel: Text
+  content: Text
+  evidence_refs: Text[]
+
+# T9.5 (#366) per-mention fan-out from slack_devops_monitor's payload
+# parser to the dedup + emit + memory-update stage. Splitting in two
+# avoids nesting `if msg_ts.length > 0 / if not already` deeper than
+# FORGE's 3-level grammar limit allows inside a single handler.
+event SlackMentionParsed
+  msg_ts: Text
+  thread_ts: Text
+  user: Text
+  text: Text

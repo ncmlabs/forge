@@ -64,7 +64,9 @@ var ForgeCockpit = (function () {
   // pending-approval change. Anything else falls back to the 2s poll.
   var REFRESH_HANDLERS = {
     IssueAssigned: true,
-    PlanApproved: true,
+    PlanReady: true,
+    ImplementationApproved: true,
+    ImplementationRejected: true,
     ImplementationReady: true,
     TestsFailed: true,
     AcceptanceMet: true,

@@ -8,7 +8,7 @@
 // language surface. If FORGE ever grows `file.read` + `toml.parse` we can
 // move the merge logic into .forge code without changing the surface.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -57,12 +57,29 @@ pub struct SlackSection {
     pub signing_secret_env: String,
     #[serde(default)]
     pub default_channel: String,
+    // T9.5 (#366) — channel ID the slack_devops_monitor watches for
+    // @-mentions. Channel IDs (`C…`) are non-secret, so this is a raw
+    // value rather than an env-indirection.
+    #[serde(default)]
+    pub devops_channel: String,
+    // T10.2 (#368) — channel ID gate_two posts plan-approval cards into.
+    // Empty string ⇒ fall back to the issue's per-thread channel from
+    // PlanReady.channel (multi-channel orgs); set to a single ID to
+    // funnel every plan approval into one reviewer channel.
+    #[serde(default)]
+    pub approval_channel: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct GithubSection {
     #[serde(default)]
     pub token_env: String,
+    // T10.1 (#367) — repo slug used by gate_one when forking a
+    // ProposalReady(kind=propose_issue) into ProposalApproved. Single-repo
+    // assumption for v1; future work can promote to a per-thread repo
+    // resolver.
+    #[serde(default)]
+    pub default_repo: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -71,22 +88,26 @@ pub struct LabelsSection {
     pub triage: Vec<String>,
     #[serde(default)]
     pub blocked: Vec<String>,
+    // T8.3 (#358) — Deterministic routing.
+    // BTreeMap so the parallel suffix/target arrays we expose to FORGE
+    // come out in stable, predictable order regardless of TOML key order.
+    #[serde(default)]
+    pub namespace: String,
+    #[serde(default)]
+    pub triage_target: String,
+    #[serde(default)]
+    pub routing: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct LlmSection {
+    // T8.6 (#361) — routing is now a free-form phase→provider table with an
+    // optional `fallback` sub-table for chains. Parsing as a raw `toml::Table`
+    // lets us accept arbitrary phase keys (`classify`, `plan`, `implement`,
+    // `review`, `ops_investigate`, plus the legacy `fast/balanced/high`)
+    // without locking the schema. Validation happens in `from_raw`.
     #[serde(default)]
-    pub routing: LlmRouting,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct LlmRouting {
-    #[serde(default)]
-    pub fast: String,
-    #[serde(default)]
-    pub balanced: String,
-    #[serde(default)]
-    pub high: String,
+    pub routing: toml::value::Table,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -111,6 +132,34 @@ pub struct GatesSection {
     pub require_approval_for: Vec<String>,
     #[serde(default)]
     pub auto_approve_labels: Vec<String>,
+    // T10.1 (#367) — Gate-1 (create-issue) toggles. `create_issue =
+    // false` makes gate_one auto-approve every propose_issue proposal
+    // without going through Slack. `create_issue_timeout_mins` is the
+    // window after which a pending approval escalates via warden.
+    #[serde(default)]
+    pub create_issue: Option<bool>,
+    #[serde(default)]
+    pub create_issue_timeout_mins: Option<f64>,
+    // T10.2 (#368) — Gate-2 (start-implementation) toggles. Same shape
+    // as create_issue: `start_implementation = false` makes gate_two
+    // auto-approve every PlanReady without going through Slack;
+    // `start_implementation_timeout_mins` drives the escalation
+    // tick counter.
+    #[serde(default)]
+    pub start_implementation: Option<bool>,
+    #[serde(default)]
+    pub start_implementation_timeout_mins: Option<f64>,
+    // T10.3 (#369) — Gate-3 (merge-PR) toggle. Default true: reviewer
+    // posts a slack approval card and waits for a button click. Flip to
+    // false to auto-merge after CI green + knowledge-store consultation,
+    // skipping the slack approval entirely. Per-repo override is
+    // available via `[repos."<owner>/<name>"] merge_pr = ...`.
+    // `merge_pr_timeout_mins` is global only (no per-repo override) and
+    // drives the reviewer's 1x-reminder / 2x-warden-escalation cadence.
+    #[serde(default)]
+    pub merge_pr: Option<bool>,
+    #[serde(default)]
+    pub merge_pr_timeout_mins: Option<f64>,
 }
 
 // [defaults] carries the per-repo-style knobs whose values apply to every
@@ -129,6 +178,26 @@ pub struct DefaultsSection {
     pub warden_max_retries: Option<f64>,
     #[serde(default)]
     pub labels_extra: Vec<String>,
+    // T8.5 (#360) — dev-cycle template knobs. Empty string ⇒ apply
+    // built-in default (constants below); per-repo overrides win when
+    // non-empty / Some.
+    #[serde(default)]
+    pub workdir_root: String,
+    #[serde(default)]
+    pub branch_prefix: String,
+    #[serde(default)]
+    pub commit_template: String,
+    #[serde(default)]
+    pub fix_commit_template: String,
+    #[serde(default)]
+    pub max_iterations: Option<f64>,
+    #[serde(default)]
+    pub auto_approve: Option<bool>,
+    // T10.2 (#368) — bound on planner re-plan attempts triggered by
+    // gate_two's ImplementationRejected feedback loop. Per-repo
+    // override available below; `None` ⇒ use built-in default.
+    #[serde(default)]
+    pub max_plan_revisions: Option<f64>,
 }
 
 // [repos."<owner>/<name>"]. Any scalar set on a per-repo block wins over
@@ -148,6 +217,27 @@ pub struct RepoOverride {
     pub warden_max_retries: Option<f64>,
     #[serde(default)]
     pub labels_extra: Vec<String>,
+    // T8.5 (#360) — per-repo overrides. None ⇒ inherit defaults.
+    #[serde(default)]
+    pub workdir_root: Option<String>,
+    #[serde(default)]
+    pub branch_prefix: Option<String>,
+    #[serde(default)]
+    pub commit_template: Option<String>,
+    #[serde(default)]
+    pub fix_commit_template: Option<String>,
+    #[serde(default)]
+    pub max_iterations: Option<f64>,
+    #[serde(default)]
+    pub auto_approve: Option<bool>,
+    // T10.2 (#368) — per-repo override of [defaults].max_plan_revisions.
+    #[serde(default)]
+    pub max_plan_revisions: Option<f64>,
+    // T10.3 (#369) — per-repo override of [gates].merge_pr. None ⇒
+    // inherit cfg.gates_merge_pr. Lets sandbox repos opt into auto-merge
+    // while production repos keep the slack approval gate.
+    #[serde(default)]
+    pub merge_pr: Option<bool>,
 }
 
 // ── Resolved config (post-merge, env-vars resolved) ──────────────
@@ -157,19 +247,85 @@ pub struct CloneDevConfig {
     pub org_name: String,
     pub slack_bot_token: String,
     pub slack_default_channel: String,
+    // T9.5 (#366) — channel ID polled by slack_devops_monitor for
+    // inbound DevOps mentions.
+    pub slack_devops_channel: String,
     pub slack_signing_secret: String,
     pub github_token: String,
     pub github_labels_triage: Vec<String>,
     pub github_labels_blocked: Vec<String>,
+    // Back-compat with T8.2 (#357) — these three keys remain part of the
+    // FORGE record schema declared in workflows/clone-dev/shared/types.forge.
+    // Post-#361 they are pulled from the same `[llm.routing]` map as any
+    // other phase key, so authoring `fast = "x"` and authoring `plan = "y"`
+    // sit side-by-side in TOML.
     pub llm_routing_fast: String,
     pub llm_routing_balanced: String,
     pub llm_routing_high: String,
+    // T8.6 (#361) — the full phase→provider primary table and the optional
+    // phase→fallback-chain table. Used by the runtime to overlay routing
+    // onto the ProviderRegistry; not currently surfaced into the FORGE
+    // record (the executor consults the registry directly per `reason
+    // "..." for <phase>`).
+    pub llm_routing: HashMap<String, String>,
+    pub llm_routing_fallback: HashMap<String, Vec<String>>,
     pub warden_max_retries: f64,
     pub warden_escalate_after_seconds: f64,
     pub budget_per_task_usd: f64,
     pub budget_per_hour_usd: f64,
     pub gates_require_approval_for: Vec<String>,
     pub gates_auto_approve_labels: Vec<String>,
+    // T10.1 (#367) — gate_one toggles. `gates_create_issue` defaults to
+    // true (gate is on); flip to false to auto-approve every
+    // propose_issue without going through Slack. The timeout is in
+    // minutes; gate_one ticks a 5-minute timer and escalates when the
+    // counter reaches the configured value.
+    pub gates_create_issue: bool,
+    pub gates_create_issue_timeout_mins: f64,
+    // T10.2 (#368) — gate_two toggles, mirroring create_issue semantics.
+    // `gates_start_implementation = false` ⇒ gate_two auto-emits
+    // ImplementationApproved with `decision_by = "auto (policy)"`.
+    pub gates_start_implementation: bool,
+    pub gates_start_implementation_timeout_mins: f64,
+    // T10.3 (#369) — gate_three (merge-PR) toggle, lives on the reviewer
+    // agent (not a standalone agent like gate_one/gate_two). Default
+    // true keeps the existing slack-approval flow; false makes the
+    // reviewer auto-merge after CI green + knowledge-store consultation
+    // without posting an approval card. `gates_merge_pr_timeout_mins`
+    // drives the reviewer's awaiting_approval timer: 1x → reminder,
+    // 2x → warden escalation. Per-repo override of the bool resolves
+    // into ResolvedRepo.merge_pr; the timeout is global only.
+    pub gates_merge_pr: bool,
+    pub gates_merge_pr_timeout_mins: f64,
+    // T10.2 (#368) — channel ID gate_two posts plan-approval cards into.
+    // Empty ⇒ fall back to PlanReady.channel.
+    pub slack_approval_channel: String,
+    // T10.1 (#367) — single-repo destination for gate_one's
+    // propose_issue → ProposalApproved fork. Empty string means no
+    // default; gate_one falls back to skipping the issue creation step.
+    pub github_default_repo: String,
+    // T8.3 (#358) — flat sibling fields. FORGE record-of-record is
+    // untested today (see workflows/clone-dev/shared/types.forge:154–158);
+    // suffixes/targets are parallel arrays so a pure FORGE task can
+    // rebuild a typed LabelRouting record from these scalars.
+    pub label_routing_namespace: String,
+    pub label_routing_suffixes: Vec<String>,
+    pub label_routing_targets: Vec<String>,
+    pub label_routing_triage_target: String,
+    // T8.5 (#360) — dev-cycle template defaults. Per-repo overrides
+    // resolve into ResolvedRepo (below). agents.forge consults the
+    // resolved RepoConfig, which falls back to these scalars via
+    // repo_config_for in shared/types.forge.
+    pub defaults_test_cmd: String,
+    pub defaults_workdir_root: String,
+    pub defaults_branch_prefix: String,
+    pub defaults_commit_template: String,
+    pub defaults_fix_commit_template: String,
+    pub defaults_max_iterations: f64,
+    pub defaults_auto_approve: bool,
+    // T10.2 (#368) — bound on planner re-plan attempts. Per-repo
+    // override resolves into ResolvedRepo.max_plan_revisions.
+    pub defaults_max_plan_revisions: f64,
     pub repos: Vec<ResolvedRepo>,
 }
 
@@ -182,6 +338,22 @@ pub struct ResolvedRepo {
     pub budget_per_task_usd: f64,
     pub warden_max_retries: f64,
     pub labels_extra: Vec<String>,
+    // T8.5 (#360) — per-repo dev-cycle templates, resolved by merging
+    // RepoOverride against DefaultsSection (and built-in constants when
+    // both are empty). Empty Text ⇒ "inherit"; FORGE side uses the
+    // default scalars from CloneDevConfig in that case.
+    pub workdir_root: String,
+    pub branch_prefix: String,
+    pub commit_template: String,
+    pub fix_commit_template: String,
+    pub max_iterations: f64,
+    pub auto_approve: bool,
+    // T10.2 (#368) — per-repo override of defaults_max_plan_revisions.
+    pub max_plan_revisions: f64,
+    // T10.3 (#369) — per-repo override of cfg.gates_merge_pr. The
+    // reviewer reads this via repo_config_for(...).merge_pr; when no
+    // per-repo entry exists it inherits the global gate value.
+    pub merge_pr: bool,
 }
 
 // Sentinels exposed to FORGE as "inherit default" markers for numeric
@@ -190,6 +362,41 @@ pub struct ResolvedRepo {
 const INHERIT_F64: f64 = -1.0;
 const DEFAULT_WARDEN_MAX_RETRIES: f64 = 3.0;
 const DEFAULT_WARDEN_ESCALATE_AFTER_SEC: f64 = 3600.0;
+// T8.3 (#358) — back-compat default for older TOML files that pre-date
+// the [labels.routing] block. The label_router pure task uses this
+// name when emitting fall-through routes.
+const DEFAULT_TRIAGE_TARGET: &str = "triage_specialist";
+// T8.5 (#360) — built-in defaults for dev-cycle templating knobs. Used
+// when neither [defaults] nor [repos."*"] supplies a value. The literal
+// strings preserve the historical hardcoded behavior in agents.forge so
+// pre-T8.5 TOML files keep working.
+const DEFAULT_WORKDIR_ROOT: &str = "/tmp/forge-workdir";
+const DEFAULT_BRANCH_PREFIX: &str = "clone-dev";
+const DEFAULT_COMMIT_TEMPLATE: &str = "feat({issue_id}): implement per plan";
+const DEFAULT_FIX_COMMIT_TEMPLATE: &str = "fix({issue_id}): iteration {iteration}";
+const DEFAULT_MAX_ITERATIONS: f64 = 3.0;
+// T10.1 (#367) — Gate-1 (create-issue) defaults. Gate is on by default
+// (operators must opt out via `[gates] create_issue = false`); the 30m
+// window matches the dev-cycle reviewer's typical approval cadence.
+const DEFAULT_GATES_CREATE_ISSUE: bool = true;
+const DEFAULT_GATES_CREATE_ISSUE_TIMEOUT_MINS: f64 = 30.0;
+// T10.2 (#368) — Gate-2 (start-implementation) defaults. Same shape
+// and rationale as Gate-1: opt-out via `[gates] start_implementation
+// = false`, 30-minute escalation window.
+const DEFAULT_GATES_START_IMPLEMENTATION: bool = true;
+const DEFAULT_GATES_START_IMPLEMENTATION_TIMEOUT_MINS: f64 = 30.0;
+// T10.3 (#369) — Gate-3 (merge-PR) defaults. Gate is on by default
+// so existing flows keep their slack-approval step; sandbox repos can
+// flip the bool per-repo. The 30-minute window matches the other two
+// gates and the dev-cycle reviewer's typical approval cadence — at
+// 30m the reviewer posts a single reminder, at 60m it escalates via
+// warden.
+const DEFAULT_GATES_MERGE_PR: bool = true;
+const DEFAULT_GATES_MERGE_PR_TIMEOUT_MINS: f64 = 30.0;
+// T10.2 (#368) — bound on planner re-plan attempts before escalating.
+// 3 mirrors the implementer's max_iterations default — a planner that
+// cannot satisfy a reviewer in 3 tries needs human attention.
+const DEFAULT_MAX_PLAN_REVISIONS: f64 = 3.0;
 
 impl CloneDevConfig {
     pub fn from_toml_str(s: &str) -> Result<Self, String> {
@@ -200,6 +407,73 @@ impl CloneDevConfig {
 
     fn from_raw(raw: CloneDevConfigRaw) -> Self {
         let defaults = raw.defaults;
+
+        // ── T8.6 (#361) — split [llm.routing] into a primary phase→provider
+        // map and an optional phase→fallback-chain table.
+        //
+        // Authored shape:
+        //   [llm.routing]
+        //   plan      = "sonnet"
+        //   implement = "gpt-4o"
+        //   [llm.routing.fallback]
+        //   plan      = ["sonnet", "gpt-4o"]
+        //
+        // Anything that isn't a string-valued top-level key or the named
+        // `fallback` sub-table is silently skipped. We don't error on
+        // malformed entries so older/newer authored configs degrade
+        // gracefully instead of crashing the runtime — the warden surfaces
+        // unresolvable provider names later.
+        let (llm_routing, llm_routing_fallback) = parse_llm_routing(&raw.llm.routing);
+
+        // BTreeMap iteration is deterministic — suffixes[i] always pairs
+        // with targets[i] regardless of TOML authoring order.
+        let (label_routing_suffixes, label_routing_targets): (Vec<_>, Vec<_>) =
+            raw.labels.routing.into_iter().unzip();
+        let label_routing_triage_target = if raw.labels.triage_target.is_empty() {
+            DEFAULT_TRIAGE_TARGET.to_string()
+        } else {
+            raw.labels.triage_target
+        };
+
+        // T8.5 — resolve [defaults] templating fields once so per-repo
+        // merge has a single fallback layer. Empty TOML strings collapse
+        // to the built-in constants here; per-repo None then falls back
+        // to these resolved defaults.
+        let defaults_workdir_root = if defaults.workdir_root.is_empty() {
+            DEFAULT_WORKDIR_ROOT.to_string()
+        } else {
+            defaults.workdir_root.clone()
+        };
+        let defaults_branch_prefix = if defaults.branch_prefix.is_empty() {
+            DEFAULT_BRANCH_PREFIX.to_string()
+        } else {
+            defaults.branch_prefix.clone()
+        };
+        let defaults_commit_template = if defaults.commit_template.is_empty() {
+            DEFAULT_COMMIT_TEMPLATE.to_string()
+        } else {
+            defaults.commit_template.clone()
+        };
+        let defaults_fix_commit_template = if defaults.fix_commit_template.is_empty() {
+            DEFAULT_FIX_COMMIT_TEMPLATE.to_string()
+        } else {
+            defaults.fix_commit_template.clone()
+        };
+        let defaults_max_iterations = defaults.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
+        let defaults_auto_approve = defaults.auto_approve.unwrap_or(false);
+        let defaults_max_plan_revisions = defaults
+            .max_plan_revisions
+            .unwrap_or(DEFAULT_MAX_PLAN_REVISIONS);
+
+        // T10.3 (#369) — resolve the global gate value once so each
+        // ResolvedRepo can fall back to it when no per-repo override
+        // exists. The bool gate is per-repo overridable; the timeout
+        // is global only.
+        let gates_merge_pr = raw.gates.merge_pr.unwrap_or(DEFAULT_GATES_MERGE_PR);
+        let gates_merge_pr_timeout_mins = raw
+            .gates
+            .merge_pr_timeout_mins
+            .unwrap_or(DEFAULT_GATES_MERGE_PR_TIMEOUT_MINS);
 
         let mut repos: Vec<ResolvedRepo> = raw
             .repos
@@ -226,6 +500,24 @@ impl CloneDevConfig {
                     v.extend(over.labels_extra);
                     v
                 },
+                workdir_root: over
+                    .workdir_root
+                    .unwrap_or_else(|| defaults_workdir_root.clone()),
+                branch_prefix: over
+                    .branch_prefix
+                    .unwrap_or_else(|| defaults_branch_prefix.clone()),
+                commit_template: over
+                    .commit_template
+                    .unwrap_or_else(|| defaults_commit_template.clone()),
+                fix_commit_template: over
+                    .fix_commit_template
+                    .unwrap_or_else(|| defaults_fix_commit_template.clone()),
+                max_iterations: over.max_iterations.unwrap_or(defaults_max_iterations),
+                auto_approve: over.auto_approve.unwrap_or(defaults_auto_approve),
+                max_plan_revisions: over
+                    .max_plan_revisions
+                    .unwrap_or(defaults_max_plan_revisions),
+                merge_pr: over.merge_pr.unwrap_or(gates_merge_pr),
             })
             .collect();
 
@@ -236,13 +528,16 @@ impl CloneDevConfig {
             org_name: raw.org.name,
             slack_bot_token: resolve_env(&raw.slack.bot_token_env),
             slack_default_channel: raw.slack.default_channel,
+            slack_devops_channel: raw.slack.devops_channel,
             slack_signing_secret: resolve_env(&raw.slack.signing_secret_env),
             github_token: resolve_env(&raw.github.token_env),
             github_labels_triage: raw.labels.triage,
             github_labels_blocked: raw.labels.blocked,
-            llm_routing_fast: raw.llm.routing.fast,
-            llm_routing_balanced: raw.llm.routing.balanced,
-            llm_routing_high: raw.llm.routing.high,
+            llm_routing_fast: llm_routing.get("fast").cloned().unwrap_or_default(),
+            llm_routing_balanced: llm_routing.get("balanced").cloned().unwrap_or_default(),
+            llm_routing_high: llm_routing.get("high").cloned().unwrap_or_default(),
+            llm_routing,
+            llm_routing_fallback,
             warden_max_retries: raw.warden.max_retries.unwrap_or(DEFAULT_WARDEN_MAX_RETRIES),
             warden_escalate_after_seconds: raw
                 .warden
@@ -252,8 +547,72 @@ impl CloneDevConfig {
             budget_per_hour_usd: raw.budget.per_hour_usd.unwrap_or(INHERIT_F64),
             gates_require_approval_for: raw.gates.require_approval_for,
             gates_auto_approve_labels: raw.gates.auto_approve_labels,
+            gates_create_issue: raw.gates.create_issue.unwrap_or(DEFAULT_GATES_CREATE_ISSUE),
+            gates_create_issue_timeout_mins: raw
+                .gates
+                .create_issue_timeout_mins
+                .unwrap_or(DEFAULT_GATES_CREATE_ISSUE_TIMEOUT_MINS),
+            gates_start_implementation: raw
+                .gates
+                .start_implementation
+                .unwrap_or(DEFAULT_GATES_START_IMPLEMENTATION),
+            gates_start_implementation_timeout_mins: raw
+                .gates
+                .start_implementation_timeout_mins
+                .unwrap_or(DEFAULT_GATES_START_IMPLEMENTATION_TIMEOUT_MINS),
+            gates_merge_pr,
+            gates_merge_pr_timeout_mins,
+            slack_approval_channel: raw.slack.approval_channel,
+            github_default_repo: raw.github.default_repo,
+            label_routing_namespace: raw.labels.namespace,
+            label_routing_suffixes,
+            label_routing_targets,
+            label_routing_triage_target,
+            defaults_test_cmd: defaults.test_cmd,
+            defaults_workdir_root,
+            defaults_branch_prefix,
+            defaults_commit_template,
+            defaults_fix_commit_template,
+            defaults_max_iterations,
+            defaults_auto_approve,
+            defaults_max_plan_revisions,
             repos,
         }
+    }
+
+    /// Resolve the ordered provider chain for a routing phase (#361).
+    /// Order: `[primary, ...fallback_chain]`. Returns an empty chain when
+    /// the phase has no entry — callers should fall back to runtime defaults.
+    pub fn routing(&self, phase: &str) -> Vec<String> {
+        let mut chain = Vec::new();
+        if let Some(primary) = self.llm_routing.get(phase) {
+            chain.push(primary.clone());
+        }
+        if let Some(fallbacks) = self.llm_routing_fallback.get(phase) {
+            for name in fallbacks {
+                if !chain.contains(name) {
+                    chain.push(name.clone());
+                }
+            }
+        }
+        chain
+    }
+
+    /// Materialize every configured phase into a `phase → chain` table for
+    /// the ProviderRegistry overlay (#361). Phases that only appear in the
+    /// fallback table (no primary) are still emitted so explicit fallback-
+    /// only configs still route somewhere.
+    pub fn routing_table(&self) -> HashMap<String, Vec<String>> {
+        let mut keys: std::collections::BTreeSet<String> =
+            self.llm_routing.keys().cloned().collect();
+        keys.extend(self.llm_routing_fallback.keys().cloned());
+        keys.into_iter()
+            .map(|phase| {
+                let chain = self.routing(&phase);
+                (phase, chain)
+            })
+            .filter(|(_, chain)| !chain.is_empty())
+            .collect()
     }
 
     // Build the FORGE-facing Value matching the CloneDevConfig record
@@ -267,6 +626,11 @@ impl CloneDevConfig {
             &mut fields,
             "slack_default_channel",
             &self.slack_default_channel,
+        );
+        insert_text(
+            &mut fields,
+            "slack_devops_channel",
+            &self.slack_devops_channel,
         );
         insert_text(
             &mut fields,
@@ -309,6 +673,94 @@ impl CloneDevConfig {
             "gates_auto_approve_labels",
             &self.gates_auto_approve_labels,
         );
+        insert_bool(&mut fields, "gates_create_issue", self.gates_create_issue);
+        insert_number(
+            &mut fields,
+            "gates_create_issue_timeout_mins",
+            self.gates_create_issue_timeout_mins,
+        );
+        insert_bool(
+            &mut fields,
+            "gates_start_implementation",
+            self.gates_start_implementation,
+        );
+        insert_number(
+            &mut fields,
+            "gates_start_implementation_timeout_mins",
+            self.gates_start_implementation_timeout_mins,
+        );
+        insert_bool(&mut fields, "gates_merge_pr", self.gates_merge_pr);
+        insert_number(
+            &mut fields,
+            "gates_merge_pr_timeout_mins",
+            self.gates_merge_pr_timeout_mins,
+        );
+        insert_text(
+            &mut fields,
+            "slack_approval_channel",
+            &self.slack_approval_channel,
+        );
+        insert_text(
+            &mut fields,
+            "github_default_repo",
+            &self.github_default_repo,
+        );
+        insert_text(
+            &mut fields,
+            "label_routing_namespace",
+            &self.label_routing_namespace,
+        );
+        insert_text_array(
+            &mut fields,
+            "label_routing_suffixes",
+            &self.label_routing_suffixes,
+        );
+        insert_text_array(
+            &mut fields,
+            "label_routing_targets",
+            &self.label_routing_targets,
+        );
+        insert_text(
+            &mut fields,
+            "label_routing_triage_target",
+            &self.label_routing_triage_target,
+        );
+        insert_text(&mut fields, "defaults_test_cmd", &self.defaults_test_cmd);
+        insert_text(
+            &mut fields,
+            "defaults_workdir_root",
+            &self.defaults_workdir_root,
+        );
+        insert_text(
+            &mut fields,
+            "defaults_branch_prefix",
+            &self.defaults_branch_prefix,
+        );
+        insert_text(
+            &mut fields,
+            "defaults_commit_template",
+            &self.defaults_commit_template,
+        );
+        insert_text(
+            &mut fields,
+            "defaults_fix_commit_template",
+            &self.defaults_fix_commit_template,
+        );
+        insert_number(
+            &mut fields,
+            "defaults_max_iterations",
+            self.defaults_max_iterations,
+        );
+        insert_bool(
+            &mut fields,
+            "defaults_auto_approve",
+            self.defaults_auto_approve,
+        );
+        insert_number(
+            &mut fields,
+            "defaults_max_plan_revisions",
+            self.defaults_max_plan_revisions,
+        );
         let repo_records: Vec<ConfidentValue> = self.repos.iter().map(repo_to_record).collect();
         fields.insert(
             "repos".into(),
@@ -316,6 +768,39 @@ impl CloneDevConfig {
         );
         Value::Record(fields)
     }
+}
+
+/// Split `[llm.routing]` raw TOML into (primary, fallback) maps (#361).
+/// Top-level string entries become `primary[phase] = provider_name`. The
+/// nested `fallback` sub-table, when present, is read as `phase → [provider,
+/// ...]`. Non-conforming values are skipped without erroring.
+fn parse_llm_routing(
+    table: &toml::value::Table,
+) -> (HashMap<String, String>, HashMap<String, Vec<String>>) {
+    let mut primary = HashMap::new();
+    let mut fallback = HashMap::new();
+    for (k, v) in table {
+        if k == "fallback" {
+            if let Some(sub) = v.as_table() {
+                for (phase, chain) in sub {
+                    if let Some(arr) = chain.as_array() {
+                        let names: Vec<String> = arr
+                            .iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect();
+                        if !names.is_empty() {
+                            fallback.insert(phase.clone(), names);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if let Some(name) = v.as_str() {
+            primary.insert(k.clone(), name.to_string());
+        }
+    }
+    (primary, fallback)
 }
 
 fn resolve_env(name: &str) -> String {
@@ -336,6 +821,10 @@ fn insert_number(fields: &mut HashMap<String, ConfidentValue>, key: &str, n: f64
     fields.insert(key.into(), ConfidentValue::deterministic(Value::Number(n)));
 }
 
+fn insert_bool(fields: &mut HashMap<String, ConfidentValue>, key: &str, b: bool) {
+    fields.insert(key.into(), ConfidentValue::deterministic(Value::Bool(b)));
+}
+
 fn insert_text_array(fields: &mut HashMap<String, ConfidentValue>, key: &str, items: &[String]) {
     let arr: Vec<ConfidentValue> = items
         .iter()
@@ -353,6 +842,14 @@ fn repo_to_record(r: &ResolvedRepo) -> ConfidentValue {
     insert_number(&mut fields, "budget_per_task_usd", r.budget_per_task_usd);
     insert_number(&mut fields, "warden_max_retries", r.warden_max_retries);
     insert_text_array(&mut fields, "labels_extra", &r.labels_extra);
+    insert_text(&mut fields, "workdir_root", &r.workdir_root);
+    insert_text(&mut fields, "branch_prefix", &r.branch_prefix);
+    insert_text(&mut fields, "commit_template", &r.commit_template);
+    insert_text(&mut fields, "fix_commit_template", &r.fix_commit_template);
+    insert_number(&mut fields, "max_iterations", r.max_iterations);
+    insert_bool(&mut fields, "auto_approve", r.auto_approve);
+    insert_number(&mut fields, "max_plan_revisions", r.max_plan_revisions);
+    insert_bool(&mut fields, "merge_pr", r.merge_pr);
     ConfidentValue::deterministic(Value::Record(fields))
 }
 
@@ -425,9 +922,11 @@ mod tests {
 
             [slack]
             default_channel = "C_default"
+            devops_channel  = "C_devops"
 
             [github]
             # no token_env set — should resolve to empty
+            default_repo = "ncmlabs/forge"
 
             [labels]
             triage  = ["needs-triage"]
@@ -447,14 +946,18 @@ mod tests {
             per_hour_usd = 20.0
 
             [gates]
-            require_approval_for = ["release", "destructive"]
-            auto_approve_labels  = ["docs-only"]
+            require_approval_for     = ["release", "destructive"]
+            auto_approve_labels      = ["docs-only"]
+            create_issue             = false
+            create_issue_timeout_mins = 60
             "#,
         )
         .expect("parse");
         assert_eq!(cfg.org_name, "ncmlabs");
         assert_eq!(cfg.slack_default_channel, "C_default");
+        assert_eq!(cfg.slack_devops_channel, "C_devops");
         assert_eq!(cfg.github_token, "");
+        assert_eq!(cfg.github_default_repo, "ncmlabs/forge");
         assert_eq!(cfg.github_labels_triage, vec!["needs-triage".to_string()]);
         assert_eq!(cfg.llm_routing_high, "claude-opus");
         assert_eq!(cfg.warden_max_retries, 5.0);
@@ -463,6 +966,42 @@ mod tests {
         assert_eq!(cfg.budget_per_hour_usd, 20.0);
         assert_eq!(cfg.gates_require_approval_for.len(), 2);
         assert_eq!(cfg.gates_auto_approve_labels, vec!["docs-only".to_string()]);
+        assert!(!cfg.gates_create_issue);
+        assert_eq!(cfg.gates_create_issue_timeout_mins, 60.0);
+    }
+
+    #[test]
+    fn defaults_test_cmd_is_exposed_for_forge_fallbacks() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            test_cmd = "npm ci && npm run typecheck && npm test && npm run build"
+            "#,
+        )
+        .expect("parse");
+
+        assert_eq!(
+            cfg.defaults_test_cmd,
+            "npm ci && npm run typecheck && npm test && npm run build"
+        );
+
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        let value = fields
+            .get("defaults_test_cmd")
+            .expect("defaults_test_cmd field");
+        match &value.value {
+            Value::Text(cmd) => {
+                assert_eq!(
+                    cmd,
+                    "npm ci && npm run typecheck && npm test && npm run build"
+                )
+            }
+            _ => panic!("defaults_test_cmd should be Text"),
+        }
     }
 
     #[test]
@@ -589,6 +1128,380 @@ mod tests {
         assert_eq!(cfg.slack_bot_token, "");
     }
 
+    // ── T9.5 (#366) — devops_channel surface ────────────────────────
+
+    #[test]
+    fn parses_slack_devops_channel() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [slack]
+            devops_channel = "C_devops"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.slack_devops_channel, "C_devops");
+    }
+
+    #[test]
+    fn slack_devops_channel_defaults_to_empty() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [org]
+            name = "ncmlabs"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.slack_devops_channel, "");
+    }
+
+    #[test]
+    fn to_forge_record_emits_slack_devops_channel() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [slack]
+            devops_channel = "C_devops"
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        let dev = fields
+            .get("slack_devops_channel")
+            .expect("slack_devops_channel field");
+        match &dev.value {
+            Value::Text(s) => assert_eq!(s, "C_devops"),
+            _ => panic!("slack_devops_channel should be Text"),
+        }
+    }
+
+    // ── T10.1 (#367) — Gate-1 (create-issue) toggles ──────────────
+
+    #[test]
+    fn gates_create_issue_defaults_when_omitted() {
+        // Older TOML files (pre-#367) don't carry the new keys. Loader
+        // must fall back to the documented defaults so gate_one boots
+        // without operator action.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            require_approval_for = ["release"]
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.gates_create_issue);
+        assert_eq!(
+            cfg.gates_create_issue_timeout_mins,
+            DEFAULT_GATES_CREATE_ISSUE_TIMEOUT_MINS
+        );
+        assert_eq!(cfg.github_default_repo, "");
+    }
+
+    #[test]
+    fn to_forge_record_emits_gate_one_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [github]
+            default_repo = "ncmlabs/forge"
+
+            [gates]
+            create_issue              = false
+            create_issue_timeout_mins = 45
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        let create_issue = fields.get("gates_create_issue").expect("flag field");
+        match &create_issue.value {
+            Value::Bool(b) => assert!(!*b),
+            _ => panic!("gates_create_issue should be Bool"),
+        }
+        let timeout = fields
+            .get("gates_create_issue_timeout_mins")
+            .expect("timeout field");
+        match &timeout.value {
+            Value::Number(n) => assert_eq!(*n, 45.0),
+            _ => panic!("gates_create_issue_timeout_mins should be Number"),
+        }
+        let repo = fields.get("github_default_repo").expect("repo field");
+        match &repo.value {
+            Value::Text(s) => assert_eq!(s, "ncmlabs/forge"),
+            _ => panic!("github_default_repo should be Text"),
+        }
+    }
+
+    // ── T10.2 (#368) — Gate-2 (start-implementation) toggles ──────
+
+    #[test]
+    fn gates_start_implementation_defaults_when_omitted() {
+        // Older TOML files (pre-#368) don't carry the new keys. Loader
+        // must fall back to the documented defaults so gate_two boots
+        // without operator action.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            require_approval_for = ["release"]
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.gates_start_implementation);
+        assert_eq!(
+            cfg.gates_start_implementation_timeout_mins,
+            DEFAULT_GATES_START_IMPLEMENTATION_TIMEOUT_MINS
+        );
+        assert_eq!(cfg.slack_approval_channel, "");
+        assert_eq!(cfg.defaults_max_plan_revisions, DEFAULT_MAX_PLAN_REVISIONS);
+    }
+
+    #[test]
+    fn gates_start_implementation_honors_authored_values() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [slack]
+            approval_channel = "C_reviewers"
+
+            [gates]
+            start_implementation              = false
+            start_implementation_timeout_mins = 45
+
+            [defaults]
+            max_plan_revisions = 5
+            "#,
+        )
+        .expect("parse");
+        assert!(!cfg.gates_start_implementation);
+        assert_eq!(cfg.gates_start_implementation_timeout_mins, 45.0);
+        assert_eq!(cfg.slack_approval_channel, "C_reviewers");
+        assert_eq!(cfg.defaults_max_plan_revisions, 5.0);
+    }
+
+    #[test]
+    fn per_repo_max_plan_revisions_overrides_default() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            max_plan_revisions = 3
+
+            [repos."acme/alpha"]
+            max_plan_revisions = 7
+
+            [repos."acme/beta"]
+            # inherits
+            "#,
+        )
+        .expect("parse");
+        let alpha = cfg.repos.iter().find(|r| r.slug == "acme/alpha").unwrap();
+        let beta = cfg.repos.iter().find(|r| r.slug == "acme/beta").unwrap();
+        assert_eq!(alpha.max_plan_revisions, 7.0);
+        assert_eq!(beta.max_plan_revisions, 3.0);
+    }
+
+    #[test]
+    fn to_forge_record_emits_gate_two_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [slack]
+            approval_channel = "C_reviewers"
+
+            [gates]
+            start_implementation              = false
+            start_implementation_timeout_mins = 60
+
+            [defaults]
+            max_plan_revisions = 4
+
+            [repos."acme/alpha"]
+            max_plan_revisions = 8
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+
+        let flag = fields
+            .get("gates_start_implementation")
+            .expect("flag field");
+        match &flag.value {
+            Value::Bool(b) => assert!(!*b),
+            _ => panic!("gates_start_implementation should be Bool"),
+        }
+        let timeout = fields
+            .get("gates_start_implementation_timeout_mins")
+            .expect("timeout field");
+        match &timeout.value {
+            Value::Number(n) => assert_eq!(*n, 60.0),
+            _ => panic!("gates_start_implementation_timeout_mins should be Number"),
+        }
+        let channel = fields
+            .get("slack_approval_channel")
+            .expect("approval channel field");
+        match &channel.value {
+            Value::Text(s) => assert_eq!(s, "C_reviewers"),
+            _ => panic!("slack_approval_channel should be Text"),
+        }
+        let max_rev = fields
+            .get("defaults_max_plan_revisions")
+            .expect("max_plan_revisions field");
+        match &max_rev.value {
+            Value::Number(n) => assert_eq!(*n, 4.0),
+            _ => panic!("defaults_max_plan_revisions should be Number"),
+        }
+        // Per-repo override surfaces on the repo record.
+        let repos = fields.get("repos").expect("repos field");
+        match &repos.value {
+            Value::Array(items) => {
+                let r = match &items[0].value {
+                    Value::Record(r) => r,
+                    _ => panic!("repo item should be a Record"),
+                };
+                let v = r.get("max_plan_revisions").expect("repo field");
+                match &v.value {
+                    Value::Number(n) => assert_eq!(*n, 8.0),
+                    _ => panic!("repo.max_plan_revisions should be Number"),
+                }
+            }
+            _ => panic!("repos should be an Array"),
+        }
+    }
+
+    // ── T10.3 (#369) — Gate-3 (merge-PR) toggles ──────────────────
+
+    #[test]
+    fn gates_merge_pr_defaults_when_omitted() {
+        // Older TOML files (pre-#369) don't carry the new keys. Loader
+        // must fall back to the documented defaults so the reviewer
+        // boots without operator action and the existing slack-approval
+        // flow stays the default.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            require_approval_for = ["release"]
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.gates_merge_pr);
+        assert_eq!(
+            cfg.gates_merge_pr_timeout_mins,
+            DEFAULT_GATES_MERGE_PR_TIMEOUT_MINS
+        );
+    }
+
+    #[test]
+    fn gates_merge_pr_honors_authored_values() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            merge_pr              = false
+            merge_pr_timeout_mins = 45
+            "#,
+        )
+        .expect("parse");
+        assert!(!cfg.gates_merge_pr);
+        assert_eq!(cfg.gates_merge_pr_timeout_mins, 45.0);
+    }
+
+    #[test]
+    fn per_repo_merge_pr_overrides_gates_value() {
+        // Sandbox repo opts into auto-merge while production repos keep
+        // the slack approval gate. The reviewer reads merge_pr off the
+        // ResolvedRepo, so the override has to win on the per-repo
+        // record while the global default still applies elsewhere.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            merge_pr = true
+
+            [repos."acme/sandbox"]
+            merge_pr = false
+
+            [repos."acme/prod"]
+            # inherits gates.merge_pr = true
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.gates_merge_pr);
+        let sandbox = cfg.repos.iter().find(|r| r.slug == "acme/sandbox").unwrap();
+        let prod = cfg.repos.iter().find(|r| r.slug == "acme/prod").unwrap();
+        assert!(!sandbox.merge_pr, "sandbox should auto-merge");
+        assert!(prod.merge_pr, "prod should keep slack approval");
+    }
+
+    #[test]
+    fn per_repo_merge_pr_inherits_when_gates_false() {
+        // Symmetric inheritance: when the global default is false, a
+        // repo without an explicit override picks up false too.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            merge_pr = false
+
+            [repos."acme/staging"]
+            # inherits gates.merge_pr = false
+            "#,
+        )
+        .expect("parse");
+        let staging = cfg.repos.iter().find(|r| r.slug == "acme/staging").unwrap();
+        assert!(!staging.merge_pr);
+    }
+
+    #[test]
+    fn to_forge_record_emits_gate_three_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [gates]
+            merge_pr              = false
+            merge_pr_timeout_mins = 60
+
+            [repos."acme/sandbox"]
+            merge_pr = true
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        let flag = fields.get("gates_merge_pr").expect("flag field");
+        match &flag.value {
+            Value::Bool(b) => assert!(!*b),
+            _ => panic!("gates_merge_pr should be Bool"),
+        }
+        let timeout = fields
+            .get("gates_merge_pr_timeout_mins")
+            .expect("timeout field");
+        match &timeout.value {
+            Value::Number(n) => assert_eq!(*n, 60.0),
+            _ => panic!("gates_merge_pr_timeout_mins should be Number"),
+        }
+        // Per-repo override surfaces on the repo record (sandbox flips
+        // back to true even though the global default is false).
+        let repos = fields.get("repos").expect("repos field");
+        match &repos.value {
+            Value::Array(items) => {
+                let r = match &items[0].value {
+                    Value::Record(r) => r,
+                    _ => panic!("repo item should be a Record"),
+                };
+                let v = r.get("merge_pr").expect("repo merge_pr field");
+                match &v.value {
+                    Value::Bool(b) => assert!(*b, "sandbox repo override should win"),
+                    _ => panic!("repo.merge_pr should be Bool"),
+                }
+            }
+            _ => panic!("repos should be an Array"),
+        }
+    }
+
     #[test]
     fn invalid_toml_returns_clean_error() {
         let err =
@@ -625,6 +1538,7 @@ mod tests {
         // Top-level scalars present
         assert!(fields.contains_key("org_name"));
         assert!(fields.contains_key("slack_default_channel"));
+        assert!(fields.contains_key("defaults_test_cmd"));
         assert!(fields.contains_key("warden_max_retries"));
         // repos array present and shaped
         let repos = fields.get("repos").expect("repos field");
@@ -668,9 +1582,393 @@ mod tests {
     }
 
     #[test]
+    fn label_routing_parses_namespace_and_suffix_target_pairs() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            namespace      = "clone-dev"
+            triage_target  = "custom_triage"
+
+            [labels.routing]
+            plan   = "planner"
+            impl   = "implementer"
+            test   = "tester"
+            review = "reviewer"
+            merge  = "release_manager"
+            ops    = "release_manager"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.label_routing_namespace, "clone-dev");
+        assert_eq!(cfg.label_routing_triage_target, "custom_triage");
+        // BTreeMap iteration is alphabetical by key; suffixes/targets are paired.
+        assert_eq!(cfg.label_routing_suffixes.len(), 6);
+        let pairs: Vec<(String, String)> = cfg
+            .label_routing_suffixes
+            .iter()
+            .cloned()
+            .zip(cfg.label_routing_targets.iter().cloned())
+            .collect();
+        assert!(pairs.contains(&("plan".into(), "planner".into())));
+        assert!(pairs.contains(&("impl".into(), "implementer".into())));
+        assert!(pairs.contains(&("test".into(), "tester".into())));
+        assert!(pairs.contains(&("review".into(), "reviewer".into())));
+        assert!(pairs.contains(&("merge".into(), "release_manager".into())));
+        assert!(pairs.contains(&("ops".into(), "release_manager".into())));
+    }
+
+    #[test]
+    fn label_routing_defaults_triage_target_when_omitted() {
+        // Older TOML files (pre-#358) won't carry triage_target. Loader must
+        // fall back to "triage_specialist" so the stub agent receives routes.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            triage = ["needs-triage"]
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.label_routing_triage_target, "triage_specialist");
+        assert_eq!(cfg.label_routing_namespace, "");
+        assert!(cfg.label_routing_suffixes.is_empty());
+        assert!(cfg.label_routing_targets.is_empty());
+    }
+
+    #[test]
+    fn to_forge_record_emits_label_routing_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [labels]
+            namespace = "clone-dev"
+
+            [labels.routing]
+            plan = "planner"
+            impl = "implementer"
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        assert!(fields.contains_key("label_routing_namespace"));
+        assert!(fields.contains_key("label_routing_suffixes"));
+        assert!(fields.contains_key("label_routing_targets"));
+        assert!(fields.contains_key("label_routing_triage_target"));
+        let suffixes = fields.get("label_routing_suffixes").expect("suffixes");
+        match &suffixes.value {
+            Value::Array(items) => assert_eq!(items.len(), 2),
+            _ => panic!("suffixes should be a Text[]"),
+        }
+    }
+
+    #[test]
     fn load_returns_clean_error_for_missing_file() {
         let missing = std::path::PathBuf::from("/nonexistent/forge-t357/not-a-file.toml");
         let err = load(&missing).expect_err("missing file should error");
         assert!(err.contains("cannot resolve config path"));
+    }
+
+    // ── T8.5 (#360) — dev-cycle templating defaults ────────────────
+
+    #[test]
+    fn defaults_templating_uses_built_in_constants_when_absent() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [org]
+            name = "ncmlabs"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.defaults_workdir_root, DEFAULT_WORKDIR_ROOT);
+        assert_eq!(cfg.defaults_branch_prefix, DEFAULT_BRANCH_PREFIX);
+        assert_eq!(cfg.defaults_commit_template, DEFAULT_COMMIT_TEMPLATE);
+        assert_eq!(
+            cfg.defaults_fix_commit_template,
+            DEFAULT_FIX_COMMIT_TEMPLATE
+        );
+        assert_eq!(cfg.defaults_max_iterations, DEFAULT_MAX_ITERATIONS);
+        assert!(!cfg.defaults_auto_approve);
+    }
+
+    #[test]
+    fn defaults_templating_honors_authored_values() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            workdir_root        = "/var/forge/work"
+            branch_prefix       = "ncmlabs/clone"
+            commit_template     = "feat({issue_id}) — {title}"
+            fix_commit_template = "chore({issue_id}): retry {iteration}"
+            max_iterations      = 5
+            auto_approve        = true
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.defaults_workdir_root, "/var/forge/work");
+        assert_eq!(cfg.defaults_branch_prefix, "ncmlabs/clone");
+        assert_eq!(cfg.defaults_commit_template, "feat({issue_id}) — {title}");
+        assert_eq!(
+            cfg.defaults_fix_commit_template,
+            "chore({issue_id}): retry {iteration}"
+        );
+        assert_eq!(cfg.defaults_max_iterations, 5.0);
+        assert!(cfg.defaults_auto_approve);
+    }
+
+    #[test]
+    fn per_repo_templating_overrides_defaults() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            workdir_root    = "/var/forge/work"
+            branch_prefix   = "clone-dev"
+            commit_template = "feat({issue_id}): default"
+            max_iterations  = 3
+            auto_approve    = false
+
+            [repos."acme/alpha"]
+            workdir_root    = "/var/forge/alpha"
+            branch_prefix   = "alpha"
+            commit_template = "alpha({issue_id}): {title}"
+            max_iterations  = 7
+            auto_approve    = true
+
+            [repos."acme/beta"]
+            # inherits everything
+            "#,
+        )
+        .expect("parse");
+        let alpha = cfg.repos.iter().find(|r| r.slug == "acme/alpha").unwrap();
+        let beta = cfg.repos.iter().find(|r| r.slug == "acme/beta").unwrap();
+
+        // alpha overrides win
+        assert_eq!(alpha.workdir_root, "/var/forge/alpha");
+        assert_eq!(alpha.branch_prefix, "alpha");
+        assert_eq!(alpha.commit_template, "alpha({issue_id}): {title}");
+        assert_eq!(alpha.max_iterations, 7.0);
+        assert!(alpha.auto_approve);
+
+        // beta inherits resolved defaults
+        assert_eq!(beta.workdir_root, "/var/forge/work");
+        assert_eq!(beta.branch_prefix, "clone-dev");
+        assert_eq!(beta.commit_template, "feat({issue_id}): default");
+        assert_eq!(beta.max_iterations, 3.0);
+        assert!(!beta.auto_approve);
+    }
+
+    #[test]
+    fn per_repo_inherits_built_in_when_defaults_section_absent() {
+        // Neither [defaults] nor per-repo override sets templating fields:
+        // each repo must still resolve to the built-in constants so
+        // agents.forge can run unconfigured.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [repos."acme/orphan"]
+            "#,
+        )
+        .expect("parse");
+        let orphan = cfg.repos.first().expect("one repo");
+        assert_eq!(orphan.workdir_root, DEFAULT_WORKDIR_ROOT);
+        assert_eq!(orphan.branch_prefix, DEFAULT_BRANCH_PREFIX);
+        assert_eq!(orphan.commit_template, DEFAULT_COMMIT_TEMPLATE);
+        assert_eq!(orphan.fix_commit_template, DEFAULT_FIX_COMMIT_TEMPLATE);
+        assert_eq!(orphan.max_iterations, DEFAULT_MAX_ITERATIONS);
+        assert!(!orphan.auto_approve);
+    }
+
+    #[test]
+    fn to_forge_record_emits_templating_fields() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [defaults]
+            workdir_root    = "/var/forge/work"
+            commit_template = "feat({issue_id}): {title}"
+            auto_approve    = true
+
+            [repos."acme/alpha"]
+            branch_prefix = "alpha"
+            "#,
+        )
+        .expect("parse");
+        let record = cfg.to_forge_record();
+        let fields = match record {
+            Value::Record(ref f) => f,
+            _ => panic!("expected Record"),
+        };
+        // Top-level defaults_* present.
+        for key in [
+            "defaults_workdir_root",
+            "defaults_branch_prefix",
+            "defaults_commit_template",
+            "defaults_fix_commit_template",
+            "defaults_max_iterations",
+            "defaults_auto_approve",
+        ] {
+            assert!(fields.contains_key(key), "missing field {key}");
+        }
+        // Per-repo record carries the merged templating fields.
+        let repos = fields.get("repos").expect("repos field");
+        match &repos.value {
+            Value::Array(items) => {
+                let r = match &items[0].value {
+                    Value::Record(r) => r,
+                    _ => panic!("repo item should be a Record"),
+                };
+                for key in [
+                    "workdir_root",
+                    "branch_prefix",
+                    "commit_template",
+                    "fix_commit_template",
+                    "max_iterations",
+                    "auto_approve",
+                ] {
+                    assert!(r.contains_key(key), "missing repo field {key}");
+                }
+            }
+            _ => panic!("repos should be an Array"),
+        }
+    }
+
+    // ── T8.6 (#361) — phase-keyed [llm.routing] ──────────────────────
+
+    #[test]
+    fn routing_phase_keyed_round_trips() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            classify        = "claude-haiku"
+            plan            = "sonnet"
+            implement       = "gpt-4o"
+            review          = "sonnet"
+            ops_investigate = "ollama-local"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(
+            cfg.llm_routing.get("classify"),
+            Some(&"claude-haiku".into())
+        );
+        assert_eq!(cfg.llm_routing.get("plan"), Some(&"sonnet".into()));
+        assert_eq!(cfg.llm_routing.get("implement"), Some(&"gpt-4o".into()));
+        assert_eq!(
+            cfg.llm_routing.get("ops_investigate"),
+            Some(&"ollama-local".into())
+        );
+        assert!(cfg.llm_routing_fallback.is_empty());
+    }
+
+    #[test]
+    fn routing_back_compat_with_fast_balanced_high() {
+        // Pre-#361 configs only used fast/balanced/high. Post-#361 those
+        // keys live in the same primary table as any other phase, and the
+        // back-compat scalars on CloneDevConfig still resolve to them.
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            fast     = "claude-haiku"
+            balanced = "claude-haiku"
+            high     = "claude-opus"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.llm_routing_fast, "claude-haiku");
+        assert_eq!(cfg.llm_routing_balanced, "claude-haiku");
+        assert_eq!(cfg.llm_routing_high, "claude-opus");
+        // And those entries are also visible in the unified routing map so
+        // a future caller can iterate every configured phase.
+        assert_eq!(cfg.llm_routing.get("fast"), Some(&"claude-haiku".into()));
+        assert_eq!(cfg.llm_routing.get("high"), Some(&"claude-opus".into()));
+    }
+
+    #[test]
+    fn routing_resolves_chain_with_fallback_table() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            plan      = "sonnet"
+            implement = "gpt-4o"
+
+            [llm.routing.fallback]
+            plan      = ["sonnet", "gpt-4o", "ollama-local"]
+            implement = ["gpt-4o", "sonnet"]
+            "#,
+        )
+        .expect("parse");
+
+        // Primary first, then fallback entries appended without dups.
+        assert_eq!(
+            cfg.routing("plan"),
+            vec!["sonnet".to_string(), "gpt-4o".into(), "ollama-local".into()]
+        );
+        // For implement, primary 'gpt-4o' equals the first fallback entry —
+        // dedup keeps the chain at 2 entries.
+        assert_eq!(
+            cfg.routing("implement"),
+            vec!["gpt-4o".to_string(), "sonnet".into()]
+        );
+    }
+
+    #[test]
+    fn routing_unknown_phase_returns_empty_chain() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            plan = "sonnet"
+            "#,
+        )
+        .expect("parse");
+        assert!(cfg.routing("does_not_exist").is_empty());
+    }
+
+    #[test]
+    fn routing_table_emits_every_configured_phase() {
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            plan      = "sonnet"
+            implement = "gpt-4o"
+
+            [llm.routing.fallback]
+            review = ["sonnet"]
+            "#,
+        )
+        .expect("parse");
+        let table = cfg.routing_table();
+        // plan + implement carry primary; review is fallback-only and still
+        // surfaces because operators may want a chain even without a primary.
+        assert_eq!(table.len(), 3);
+        assert_eq!(table.get("plan").unwrap(), &vec!["sonnet".to_string()]);
+        assert_eq!(table.get("implement").unwrap(), &vec!["gpt-4o".to_string()]);
+        assert_eq!(table.get("review").unwrap(), &vec!["sonnet".to_string()]);
+    }
+
+    #[test]
+    fn routing_silently_skips_malformed_entries() {
+        // Non-string values for primary keys and non-array fallback values
+        // are dropped rather than rejecting the whole config — keeps a
+        // newer config readable by older runtimes (forward-compat).
+        let cfg = CloneDevConfig::from_toml_str(
+            r#"
+            [llm.routing]
+            plan = "sonnet"
+            broken_number = 42
+            broken_array = ["a", "b"]
+
+            [llm.routing.fallback]
+            plan = ["sonnet", "gpt-4o"]
+            broken_str = "not-a-list"
+            "#,
+        )
+        .expect("parse");
+        assert_eq!(cfg.llm_routing.get("plan"), Some(&"sonnet".into()));
+        assert!(!cfg.llm_routing.contains_key("broken_number"));
+        assert!(!cfg.llm_routing.contains_key("broken_array"));
+        assert_eq!(
+            cfg.llm_routing_fallback.get("plan"),
+            Some(&vec!["sonnet".into(), "gpt-4o".into()])
+        );
+        assert!(!cfg.llm_routing_fallback.contains_key("broken_str"));
     }
 }

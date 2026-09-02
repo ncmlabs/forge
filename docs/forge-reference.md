@@ -83,6 +83,12 @@ task greet_user
     say "The answer is {answer_value}"
 ```
 
+`{!expr}` is the raw-interpolation form for `Html` values (skips the autoescape that the regular `{expr}` form applies inside `Html` strings).
+
+### Escape Sequences
+
+The parser recognizes seven escapes inside template strings: `\n`, `\r`, `\t`, `\"`, `\\`, `\{`, `\}`. The brace escapes (`\{`, `\}`) carry literal `{` / `}` past the parser without triggering interpolation — useful when a workflow needs to pass placeholder-bearing text (e.g. `"\{issue_id\}"`) to a runtime helper such as `text.replace`. Interpolation `{var}` is parse-time only, so a string loaded later from TOML/JSON/etc. that contains `{var}` is inert text and must be substituted explicitly.
+
 ## 6. Literals
 
 FORGE supports numeric, boolean, and array literals.
@@ -869,9 +875,16 @@ try external_service(request) or use_cached_result(request_id)
 
 ### reason
 
-**Syntax:** `reason <template_string>`
+**Syntax:** `reason <template_string> [for <phase>]`
 
 Sends a prompt to the LLM and returns a Text response with confidence metadata.
+
+The optional `for <phase>` clause (issue #361) attaches a routing phase key
+to the call-site. When set, the runtime consults the configured `[llm.routing]`
+table (in `clone-dev.toml` for the clone-developer track) and dispatches to
+the configured provider chain. The phase identifier accepts any name —
+including reserved words like `classify` — since the position after `for`
+is unambiguous.
 
 **Examples:**
 ```
@@ -879,14 +892,17 @@ reason "Analyze the sentiment of: {input}"
 
 reason "Is this a valid email address? {email}"
 
-reason "Summarize the key points from: {document}"
+reason "Draft an implementation plan for {issue.title}" for plan
+
+reason "Investigate ops query: {q}" for ops_investigate
 ```
 
 ### classify
 
-**Syntax:** `classify <expr> into [label1, label2, label3]`
+**Syntax:** `classify <expr> into [label1, label2, label3] [for <phase>]`
 
 Classifies the input expression into one of the provided string labels.
+Accepts the same trailing `for <phase>` clause as `reason`.
 
 **Examples:**
 ```
@@ -895,6 +911,8 @@ classify user_feedback into ["bug", "feature_request", "documentation"]
 classify sentiment_score into ["positive", "neutral", "negative"]
 
 classify document into ["technical", "marketing", "legal", "other"]
+
+classify request into ["dev-cycle", "observe", "ignore"] for classify
 ```
 
 ### search
@@ -2582,6 +2600,9 @@ Built-in capability families:
 | Command | `command.status`, `command.output`, `command.cancel` |
 | Files | `file.read` (server-only) |
 | Structured Data | `toml.parse`, `json.parse` |
+| Text | `text.to_number`, `text.replace`, `text.short_id` |
+| Environment | `env.get` |
+| Process | `proc.exit` |
 | Skills | `skill.<namespace>.<capability>(...)` |
 
 `search "query"` is restricted to `#! boundary: server`.
@@ -2617,7 +2638,7 @@ capabilities:
         error_path: error
 ```
 
-Use `{param}` placeholders for capability arguments and `{env:NAME}` for environment variables. Use `{{` and `}}` for literal braces inside argv templates.
+Use `{param}` placeholders for capability arguments, `{env:NAME}` for environment variables, and `{json:param}` when an argument must be inserted as a JSON string literal inside a larger argv template. Use `{{` and `}}` for literal braces inside argv templates.
 
 The `github` skill ships two parallel issue-creation capabilities:
 
@@ -2706,7 +2727,41 @@ The compiler requires callers to bind the result and discriminate with `when x.s
 
 ---
 
-## 23. Templates and Raw Interpolation
+## 23. Text, Environment, and Process Built-ins
+
+Small leaf intrinsics for runtime-only operations that don't fit the LLM/skill/data taxonomies. All resolved in `src/runtime/executor.rs` and registered in `src/resolver.rs`.
+
+| Capability | Signature | Boundary | Notes |
+|---|---|---|---|
+| `text.to_number(s)` | `Text -> Number` | any | Parses text to number; returns `0.0` on failure. |
+| `text.replace(s, find, replacement)` | `(Text, Text, Text) -> Text` | any | Substitutes every occurrence of `find` in `s` with `replacement`. Empty `find` is a no-op. |
+| `text.short_id()` | `() -> Text` | any | Returns an 8-char lowercase hex prefix of a v4 UUID. Not security-grade; useful for collision-resistant suffixes (~16M values). |
+| `env.get(name, default)` | `(Text, Text) -> Text` | any | Reads an env var at runtime; returns `default` if unset. |
+| `proc.exit(code)` | `Number -> Unit` | any (CLI only meaningful) | Signals process exit; runtime translates to `std::process::exit(code)` from the generated CLI dispatch. |
+
+### Why `text.replace` exists
+
+FORGE's `{var}` interpolation is parse-time only. A string loaded from TOML/JSON/file contents at runtime that *contains* `{var}` is inert text — the parser already passed. To render runtime templates (e.g. a `commit_template` like `"feat({issue_id}): implement"` loaded from `clone-dev.toml`), substitute placeholders explicitly:
+
+```forge
+msg = template
+  |> text.replace("\{issue_id\}", issue_id)
+  |> text.replace("\{title\}", title)
+```
+
+The `\{` / `\}` escapes (Section 5) are mandatory on the `find` argument so the parser doesn't try to interpolate against the surrounding scope.
+
+### Why `text.short_id` exists
+
+Used by `workflows/dev-cycle/agents.forge` to suffix per-task workdirs as `{workdir_root}/{repo_slug}/{issue_id}-{short_id}`, so two concurrent invocations sharing a `repo_slug`/`issue_id` (rerun, retry, parallel) cannot collide on disk. 8 hex chars give ~16M distinct values per `(repo, issue)` pair — more than adequate for a single-host swarm; the value is never load-bearing for security.
+
+### Boundary Rules
+
+All five built-ins are accepted in every boundary (`server`, `client`, `shared`). Server-only restrictions apply to `file.read`, `search`, and `data.*` — not these.
+
+---
+
+## 24. Templates and Raw Interpolation
 
 Normal template interpolation uses `{expr}` and is escaped in HTML contexts. Raw interpolation uses `{!expr}` and skips HTML escaping. Use raw interpolation only for trusted or already-sanitized HTML.
 
@@ -2718,7 +2773,7 @@ endpoint page() -> Html
 
 ---
 
-## 24. Example Validation Buckets
+## 25. Example Validation Buckets
 
 Examples are not all validated the same way:
 

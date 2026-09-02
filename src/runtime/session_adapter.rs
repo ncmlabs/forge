@@ -110,13 +110,12 @@ pub fn build_resume_command(adapter: &AdapterConfig, state: &SessionState) -> Op
                 args.push(arg.clone());
             }
         }
-    } else if let Some(ref flag) = resume.flag {
+    } else {
         // Flag-based resume: e.g., claude --resume <id>
+        let flag = resume.flag.as_ref()?;
         args.extend(adapter.args.iter().cloned());
         args.push(flag.clone());
         args.push(external_id.clone());
-    } else {
-        return None;
     }
 
     // If there's a follow-up prompt, add it

@@ -52,6 +52,8 @@ Current FORGE surfaces to account for include:
 - uncertainty handling: do not directly `give` oracle/runtime results; bind then use `when result.sure`, `when result.unsure`, and `else`
 - `exec`, `command`, background `command.status/output/cancel`
 - `file.read` (server-only) plus schema-driven `toml.parse(text, "TypeName")` / `json.parse(text, "TypeName")` built-ins; `TypeName` is a string literal naming a `type` in the same program and refines the return type to `Named(TypeName)`
+- text built-ins: `text.to_number(s)`, `text.replace(s, find, replacement)` (runtime template substitution since `{var}` interpolation is parse-time only), `text.short_id()` (8-char hex from v4 UUID, used for collision-resistant suffixes like dev-cycle workdirs)
+- template-string escapes: `\n`, `\r`, `\t`, `\"`, `\\`, `\{`, `\}` — the brace escapes carry literal `{` / `}` past the parser, required when passing placeholder text (e.g. `"\{issue_id\}"`) to runtime helpers like `text.replace`
 - `session`, `on progress`/`on complete` hooks, `isolate worktree`, and `gives AgentResult`
 - `AgentResult` fields and `metadata.verification`
 - `knowledge store`, `recall`, `learn`

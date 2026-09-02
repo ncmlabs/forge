@@ -1,0 +1,110 @@
+#! boundary: shared
+
+# ================================================================
+# Clone-Dev — Stage-2 Label Router (T8.3, #358)
+# ================================================================
+# Pure deterministic routing: GitHub issue labels + config →
+# RoutingDecision. No LLM, no skill calls, no I/O. Mastermind calls
+# this on every GithubIssueOpened and emits a TaskRouted event with
+# the result. Specialists subscribe TaskRouted with a `where`
+# filter on `specialist` to pick up only their own work.
+#
+# Routing rule (in priority order):
+#   1. Zero `<namespace>:*` labels       → triage_specialist  (no_clonedev_label)
+#   2. >1  `<namespace>:*` labels        → triage_specialist  (multi_clonedev_labels)
+#   3. Suffix mapped in config           → that specialist     (ok)
+#   4. Unmapped suffix                   → triage_specialist  (unknown_suffix:{suffix})
+#
+# Suffix → target mapping is config-driven via [labels.routing] in
+# clone-dev.toml. Adding a new specialist later is config-only — no
+# FORGE code change.
+# ================================================================
+
+type LabelRouting
+  namespace: Text          # e.g. "clone-dev"
+  suffixes: Text[]         # parallel-array map: suffixes[i] → targets[i]
+  targets: Text[]
+  triage_target: Text      # fall-through agent name
+
+type RoutingDecision
+  specialist: Text         # name of agent to route to
+  outcome: Text            # "routed" | "triage"
+  matched_suffix: Text     # "" when no namespace match; suffix when known/unknown
+  diagnostic: Text         # "ok" | "no_clonedev_label" | "multi_clonedev_labels" | "unknown_suffix:{suffix}"
+                           # (named `diagnostic` rather than `reason` because `reason`
+                           # is the LLM-call keyword in FORGE)
+
+# ── Helpers (pure) ──────────────────────────────────────────────
+
+# True iff `label` is shaped "<namespace>:<suffix>" for our namespace.
+pure label_in_namespace
+  needs label: Text, namespace: Text
+  gives Bool
+  do
+    parts = label.split(":")
+    if parts.length != 2
+      give false
+    if parts[0] == namespace
+      give true
+    give false
+
+# Filter labels to only those in our namespace.
+pure clonedev_labels_only
+  needs labels: Text[], namespace: Text
+  gives Text[]
+  do
+    result = []
+    for label in labels
+      in_ns = label_in_namespace(label, namespace)
+      if in_ns
+        result = result + [label]
+    give result
+
+# Extract suffix from "clone-dev:plan" → "plan". Returns "" on bad shape.
+pure suffix_of
+  needs label: Text
+  gives Text
+  do
+    parts = label.split(":")
+    if parts.length != 2
+      give ""
+    give parts[1]
+
+# Suffix → specialist via parallel-array lookup. Returns "" when unmapped.
+pure target_for_suffix
+  needs suffix: Text, suffixes: Text[], targets: Text[]
+  gives Text
+  do
+    i = 0
+    for s in suffixes
+      if s == suffix
+        give targets[i]
+      i = i + 1
+    give ""
+
+# ── Main router ─────────────────────────────────────────────────
+
+pure label_router
+  needs labels: Text[], routing: LabelRouting
+  gives RoutingDecision
+  do
+    ours = clonedev_labels_only(labels, routing.namespace)
+    if ours.length == 0
+      give RoutingDecision(specialist: routing.triage_target, outcome: "triage", matched_suffix: "", diagnostic: "no_clonedev_label")
+    if ours.length > 1
+      give RoutingDecision(specialist: routing.triage_target, outcome: "triage", matched_suffix: "", diagnostic: "multi_clonedev_labels")
+    suffix = suffix_of(ours[0])
+    target = target_for_suffix(suffix, routing.suffixes, routing.targets)
+    if target == ""
+      give RoutingDecision(specialist: routing.triage_target, outcome: "triage", matched_suffix: suffix, diagnostic: "unknown_suffix:{suffix}")
+    give RoutingDecision(specialist: target, outcome: "routed", matched_suffix: suffix, diagnostic: "ok")
+
+# Rebuild a typed LabelRouting record from the flat sibling fields on
+# CloneDevConfig. Mastermind calls this once per GithubIssueOpened —
+# trivial cost (record allocation only) and keeps `label_router`
+# itself decoupled from the config record shape.
+pure label_routing_of
+  needs cfg: CloneDevConfig
+  gives LabelRouting
+  do
+    give LabelRouting(namespace: cfg.label_routing_namespace, suffixes: cfg.label_routing_suffixes, targets: cfg.label_routing_targets, triage_target: cfg.label_routing_triage_target)

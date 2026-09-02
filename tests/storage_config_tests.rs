@@ -131,6 +131,42 @@ fn cli_and_server_share_same_redb_under_unified_root() {
 }
 
 #[test]
+fn wake_cli_and_serve_share_wake_secret_store() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let _guard = EnvGuard::unset();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = StorageConfig {
+        root: Some(tmp.path().to_str().unwrap().to_string()),
+    };
+
+    let cli_storage = ForgeStorage::open_wake_from_config(Some(&cfg), None).expect("cli wake open");
+    cli_storage
+        .upsert_wake_secret("mastermind", "github_issue_opened", "secret")
+        .expect("register wake secret");
+    drop(cli_storage);
+
+    let serve_storage =
+        ForgeStorage::open_wake_from_config(Some(&cfg), None).expect("serve wake open");
+    assert_eq!(
+        serve_storage
+            .lookup_wake_secret("mastermind", "github_issue_opened")
+            .unwrap(),
+        Some("secret".to_string())
+    );
+
+    let runtime_storage =
+        ForgeStorage::open_from_config(Some(&cfg), None, "server.redb").expect("server data open");
+    assert_eq!(
+        runtime_storage
+            .lookup_wake_secret("mastermind", "github_issue_opened")
+            .unwrap(),
+        None,
+        "wake secrets must not depend on the per-server runtime database"
+    );
+}
+
+#[test]
 fn empty_env_var_falls_through_to_config() {
     let _lock = ENV_LOCK.lock().unwrap();
     let _guard = EnvGuard::set("");

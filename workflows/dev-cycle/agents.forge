@@ -24,6 +24,10 @@ use
   llm.reason
   llm.classify
   skill.github
+  env.get
+  config.load_clone_dev
+  text.replace
+  text.short_id
 
 # ── Types ────────────────────────────────────────────────────────
 
@@ -62,9 +66,16 @@ event IssueAssigned
   callback_url: Text
   test_cmd: Text
 
-event PlanApproved
+# T10.2 (#368) — renamed from PlanApproved. The planner produces this
+# *before* the human gate; "Ready" reflects "plan drafted, awaiting
+# review" rather than the pre-T10.2 implicit auto-approval semantics.
+# gate_two consumes this and either auto-emits ImplementationApproved
+# (when [gates] start_implementation = false) or sends a Slack
+# approval card and waits for ApprovalResponse.
+event PlanReady
   issue_id: Text
   repo: Text
+  title: Text
   plan: Text
   criteria: Text
   branch: Text
@@ -72,10 +83,40 @@ event PlanApproved
   callback_url: Text
   test_cmd: Text
 
+# T10.2 (#368) — emitted by gate_two after a human approval (or after
+# auto-approval when the gate is bypassed). decision_by carries the
+# Slack user who clicked Approve, or "auto (policy)" when the gate
+# was bypassed via [gates] start_implementation = false.
+event ImplementationApproved
+  issue_id: Text
+  repo: Text
+  title: Text
+  plan: Text
+  criteria: Text
+  branch: Text
+  channel: Text
+  callback_url: Text
+  test_cmd: Text
+  decision_by: Text
+
+# T10.2 (#368) — emitted by gate_two on rejection or timeout. The
+# planner subscribes (filtered by issue_id) and re-plans with `comment`
+# as additional context, bounded by [defaults] max_plan_revisions.
+# `comment` is the rejection narrative; `decision_by` identifies who
+# (or what — "system" on timeout) caused the rejection.
+event ImplementationRejected
+  issue_id: Text
+  comment: Text
+  decision_by: Text
+
 event ImplementationReady
   issue_id: Text
   repo: Text
+  title: Text
+  plan: Text
+  criteria: Text
   branch: Text
+  workdir: Text
   channel: Text
   callback_url: Text
   test_cmd: Text
@@ -92,7 +133,11 @@ event TestsFailed
 event AcceptanceMet
   issue_id: Text
   repo: Text
+  title: Text
+  plan: Text
+  criteria: Text
   branch: Text
+  workdir: Text
   report: Text
   channel: Text
   callback_url: Text
@@ -189,7 +234,7 @@ task draft_plan
   needs issue: Issue
   gives Text
   do
-    result = reason "You are a senior engineer planning work on a GitHub repo. Given this issue, produce a concise implementation plan with numbered steps.\n\nTitle: {issue.title}\nAcceptance criteria: {issue.criteria}"
+    result = reason "You are a senior engineer planning work on a GitHub repo. Given this issue, produce a concise implementation plan with numbered steps.\n\nTitle: {issue.title}\nAcceptance criteria: {issue.criteria}" for plan
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Manual planning required."
@@ -199,16 +244,34 @@ task check_acceptance
   gives Text
   do
     failure_text = report.failures
-    result = classify failure_text into ["blocking", "minor", "none"]
+    result = classify failure_text into ["blocking", "minor", "none"] for review
     when result.sure -> give result
     when result.unsure -> give "needs_human_review"
+    else -> give "inconclusive"
+
+# Issue #431: deterministic gate between the configured test command and the
+# LLM acceptance classifier. A non-zero command exit code must NEVER be
+# downgraded by `check_acceptance` — the gate returns "command_failed"
+# immediately and the tester emits TestsFailed with the raw output.
+# `check_acceptance` only runs after the command exits 0.
+task tester_gate
+  needs exit_code: Number, output_text: Text
+  gives Text
+  do
+    if exit_code != 0
+      give "command_failed"
+    report = TestReport(passed: true, failures: output_text, coverage: 0)
+    issue_placeholder = Issue(id: "gate", title: "", criteria: "")
+    gate_acceptance = check_acceptance(issue_placeholder, report)
+    when gate_acceptance.sure -> give gate_acceptance
+    when gate_acceptance.unsure -> give gate_acceptance
     else -> give "inconclusive"
 
 task draft_changelog_entry
   needs issue: Issue, branch: Text
   gives Text
   do
-    result = reason "Write a Keep-a-Changelog entry.\n\nIssue: {issue.title}\nBranch: {branch}\nUse one of: Added, Changed, Fixed. Then a one-line description."
+    result = reason "Write a Keep-a-Changelog entry.\n\nIssue: {issue.title}\nBranch: {branch}\nUse one of: Added, Changed, Fixed. Then a one-line description." for review
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Changed: {issue.title}"
@@ -217,7 +280,7 @@ task draft_pr_description
   needs issue: Issue, changelog: Text
   gives Text
   do
-    result = reason "Write a concise PR description.\n\nIssue: {issue.title}\nAcceptance criteria: {issue.criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Test plan section."
+    result = reason "Write a concise PR description using only the facts below. Do not ask for more context.\n\nIssue: {issue.title}\nAcceptance criteria:\n{issue.criteria}\nChangelog: {changelog}\n\nInclude a Summary section and a Verification section." for review
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Summary: {issue.title}"
@@ -226,7 +289,7 @@ task diagnose_failures
   needs failures: Text, plan: Text, iteration: Number
   gives Text
   do
-    result = reason "You are diagnosing test failures (attempt {iteration}).\n\nOriginal plan:\n{plan}\n\nTest output:\n{failures}\n\nProvide a concise diagnosis: 1) Root cause of each failure 2) Which plan step is affected 3) Recommended fix approach."
+    result = reason "You are diagnosing test failures (repair attempt {iteration}).\n\nOriginal plan:\n{plan}\n\nTest output:\n{failures}\n\nProvide a concise diagnosis: 1) Root cause of each failure 2) Which file and plan step are affected 3) The smallest source edit that should fix the current failure. If the failure is a TypeScript import or missing test-runner symbol error, call out the exact import line to consolidate or extend. Prefer repairing the failing file over rewriting fixtures, seed data, or unrelated tests." for implement
     when result.sure -> give result
     when result.unsure -> give result
     else -> give "Diagnosis inconclusive — failures: {failures}"
@@ -244,7 +307,7 @@ task characterize_pr_diff
   gives Text
   do
     prompt = "Summarize this PR diff in 2-3 sentences. Focus on: what was changed, why (infer from title), and which area of the codebase is affected. Be specific about file types and modules.\n\nTitle: {title}\nDiff (truncated):\n{diff_text}"
-    result = reason prompt
+    result = reason prompt for review
     when result.sure -> give "{result}"
     when result.unsure -> give "{result}"
     else -> give "Diff characterization unavailable"
@@ -264,18 +327,154 @@ task assess_with_history
     if prior_decisions == ""
       give "needs_human"
     analysis_prompt = "You are a code reviewer deciding whether a PR should be approved based on historical patterns from this repository.\n\nCurrent PR:\n- Branch: {branch}\n- Diff characterization: {characterization}\n\nSimilar prior PR decisions from this repository:\n{prior_decisions}\n\nRules:\n- auto_approve: Current PR closely matches >=2 prior PRs that were approved, with similar scope, area, and patterns\n- auto_reject: Current PR matches >=2 prior PRs that were rejected for the same structural reason\n- needs_human: Not enough similar history, mixed signals, novel pattern, or insufficient confidence\n\nAnalyze the evidence and classify."
-    result = classify analysis_prompt into ["auto_approve", "needs_human", "auto_reject"]
+    result = classify analysis_prompt into ["auto_approve", "needs_human", "auto_reject"] for review
     when result.sure -> give "{result}"
     when result.unsure -> give "needs_human"
     else -> give "needs_human"
 
 # ── Pure Functions ───────────────────────────────────────────────
 
+# T8.5 (#360): branch prefix sourced from per-repo CloneDev config so
+# multi-tenant runs can vary the convention without forking this file.
 pure branch_name
-  needs issue_id: Text
+  needs prefix: Text, issue_id: Text
   gives Text
   do
-    give "clone-dev/{issue_id}"
+    give "{prefix}/{issue_id}"
+
+# T8.5 (#360): render a commit message from a config-loaded template
+# string. Substitutes {issue_id}, {title}, {body}, and {iteration} in
+# that order. Templates loaded from TOML are inert text — FORGE's
+# parse-time `{var}` interpolation doesn't reach runtime strings —
+# so we walk the placeholders explicitly via text.replace.
+pure render_commit_message
+  needs template: Text, issue_id: Text, title: Text, body: Text, iteration: Number
+  gives Text
+  do
+    s1 = text.replace(template, "\{issue_id\}", issue_id)
+    s2 = text.replace(s1, "\{title\}", title)
+    s3 = text.replace(s2, "\{body\}", body)
+    iter_text = "{iteration}"
+    s4 = text.replace(s3, "\{iteration\}", iter_text)
+    give s4
+
+pure strip_shell_fences
+  needs script: Text
+  gives Text
+  do
+    s1 = text.replace(script, "```bash\n", "")
+    s2 = text.replace(s1, "```sh\n", "")
+    s3 = text.replace(s2, "```shell\n", "")
+    s4 = text.replace(s3, "```\n", "")
+    s5 = text.replace(s4, "```", "")
+    give s5
+
+# T8.5 (#360): keep memory.auto_decision Text-shaped for downstream
+# observers (debug logs, knowledge-store rows) while letting the
+# config carry the underlying Bool. Encoded as a pure helper so the
+# parse-time `if cond` body never has to be a single-statement block —
+# the FORGE grammar's leaf-only nesting limit makes inline conditional
+# assignment awkward, and pure dispatch is the cleanest alternative.
+pure bool_to_decision
+  needs enabled: Bool
+  gives Text
+  do
+    if enabled
+      give "enabled"
+    give "disabled"
+
+pure close_reference
+  needs repo: Text, issue_id: Text
+  gives Text
+  do
+    give "Closes {repo}#{issue_id}"
+
+pure pr_body_needs_fallback
+  needs draft: Text
+  gives Bool
+  do
+    lower = draft.lower()
+    trimmed = draft.trim()
+    if trimmed == ""
+      give true
+    if lower.contains("need more context")
+      give true
+    if lower.contains("could you provide")
+      give true
+    if not lower.contains("summary")
+      give true
+    has_test_plan = lower.contains("test plan")
+    has_verification = lower.contains("verification")
+    if not has_test_plan and not has_verification
+      give true
+    give false
+
+pure ensure_close_reference
+  needs body: Text, close_ref: Text
+  gives Text
+  do
+    if body.contains(close_ref)
+      give body
+    give "{body}\n\n{close_ref}"
+
+pure fallback_pr_body
+  needs title: Text, criteria: Text, plan: Text, test_cmd: Text, report: Text, close_ref: Text
+  gives Text
+  do
+    give "## Summary\n\nAutomated clone-dev implementation for: {title}\n\nAcceptance criteria:\n{criteria}\n\nPlan executed:\n{plan}\n\n## Verification\n\nResult: {report}\n\nCommand:\n```sh\n{test_cmd}\n```\n\n{close_ref}"
+
+pure normalize_pr_body
+  needs draft: Text, title: Text, criteria: Text, plan: Text, test_cmd: Text, report: Text, close_ref: Text
+  gives Text
+  do
+    if pr_body_needs_fallback(draft)
+      give fallback_pr_body(title, criteria, plan, test_cmd, report, close_ref)
+    give ensure_close_reference(draft, close_ref)
+
+pure ci_allows_gate_three
+  needs ci_status: Text
+  gives Bool
+  do
+    lower = ci_status.lower()
+    if lower.contains("error")
+      give false
+    if lower.contains("cancel")
+      give false
+    if lower.contains("failure")
+      give false
+    if lower.contains("failed") and not lower.contains("0 failed")
+      give false
+    if lower.contains("pass")
+      give true
+    if lower.contains("success")
+      give true
+    if lower.contains("green")
+      give true
+    give false
+
+pure gate_three_channel_for
+  needs cfg: CloneDevConfig, fallback: Text
+  gives Text
+  do
+    if cfg.slack_approval_channel.length > 0
+      give cfg.slack_approval_channel
+    if fallback.length > 0
+      give fallback
+    give cfg.slack_default_channel
+
+pure trusted_green_review_path
+  needs auto_decision: Text, merge_pr: Bool, ci_passed_first_try: Bool, ci_status: Text
+  gives Bool
+  do
+    if auto_decision == "disabled" and merge_pr and ci_passed_first_try and ci_allows_gate_three(ci_status)
+      give true
+    give false
+
+pure gate_three_approval_context
+  needs branch: Text, entry: Text, ci_status: Text, verdict: Text, characterization: Text
+  gives Text
+  do
+    give "Branch: {branch}\nChangelog: {entry}\nCI: {ci_status}\n\nKnowledge verdict: {verdict}\nDiff summary: {characterization}\n\nApprove to merge or reject to iterate."
 
 # T5.2 (#303): mastery scoring.
 pure compute_swarm_score
@@ -324,50 +523,91 @@ agent planner
   memory
     issue_id: Text
     repo: Text
+    title: Text
+    branch: Text
     channel: Text
     callback_url: Text
     plan_text: Text
     criteria: Text
     test_cmd: Text
     repo_slug: Text
+    config_path: Text
+    config: CloneDevConfig
+    revision_count: Number
+    max_plan_revisions: Number
   knowledge store: ".forge-knowledge/pr-history"
     max_entries: 10000
     retention: 365d
   subscribe IssueAssigned
+  subscribe ImplementationRejected where issue_id == memory.issue_id
   subscribe TaskCompleted where task_id == memory.issue_id
 
   on start
     memory.issue_id = ""
     memory.repo = ""
+    memory.title = ""
+    memory.branch = ""
     memory.channel = ""
     memory.callback_url = ""
     memory.plan_text = ""
     memory.criteria = ""
     memory.test_cmd = ""
     memory.repo_slug = ""
-    say "[planner] ready"
+    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml")
+    memory.config = config.load_clone_dev(memory.config_path)
+    memory.revision_count = 0
+    memory.max_plan_revisions = memory.config.defaults_max_plan_revisions
+    say "[planner] ready (config: {memory.config_path}, branch_prefix default: {memory.config.defaults_branch_prefix}, max_plan_revisions: {memory.max_plan_revisions})"
 
   on IssueAssigned(issue_id: Text, repo: Text, title: Text, body: Text, channel: Text, callback_url: Text, test_cmd: Text)
     memory.issue_id = issue_id
     memory.repo = repo
+    memory.title = title
     memory.channel = channel
     memory.callback_url = callback_url
     memory.criteria = body
     memory.test_cmd = test_cmd
     memory.repo_slug = slugify_repo(repo)
+    memory.revision_count = 0
+    repo_cfg = repo_config_for(memory.config, memory.repo_slug)
+    memory.max_plan_revisions = repo_cfg.max_plan_revisions
     say "[planner] Planning issue {issue_id} in {repo}"
     issue = Issue(id: issue_id, title: title, criteria: body)
     plan_text = draft_plan(issue)
     memory.plan_text = plan_text
-    branch = branch_name(issue_id)
+    branch = branch_name(repo_cfg.branch_prefix, issue_id)
+    memory.branch = branch
     emit PostMessage(channel: channel, text: "Plan drafted for {issue_id} in {repo}:\n{plan_text}", thread_ts: "")
-    say "[planner] Plan drafted - handing off to implementer"
-    emit PlanApproved(issue_id: issue_id, repo: repo, plan: plan_text, criteria: body, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+    say "[planner] Plan drafted - handing off to gate_two"
+    emit PlanReady(issue_id: issue_id, repo: repo, title: title, plan: plan_text, criteria: body, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+
+  # T10.2 (#368) — revise loop. gate_two emits this on rejection or
+  # timeout; we re-plan with the rejection comment as additional
+  # context, bounded by max_plan_revisions (defaults to 3, per-repo
+  # override via [repos."<slug>"] max_plan_revisions). On limit, we
+  # escalate to the warden rather than emit a fresh PlanReady.
+  on ImplementationRejected(issue_id: Text, comment: Text, decision_by: Text)
+    memory.revision_count = memory.revision_count + 1
+    say "[planner] Re-plan request for {issue_id} (revision {memory.revision_count}/{memory.max_plan_revisions}) — feedback from {decision_by}: {comment}"
+    if memory.revision_count > memory.max_plan_revisions
+      say "[planner] Max plan revisions ({memory.max_plan_revisions}) reached for {issue_id}. Escalating."
+      emit RequestHuman(channel: memory.channel, context: "Planner exhausted {memory.max_plan_revisions} revision attempts for {memory.issue_id}. Last rejection by {decision_by}: {comment}", urgency: "high", thread_ts: "")
+      escalate to lead
+      give "escalated"
+    revise_prompt = "You are revising a plan that a human reviewer rejected. Produce a revised plan that directly addresses the reviewer's feedback.\n\nIssue: {memory.issue_id}\nTitle: {memory.title}\nAcceptance criteria:\n{memory.criteria}\n\nPrevious plan (rejected):\n{memory.plan_text}\n\nReviewer feedback:\n{comment}\n\nWrite a concise revised plan with numbered steps that incorporates the feedback. Be specific about what changed."
+    revised = reason revise_prompt for plan
+    memory.plan_text = revised
+    when revised.sure -> say "[planner] Revised plan generated (confident)"
+    when revised.unsure -> say "[planner] Revised plan generated (unsure)"
+    else -> say "[planner] Revised plan uncertain — proceeding with raw output"
+    emit PostMessage(channel: memory.channel, text: "Revised plan ({memory.revision_count}/{memory.max_plan_revisions}) for {memory.issue_id}:\n{memory.plan_text}", thread_ts: "")
+    say "[planner] Revised plan emitted - handing off to gate_two"
+    emit PlanReady(issue_id: memory.issue_id, repo: memory.repo, title: memory.title, plan: memory.plan_text, criteria: memory.criteria, branch: memory.branch, channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[planner] Extracting lesson for {task_id} (outcome={outcome})"
     lesson_prompt = "You are the planner for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nOriginal acceptance criteria:\n{memory.criteria}\n\nThe plan you produced:\n{memory.plan_text}\n\nWrite a one- to three-sentence lesson of the form 'this plan shape -> this outcome'. Focus on what a future planner should repeat or avoid for similar issues. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for plan
     when lesson.sure -> say "[planner] Lesson: {lesson}"
     else -> say "[planner] Lesson uncertain: {lesson}"
     cat = "lesson-planner-{memory.repo_slug}"
@@ -388,6 +628,7 @@ agent implementer
     branch: Text
     plan: Text
     criteria: Text
+    title: Text
     iteration: Number
     channel: Text
     callback_url: Text
@@ -397,10 +638,15 @@ agent implementer
     iteration_log: Text
     last_diagnosis: Text
     repo_slug: Text
+    config_path: Text
+    config: CloneDevConfig
+    workdir: Text
+    commit_template: Text
+    fix_commit_template: Text
   knowledge store: ".forge-knowledge/pr-history"
     max_entries: 10000
     retention: 365d
-  subscribe PlanApproved
+  subscribe ImplementationApproved
   subscribe TestsFailed
   subscribe TaskCompleted where task_id == memory.issue_id
 
@@ -410,6 +656,7 @@ agent implementer
     memory.branch = ""
     memory.plan = ""
     memory.criteria = ""
+    memory.title = ""
     memory.iteration = 0
     memory.channel = ""
     memory.callback_url = ""
@@ -419,13 +666,19 @@ agent implementer
     memory.iteration_log = ""
     memory.last_diagnosis = ""
     memory.repo_slug = ""
-    say "[implementer] ready"
+    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml")
+    memory.config = config.load_clone_dev(memory.config_path)
+    memory.workdir = ""
+    memory.commit_template = ""
+    memory.fix_commit_template = ""
+    say "[implementer] ready (config: {memory.config_path})"
 
-  on PlanApproved(issue_id: Text, repo: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
+  on ImplementationApproved(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text, decision_by: Text)
     memory.issue_id = issue_id
     memory.repo = repo
     memory.plan = plan
     memory.criteria = criteria
+    memory.title = title
     memory.branch = branch
     memory.channel = channel
     memory.callback_url = callback_url
@@ -434,23 +687,34 @@ agent implementer
     memory.iteration = 0
     memory.iteration_log = ""
     memory.last_diagnosis = ""
-    say "[implementer] Starting implementation for {issue_id} on branch {branch}"
-    clone_cmd = "rm -rf /tmp/forge-workdir-{issue_id} && gh repo clone {repo} /tmp/forge-workdir-{issue_id} 2>&1 && cd /tmp/forge-workdir-{issue_id} && git checkout -b {branch} 2>&1"
+    repo_cfg = repo_config_for(memory.config, memory.repo_slug)
+    memory.max_iterations = repo_cfg.max_iterations
+    memory.commit_template = repo_cfg.commit_template
+    memory.fix_commit_template = repo_cfg.fix_commit_template
+    short_id = text.short_id()
+    memory.workdir = "{repo_cfg.workdir_root}/{memory.repo_slug}/{issue_id}-{short_id}"
+    say "[implementer] Starting implementation for {issue_id} on branch {branch} (workdir: {memory.workdir}, max_iter: {memory.max_iterations})"
+    clone_cmd = "rm -rf {memory.workdir} && mkdir -p {memory.workdir} && gh repo clone {repo} {memory.workdir} 2>&1 && cd {memory.workdir} && git checkout -b {branch} 2>&1"
     clone_result = command clone_cmd timeout 60s
     when clone_result.sure -> say "[implementer] Repo cloned and branch {branch} created"
     else -> say "[implementer] Clone/checkout issue: {clone_result}"
-    impl_prompt = "You are implementing a code change for a GitHub issue.\n\nIssue: {issue_id}\nPlan:\n{plan}\nAcceptance criteria:\n{memory.criteria}\n\nGenerate the implementation as a shell script that creates or modifies files using cat heredocs. Output ONLY the shell commands, no markdown fencing, no explanations. Keep changes minimal and focused."
-    code = reason impl_prompt
+    impl_prompt = "You are implementing a code change for a GitHub issue.\n\nIssue: {issue_id}\nPlan:\n{plan}\nAcceptance criteria:\n{memory.criteria}\n\nGenerate the implementation as a POSIX shell script that creates or modifies files using cat heredocs. Before writing any file, create its parent directory with mkdir -p when the directory may not already exist. Output ONLY executable shell commands, no markdown fencing, no explanations. Keep changes minimal and focused."
+    code = reason impl_prompt for implement
     when code.sure -> say "[implementer] Implementation generated"
     else -> say "[implementer] Implementation generation uncertain"
-    apply_result = command "cd /tmp/forge-workdir-{issue_id} && sh -c '{code}'" timeout 30s
+    stripped_code = strip_shell_fences(code)
+    clean_code = stripped_code.trim()
+    if clean_code == ""
+      give "apply_failed: empty generated shell after fence normalization"
+    apply_result = command ["sh", "-c", clean_code] in "{memory.workdir}" timeout 30s
     when apply_result.sure -> say "[implementer] Changes applied"
-    else -> say "[implementer] Changes may not have applied cleanly"
-    commit_result = command "cd /tmp/forge-workdir-{issue_id} && git add -A && git diff --cached --quiet || git commit -m 'feat({issue_id}): implement per plan' && git push origin {branch} 2>&1" timeout 60s
+    else -> give "apply_failed: {apply_result}"
+    commit_msg = render_commit_message(memory.commit_template, issue_id, memory.title, memory.criteria, 0)
+    commit_result = command "cd {memory.workdir} && git add -A && if git diff --cached --quiet; then echo 'no staged changes to commit'; exit 42; fi && git commit -m '{commit_msg}' && git push origin {branch} 2>&1" timeout 60s
     when commit_result.sure -> say "[implementer] Changes committed and pushed"
-    else -> say "[implementer] Commit/push issue: {commit_result}"
+    else -> give "commit_push_failed: {commit_result}"
     emit PostMessage(channel: channel, text: "Implementation pushed for {issue_id} on branch {branch}. Running tests next.", thread_ts: "")
-    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+    emit ImplementationReady(issue_id: issue_id, repo: repo, title: memory.title, plan: memory.plan, criteria: memory.criteria, branch: branch, workdir: memory.workdir, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
   on TestsFailed(issue_id: Text, repo: Text, branch: Text, failures: Text, channel: Text, callback_url: Text, test_cmd: Text)
     memory.iteration = memory.iteration + 1
@@ -460,29 +724,34 @@ agent implementer
     memory.last_diagnosis = diagnosis
     memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\n{diagnosis}"
     say "[implementer] Diagnosis: {diagnosis}"
-    if memory.iteration >= memory.max_iterations
+    if memory.iteration > memory.max_iterations
       say "[implementer] Max iterations ({memory.max_iterations}) reached for {issue_id}. Escalating."
       escalate_msg = "ESCALATION: Issue {issue_id} in {repo} failed after {memory.max_iterations} fix attempts. Branch: {branch}. Iteration count: {memory.iteration}. Last diagnosis: {diagnosis}. Last failure output: {failures}"
       emit RequestHuman(channel: channel, context: escalate_msg, urgency: "high", thread_ts: "")
       escalate to lead
       give "escalated"
-    fix_prompt = "Fix the test failures for issue {issue_id}.\n\nOriginal plan:\n{memory.plan}\n\nDiagnosis of current failures:\n{diagnosis}\n\nRaw test output:\n{failures}\n\nGenerate ONLY shell commands (cat heredocs, sed, etc.) to fix the issues. No markdown, no explanations."
-    fix_code = reason fix_prompt
+    fix_prompt = "Fix the test failures for issue {issue_id} with the smallest targeted source edit.\n\nOriginal plan:\n{memory.plan}\n\nDiagnosis of current failures:\n{diagnosis}\n\nRaw test output:\n{failures}\n\nRules:\n- Edit the file named by the current compiler/test error when one is present.\n- Preserve existing tests and seed data unless the failing assertion proves they are wrong.\n- For TypeScript duplicate import errors, consolidate imports instead of adding another import for the same identifier.\n- For missing Vitest globals such as beforeAll, afterAll, beforeEach, afterEach, describe, expect, or it, add the missing symbol to the existing vitest import list.\n- Do not rewrite unrelated files to mask a local import or typecheck error.\n\nGenerate ONLY executable POSIX shell commands (cat heredocs, sed, etc.) to fix the issues. Before writing any file, create its parent directory with mkdir -p when the directory may not already exist. No markdown fences, no explanations."
+    fix_code = reason fix_prompt for implement
     when fix_code.sure -> say "[implementer] Fix generated"
     else -> say "[implementer] Fix generation uncertain"
-    apply_result = command "cd /tmp/forge-workdir-{issue_id} && sh -c '{fix_code}'" timeout 30s
+    stripped_fix_code = strip_shell_fences(fix_code)
+    clean_fix_code = stripped_fix_code.trim()
+    if clean_fix_code == ""
+      give "fix_apply_failed: empty generated shell after fence normalization"
+    apply_result = command ["sh", "-c", clean_fix_code] in "{memory.workdir}" timeout 30s
     when apply_result.sure -> say "[implementer] Fix applied"
-    else -> say "[implementer] Fix may not have applied cleanly"
-    commit_result = command "cd /tmp/forge-workdir-{issue_id} && git add -A && git diff --cached --quiet || git commit -m 'fix({issue_id}): iteration {memory.iteration}' && git push origin {branch} 2>&1" timeout 60s
-    when commit_result.sure -> say "[implementer] Fix committed and pushed"
-    else -> say "[implementer] Fix commit/push issue"
-    say "[implementer] Fix iteration {memory.iteration} for {issue_id} pushed. Re-running tests."
-    emit ImplementationReady(issue_id: issue_id, repo: repo, branch: branch, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
+    else -> give "fix_apply_failed: {apply_result}"
+    fix_msg = render_commit_message(memory.fix_commit_template, issue_id, memory.title, memory.criteria, memory.iteration)
+    commit_result = command "cd {memory.workdir} && git add -A && if git diff --cached --quiet; then echo 'no staged source diff after fix; skipping commit'; else git commit -m '{fix_msg}' && git push origin {branch}; fi 2>&1" timeout 60s
+    when commit_result.sure -> say "[implementer] Fix committed, or no source diff was produced"
+    else -> give "fix_commit_push_failed: {commit_result}"
+    say "[implementer] Fix iteration {memory.iteration} for {issue_id} ready. Re-running tests."
+    emit ImplementationReady(issue_id: issue_id, repo: repo, title: memory.title, plan: memory.plan, criteria: memory.criteria, branch: branch, workdir: memory.workdir, channel: channel, callback_url: callback_url, test_cmd: memory.test_cmd)
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[implementer] Extracting lesson for {task_id} (outcome={outcome}, iterations={memory.iteration})"
     lesson_prompt = "You are the implementer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nFix iterations used: {memory.iteration}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nPlan executed:\n{memory.plan}\n\nIteration log (diagnoses across fix attempts):\n{memory.iteration_log}\n\nWrite a one- to three-sentence lesson of the form 'this error pattern -> this fix' (or 'this pattern -> first-try pass'). Focus on what a future implementer should reuse or avoid. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for implement
     when lesson.sure -> say "[implementer] Lesson: {lesson}"
     else -> say "[implementer] Lesson uncertain: {lesson}"
     cat = "lesson-implementer-{memory.repo_slug}"
@@ -501,6 +770,10 @@ agent tester
     issue_id: Text
     repo: Text
     branch: Text
+    title: Text
+    plan: Text
+    criteria: Text
+    workdir: Text
     channel: Text
     callback_url: Text
     acceptance_result: Text
@@ -518,6 +791,10 @@ agent tester
     memory.issue_id = ""
     memory.repo = ""
     memory.branch = ""
+    memory.title = ""
+    memory.plan = ""
+    memory.criteria = ""
+    memory.workdir = ""
     memory.channel = ""
     memory.callback_url = ""
     memory.acceptance_result = ""
@@ -527,43 +804,52 @@ agent tester
     memory.repo_slug = ""
     say "[tester] ready"
 
-  on ImplementationReady(issue_id: Text, repo: Text, branch: Text, channel: Text, callback_url: Text, test_cmd: Text)
+  on ImplementationReady(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, workdir: Text, channel: Text, callback_url: Text, test_cmd: Text)
     if memory.issue_id != issue_id
       memory.test_runs = 0
     memory.issue_id = issue_id
     memory.repo = repo
+    memory.title = title
+    memory.plan = plan
+    memory.criteria = criteria
     memory.branch = branch
+    memory.workdir = workdir
     memory.channel = channel
     memory.callback_url = callback_url
     memory.test_cmd = test_cmd
     memory.repo_slug = slugify_repo(repo)
     memory.test_runs = memory.test_runs + 1
-    say "[tester] Running tests on {branch} in {repo} (run #{memory.test_runs})"
-    pull_result = command "cd /tmp/forge-workdir-{issue_id} && git pull origin {branch} 2>&1" timeout 30s
+    say "[tester] Running tests on {branch} in {repo} (run #{memory.test_runs}, workdir: {workdir})"
+    pull_result = command "cd {workdir} && git pull origin {branch} 2>&1" timeout 30s
     when pull_result.sure -> say "[tester] Latest changes pulled"
     else -> say "[tester] Pull may have issues: {pull_result}"
-    test_output = command "cd /tmp/forge-workdir-{issue_id} && {memory.test_cmd} 2>&1" timeout 120s
+    test_output = command "cd {workdir} && {memory.test_cmd} 2>&1" timeout 120s
     when test_output.sure -> say "[tester] Tests completed (exit 0)"
     else -> say "[tester] Tests completed with failures"
     memory.last_test_output = test_output
-    report = TestReport(passed: false, failures: test_output, coverage: 0)
-    issue = Issue(id: issue_id, title: branch, criteria: "all tests pass")
-    acceptance = check_acceptance(issue, report)
-    memory.acceptance_result = acceptance
     tcmd = memory.test_cmd
     first_try = memory.test_runs == 1
-    if acceptance == "none" or acceptance == "minor"
-      say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met (first_try: {first_try})"
-      emit PostMessage(channel: channel, text: "Tests passed for {issue_id} on {branch}. Moving to review.", thread_ts: "")
-      emit AcceptanceMet(issue_id: issue_id, repo: repo, branch: branch, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd, ci_passed_first_try: first_try)
-    if acceptance == "blocking" or acceptance == "needs_human_review" or acceptance == "inconclusive"
-      say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
-      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: test_output, channel: channel, callback_url: callback_url, test_cmd: tcmd)
+    gate = tester_gate(test_output.exit_code, "{test_output.stdout}")
+    if gate == "command_failed"
+      say "[tester] Tests FAILED (command exit != 0) — sending raw failure output to implementer (first_try: {first_try})"
+      emit PostMessage(channel: channel, text: "Test command failed for {issue_id} on {branch}. Fix iteration starting.", thread_ts: "")
+      emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: "{test_output.stdout}", channel: channel, callback_url: callback_url, test_cmd: tcmd)
+    if gate != "command_failed"
+      say "[tester] Tests classified ({gate}) — routing on acceptance result"
+      acceptance = gate
+      memory.acceptance_result = acceptance
+      if acceptance == "none" or acceptance == "minor"
+        say "[tester] Tests PASSED ({acceptance}) — acceptance criteria met (first_try: {first_try})"
+        emit PostMessage(channel: channel, text: "Tests passed for {issue_id} on {branch}. Moving to review.", thread_ts: "")
+        emit AcceptanceMet(issue_id: issue_id, repo: repo, title: memory.title, plan: memory.plan, criteria: memory.criteria, branch: branch, workdir: workdir, report: "passed", channel: channel, callback_url: callback_url, test_cmd: tcmd, ci_passed_first_try: first_try)
+      if acceptance == "blocking" or acceptance == "needs_human_review" or acceptance == "inconclusive"
+        say "[tester] Tests FAILED ({acceptance}) — sending back to implementer"
+        emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: "{test_output.stdout}", channel: channel, callback_url: callback_url, test_cmd: tcmd)
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[tester] Extracting lesson for {task_id} (outcome={outcome}, first_try={ci_passed_first_try})"
     lesson_prompt = "You are the tester for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nTest runs on this task: {memory.test_runs}\nci_passed_first_try: {ci_passed_first_try}\nFinal acceptance result: {memory.acceptance_result}\nLast test output (truncated):\n{memory.last_test_output}\n\nWrite a one- to three-sentence lesson of the form 'this coverage gap -> this miss' (or 'this coverage pattern -> this pass'). Focus on what the test signal revealed that future tasks can reuse. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for review
     when lesson.sure -> say "[tester] Lesson: {lesson}"
     else -> say "[tester] Lesson uncertain: {lesson}"
     cat = "lesson-tester-{memory.repo_slug}"
@@ -578,11 +864,16 @@ agent tester
 
 agent reviewer
   lifecycle: ReviewPhase
-  memory
+  memory persistent
     issue_id: Text
     repo: Text
     branch: Text
+    title: Text
+    plan: Text
+    criteria: Text
+    workdir: Text
     channel: Text
+    approval_channel: Text
     callback_url: Text
     changelog_entry: Text
     pr_body: Text
@@ -594,18 +885,67 @@ agent reviewer
     auto_decision: Text
     review_rounds: Number
     ci_passed_first_try: Bool
+    config_path: Text
+    config: CloneDevConfig
+    timeout_ticks: Number
+    ci_status: Text
+    review_checkpoint: Text
+    approval_emitted: Bool
   knowledge store: ".forge-knowledge/pr-history"
     max_entries: 10000
     retention: 365d
+  timer merge_approval_timeout: 300s
   subscribe AcceptanceMet
   subscribe ApprovalResponse
   subscribe TaskCompleted where task_id == memory.issue_id
 
   on start
+    requires lifecycle == idle on fail: give "reviewer start requires idle lifecycle"
+    restored_checkpoint = memory.review_checkpoint
+    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml")
+    memory.config = config.load_clone_dev(memory.config_path)
+    memory.approval_channel = gate_three_channel_for(memory.config, memory.channel)
+    if restored_checkpoint == "pr_ready" and not memory.approval_emitted
+      say "[reviewer] Recovering existing PR for {memory.issue_id} on {memory.branch} before Gate 3"
+      pr_lookup = skill.github.get_pr_for_branch(memory.repo, memory.branch)
+      memory.pr_url = pr_lookup
+      when pr_lookup.sure -> say "[reviewer] Recovered PR state: {pr_lookup}"
+      else -> say "[reviewer] PR recovery lookup uncertain: {pr_lookup}"
+      ci_result = skill.github.check_ci(memory.repo, memory.branch)
+      memory.ci_status = ci_result
+      when ci_result.sure -> say "[reviewer] Recovered CI status: {ci_result}"
+      else -> say "[reviewer] Recovered CI check uncertain: {ci_result}"
+      memory.review_verdict = "needs_human"
+      memory.diff_characterization = "Skipped during restart recovery after PR body repair and CI checkpoint."
+      if ci_allows_gate_three(memory.ci_status)
+        emit PRReady(issue_id: memory.issue_id, repo: memory.repo, pr_url: memory.pr_url, channel: memory.channel, callback_url: memory.callback_url)
+        transition to awaiting_approval
+        approval_context = gate_three_approval_context(memory.branch, memory.changelog_entry, memory.ci_status, memory.review_verdict, memory.diff_characterization)
+        emit PostApproval(channel: memory.approval_channel, title: "PR for {memory.issue_id} in {memory.repo} ready for review", context: approval_context, callback_url: memory.callback_url, request_id: memory.issue_id, thread_ts: "")
+        say "[reviewer] Recovered Gate 3 approval request emitted to slack-adapter"
+        memory.approval_emitted = true
+        memory.review_checkpoint = "approval_emitted"
+        memory.timeout_ticks = 0
+        start merge_approval_timeout
+        give "recovered-gate-three"
+      emit WardenEscalation(agent_id: "reviewer", cause: "reviewer_recovery_ci_blocked", detail: "Reviewer recovered PR for {memory.issue_id} but CI was not green enough to emit Gate 3. PR: {memory.pr_url}. CI: {memory.ci_status}", channel: memory.approval_channel)
+      emit PostMessage(channel: memory.approval_channel, text: ":warning: Reviewer recovered PR for {memory.issue_id} but did not emit merge approval because CI was not green. PR: {memory.pr_url}", thread_ts: "")
+      memory.review_checkpoint = "recovery_escalated"
+      give "recovery-escalated"
+    if restored_checkpoint == "approval_emitted"
+      say "[reviewer] Restored pending Gate 3 approval for {memory.issue_id}; restarting approval timer"
+      transition to awaiting_approval
+      start merge_approval_timeout
+      give "approval-restored"
     memory.issue_id = ""
     memory.repo = ""
     memory.branch = ""
+    memory.title = ""
+    memory.plan = ""
+    memory.criteria = ""
+    memory.workdir = ""
     memory.channel = ""
+    memory.approval_channel = ""
     memory.callback_url = ""
     memory.changelog_entry = ""
     memory.pr_body = ""
@@ -617,36 +957,75 @@ agent reviewer
     memory.auto_decision = "disabled"
     memory.review_rounds = 0
     memory.ci_passed_first_try = false
-    say "[reviewer] ready"
+    memory.timeout_ticks = 0
+    memory.ci_status = ""
+    memory.review_checkpoint = ""
+    memory.approval_emitted = false
+    say "[reviewer] ready (config: {memory.config_path} merge_pr={memory.config.gates_merge_pr} merge_pr_timeout_mins={memory.config.gates_merge_pr_timeout_mins})"
 
-  on AcceptanceMet(issue_id: Text, repo: Text, branch: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text, ci_passed_first_try: Bool)
+  on AcceptanceMet(issue_id: Text, repo: Text, title: Text, plan: Text, criteria: Text, branch: Text, workdir: Text, report: Text, channel: Text, callback_url: Text, test_cmd: Text, ci_passed_first_try: Bool)
     requires lifecycle == idle on fail: give "review already in progress"
     if memory.issue_id != issue_id
       memory.review_rounds = 0
     memory.issue_id = issue_id
     memory.repo = repo
+    memory.title = title
+    memory.plan = plan
+    memory.criteria = criteria
     memory.branch = branch
+    memory.workdir = workdir
     memory.channel = channel
+    memory.approval_channel = gate_three_channel_for(memory.config, channel)
     memory.callback_url = callback_url
     memory.test_cmd = test_cmd
     memory.repo_slug = slugify_repo(repo)
     memory.review_rounds = memory.review_rounds + 1
     memory.ci_passed_first_try = ci_passed_first_try
-    say "[reviewer] Drafting changelog for {issue_id}"
-    issue = Issue(id: issue_id, title: "close #{issue_id}", criteria: "")
+    repo_cfg = repo_config_for(memory.config, memory.repo_slug)
+    auto_decision = bool_to_decision(repo_cfg.auto_approve)
+    memory.auto_decision = auto_decision
+    say "[reviewer] Drafting changelog for {issue_id} (auto_decision: {auto_decision})"
+    issue = Issue(id: issue_id, title: title, criteria: criteria)
     entry = draft_changelog_entry(issue, branch)
     memory.changelog_entry = entry
     say "[reviewer] Drafting PR description"
-    body = draft_pr_description(issue, entry)
+    draft_body = draft_pr_description(issue, entry)
+    close_ref = close_reference(repo, issue_id)
+    body = normalize_pr_body(draft_body, title, criteria, plan, test_cmd, report, close_ref)
     memory.pr_body = body
+    memory.review_checkpoint = "drafted"
+    memory.approval_emitted = false
     say "[reviewer] Creating PR in {repo} from {branch}"
     pr_url = skill.github.create_pr(repo, branch, "feat({issue_id}): automated implementation", body)
     when pr_url.sure -> say "[reviewer] PR created: {pr_url}"
     else -> say "[reviewer] PR creation uncertain: {pr_url}"
     memory.pr_url = pr_url
+    repair_result = skill.github.update_pr(repo, branch, "feat({issue_id}): automated implementation", body)
+    when repair_result.sure -> say "[reviewer] PR body repaired/verified for {branch}"
+    else -> give "pr_body_repair_failed: reviewer could not repair PR body for {issue_id} in {repo} on branch {branch}: {repair_result}"
+    pr_lookup = skill.github.get_pr_for_branch(repo, branch)
+    memory.pr_url = pr_lookup
+    when pr_lookup.sure -> say "[reviewer] PR state recovered/verified for {branch}: {pr_lookup}"
+    else -> say "[reviewer] PR state lookup uncertain for {branch}: {pr_lookup}"
     ci_result = skill.github.check_ci(repo, branch)
+    memory.ci_status = ci_result
     when ci_result.sure -> say "[reviewer] CI status: {ci_result}"
     else -> say "[reviewer] CI check uncertain: {ci_result}"
+    memory.review_checkpoint = "pr_ready"
+    memory.diff_characterization = "Skipped for trusted green human-approval path."
+    if trusted_green_review_path(memory.auto_decision, repo_cfg.merge_pr, ci_passed_first_try, memory.ci_status)
+      memory.review_verdict = "needs_human"
+      emit ReviewDecision(issue_id: issue_id, repo: repo, decision: memory.review_verdict)
+      emit PRReady(issue_id: issue_id, repo: repo, pr_url: memory.pr_url, channel: channel, callback_url: callback_url)
+      transition to awaiting_approval
+      approval_context = gate_three_approval_context(branch, entry, memory.ci_status, memory.review_verdict, memory.diff_characterization)
+      emit PostApproval(channel: memory.approval_channel, title: "PR for {issue_id} in {repo} ready for review", context: approval_context, callback_url: callback_url, request_id: issue_id, thread_ts: "")
+      say "[reviewer] Trusted green path skipped PR history and emitted Gate 3 approval"
+      memory.approval_emitted = true
+      memory.review_checkpoint = "approval_emitted"
+      memory.timeout_ticks = 0
+      start merge_approval_timeout
+      give "gate-three-emitted"
     say "[reviewer] Consulting PR history for {issue_id}"
     pr_title = "feat({issue_id}): automated implementation"
     diff_text = fetch_pr_diff(branch, repo)
@@ -663,58 +1042,114 @@ agent reviewer
     emit ReviewDecision(issue_id: issue_id, repo: repo, decision: verdict)
     if verdict == "auto_approve" and memory.auto_decision == "enabled"
       say "[reviewer] AUTO-APPROVED by knowledge store — merging PR for {issue_id}"
-      merge_result = skill.github.merge_pr(repo, pr_url)
+      merge_result = skill.github.merge_pr(repo, branch)
       when merge_result.sure -> say "[reviewer] PR merged successfully"
       else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      close_result = skill.github.close_issue(repo, issue_id)
+      when close_result.sure -> say "[reviewer] Source issue {issue_id} closed"
+      else -> say "[reviewer] Source issue close uncertain: {close_result}"
       merge_msg = "AUTO-MERGED: {issue_id} in {repo}. Branch {branch} merged. Approved by knowledge-store."
-      emit PostApprovalResult(channel: channel, request_id: issue_id, approved: true, approver: "knowledge-store", summary: merge_msg, thread_ts: "")
+      emit PostApprovalResult(channel: memory.approval_channel, request_id: issue_id, approved: true, approver: "knowledge-store", summary: merge_msg, thread_ts: "")
       cleanup = skill.github.delete_branch(repo, branch)
-      workdir_cleanup = command "rm -rf /tmp/forge-workdir-{issue_id}" timeout 10s
-      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{pr_url} decision:auto_approved\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
+      workdir_cleanup = command "rm -rf {workdir}" timeout 10s
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:auto_approved\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
       emit PRMerged(issue_id: issue_id, repo: repo, branch: branch, ci_passed_first_try: memory.ci_passed_first_try, review_rounds: memory.review_rounds)
+      memory.review_checkpoint = "merged"
       give "auto-approved"
     if verdict == "auto_reject" and memory.auto_decision == "enabled"
       say "[reviewer] AUTO-REJECTED by knowledge store — sending back to implementer"
       reject_msg = "AUTO-REJECTED: PR for {issue_id} in {repo}. Knowledge store found prior rejection patterns. Iterating."
-      emit PostApprovalResult(channel: channel, request_id: issue_id, approved: false, approver: "knowledge-store", summary: reject_msg, thread_ts: "")
-      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{pr_url} decision:auto_rejected\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
+      emit PostApprovalResult(channel: memory.approval_channel, request_id: issue_id, approved: false, approver: "knowledge-store", summary: reject_msg, thread_ts: "")
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:auto_rejected\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
       emit TestsFailed(issue_id: issue_id, repo: repo, branch: branch, failures: "Auto-rejected by knowledge store: prior rejection patterns", channel: channel, callback_url: callback_url, test_cmd: test_cmd)
+      memory.review_checkpoint = "rejected"
       give "auto-rejected"
-    emit PRReady(issue_id: issue_id, repo: repo, pr_url: pr_url, channel: channel, callback_url: callback_url)
+    if repo_cfg.merge_pr == false
+      say "[reviewer] gates.merge_pr=false for {memory.repo_slug} — auto-merging without slack approval"
+      merge_result = skill.github.merge_pr(repo, branch)
+      when merge_result.sure -> say "[reviewer] PR merged successfully"
+      else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      close_result = skill.github.close_issue(repo, issue_id)
+      when close_result.sure -> say "[reviewer] Source issue {issue_id} closed"
+      else -> say "[reviewer] Source issue close uncertain: {close_result}"
+      merge_msg = "AUTO-MERGED (gates.merge_pr=false): {issue_id} in {repo}. Branch {branch} merged. No slack approval required."
+      emit PostMessage(channel: memory.approval_channel, text: ":robot_face: {merge_msg}", thread_ts: "")
+      cleanup = skill.github.delete_branch(repo, branch)
+      workdir_cleanup = command "rm -rf {workdir}" timeout 10s
+      learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:auto_merged_policy\nbranch: {branch}\ndiff_characterization: {characterization}\nverdict: {verdict}" category: "pr-decisions-{memory.repo_slug}"
+      emit PRMerged(issue_id: issue_id, repo: repo, branch: branch, ci_passed_first_try: memory.ci_passed_first_try, review_rounds: memory.review_rounds)
+      memory.review_checkpoint = "merged"
+      give "auto-merged-policy"
+    emit PRReady(issue_id: issue_id, repo: repo, pr_url: memory.pr_url, channel: channel, callback_url: callback_url)
     transition to awaiting_approval
-    approval_context = "Branch: {branch}\nChangelog: {entry}\nCI: {ci_result}\n\nKnowledge verdict: {verdict}\nDiff summary: {characterization}\n\nApprove to merge or reject to iterate."
-    emit PostApproval(channel: channel, title: "PR for {issue_id} in {repo} ready for review", context: approval_context, callback_url: callback_url, request_id: issue_id, thread_ts: "")
+    approval_context = gate_three_approval_context(branch, entry, memory.ci_status, verdict, characterization)
+    emit PostApproval(channel: memory.approval_channel, title: "PR for {issue_id} in {repo} ready for review", context: approval_context, callback_url: callback_url, request_id: issue_id, thread_ts: "")
     say "[reviewer] Approval request emitted to slack-adapter"
+    memory.approval_emitted = true
+    memory.review_checkpoint = "approval_emitted"
+    memory.timeout_ticks = 0
+    start merge_approval_timeout
 
   on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
     requires lifecycle == awaiting_approval on fail: give "no pending review"
     requires request_id == memory.issue_id on fail: give "stale response"
+    cancel merge_approval_timeout
     if approved
       say "[reviewer] APPROVED by {comment} — merging PR for {memory.issue_id}"
-      merge_result = skill.github.merge_pr(memory.repo, memory.pr_url)
+      merge_result = skill.github.merge_pr(memory.repo, memory.branch)
       when merge_result.sure -> say "[reviewer] PR merged successfully"
       else -> say "[reviewer] Merge result uncertain: {merge_result}"
+      close_result = skill.github.close_issue(memory.repo, memory.issue_id)
+      when close_result.sure -> say "[reviewer] Source issue {memory.issue_id} closed"
+      else -> say "[reviewer] Source issue close uncertain: {close_result}"
       merge_msg = "MERGED: {memory.issue_id} in {memory.repo}. Branch {memory.branch} merged. Approved by {comment}."
-      emit PostApprovalResult(channel: memory.channel, request_id: memory.issue_id, approved: true, approver: comment, summary: merge_msg, thread_ts: "")
+      emit PostApprovalResult(channel: memory.approval_channel, request_id: memory.issue_id, approved: true, approver: comment, summary: merge_msg, thread_ts: "")
       cleanup = skill.github.delete_branch(memory.repo, memory.branch)
       when cleanup.sure -> say "[reviewer] Branch {memory.branch} deleted"
       else -> say "[reviewer] Branch cleanup uncertain"
-      workdir_cleanup = command "rm -rf /tmp/forge-workdir-{memory.issue_id}" timeout 10s
+      workdir_cleanup = command "rm -rf {memory.workdir}" timeout 10s
       learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:human_approved\nbranch: {memory.branch}\ndiff_characterization: {memory.diff_characterization}\nverdict_was: {memory.review_verdict}\nhuman_action: approved by {comment}" category: "pr-decisions-{memory.repo_slug}"
       emit PRMerged(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, ci_passed_first_try: memory.ci_passed_first_try, review_rounds: memory.review_rounds)
+      memory.review_checkpoint = "merged"
       transition to idle
     if not approved
       say "[reviewer] REJECTED by {comment} — sending back to implementer"
       reject_msg = "PR for {memory.issue_id} REJECTED by {comment}. Iterating."
-      emit PostApprovalResult(channel: memory.channel, request_id: memory.issue_id, approved: false, approver: comment, summary: reject_msg, thread_ts: "")
+      emit PostApprovalResult(channel: memory.approval_channel, request_id: memory.issue_id, approved: false, approver: comment, summary: reject_msg, thread_ts: "")
       learn "PR-REVIEW-DECISION project:{memory.repo_slug} pr:{memory.pr_url} decision:human_rejected\nbranch: {memory.branch}\ndiff_characterization: {memory.diff_characterization}\nverdict_was: {memory.review_verdict}\nhuman_action: rejected by {comment}" category: "pr-decisions-{memory.repo_slug}"
       emit TestsFailed(issue_id: memory.issue_id, repo: memory.repo, branch: memory.branch, failures: "PR rejected: {comment}", channel: memory.channel, callback_url: memory.callback_url, test_cmd: memory.test_cmd)
+      memory.review_checkpoint = "rejected"
       transition to idle
+
+  # T10.3 (#369) — gate_three timeout. The 5-minute tick deliberately
+  # mirrors gate_two's cadence (gate_two.forge:161-177). The cadence
+  # *after* the tick differs: this handler holds quiet until elapsed_mins
+  # crosses 1x merge_pr_timeout_mins (post one reminder), then escalates
+  # via warden once it crosses 2x. Per the issue DoD: "after timeout,
+  # reviewer posts reminder; after 2x timeout, escalate via warden."
+  on merge_approval_timeout.expired
+    requires lifecycle == awaiting_approval on fail: give "no pending approval"
+    next_ticks = memory.timeout_ticks + 1
+    memory.timeout_ticks = next_ticks
+    elapsed_mins = next_ticks * 5
+    timeout_budget = memory.config.gates_merge_pr_timeout_mins
+    if elapsed_mins >= timeout_budget * 2
+      say "[reviewer] PR-merge approval for {memory.issue_id} hit 2x timeout ({elapsed_mins}m) — escalating to warden"
+      emit WardenEscalation(agent_id: "reviewer", cause: "merge_approval_2x_timeout", detail: "PR approval for {memory.issue_id} timed out after {elapsed_mins}m (2x budget)", channel: memory.approval_channel)
+      emit PostMessage(channel: memory.approval_channel, text: ":hourglass: PR-approval 2x timeout for {memory.issue_id}. Warden notified.", thread_ts: "")
+      memory.review_checkpoint = "approval_timeout_escalated"
+      transition to idle
+    if elapsed_mins >= timeout_budget
+      say "[reviewer] PR-merge approval reminder for {memory.issue_id}: {elapsed_mins}m elapsed (1x budget reached)"
+      emit PostMessage(channel: memory.approval_channel, text: "REMINDER: PR approval still pending for {memory.issue_id} ({elapsed_mins}m elapsed). Will escalate to warden at {timeout_budget * 2}m.", thread_ts: "")
+      start merge_approval_timeout
+    if elapsed_mins < timeout_budget
+      start merge_approval_timeout
 
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[reviewer] Extracting lesson for {task_id} (outcome={outcome}, rounds={review_rounds})"
     lesson_prompt = "You are the reviewer for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nOutcome: {outcome}\nReview rounds: {review_rounds}\nKnowledge-store verdict: {memory.review_verdict}\nDiff characterization:\n{memory.diff_characterization}\n\nWrite a one- to three-sentence lesson of the form 'this objection -> this response' (or 'this diff shape -> this verdict path'). Focus on what review pattern future tasks should expect. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for review
     when lesson.sure -> say "[reviewer] Lesson: {lesson}"
     else -> say "[reviewer] Lesson uncertain: {lesson}"
     cat = "lesson-reviewer-{memory.repo_slug}"
@@ -767,7 +1202,7 @@ agent release_manager
   on TaskCompleted(task_id: Text, repo: Text, outcome: Text, ci_passed_first_try: Bool, review_rounds: Number, time_to_merge: Number, reverted_within_7d: Bool)
     say "[release_manager] Extracting lesson for {task_id} (outcome={outcome})"
     lesson_prompt = "You are the release manager for the FORGE dev-cycle. A task just finished.\n\nTask: {task_id}\nBranch: {memory.branch}\nOutcome: {outcome}\nci_passed_first_try: {ci_passed_first_try}\nReview rounds: {review_rounds}\n\nWrite a one- to three-sentence lesson of the form 'this PR shape -> this merge path'. Focus on what the release signal says about how this kind of change should be shipped next time. Be specific and concrete."
-    lesson = reason lesson_prompt
+    lesson = reason lesson_prompt for review
     when lesson.sure -> say "[release_manager] Lesson: {lesson}"
     else -> say "[release_manager] Lesson uncertain: {lesson}"
     cat = "lesson-release-{memory.repo_slug}"

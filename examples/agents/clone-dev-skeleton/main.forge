@@ -300,7 +300,7 @@ agent mastermind
   on ClonedevTaskInbound(kind: Text, repo: Text, pr_number: Text, callback_url: Text, channel: Text, message: Text)
     memory.task_counter = memory.task_counter + 1
     task_id = "T{memory.task_counter}"
-    decision = reason "Classify clone-dev request. kind is {kind}. Valid targets are pr_reviewer or echo. Reply with target only."
+    decision = reason "Classify clone-dev request. kind is {kind}. Valid targets are pr_reviewer or echo. Reply with target only." for classify
     memory.last_decision = decision
     target = "echo"
     if kind == "pr_review"
@@ -406,7 +406,7 @@ agent pr_reviewer
     else -> say "[pr_reviewer] CI status fetch uncertain"
     memory.ci_status = ci_check
     review_prompt = "Use ONLY the facts below - do not invent any details. Summarize this PR in 2 sentences for a reviewer. Mention the target branch and CI state. PR facts JSON: {memory.pr_facts} CI output: {memory.ci_status}"
-    review = reason review_prompt
+    review = reason review_prompt for review
     when review.sure -> say "[pr_reviewer] Review summary generated"
     else -> say "[pr_reviewer] Review summary uncertain"
     memory.review_summary = review
@@ -425,7 +425,7 @@ agent pr_reviewer
       when merge_result.sure -> say "[pr_reviewer] Merge command executed"
       else -> say "[pr_reviewer] Merge command uncertain"
       ann_prompt = "Use ONLY the facts below - do not invent any details. Write a short 2-sentence merge announcement. State the actual target branch from the PR facts and that the merge was just executed. Approver: {comment}. PR facts JSON: {memory.pr_facts} Merge command output: {merge_result}"
-      summary = reason ann_prompt
+      summary = reason ann_prompt for review
       msg = "MERGED PR {memory.pr_number}: {summary}"
       followup = skill.slack.send_message(memory.channel, msg)
       say "[pr_reviewer] APPROVED and merged PR {memory.pr_number} by {comment}"

@@ -150,7 +150,11 @@ template_string = ${ "\"" ~ template_part* ~ "\"" }
 template_part       =  { template_interp_raw | template_interp | template_escape | template_text }
 template_interp     =  { "{" ~ _s_opt ~ expr ~ _s_opt ~ "}" }
 template_interp_raw =  { "{!" ~ _s_opt ~ expr ~ _s_opt ~ "}" }
-template_escape = @{ "\\" ~ ("n" | "r" | "t" | "\"" | "\\") }
+// `\{` and `\}` allow literal braces inside template strings so the
+// program can pass placeholder text (e.g. "{issue_id}") to runtime helpers
+// like text.replace without the parser eating it as `{expr}` interpolation.
+// Issue #360 (T8.5).
+template_escape = @{ "\\" ~ ("n" | "r" | "t" | "\"" | "\\" | "{" | "}") }
 template_text   = @{ (!("\"" | "{" | "\\") ~ ANY)+ }
 
 // --- Type names ---
@@ -266,6 +270,7 @@ agent_decl = {
     (i1 ~ lifecycle_clause ~ nl)? ~
     (i1 ~ memory_block)? ~
     (i1 ~ knowledge_block)? ~
+    (i1 ~ allows_clause ~ nl)? ~
     (i1 ~ timer_field ~ nl)* ~
     (i1 ~ schedule_block)* ~
     (i1 ~ correlate_block)* ~
@@ -274,6 +279,18 @@ agent_decl = {
     (i1 ~ warden_override_block)? ~
     (blank_line | on_handler)+ ~
     (i1 ~ stuck_policy)?
+}
+
+// Per-agent skill capability allow-list (issue #363 / T9.2). Comma-separated
+// glob patterns; only suffix `.*` is supported. Empty (= clause absent) means
+// unrestricted, preserving back-compat for every existing agent. The
+// allows_checker pass enforces this against `skill.X.Y(...)` call sites.
+allows_clause = {
+    "allows" ~ _s ~ skill_pattern ~ (_s_opt ~ "," ~ _s_opt ~ skill_pattern)*
+}
+skill_pattern = @{
+    "skill" ~ "." ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* ~
+    ("." ~ ((ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* | "*"))*
 }
 
 lifecycle_clause = { "lifecycle" ~ _s_opt ~ ":" ~ _s_opt ~ ident }
@@ -291,7 +308,12 @@ knowledge_option = {
     "max_entries" ~ _s_opt ~ ":" ~ _s_opt ~ number_lit
   | "retention" ~ _s_opt ~ ":" ~ _s_opt ~ duration
   | "import" ~ _s_opt ~ ":" ~ _s_opt ~ ident_list
+  | knowledge_project_id
 }
+// Per-repo store scoping (#359 / T8.4). Value is any expression so T8.5 can
+// inject `memory.repo_slug` from clone-dev config; for T8.4 itself only
+// literal Text values are honoured at config-extraction time.
+knowledge_project_id = { "project_id" ~ _s_opt ~ ":" ~ _s_opt ~ expr }
 
 timer_field = { "timer" ~ _s ~ ident ~ _s_opt ~ ":" ~ _s_opt ~ duration }
 
@@ -771,8 +793,16 @@ session_hook_kind = { "progress" | "complete" }
 session_emit_hook = { "emit" ~ _s ~ ident ~ "(" ~ _s_opt ~ arg_list? ~ _s_opt ~ ")" }
 env_map      = { "{" ~ _s_opt ~ env_entry ~ (_s_opt ~ "," ~ _s_opt ~ env_entry)* ~ _s_opt ~ "}" }
 env_entry    = { ident ~ _s_opt ~ ":" ~ _s_opt ~ expr }
-reason_expr   = { "reason" ~ _s ~ string_arg }
-classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list }
+// `for <phase>` clause (issue #361, T8.6) — optional trailing tag attaching a
+// routing phase key to a `reason`/`classify` call-site. Phase names like
+// `classify` collide with the `keyword` exclusion that gates `ident`, so we
+// admit a permissive identifier shape here. The position after `for` inside
+// `reason_expr`/`classify_expr` is unambiguous, so allowing keywords carries
+// no parser conflict.
+phase_ident   = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+phase_clause  = { "for" ~ _s ~ phase_ident }
+reason_expr   = { "reason" ~ _s ~ string_arg ~ (_s ~ phase_clause)? }
+classify_expr = { "classify" ~ _s ~ atom ~ _s ~ "into" ~ _s ~ label_list ~ (_s ~ phase_clause)? }
 search_expr   = { "search" ~ _s ~ string_arg }
 recall_expr   = { "recall" ~ _s ~ string_arg }
 try_or_expr   = { "try" ~ _s ~ and_expr ~ _s ~ "or" ~ _s ~ expr }

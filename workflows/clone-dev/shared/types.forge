@@ -162,6 +162,11 @@ pure apply_completion
 # returns a safe default RepoConfig when the repo is not listed.
 # ================================================================
 
+# T8.5 (#360) — RepoConfig.workdir_root/branch_prefix/commit_template/
+# fix_commit_template/max_iterations/auto_approve carry the per-repo
+# dev-cycle overrides. The Rust loader merges [defaults] with per-repo
+# blocks so workflow code reads each field directly without per-call
+# inheritance logic.
 type RepoConfig
   slug: Text
   slack_channel: Text
@@ -170,11 +175,20 @@ type RepoConfig
   budget_per_task_usd: Number
   warden_max_retries: Number
   labels_extra: Text[]
+  workdir_root: Text
+  branch_prefix: Text
+  commit_template: Text
+  fix_commit_template: Text
+  max_iterations: Number
+  auto_approve: Bool
+  max_plan_revisions: Number
+  merge_pr: Bool
 
 type CloneDevConfig
   org_name: Text
   slack_bot_token: Text
   slack_default_channel: Text
+  slack_devops_channel: Text
   slack_signing_secret: Text
   github_token: Text
   github_labels_triage: Text[]
@@ -188,7 +202,33 @@ type CloneDevConfig
   budget_per_hour_usd: Number
   gates_require_approval_for: Text[]
   gates_auto_approve_labels: Text[]
+  gates_create_issue: Bool
+  gates_create_issue_timeout_mins: Number
+  gates_start_implementation: Bool
+  gates_start_implementation_timeout_mins: Number
+  gates_merge_pr: Bool
+  gates_merge_pr_timeout_mins: Number
+  slack_approval_channel: Text
+  github_default_repo: Text
+  label_routing_namespace: Text
+  label_routing_suffixes: Text[]
+  label_routing_targets: Text[]
+  label_routing_triage_target: Text
+  defaults_test_cmd: Text
+  defaults_workdir_root: Text
+  defaults_branch_prefix: Text
+  defaults_commit_template: Text
+  defaults_fix_commit_template: Text
+  defaults_max_iterations: Number
+  defaults_auto_approve: Bool
+  defaults_max_plan_revisions: Number
   repos: RepoConfig[]
+
+# T8.3 (#358) — `label_routing_*` flat sibling fields above carry the
+# Stage-2 deterministic routing config. `suffixes` and `targets` are
+# parallel arrays (Text[]+Text[]) rather than a record-of-record per
+# the same flat-shape constraint that drives `repos: RepoConfig[]`.
+# label_router rebuilds a typed LabelRouting record from these scalars.
 
 pure repo_config_for
   needs cfg: CloneDevConfig, slug: Text
@@ -197,4 +237,22 @@ pure repo_config_for
     for r in cfg.repos
       if r.slug == slug
         give r
-    give RepoConfig(slug: "", slack_channel: cfg.slack_default_channel, test_cmd: "", model_override: "", budget_per_task_usd: -1.0, warden_max_retries: -1.0, labels_extra: [])
+      repo_slug = text.replace(r.slug, "/", "-")
+      if repo_slug == slug
+        give r
+    give RepoConfig(slug: "", slack_channel: cfg.slack_default_channel, test_cmd: cfg.defaults_test_cmd, model_override: "", budget_per_task_usd: -1.0, warden_max_retries: -1.0, labels_extra: [], workdir_root: cfg.defaults_workdir_root, branch_prefix: cfg.defaults_branch_prefix, commit_template: cfg.defaults_commit_template, fix_commit_template: cfg.defaults_fix_commit_template, max_iterations: cfg.defaults_max_iterations, auto_approve: cfg.defaults_auto_approve, max_plan_revisions: cfg.defaults_max_plan_revisions, merge_pr: cfg.gates_merge_pr)
+
+# GitHub's native `issues` webhook sends nested repository / issue /
+# label objects. Mastermind normalizes this provider shape into the
+# flat `GithubIssueOpened` clone-dev event before deterministic routing.
+type GithubWebhookRepository
+  full_name: Text
+
+type GithubWebhookLabel
+  name: Text
+
+type GithubWebhookIssue
+  number: Number
+  title: Text
+  body: Text
+  labels: GithubWebhookLabel[]

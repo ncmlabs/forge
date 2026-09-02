@@ -195,6 +195,12 @@ pub struct AgentDecl {
     pub memory: Vec<Spanned<FieldDef>>,
     pub memory_persistent: bool,
     pub knowledge: Option<Spanned<KnowledgeDecl>>,
+    /// Per-agent skill allow-list (issue #363 / T9.2). Empty = unrestricted.
+    /// Patterns are dotted skill paths, optionally suffixed with `.*` for
+    /// single-segment glob (e.g. `skill.github.*` matches `skill.github.create_pr`
+    /// but not `skill.github.foo.bar`). The allows_checker pass enforces this
+    /// against `skill.X.Y(...)` call sites in handler bodies.
+    pub allows: Vec<Spanned<String>>,
     pub timers: Vec<Spanned<TimerField>>,
     pub schedules: Vec<Spanned<ScheduleField>>,
     pub correlates: Vec<Spanned<CorrelateField>>,
@@ -211,6 +217,11 @@ pub struct AgentDecl {
 #[derive(Debug, Clone)]
 pub struct KnowledgeDecl {
     pub store_path: Spanned<Expr>,
+    /// Optional repo / project scope (issue #359 / T8.4). When present, the
+    /// runtime resolves persistence to `{store_path}/{project_id}/knowledge.json`
+    /// and filters recall to that project. T8.5 will thread the per-repo
+    /// `RepoConfig.slug` from `clone-dev.toml` into this slot.
+    pub project_id: Option<Spanned<Expr>>,
     pub max_entries: Option<Spanned<f64>>,
     pub retention: Option<Spanned<Duration>>,
     pub imports: Vec<Spanned<String>>,
@@ -544,9 +555,9 @@ pub enum Expr {
     Call(CallExpr),
     /// Constructor: `Failure("msg", retry: true)`
     Constructor(ConstructorExpr),
-    /// `reason "prompt"`
-    Reason(Box<Spanned<Expr>>),
-    /// `classify expr into ["a", "b"]`
+    /// `reason "prompt"` or `reason "prompt" for <phase>` (#361)
+    Reason(ReasonExpr),
+    /// `classify expr into ["a", "b"]` or `... for <phase>` (#361)
     Classify(ClassifyExpr),
     /// `search "query"`
     Search(Box<Spanned<Expr>>),
@@ -655,6 +666,17 @@ pub struct ConstructorExpr {
 pub struct ClassifyExpr {
     pub input: Box<Spanned<Expr>>,
     pub labels: Vec<Spanned<String>>,
+    /// Optional routing phase (#361). When set, the executor consults the
+    /// configured `[llm.routing]` table to dispatch to a specific provider
+    /// chain instead of the runtime default.
+    pub phase: Option<Spanned<String>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReasonExpr {
+    pub prompt: Box<Spanned<Expr>>,
+    /// Optional routing phase (#361). See `ClassifyExpr::phase`.
+    pub phase: Option<Spanned<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

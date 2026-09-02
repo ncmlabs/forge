@@ -21,6 +21,10 @@ pub struct CapabilityHint {
     pub local_only: bool,
     pub max_cost_per_call: Option<f32>,
     pub provider_name: Option<String>,
+    /// Routing phase (#361). When set, the registry consults the configured
+    /// `[llm.routing]` table to pick a provider chain. `provider_name` still
+    /// wins over `phase` when both are set — explicit pin beats config.
+    pub phase: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Deserialize)]

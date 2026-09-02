@@ -85,9 +85,9 @@ capabilities:
         - --data-urlencode
         - "channel={channel}"
         - --data-urlencode
-        - "text={text}"
+        - "text={slack_approval_fallback:text:request_id}"
         - --data-urlencode
-        - 'blocks=[{{"type":"section","text":{{"type":"mrkdwn","text":"{text}"}}}},{{"type":"actions","block_id":"approval_actions","elements":[{{"type":"button","text":{{"type":"plain_text","text":"Approve"}},"style":"primary","action_id":"approve","value":"approved:{request_id}"}},{{"type":"button","text":{{"type":"plain_text","text":"Reject"}},"style":"danger","action_id":"reject","value":"rejected:{request_id}"}}]}}]'
+        - "blocks={slack_approval_blocks:text:request_id}"
       result:
         success_path: ok
         error_path: error

@@ -1,0 +1,223 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev Stage 1 — gate_one (T10.1, #367)
+# ================================================================
+# Human-in-the-loop approval bridge between T9.3 (solution_proposer
+# emits ProposalReady) and T9.4 (issue_creator subscribes
+# ProposalApproved where kind == "propose_issue"). Replaces the
+# `smoke_propose_approved` operator-driven endpoint with a real
+# Slack approve/reject button gate while keeping that endpoint as
+# a parallel ops/test injection path.
+#
+# Flow per kind:
+#   ProposalReady kind == "answer"
+#     → PostMessage(content) into the originating Slack thread.
+#       No approval — these are read-only summaries.
+#   ProposalReady kind == "small_action"
+#     → stub PostMessage + SmallActionApproved placeholder for the
+#       future action runner. No approval gate yet (no real action
+#       runner ships in T10.1).
+#   ProposalReady kind == "propose_issue"
+#     → if config.gates_create_issue == false:
+#         auto-approve immediately (decision_by = "auto (policy)").
+#       else:
+#         emit PostApproval to slack_adapter, transition to
+#         waiting_approval, start the 5m approval_timeout timer,
+#         then on ApprovalResponse fork into ProposalApproved or
+#         ProposalRejected. On timer expiry, increment a counter
+#         until elapsed_mins >= gates_create_issue_timeout_mins,
+#         then escalate via warden + emit ProposalRejected
+#         (reason="timeout").
+#
+# Correlation: keyed by thread_ts. Two `correlate on` clauses
+# (DevOpsRequest, ProposalReady) mirror mastermind_intake.forge:99-101
+# so the same persistent agent instance handles a thread end-to-end.
+# `subscribe ApprovalResponse` is the third inbound — no correlate
+# because ApprovalResponse carries no thread_ts; we filter by
+# `requires request_id == memory.thread_ts` (the same shape the
+# dev-cycle reviewer uses at agents.forge:768).
+#
+# proposal_id strategy: request_id == thread_ts. Single-proposal-
+# in-flight invariant per thread (lifecycle gate keeps a second
+# ProposalReady from overwriting an in-flight approval; the
+# `requires` filter discards stale callbacks).
+#
+# Cross-references:
+#   - PostApproval / PostMessage / WardenEscalation declared in
+#     examples/agents/slack-adapter/agents.forge.
+#   - ApprovalResponse / ProposalRejected / SmallActionApproved
+#     declared in workflows/clone-dev/shared/events.forge.
+#   - ProposalApproved schema (8 fields) unchanged — see comment
+#     in shared/events.forge above the declaration.
+#   - Pattern source: examples/agents/approval-gate/main.forge:73-140
+#     (states + timer + retry-then-escalate) and the dev-cycle
+#     reviewer at workflows/dev-cycle/agents.forge:761-789.
+# ================================================================
+
+use
+  config.load_clone_dev
+
+# ── Helpers ────────────────────────────────────────────────────
+
+# Pick the first sentence of `content` (split on ". ") and word-
+# truncate to `limit` chars. FORGE today has no substring primitive,
+# so we accumulate words until the next one would exceed the budget,
+# then trim the leading space. Falls back to the unsplit head if no
+# word fits (single token longer than the limit).
+pure first_sentence_truncated
+  needs content: Text, limit: Number
+  gives Text
+  do
+    sentences = content.split(". ")
+    head = sentences[0]
+    if head.length <= limit
+      give head
+    words = head.split(" ")
+    acc = ""
+    for w in words
+      probe = acc + " " + w
+      if probe.length <= limit + 1
+        acc = probe
+    trimmed = acc.trim()
+    if trimmed.length == 0
+      give head
+    give trimmed
+
+# Render the issue body: proposal content + a bullet list of the
+# evidence refs the proposer carried over from the investigators.
+pure build_issue_body
+  needs content: Text, evidence_refs: Text[]
+  gives Text
+  do
+    body = content + "\n\nEvidence:\n"
+    for ev in evidence_refs
+      body = body + "- " + ev + "\n"
+    give body
+
+# ── States ─────────────────────────────────────────────────────
+# Two states mirror approval-gate/main.forge:73-75. `idle` ⇒ ready
+# for the next ProposalReady; `waiting_approval` ⇒ a Slack approval
+# card is in flight and the timer is running.
+
+states ApprovalPhase
+  idle -> waiting_approval
+  waiting_approval -> idle
+
+# ── Agent ──────────────────────────────────────────────────────
+
+agent gate_one
+  lifecycle: ApprovalPhase
+  memory persistent
+    thread_ts: Text
+    channel: Text
+    user: Text
+    kind: Text
+    content: Text
+    suggested_labels: Text[]
+    evidence_refs: Text[]
+    repo: Text
+    title: Text
+    body: Text
+    decision: Text
+    timeout_ticks: Number
+    config_path: Text
+    config: CloneDevConfig
+  timer approval_timeout: 300s
+  correlate on DevOpsRequest.thread_ts
+    mode: wake
+  correlate on ProposalReady.thread_ts
+    mode: wake
+  subscribe ApprovalResponse
+
+  on start
+    memory.config_path = env.get("FORGE_CLONEDEV_CONFIG", "clone-dev.toml")
+    memory.config = config.load_clone_dev(memory.config_path)
+    memory.thread_ts = ""
+    memory.channel = ""
+    memory.user = ""
+    memory.kind = "none"
+    memory.content = ""
+    memory.suggested_labels = []
+    memory.evidence_refs = []
+    memory.repo = ""
+    memory.title = ""
+    memory.body = ""
+    memory.decision = "none"
+    memory.timeout_ticks = 0
+    say "[gate_one] ready (create_issue={memory.config.gates_create_issue} timeout_mins={memory.config.gates_create_issue_timeout_mins})"
+
+  on DevOpsRequest(channel: Text, user: Text, text: Text, thread_ts: Text, message_ts: Text)
+    memory.thread_ts = thread_ts
+    memory.channel = channel
+    memory.user = user
+    say "[gate_one] thread={thread_ts} channel captured user={user}"
+
+  on ProposalReady(thread_ts: Text, kind: Text, content: Text, suggested_labels: Text[], evidence_refs: Text[], confidence: Number)
+    requires lifecycle == idle on fail: give "approval already in flight"
+    memory.thread_ts = thread_ts
+    memory.kind = kind
+    memory.content = content
+    memory.suggested_labels = suggested_labels
+    memory.evidence_refs = evidence_refs
+    say "[gate_one] thread={thread_ts} kind={kind} confidence={confidence}"
+    if kind == "answer"
+      emit PostMessage(channel: memory.channel, text: content, thread_ts: thread_ts)
+    if kind == "small_action"
+      emit PostMessage(channel: memory.channel, text: "[stub] small_action: {content}", thread_ts: thread_ts)
+      emit SmallActionApproved(thread_ts: thread_ts, channel: memory.channel, content: content, evidence_refs: evidence_refs)
+    if kind == "propose_issue"
+      memory.repo = memory.config.github_default_repo
+      memory.title = first_sentence_truncated(content, 80)
+      memory.body = build_issue_body(content, evidence_refs)
+      memory.decision = "pending"
+      memory.timeout_ticks = 0
+      if memory.config.gates_create_issue == false
+        memory.decision = "auto"
+        say "[gate_one] thread={thread_ts} auto-approving (gates_create_issue=false)"
+        emit ProposalApproved(thread_ts: thread_ts, channel: memory.channel, kind: "propose_issue", repo: memory.repo, title: memory.title, body: memory.body, suggested_labels: suggested_labels, evidence_refs: evidence_refs)
+      if memory.config.gates_create_issue == true
+        approval_context = "Title: {memory.title}\nRepo: {memory.repo}\n\n{memory.body}"
+        emit PostApproval(channel: memory.channel, title: "Create issue: {memory.title}", context: approval_context, callback_url: "http://localhost:3300/webhook/approval", request_id: thread_ts, thread_ts: thread_ts)
+        say "[gate_one] thread={thread_ts} approval card sent — awaiting decision"
+        transition to waiting_approval
+        start approval_timeout
+
+  on ApprovalResponse(request_id: Text, approved: Bool, comment: Text)
+    requires lifecycle == waiting_approval on fail: give "no pending approval"
+    requires request_id == memory.thread_ts on fail: give "stale response"
+    cancel approval_timeout
+    if approved
+      memory.decision = "approved"
+      say "[gate_one] thread={memory.thread_ts} approved by {comment}"
+      emit ProposalApproved(thread_ts: memory.thread_ts, channel: memory.channel, kind: "propose_issue", repo: memory.repo, title: memory.title, body: memory.body, suggested_labels: memory.suggested_labels, evidence_refs: memory.evidence_refs)
+      emit PostMessage(channel: memory.channel, text: ":white_check_mark: Approved by {comment} — creating issue.", thread_ts: memory.thread_ts)
+    if not approved
+      memory.decision = "rejected"
+      say "[gate_one] thread={memory.thread_ts} rejected by {comment}"
+      emit ProposalRejected(thread_ts: memory.thread_ts, channel: memory.channel, kind: "propose_issue", rejection_reason: "human", decision_by: comment, comment: comment)
+      emit PostMessage(channel: memory.channel, text: ":x: Rejected by {comment}.", thread_ts: memory.thread_ts)
+    transition to idle
+
+  on approval_timeout.expired
+    requires lifecycle == waiting_approval on fail: give "no pending approval"
+    next_ticks = memory.timeout_ticks + 1
+    memory.timeout_ticks = next_ticks
+    elapsed_mins = next_ticks * 5
+    timeout_budget = memory.config.gates_create_issue_timeout_mins
+    if elapsed_mins >= timeout_budget
+      memory.decision = "timeout"
+      say "[gate_one] thread={memory.thread_ts} timeout after {elapsed_mins}m — escalating"
+      emit WardenEscalation(agent_id: "gate_one", cause: "approval_timeout", detail: "request {memory.thread_ts} timed out after {elapsed_mins}m", channel: memory.channel)
+      emit ProposalRejected(thread_ts: memory.thread_ts, channel: memory.channel, kind: "propose_issue", rejection_reason: "timeout", decision_by: "system", comment: "no response in {elapsed_mins}m")
+      emit PostMessage(channel: memory.channel, text: ":hourglass: Approval timeout for {memory.title}. Escalating.", thread_ts: memory.thread_ts)
+      transition to idle
+    if elapsed_mins < timeout_budget
+      say "[gate_one] thread={memory.thread_ts} reminder tick={memory.timeout_ticks} elapsed={elapsed_mins}m"
+      emit PostMessage(channel: memory.channel, text: "REMINDER: approval still pending for {memory.title} ({elapsed_mins}m elapsed).", thread_ts: memory.thread_ts)
+      start approval_timeout
+
+  if stuck for 3 turns
+    say "[gate_one] stuck. escalating."
+    emit WardenEscalation(agent_id: "gate_one", cause: "stuck>3", detail: memory.kind, channel: memory.channel)
+    escalate to investigators_ward

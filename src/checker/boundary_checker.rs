@@ -9,6 +9,17 @@ use crate::ast::{
 };
 use crate::diagnostic::Diagnostic;
 
+/// Built-in capability namespaces that are always valid and should not be
+/// treated as undefined variables or cross-boundary references.
+const BUILTIN_NAMESPACES: &[&str] = &[
+    "file", "web", "data", "llm", "html", "markdown", "env", "config", "text", "proc", "skill",
+    "pool", "command", "timer", "clock",
+];
+
+fn is_builtin_namespace(name: &str) -> bool {
+    BUILTIN_NAMESPACES.contains(&name)
+}
+
 // ── Public API ─────────────────────────────────────────────
 
 pub fn check(programs: &[(&Program, &str)]) -> Vec<Diagnostic> {
@@ -498,7 +509,10 @@ fn check_refs_in_expr(
                 check_refs_in_expr(&arg.node.value, boundary, registry, file, diagnostics);
             }
         }
-        Expr::Reason(inner) | Expr::Recall(inner) | Expr::Exec(inner) => {
+        Expr::Reason(reason) => {
+            check_refs_in_expr(&reason.prompt, boundary, registry, file, diagnostics);
+        }
+        Expr::Recall(inner) | Expr::Exec(inner) => {
             check_refs_in_expr(inner, boundary, registry, file, diagnostics);
         }
         Expr::Command(cmd_expr) => {
@@ -620,10 +634,14 @@ fn check_refs_in_expr(
                         .with_help("call a server endpoint that reads or writes the data, or move this code to `#! boundary: server`"),
                     );
                 }
-                // file.read: filesystem access is server-only. Clients and
-                // shared-boundary code reading arbitrary paths is a footgun
-                // (data exfiltration, ambient capability escape). #380.
-                if ns == "file" && method.node == "read" && boundary != BoundaryKind::Server {
+                // file.read / file.write: filesystem access is server-only.
+                // Clients and shared-boundary code touching arbitrary paths
+                // is a footgun (data exfiltration, ambient capability
+                // escape). #380 (read), #438 (write).
+                if ns == "file"
+                    && (method.node == "read" || method.node == "write")
+                    && boundary != BoundaryKind::Server
+                {
                     let boundary_name = match boundary {
                         BoundaryKind::Client => "client",
                         BoundaryKind::Shared => "shared",
@@ -632,9 +650,12 @@ fn check_refs_in_expr(
                     diagnostics.push(
                         Diagnostic::error(
                             file,
-                            format!("file.read() is not allowed in {} boundary", boundary_name),
+                            format!(
+                                "file.{}() is not allowed in {} boundary",
+                                method.node, boundary_name
+                            ),
                             inner.span.start..method.span.end,
-                            "file.read touches the host filesystem and must live in server boundary files",
+                            "file I/O touches the host filesystem and must live in server boundary files",
                         )
                         .with_help("move this code to a file with `#! boundary: server`, or surface the file contents via a server endpoint"),
                     );
@@ -679,6 +700,12 @@ fn check_name_ref(
     file: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    // Skip check for built-in capability namespaces - they are always valid
+    // and should not be treated as undefined variables or cross-boundary refs.
+    if is_builtin_namespace(name) {
+        return;
+    }
+
     match file_boundary {
         BoundaryKind::Client => {
             if registry.server_symbols.contains(name) {

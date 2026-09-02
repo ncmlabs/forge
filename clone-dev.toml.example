@@ -39,18 +39,59 @@ token_env = "GITHUB_TOKEN"
 # ── [labels] ──────────────────────────────────────────────────────
 # Org-wide label policies. Applied to every repo unless the per-repo
 # [repos."…"].labels_extra block adds more (arrays concat).
+#
+# T8.3 (#358): namespace + suffix→specialist routing drives the
+# Stage-2 label_router pure task. A label `clone-dev:plan` on an
+# inbound issue routes deterministically to the `planner` agent
+# (zero LLM calls). Issues with no `clone-dev:*` label, multiple
+# such labels, or a suffix that isn't mapped fall through to the
+# `triage_target` agent. Adding a new specialist is config-only —
+# add a `<suffix> = "<agent_name>"` line under [labels.routing].
 [labels]
-triage  = ["needs-triage", "auto-forge"]
-blocked = ["blocked", "blocked:external"]
+triage         = ["needs-triage", "auto-forge"]
+blocked        = ["blocked", "blocked:external"]
+namespace      = "clone-dev"
+triage_target  = "triage_specialist"
+
+[labels.routing]
+plan   = "planner"
+impl   = "implementer"
+test   = "tester"
+review = "reviewer"
+merge  = "release_manager"
+ops    = "release_manager"   # no dedicated ops agent yet — alias to release_manager
 
 # ── [llm.routing] ─────────────────────────────────────────────────
-# Named provider profiles from forge.config.toml. The mastermind and
-# specialists reference these by role (fast/balanced/high), so the
-# deployment picks the concrete model.
+# Phase → primary provider (T8.6, #361). Each `reason "..." for <phase>`
+# call-site in the workflow consults this table and dispatches to the
+# named provider in forge.config.toml. The five canonical phases match
+# the five clone-dev specialist roles:
+#   • classify        — mastermind triage of inbound work
+#   • plan            — planner drafting an implementation strategy
+#   • implement       — implementer generating code / fix iterations
+#   • review          — reviewer / changelog / PR description / lessons
+#   • ops_investigate — read-only ops queries that must stay on-prem
+#
+# Mixing providers per phase is the point: heavy reasoning on
+# Anthropic, throughput on OpenAI, sensitive ops on local Ollama.
+#
+# Legacy `fast`/`balanced`/`high` keys are still recognized (T8.2
+# compatibility) — they live in the same map, just under those names.
 [llm.routing]
-fast     = "claude-haiku"
-balanced = "claude-haiku"
-high     = "claude-opus"
+classify        = "sonnet"
+plan            = "sonnet"
+implement       = "gpt-4o"
+review          = "sonnet"
+ops_investigate = "ollama-local"
+
+# Optional fallback chains. Tried in order when the primary errors
+# (timeout / 5xx). Cost is charged to whichever provider served.
+# Entries are full provider IDs from forge.config.toml; the primary
+# from above is automatically prepended if absent.
+[llm.routing.fallback]
+plan      = ["sonnet", "gpt-4o"]
+implement = ["gpt-4o", "sonnet"]
+review    = ["sonnet", "gpt-4o"]
 
 # ── [warden] ──────────────────────────────────────────────────────
 # Defaults for org_warden. Per-repo overrides (below) win when set.

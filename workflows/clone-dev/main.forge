@@ -21,9 +21,75 @@
 #     • TaskNode + 12 cycle-detection helpers (T4.1 #299 shape)
 #     • CloneDevInbound, GithubIssueOpened/PrMerged, SlackMessage,
 #       TaskBlocked / UnblockTask / CycleDetected, SeedTask,
-#       CrossProjectRequested
+#       CrossProjectRequested, TaskRouted (#358)
 #
-# Single `org_warden` supervises all nine agents.
+#   stage2/label_router.forge + stage2/triage_specialist.forge
+#     • T8.3 (#358): pure deterministic label routing + visibility
+#       fall-through agent for unmapped / multi-labeled / unlabeled
+#       inbound issues.
+#
+#   stage1/slack_devops_monitor.forge
+#     • T9.5 (#366): polls config.slack.devops_channel for @-mentions
+#       via skill.slack.detect_mentions and emits DevOpsRequest. The
+#       production input that replaces the smoke endpoint stand-in;
+#       the /devops_request endpoint is kept as a parallel ops/test
+#       injection path so integration tests can drive the consumer
+#       half without a Slack workspace.
+#
+#   stage1/mastermind_intake.forge
+#     • T9.1 (#362): conversational classifier for fuzzy Slack-mention
+#       intake. One persistent instance per Slack thread_ts (correlated
+#       via #334). Routes investigation requests by domain to the
+#       T9.2 (#363) investigators.
+#
+#   stage1/investigators/{code,ops,security}_investigator.forge
+#     • T9.2 (#363): three domain specialists, each with an explicit
+#       skill `allows` clause. Subscribe InvestigationRequested filtered
+#       by domain; emit Finding(thread_ts, domain, summary, evidence,
+#       confidence, suggested_action) which mastermind_intake stitches
+#       back into the originating Slack thread.
+#
+#   stage1/solution_proposer.forge
+#     • T9.3 (#364): Finding aggregator. correlate on Finding.thread_ts
+#       + 2s quiet-window timer; once the batch quiesces, calls
+#       `reason for plan` and emits ProposalReady(kind, content,
+#       suggested_labels, evidence_refs, confidence) for the future
+#       Gate-1 (T10.1) approval flow. Additive — intake's per-Finding
+#       Slack stitch-back is unchanged.
+#
+#   stage1/gate_one.forge
+#     • T10.1 (#367): human-in-the-loop approval bridge between T9.3's
+#       ProposalReady and T9.4's ProposalApproved. Forks by kind —
+#       answer/small_action post directly; propose_issue emits
+#       PostApproval to slack_adapter and waits for ApprovalResponse,
+#       then emits ProposalApproved or ProposalRejected. `[gates]
+#       create_issue = false` auto-approves; `create_issue_timeout_mins`
+#       drives a 5-minute reminder timer that escalates via warden
+#       once elapsed.
+#
+#   stage1/issue_creator.forge
+#     • T9.4 (#365): consumes ProposalApproved (kind == propose_issue)
+#       from the T10.1 (#367) Gate-1 flow, calls
+#       skill.github.create_labeled_issue, emits IssueCreated for
+#       audit, and posts a confirmation back into the originating
+#       Slack thread via PostMessage. One-retry policy: two sequential
+#       skill calls before WardenEscalation.
+#
+#   ../dev-cycle/gate_two.forge
+#     • T10.2 (#368): human-in-the-loop approval bridge between the
+#       planner (emits PlanReady) and the implementer (subscribes
+#       ImplementationApproved). Same shape as gate_one keyed on
+#       issue_id; auto-bypass via [gates] start_implementation =
+#       false; on reject emits ImplementationRejected which the
+#       planner consumes for a bounded re-plan loop ([defaults]
+#       max_plan_revisions). Approval card routes to
+#       config.slack.approval_channel when set, else falls back to
+#       PlanReady.channel.
+#
+# `org_warden` supervises the eleven core agents; `investigators_ward`
+# adds bounded supervision for the T9.2 specialists, the T9.3 proposer,
+# and the T9.4 issue_creator (same risk profile: narrow scope, single
+# external skill call).
 #
 # HTTP surface (one port):
 #   GET  /health                     → liveness probe
@@ -46,7 +112,18 @@
 #     -s workflows/clone-dev/shared/types.forge \
 #     -s workflows/clone-dev/shared/events.forge \
 #     -s workflows/clone-dev/shared/mastermind.forge \
+#     -s workflows/clone-dev/stage1/slack_devops_monitor.forge \
+#     -s workflows/clone-dev/stage1/mastermind_intake.forge \
+#     -s workflows/clone-dev/stage1/investigators/code_investigator.forge \
+#     -s workflows/clone-dev/stage1/investigators/ops_investigator.forge \
+#     -s workflows/clone-dev/stage1/investigators/security_investigator.forge \
+#     -s workflows/clone-dev/stage1/solution_proposer.forge \
+#     -s workflows/clone-dev/stage1/gate_one.forge \
+#     -s workflows/clone-dev/stage1/issue_creator.forge \
+#     -s workflows/clone-dev/stage2/label_router.forge \
+#     -s workflows/clone-dev/stage2/triage_specialist.forge \
 #     -s workflows/dev-cycle/agents.forge \
+#     -s workflows/dev-cycle/gate_two.forge \
 #     -s examples/agents/slack-adapter/agents.forge \
 #     workflows/clone-dev/main.forge --port 3300
 #
@@ -62,7 +139,7 @@
 # was copied verbatim).
 
 warden org_warden
-  manages [mastermind, planner, implementer, tester, reviewer, release_manager, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
+  manages [mastermind, mastermind_intake, slack_devops_monitor, planner, gate_two, implementer, tester, reviewer, release_manager, triage_specialist, swarm_mastery_coordinator, swarm_mastery_tuple, slack_adapter]
   on stuck: nudge, self
     after 3: escalate
   on timeout: restart, self
@@ -76,21 +153,43 @@ warden org_warden
     after 3: escalate
   max_retries 3 per 1h then escalate
 
+# ── Warden: Investigators (#363, T9.2) ──────────────────────────
+# Bounded supervision for the three Stage-1 specialists. The per-
+# turn `if stuck for 3 turns` block inside each investigator handles
+# the soft escalation path (emits WardenEscalation, escalates to this
+# warden); this declaration handles the hard cases (crash / timeout)
+# uniformly across all three.
+warden investigators_ward
+  manages [code_investigator, ops_investigator, security_investigator, solution_proposer, gate_one, issue_creator]
+  on stuck: escalate, self
+  on crash: restart, self
+  on timeout: restart, self
+  max_retries 3 per 1h then escalate
+
 # ── System ───────────────────────────────────────────────────────
-# Linear pipeline with mastermind as the intake and slack_adapter as
-# a sink (all user-visible output flows through it). Mastery agents
-# observe TaskCompleted out-of-band and don't need explicit wiring.
+# Agents communicate through explicit bus subscriptions. Keeping this
+# system unchained avoids forwarding status events such as PostMessage
+# into the next dev-cycle specialist.
 
 system clone_dev_system
   use
     mm: mastermind
+    monitor: slack_devops_monitor
+    intake: mastermind_intake
+    code_inv: code_investigator
+    ops_inv: ops_investigator
+    sec_inv: security_investigator
+    proposer: solution_proposer
+    gate: gate_one
+    issuer: issue_creator
     plan: planner
+    gate2: gate_two
     impl: implementer
     test: tester
     review: reviewer
     release: release_manager
+    triage: triage_specialist
     slack: slack_adapter
-  mm >> plan >> impl >> test >> review
 
 # ── Endpoints ────────────────────────────────────────────────────
 
@@ -121,3 +220,37 @@ endpoint seed_task(task_id: Text, specialist: Text, project: Text) -> Text
 endpoint cross_project(source_task_id: Text, target_repo: Text, description: Text, labels: Text) -> Text
   emit CrossProjectRequested(source_task_id: source_task_id, target_repo: target_repo, description: description, labels: labels)
   give "CrossProjectRequested queued (source={source_task_id} target_repo={target_repo})"
+
+# T9.1 (#362) — parallel injection path next to the T9.5 (#366)
+# slack_devops_monitor (workflows/clone-dev/stage1/). Lets ops drive
+# the Stage-1 pipeline without a Slack workspace and lets integration
+# tests assert on the consumer half in isolation by emitting
+# DevOpsRequest directly. mastermind_intake correlates on thread_ts so
+# repeating calls with the same thread_ts route to the same agent
+# instance (multi-turn conversation).
+endpoint devops_request(channel: Text, user: Text, text: Text, thread_ts: Text, message_ts: Text) -> Text
+  emit DevOpsRequest(channel: channel, user: user, text: text, thread_ts: thread_ts, message_ts: message_ts)
+  give "DevOpsRequest queued (thread_ts={thread_ts} user={user})"
+
+# T9.4 (#365) — smoke endpoint that stands in for the T10.1 (#367)
+# Gate-1 approval flow. Operator passes the human-approved fields
+# (repo / title / body) directly; suggested_labels is hardcoded to
+# ["clone-dev:plan"] for the smoke. issue_creator picks it up via the
+# `subscribe ProposalApproved where kind == "propose_issue"` filter.
+# Kept as a parallel ops/test injection path even after T10.1 ships,
+# so integration tests can drive issue_creator without a Slack
+# workspace and operators can bypass gate_one for emergency runs.
+endpoint smoke_propose_approved(thread_ts: Text, channel: Text, repo: Text, title: Text, body: Text) -> Text
+  emit ProposalApproved(thread_ts: thread_ts, channel: channel, kind: "propose_issue", repo: repo, title: title, body: body, suggested_labels: ["clone-dev:plan"], evidence_refs: [])
+  give "ProposalApproved queued (repo={repo} title={title})"
+
+# T10.1 (#367) — smoke endpoint that drives gate_one end-to-end. Two
+# emits: DevOpsRequest seeds gate_one's memory.channel via the
+# correlate-on-DevOpsRequest.thread_ts clause, and ProposalReady
+# fires the actual gate logic on the same thread instance. evidence
+# carries a single synthetic ref so the rendered approval body
+# exercises build_issue_body's bullet path.
+endpoint smoke_proposal_ready(thread_ts: Text, channel: Text, kind: Text, content: Text) -> Text
+  emit DevOpsRequest(channel: channel, user: "smoke", text: "smoke", thread_ts: thread_ts, message_ts: thread_ts)
+  emit ProposalReady(thread_ts: thread_ts, kind: kind, content: content, suggested_labels: ["clone-dev:plan"], evidence_refs: ["smoke: synthetic"], confidence: 0.9)
+  give "ProposalReady queued (kind={kind} thread_ts={thread_ts})"

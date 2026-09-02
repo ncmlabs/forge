@@ -1,0 +1,12 @@
+#! boundary: server
+
+use
+  file.read
+
+exportable agent dbg
+  on start
+    r = file.read("/etc/hostname")
+    say "R={r}"
+
+fn main
+  a = spawn dbg as "dbg"

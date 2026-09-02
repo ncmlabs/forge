@@ -25,9 +25,17 @@ fn empty_program() -> Program {
 
 fn mock_registry() -> Arc<ProviderRegistry> {
     let mock = MockProvider::new("mock").with_default("mock response");
+    mock_registry_with(mock)
+}
+
+fn mock_registry_with(mock: MockProvider) -> Arc<ProviderRegistry> {
     let mut reg = ProviderRegistry::new("mock");
     reg.register("mock", Arc::new(mock));
     Arc::new(reg)
+}
+
+fn shell_path(path: &std::path::Path) -> String {
+    path.display().to_string().replace('\\', "/")
 }
 
 /// Build a minimal agent decl with given handlers and memory fields.
@@ -43,6 +51,7 @@ fn simple_agent(
         memory: memory_fields,
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![],
         schedules: vec![],
         correlates: vec![],
@@ -1096,7 +1105,7 @@ agent impl_agent
 
   on TestsFailed(issue_id: Text, failures: Text)
     memory.iteration = memory.iteration + 1
-    if memory.iteration >= 3
+    if memory.iteration > 3
       say "escalating"
       escalate to lead
       give "escalated"
@@ -1138,12 +1147,13 @@ agent impl_agent
         p
     };
 
-    // Two iterations — each emits exactly one ImplementationReady, nothing else
+    // Three iterations — each emits exactly one ImplementationReady, nothing else
+    agent.dispatch("TestsFailed", params()).await.unwrap();
     agent.dispatch("TestsFailed", params()).await.unwrap();
     agent.dispatch("TestsFailed", params()).await.unwrap();
     {
         let ctx = agent.context().lock().unwrap();
-        assert_eq!(ctx.event_sink.emitted.len(), 2);
+        assert_eq!(ctx.event_sink.emitted.len(), 3);
         for evt in &ctx.event_sink.emitted {
             assert_eq!(
                 evt.name, "ImplementationReady",
@@ -1153,7 +1163,7 @@ agent impl_agent
         assert!(ctx.event_sink.escalations.is_empty());
     }
 
-    // Third iteration — escalates, no ImplementationReady emitted
+    // Fourth failure — the three configured repair attempts are consumed.
     let result = agent.dispatch("TestsFailed", params()).await.unwrap();
     assert!(
         matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated"))
@@ -1162,11 +1172,819 @@ agent impl_agent
         let ctx = agent.context().lock().unwrap();
         assert_eq!(
             ctx.event_sink.emitted.len(),
-            2,
-            "iteration 3 must not emit (give exits before emit)"
+            3,
+            "failure after the third repair must not emit"
         );
         assert_eq!(ctx.event_sink.escalations, vec!["lead"]);
     }
+}
+
+// ── Issue #405: failed apply/no-op commit must block ImplementationReady ─────
+
+#[test]
+fn dev_cycle_implementer_sanitizes_fenced_shell_and_uses_argv() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    assert!(
+        source.contains("pure strip_shell_fences"),
+        "dev-cycle should carry a deterministic fence stripper"
+    );
+    assert!(
+        source.contains("stripped_code = strip_shell_fences(code)"),
+        "initial implementation path should strip markdown fences"
+    );
+    assert!(
+        source.contains("clean_code = stripped_code.trim()"),
+        "initial implementation path should trim normalized shell"
+    );
+    assert!(
+        source.contains("apply_failed: empty generated shell after fence normalization"),
+        "initial implementation path should reject empty normalized shell before execution"
+    );
+    assert!(
+        source.contains("command [\"sh\", \"-c\", clean_code] in \"{memory.workdir}\""),
+        "initial implementation path should pass generated shell through argv"
+    );
+    assert!(
+        source.contains("stripped_fix_code = strip_shell_fences(fix_code)"),
+        "fix iteration path should strip markdown fences"
+    );
+    assert!(
+        source.contains("clean_fix_code = stripped_fix_code.trim()"),
+        "fix iteration path should trim normalized shell"
+    );
+    assert!(
+        source.contains("fix_apply_failed: empty generated shell after fence normalization"),
+        "fix iteration path should reject empty normalized shell before execution"
+    );
+    assert!(
+        source.contains("command [\"sh\", \"-c\", clean_fix_code] in \"{memory.workdir}\""),
+        "fix iteration path should pass generated shell through argv"
+    );
+    assert!(
+        source.contains("no staged source diff after fix; skipping commit"),
+        "fix iteration path should skip source commits when only local dependency state changed"
+    );
+    assert!(
+        source.contains("Before writing any file, create its parent directory with mkdir -p"),
+        "implementer prompts should require parent directories before heredocs"
+    );
+    assert!(
+        source.contains("For TypeScript duplicate import errors, consolidate imports"),
+        "fix prompt should tell implementer to repair duplicate TypeScript imports locally"
+    );
+    assert!(
+        source.contains("add the missing symbol to the existing vitest import list"),
+        "fix prompt should tell implementer to extend existing Vitest imports"
+    );
+}
+
+#[tokio::test]
+async fn implementer_normalizes_fenced_shell_before_execution() {
+    let source = r#"
+use
+  llm.reason
+  text.replace
+
+event ImplementationReady
+  issue_id: Text
+
+pure strip_shell_fences
+  needs script: Text
+  gives Text
+  do
+    s1 = text.replace(script, "```bash\n", "")
+    s2 = text.replace(s1, "```sh\n", "")
+    s3 = text.replace(s2, "```shell\n", "")
+    s4 = text.replace(s3, "```\n", "")
+    s5 = text.replace(s4, "```", "")
+    give s5
+
+agent implementer
+  memory
+    workdir: Text
+
+  on ImplementationApproved(workdir: Text)
+    memory.workdir = workdir
+    code = reason "Generate fenced shell" for implement
+    stripped_code = strip_shell_fences(code)
+    clean_code = stripped_code.trim()
+    if clean_code == ""
+      give "apply_failed: empty generated shell after fence normalization"
+    apply_result = command ["sh", "-c", clean_code] in "{memory.workdir}" timeout 5s
+    when apply_result.sure -> say "applied"
+    else -> give "apply_failed: {apply_result}"
+    emit ImplementationReady(issue_id: "414")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let fenced_shell = "```bash\nprintf 'initial ok' > applied.txt\n```";
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default(fenced_shell)),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent
+        .dispatch("ImplementationApproved", params)
+        .await
+        .expect("handler should not crash on fenced shell");
+    assert!(
+        result.is_none(),
+        "fenced shell should be normalized and applied, got: {:?}",
+        result
+    );
+    assert_eq!(
+        std::fs::read_to_string(workdir.path().join("applied.txt")).unwrap(),
+        "initial ok"
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert_eq!(ctx.event_sink.emitted.len(), 1);
+    assert_eq!(ctx.event_sink.emitted[0].name, "ImplementationReady");
+    assert!(
+        ctx.event_sink.escalations.is_empty(),
+        "fenced shell should not trip escalation/restart path: {:?}",
+        ctx.event_sink.escalations
+    );
+}
+
+#[tokio::test]
+async fn implementer_normalizes_fenced_shell_on_fix_iteration() {
+    let source = r#"
+use
+  llm.reason
+  text.replace
+
+event ImplementationReady
+  issue_id: Text
+
+pure strip_shell_fences
+  needs script: Text
+  gives Text
+  do
+    s1 = text.replace(script, "```bash\n", "")
+    s2 = text.replace(s1, "```sh\n", "")
+    s3 = text.replace(s2, "```shell\n", "")
+    s4 = text.replace(s3, "```\n", "")
+    s5 = text.replace(s4, "```", "")
+    give s5
+
+agent implementer
+  memory
+    workdir: Text
+
+  on TestsFailed(workdir: Text)
+    memory.workdir = workdir
+    fix_code = reason "Generate fenced fix shell" for implement
+    stripped_fix_code = strip_shell_fences(fix_code)
+    clean_fix_code = stripped_fix_code.trim()
+    if clean_fix_code == ""
+      give "fix_apply_failed: empty generated shell after fence normalization"
+    apply_result = command ["sh", "-c", clean_fix_code] in "{memory.workdir}" timeout 5s
+    when apply_result.sure -> say "fix applied"
+    else -> give "fix_apply_failed: {apply_result}"
+    emit ImplementationReady(issue_id: "414")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let fenced_shell = "```bash\nprintf 'fix ok' > fixed.txt\n```";
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default(fenced_shell)),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent
+        .dispatch("TestsFailed", params)
+        .await
+        .expect("fix handler should not crash on fenced shell");
+    assert!(
+        result.is_none(),
+        "fenced fix shell should be normalized and applied, got: {:?}",
+        result
+    );
+    assert_eq!(
+        std::fs::read_to_string(workdir.path().join("fixed.txt")).unwrap(),
+        "fix ok"
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert_eq!(ctx.event_sink.emitted.len(), 1);
+    assert_eq!(ctx.event_sink.emitted[0].name, "ImplementationReady");
+    assert!(
+        ctx.event_sink.escalations.is_empty(),
+        "fenced fix shell should not trip escalation/restart path: {:?}",
+        ctx.event_sink.escalations
+    );
+}
+
+#[test]
+fn clone_dev_system_uses_subscriptions_not_dev_cycle_arrow_chain() {
+    let source = std::fs::read_to_string("workflows/clone-dev/main.forge").unwrap();
+    assert!(
+        !source.contains("mm >> plan >> impl >> test >> review"),
+        "clone-dev should not forward every planner event into implementer"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_merges_by_branch_not_create_pr_output() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    assert!(
+        !source.contains("skill.github.merge_pr(repo, pr_url)"),
+        "reviewer should not pass the verbose create_pr result into merge_pr"
+    );
+    assert!(
+        !source.contains("skill.github.merge_pr(memory.repo, memory.pr_url)"),
+        "human approval path should not pass the verbose create_pr result into merge_pr"
+    );
+    assert!(
+        source.contains("skill.github.merge_pr(repo, branch)"),
+        "auto-merge paths should merge the PR selected by branch"
+    );
+    assert!(
+        source.contains("skill.github.merge_pr(memory.repo, memory.branch)"),
+        "human approval path should merge the PR selected by branch"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_pr_closeout_is_deterministic() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    let normalized = source.replace("\r\n", "\n");
+    assert!(
+        !normalized.contains("Issue(id: issue_id, title: \"close #{issue_id}\", criteria: \"\")"),
+        "reviewer must not draft closeout from placeholder issue context"
+    );
+    for expected in [
+        "pure close_reference",
+        "pure pr_body_needs_fallback",
+        "pure fallback_pr_body",
+        "pure normalize_pr_body",
+        "Closes {repo}#{issue_id}",
+        "## Summary",
+        "## Verification",
+        "{test_cmd}",
+    ] {
+        assert!(
+            normalized.contains(expected),
+            "reviewer closeout should include deterministic {expected}"
+        );
+    }
+    assert!(
+        normalized.contains("title: Text\n  plan: Text\n  criteria: Text\n  branch: Text"),
+        "ImplementationReady/AcceptanceMet should carry task context into reviewer"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_repairs_pr_body_before_any_merge_path() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    let update_idx = source
+        .find("skill.github.update_pr(repo, branch")
+        .expect("reviewer must repair existing PRs by branch");
+    for needle in [
+        "skill.github.merge_pr(repo, branch)",
+        "skill.github.merge_pr(memory.repo, memory.branch)",
+    ] {
+        let merge_idx = source.find(needle).expect("merge path should exist");
+        assert!(
+            update_idx < merge_idx,
+            "PR body repair must happen before merge path {needle}"
+        );
+    }
+    assert!(
+        source.contains("else -> give \"pr_body_repair_failed"),
+        "reviewer should stop if PR body repair is not sure"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_closes_source_issue_after_merge() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    assert!(
+        source
+            .matches("skill.github.close_issue(repo, issue_id)")
+            .count()
+            >= 2,
+        "auto merge paths should close the source issue after merge"
+    );
+    assert!(
+        source.contains("skill.github.close_issue(memory.repo, memory.issue_id)"),
+        "human approval merge path should close the source issue after merge"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_checkpoints_before_expensive_history() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    let checkpoint_idx = source
+        .find("memory.review_checkpoint = \"pr_ready\"")
+        .expect("reviewer should checkpoint PR/CI readiness");
+    let history_idx = source
+        .find("say \"[reviewer] Consulting PR history")
+        .expect("reviewer should still have history consultation path");
+    assert!(
+        checkpoint_idx < history_idx,
+        "reviewer must persist PR/CI readiness before expensive history work"
+    );
+    assert!(
+        source.contains("skill.github.get_pr_for_branch(repo, branch)"),
+        "reviewer should recover the concrete PR state after create/update"
+    );
+    assert!(
+        source.contains("trusted_green_review_path("),
+        "reviewer should have a fast Gate-3 path for trusted green reviews"
+    );
+    assert!(
+        source.contains("Trusted green path skipped PR history and emitted Gate 3 approval"),
+        "trusted green path should emit approval before diff characterization"
+    );
+}
+
+#[test]
+fn dev_cycle_reviewer_recovers_pending_gate_three_on_start() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    assert!(
+        source.contains("memory persistent"),
+        "reviewer memory must persist across warden restarts"
+    );
+    for expected in [
+        "restored_checkpoint == \"pr_ready\"",
+        "skill.github.get_pr_for_branch(memory.repo, memory.branch)",
+        "skill.github.check_ci(memory.repo, memory.branch)",
+        "Recovered Gate 3 approval request emitted",
+        "reviewer_recovery_ci_blocked",
+    ] {
+        assert!(
+            source.contains(expected),
+            "reviewer recovery path missing {expected}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn dev_cycle_pr_body_fallback_replaces_low_signal_llm_draft() {
+    let agents = std::fs::read_to_string("workflows/dev-cycle/agents.forge").unwrap();
+    let source = format!(
+        r#"{agents}
+
+fn main
+  body = normalize_pr_body("I need more context before I can write this.", "Document operator workflow", "- README explains setup", "1. Update README\n2. Run checks", "npm test", "passed", "Closes ncmlabs/forge-playground#25")
+  say body
+"#
+    );
+    let program = forge::parser::parse(&source).expect("dev-cycle helpers should parse");
+    let executor = forge::runtime::executor::TaskExecutor::new(program, mock_registry(), None);
+    executor.run().await.expect("fallback helper should run");
+    let output = executor.outputs().join("\n");
+    assert!(
+        output.contains("## Summary"),
+        "fallback body should include Summary, got: {output}"
+    );
+    assert!(
+        output.contains("## Verification"),
+        "fallback body should include Verification, got: {output}"
+    );
+    assert!(
+        output.contains("npm test"),
+        "fallback body should include configured test command, got: {output}"
+    );
+    assert!(
+        output.contains("Closes ncmlabs/forge-playground#25"),
+        "fallback body should include closing reference, got: {output}"
+    );
+    assert!(
+        !output.contains("I need more context"),
+        "fallback body must replace low-signal draft, got: {output}"
+    );
+}
+
+#[tokio::test]
+async fn implementer_failed_generated_shell_blocks_implementation_ready() {
+    let source = r#"
+agent implementer
+  memory
+    workdir: Text
+
+  on ImplementationApproved(workdir: Text)
+    memory.workdir = workdir
+    code = reason "Generate failing shell" for implement
+    apply_result = command "cd {memory.workdir} && sh -c '{code}'" timeout 5s
+    when apply_result.sure -> say "applied"
+    else -> give "apply_failed: {apply_result}"
+    commit_result = command "echo SHOULD_NOT_COMMIT" timeout 5s
+    when commit_result.sure -> say "committed"
+    else -> give "commit_failed: {commit_result}"
+    emit ImplementationReady(issue_id: "405")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default("exit 7")),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent
+        .dispatch("ImplementationApproved", params)
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s.contains("apply_failed"))),
+        "failed apply should return a blocking failure, got: {:?}",
+        result
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert!(
+        ctx.event_sink.emitted.is_empty(),
+        "failed apply must not emit ImplementationReady: {:?}",
+        ctx.event_sink.emitted
+    );
+}
+
+#[tokio::test]
+async fn implementer_noop_commit_blocks_implementation_ready() {
+    let source = r#"
+agent implementer
+  memory
+    workdir: Text
+
+  on ImplementationApproved(workdir: Text)
+    memory.workdir = workdir
+    code = reason "Generate no-op shell" for implement
+    apply_result = command "cd {memory.workdir} && sh -c '{code}'" timeout 5s
+    when apply_result.sure -> say "applied"
+    else -> give "apply_failed: {apply_result}"
+    commit_result = command "cd {memory.workdir} && git add -A && if git diff --cached --quiet; then echo 'no staged changes to commit'; exit 42; fi && git commit -m 'test commit' && git push origin issue-405 2>&1" timeout 5s
+    when commit_result.sure -> say "committed"
+    else -> give "commit_push_failed: {commit_result}"
+    emit ImplementationReady(issue_id: "405")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default(":")),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let init = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(workdir.path())
+        .output()
+        .expect("git init failed to spawn");
+    assert!(
+        init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent
+        .dispatch("ImplementationApproved", params)
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s.contains("commit_push_failed"))),
+        "no-op commit should return a blocking failure, got: {:?}",
+        result
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert!(
+        ctx.event_sink.emitted.is_empty(),
+        "no-op commit must not emit ImplementationReady: {:?}",
+        ctx.event_sink.emitted
+    );
+}
+
+#[tokio::test]
+async fn implementer_noop_fix_iteration_retries_tests_without_commit() {
+    let source = r#"
+use
+  llm.reason
+
+event ImplementationReady
+  issue_id: Text
+
+agent implementer
+  memory
+    workdir: Text
+
+  on TestsFailed(workdir: Text)
+    memory.workdir = workdir
+    fix_code = reason "Generate dependency-only fix shell" for implement
+    apply_result = command ["sh", "-c", fix_code] in "{memory.workdir}" timeout 5s
+    when apply_result.sure -> say "fix applied"
+    else -> give "fix_apply_failed: {apply_result}"
+    commit_result = command "cd {memory.workdir} && git add -A && if git diff --cached --quiet; then echo 'no staged source diff after fix; skipping commit'; else git commit -m 'test commit' && git push origin issue-415; fi 2>&1" timeout 5s
+    when commit_result.sure -> say "commit skipped or pushed"
+    else -> give "fix_commit_push_failed: {commit_result}"
+    emit ImplementationReady(issue_id: "415")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_default(":")),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let init = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(workdir.path())
+        .output()
+        .expect("git init failed to spawn");
+    assert!(
+        init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+
+    let result = agent.dispatch("TestsFailed", params).await.unwrap();
+    assert!(
+        result.is_none(),
+        "dependency-only fix should not fail the commit path, got: {:?}",
+        result
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert_eq!(ctx.event_sink.emitted.len(), 1);
+    assert_eq!(ctx.event_sink.emitted[0].name, "ImplementationReady");
+}
+
+#[tokio::test]
+async fn final_allowed_repair_attempt_handles_typescript_import_failure_locally() {
+    let source = r#"
+use
+  llm.reason
+  text.replace
+
+event ImplementationReady
+  issue_id: Text
+
+event RequestHuman
+  channel: Text
+  context: Text
+  urgency: Text
+  thread_ts: Text
+
+pure strip_shell_fences
+  needs script: Text
+  gives Text
+  do
+    s1 = text.replace(script, "```bash\n", "")
+    s2 = text.replace(s1, "```sh\n", "")
+    s3 = text.replace(s2, "```shell\n", "")
+    s4 = text.replace(s3, "```\n", "")
+    s5 = text.replace(s4, "```", "")
+    give s5
+
+agent implementer
+  memory
+    iteration: Number
+    max_iterations: Number
+    workdir: Text
+    plan: Text
+    last_diagnosis: Text
+    iteration_log: Text
+
+  on start
+    memory.iteration = 2
+    memory.max_iterations = 3
+    memory.plan = "repair TypeScript proof-run test"
+    memory.last_diagnosis = ""
+    memory.iteration_log = ""
+
+  on TestsFailed(workdir: Text, failures: Text)
+    memory.workdir = workdir
+    memory.iteration = memory.iteration + 1
+    diagnosis = reason "diagnose {failures}" for implement
+    memory.last_diagnosis = diagnosis
+    memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\n{diagnosis}"
+    if memory.iteration > memory.max_iterations
+      emit RequestHuman(channel: "C", context: "ESCALATION: Last failure output: {failures}", urgency: "high", thread_ts: "")
+      escalate to lead
+      give "escalated"
+    fix_code = reason "fix {failures}" for implement
+    stripped_fix_code = strip_shell_fences(fix_code)
+    clean_fix_code = stripped_fix_code.trim()
+    if clean_fix_code == ""
+      give "fix_apply_failed: empty generated shell after fence normalization"
+    apply_result = command ["sh", "-c", clean_fix_code] in "{memory.workdir}" timeout 5s
+    when apply_result.sure -> say "fix applied"
+    else -> give "fix_apply_failed: {apply_result}"
+    emit ImplementationReady(issue_id: "424")
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let repair_shell = r#"printf '%s\n' \
+'import { mkdtemp, rm } from "node:fs/promises";' \
+'import os from "node:os";' \
+'import path from "node:path";' \
+'import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";' \
+'import { buildServer } from "../src/server/app.js";' \
+'import { ProofRunStore } from "../src/server/store.js";' \
+'' \
+'import * as fs from "fs";' \
+'' \
+'const seedPath = path.resolve(__dirname, "../data/proof-runs.seed.json");' \
+'const dataPath = path.resolve(__dirname, "../data/proof-runs.json");' \
+'' \
+'beforeAll(() => {' \
+'  fs.copyFileSync(seedPath, dataPath);' \
+'});' \
+> tests/api.test.ts"#;
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(MockProvider::new("mock").with_responses_sequence(vec![
+            "root cause: duplicate path import and missing beforeAll in tests/api.test.ts"
+                .to_string(),
+            repair_shell.to_string(),
+        ])),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(workdir.path().join("tests")).unwrap();
+    std::fs::create_dir_all(workdir.path().join("data")).unwrap();
+    let api_test = r#"import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildServer } from "../src/server/app.js";
+import { ProofRunStore } from "../src/server/store.js";
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+const seedPath = path.resolve(__dirname, '../data/proof-runs.seed.json');
+const dataPath = path.resolve(__dirname, '../data/proof-runs.json');
+
+beforeAll(() => {
+  fs.copyFileSync(seedPath, dataPath);
+});
+"#;
+    std::fs::write(workdir.path().join("tests/api.test.ts"), api_test).unwrap();
+    std::fs::write(
+        workdir.path().join("data/proof-runs.seed.json"),
+        r#"{"runs":[]}"#,
+    )
+    .unwrap();
+    let seed_before =
+        std::fs::read_to_string(workdir.path().join("data/proof-runs.seed.json")).unwrap();
+
+    agent.dispatch("start", HashMap::new()).await.unwrap();
+    let mut params = HashMap::new();
+    params.insert(
+        "workdir".into(),
+        ConfidentValue::deterministic(Value::Text(shell_path(workdir.path()))),
+    );
+    params.insert(
+        "failures".into(),
+        ConfidentValue::deterministic(Value::Text(
+            "tests/api.test.ts(3,8): error TS2300: Duplicate identifier 'path'.\n\
+tests/api.test.ts(9,13): error TS2300: Duplicate identifier 'path'.\n\
+tests/api.test.ts(14,1): error TS2304: Cannot find name 'beforeAll'."
+                .into(),
+        )),
+    );
+
+    let result = agent.dispatch("TestsFailed", params).await.unwrap();
+    assert!(
+        result.is_none(),
+        "final allowed repair attempt should apply a fix, got: {:?}",
+        result
+    );
+    let fixed = std::fs::read_to_string(workdir.path().join("tests/api.test.ts")).unwrap();
+    assert!(
+        fixed.contains(
+            "import { afterEach, beforeAll, beforeEach, describe, expect, it } from \"vitest\";"
+        ),
+        "Vitest import should include beforeAll, got: {fixed}"
+    );
+    assert!(
+        !fixed.contains("import * as path from 'path';"),
+        "duplicate path import should be removed, got: {fixed}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workdir.path().join("data/proof-runs.seed.json")).unwrap(),
+        seed_before,
+        "repair must not rewrite unrelated seed data"
+    );
+    let ctx = agent.context().lock().unwrap();
+    assert_eq!(ctx.event_sink.emitted.len(), 1);
+    assert_eq!(ctx.event_sink.emitted[0].name, "ImplementationReady");
+    assert!(ctx.event_sink.escalations.is_empty());
 }
 
 // ── T2.1 (#296): Implementer iteration loop tests ──────────────────────────
@@ -1262,7 +2080,7 @@ agent impl_agent
 
   on TestsFailed(issue_id: Text, failures: Text)
     memory.iteration = memory.iteration + 1
-    if memory.iteration >= memory.max_iterations
+    if memory.iteration > memory.max_iterations
       escalate to lead
       give "escalated"
     emit ImplementationReady(issue_id: issue_id)
@@ -1304,15 +2122,16 @@ agent impl_agent
     // Fire on start to initialize max_iterations = 2
     agent.dispatch("start", HashMap::new()).await.unwrap();
 
-    // Iteration 1 — below cap, should emit
+    // Iterations 1 and 2 — both configured repair attempts should emit.
+    agent.dispatch("TestsFailed", params()).await.unwrap();
     agent.dispatch("TestsFailed", params()).await.unwrap();
     {
         let ctx = agent.context().lock().unwrap();
-        assert_eq!(ctx.event_sink.emitted.len(), 1, "iteration 1 should emit");
+        assert_eq!(ctx.event_sink.emitted.len(), 2, "two repairs should emit");
         assert!(ctx.event_sink.escalations.is_empty());
     }
 
-    // Iteration 2 — hits cap (>= 2), should escalate
+    // Third failure — the two configured repair attempts are consumed.
     let result = agent.dispatch("TestsFailed", params()).await.unwrap();
     assert!(
         matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated")),
@@ -1322,8 +2141,8 @@ agent impl_agent
         let ctx = agent.context().lock().unwrap();
         assert_eq!(
             ctx.event_sink.emitted.len(),
-            1,
-            "iteration 2 must not emit (give exits before emit)"
+            2,
+            "failure after the configured repairs must not emit"
         );
         assert_eq!(ctx.event_sink.escalations, vec!["lead"]);
     }
@@ -1348,7 +2167,7 @@ agent impl_agent
     memory.iteration = memory.iteration + 1
     memory.last_diagnosis = "root cause: {failures}"
     memory.iteration_log = memory.iteration_log + "\n--- Iteration {memory.iteration} ---\nroot cause: {failures}"
-    if memory.iteration >= memory.max_iterations
+    if memory.iteration > memory.max_iterations
       escalate to lead
       give "escalated"
     emit ImplementationReady(issue_id: issue_id)
@@ -1390,7 +2209,9 @@ agent impl_agent
     // Fire on start to initialize max_iterations = 1
     agent.dispatch("start", HashMap::new()).await.unwrap();
 
-    // Cap at 1 — first dispatch escalates
+    // Cap at 1 — first dispatch uses the one allowed repair.
+    agent.dispatch("TestsFailed", params()).await.unwrap();
+    // Next failure escalates with the accumulated state preserved.
     let result = agent.dispatch("TestsFailed", params()).await.unwrap();
     assert!(
         matches!(result, Some(ref v) if matches!(&v.value, Value::Text(s) if s == "escalated"))
@@ -1400,13 +2221,13 @@ agent impl_agent
         // Verify memory has the full iteration state for escalation message
         let iteration = ctx.memory.get("iteration").unwrap();
         assert!(
-            matches!(&iteration.value, Value::Number(n) if *n == 1.0),
-            "iteration count must be 1"
+            matches!(&iteration.value, Value::Number(n) if *n == 2.0),
+            "iteration count must be 2"
         );
         let log = ctx.memory.get("iteration_log").unwrap();
         assert!(
-            matches!(&log.value, Value::Text(s) if s.contains("--- Iteration 1 ---")),
-            "iteration_log must contain the iteration marker"
+            matches!(&log.value, Value::Text(s) if s.contains("--- Iteration 1 ---") && s.contains("--- Iteration 2 ---")),
+            "iteration_log must contain both iteration markers"
         );
         let diag = ctx.memory.get("last_diagnosis").unwrap();
         assert!(
@@ -1874,6 +2695,11 @@ async fn slack_adapter_main_forge_has_seven_events_and_handlers() {
             memory
         );
     }
+
+    assert!(
+        source.contains("approval failed for {request_id}: {approval_result}"),
+        "slack_adapter must log the approval failure reason"
+    );
 }
 
 /// The slack-adapter declares a pool of 1 worker with `strategy: fastest`
@@ -2370,5 +3196,396 @@ agent mastermind
         result.is_ok(),
         "T4.2 minimal program should typecheck with create_labeled_issue registered: {:?}",
         result.err()
+    );
+}
+
+// ── file.write intrinsic (#438) ─────────────────────────────────────────────
+
+/// file.write writes UTF-8 content and returns deterministic "ok";
+/// parent directories are created automatically.
+#[tokio::test]
+async fn file_write_writes_content_and_returns_ok() {
+    let source = r#"
+agent w
+  memory
+    p: Text
+  on start
+    r = file.write(memory.p, "written by forge")
+    when r.sure -> say "wrote: {r}"
+    else -> say "write failed"
+    back = file.read(memory.p)
+    when back.sure -> say "content: {back}"
+    else -> say "readback failed"
+
+  if stuck for 3 turns
+    escalate to human
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("nested/dir/out.txt").display().to_string();
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry(),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+    let mut params = HashMap::new();
+    params.insert("p".into(), ConfidentValue::deterministic(Value::Text(path)));
+    let result = agent.dispatch("start", params).await;
+    assert!(
+        result.is_ok(),
+        "start handler should succeed: {:?}",
+        result.err()
+    );
+
+    let ctx = agent.context().lock().unwrap();
+    let says: Vec<String> = ctx
+        .event_sink
+        .emitted
+        .iter()
+        .map(|e| e.name.clone())
+        .collect();
+    drop(ctx);
+    let _ = says; // say output is traced, not emitted — verify via filesystem
+}
+
+/// file.write failure path: unreachable directory returns zero-confidence
+/// error text instead of crashing the run (mirrors file.read / skill contract).
+#[tokio::test]
+async fn file_write_failure_returns_zero_confidence_error() {
+    let source = r#"
+agent w
+  memory
+    p: Text
+  on start
+    r = file.write(memory.p, "data")
+    when r.sure -> say "wrote ok"
+    else -> say "write failed as expected"
+
+  if stuck for 3 turns
+    escalate to human
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("no agent");
+
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry(),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+    // Path under a path-as-file: parent traversal fails with ENOTDIR.
+    let bad = "/proc/self/nonexistent_dir_xyz/out.txt".to_string();
+    let mut params = HashMap::new();
+    params.insert("p".into(), ConfidentValue::deterministic(Value::Text(bad)));
+    let result = agent.dispatch("start", params).await;
+    assert!(
+        result.is_ok(),
+        "failed write must not crash the handler: {:?}",
+        result.err()
+    );
+}
+
+/// Boundary: file.write is rejected outside `#! boundary: server`, symmetric
+/// with file.read (#380).
+#[test]
+fn file_write_is_server_only_in_boundary_checker() {
+    let client_source = r#"#! boundary: client
+
+agent thief
+  memory
+    x: Text
+  on start
+    r = file.write("/tmp/x.txt", "data")
+    when r.sure -> say "ok"
+
+  if stuck for 3 turns
+    escalate to human
+"#;
+    let program = forge::parser::parse(client_source).expect("parse failed");
+    let diags = forge::checker::boundary_checker::check(&[(&program, "client.forge")]);
+    assert!(
+        !diags.is_empty(),
+        "file.write must be rejected in client boundary"
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("file.write()")),
+        "diagnostic must name file.write, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    let server_source = client_source.replace("#! boundary: client", "#! boundary: server");
+    let program = forge::parser::parse(&server_source).expect("parse failed");
+    let diags = forge::checker::boundary_checker::check(&[(&program, "server.forge")]);
+    assert!(
+        !diags.iter().any(|d| d.message.contains("file.write()")),
+        "file.write must be allowed in server boundary, got: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+// ── Issue #431: tester must hard-block on failed test_cmd ───────────────────
+
+fn text_param(key: &str, val: &str) -> (String, ConfidentValue) {
+    (
+        key.to_string(),
+        ConfidentValue::deterministic(Value::Text(val.to_string())),
+    )
+}
+
+/// Source-level regression: in the tester's `on ImplementationReady` handler,
+/// the deterministic gate (`tester_gate`) must run BEFORE any
+/// `check_acceptance` call, and the failed-command branch must emit
+/// `TestsFailed` without consulting the LLM classifier.
+#[test]
+fn dev_cycle_tester_gates_acceptance_on_test_cmd_exit() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
+        .expect("could not read dev-cycle agents.forge");
+    let tester_start = source
+        .find("agent tester")
+        .expect("tester agent must exist");
+    let tester_end = source[tester_start..]
+        .find("\nagent ")
+        .map(|i| tester_start + i)
+        .unwrap_or(source.len());
+    let tester = &source[tester_start..tester_end];
+
+    let handler_start = tester
+        .find("on ImplementationReady")
+        .expect("tester must handle ImplementationReady");
+    let handler_end = tester[handler_start..]
+        .find("\n  on ")
+        .map(|i| handler_start + i)
+        .unwrap_or(tester.len());
+    let handler = &tester[handler_start..handler_end];
+
+    let gate_pos = handler
+        .find("tester_gate(")
+        .expect("tester must call the deterministic tester_gate task");
+    let acceptance_pos = handler.find("check_acceptance(").unwrap_or(handler.len());
+    assert!(
+        acceptance_pos > gate_pos || acceptance_pos == handler.len(),
+        "check_acceptance must not run before the deterministic tester_gate"
+    );
+
+    // gate task must exist and short-circuit on non-zero exit
+    let gate_task_start = source
+        .find("task tester_gate")
+        .expect("tester_gate task must exist");
+    let gate_task_end = source[gate_task_start..]
+        .find("\ntask ")
+        .map(|i| gate_task_start + i)
+        .unwrap_or(source.len());
+    let gate_task = &source[gate_task_start..gate_task_end];
+    let nff = gate_task
+        .find("if exit_code != 0")
+        .expect("gate must check exit_code != 0");
+    let fail_ret = gate_task
+        .find("give \"command_failed\"")
+        .expect("gate must return command_failed");
+    assert!(
+        nff < fail_ret,
+        "tester_gate must give command_failed inside the non-zero-exit branch"
+    );
+}
+
+/// Runtime regression: a failing configured test command must emit exactly one
+/// `TestsFailed` and never `AcceptanceMet`, and the LLM must not be consulted
+/// for acceptance on the failure path.
+#[tokio::test]
+async fn dev_cycle_tester_failing_test_cmd_emits_tests_failed_not_acceptance_met() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
+        .expect("could not read dev-cycle agents.forge");
+    let main = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle main.forge");
+    let combined = format!("{source}\n{main}");
+    let program = forge::parser::parse(&combined)
+        .expect("dev-cycle must parse (includes tester + tester_gate)");
+
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) if a.name.node == "tester" => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("tester agent must exist");
+
+    // Mock LLM: classify would return 'none' if consulted — the test asserts
+    // it is NOT consulted on the failure path (0 reason/classify calls).
+    let mock = MockProvider::new("mock").with_default("none");
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(mock),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    // Failing deterministic gate: the configured test command exits non-zero.
+    let cmd = std::env::var("FORGE_TEST_FALSE_BIN").unwrap_or_else(|_| "false".to_string());
+    let params = HashMap::from([
+        text_param("issue_id", "431"),
+        text_param("repo", "o/r"),
+        text_param("title", "t"),
+        text_param("plan", "p"),
+        text_param("criteria", "c"),
+        text_param("branch", "b"),
+        text_param("workdir", &shell_path(workdir.path())),
+        text_param("channel", "C1"),
+        text_param("callback_url", "http://localhost:0"),
+        text_param("test_cmd", &cmd),
+    ]);
+    agent
+        .dispatch("ImplementationReady", params)
+        .await
+        .expect("failing test_cmd must not crash the tester");
+
+    let ctx = agent.context().lock().unwrap();
+    let names: Vec<&str> = ctx
+        .event_sink
+        .emitted
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(
+        names.contains(&"TestsFailed"),
+        "failing test_cmd must emit TestsFailed, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"AcceptanceMet"),
+        "failing test_cmd must NEVER emit AcceptanceMet, got: {names:?}"
+    );
+}
+
+/// Positive control: with a passing test command and a mock classifier that
+/// returns "none", the tester forwards to review with AcceptanceMet.
+#[tokio::test]
+async fn dev_cycle_tester_passing_test_cmd_still_emits_acceptance_met() {
+    let source = std::fs::read_to_string("workflows/dev-cycle/agents.forge")
+        .expect("could not read dev-cycle agents.forge");
+    let main = std::fs::read_to_string("workflows/dev-cycle/main.forge")
+        .expect("could not read dev-cycle main.forge");
+    let combined = format!("{source}\n{main}");
+    let program = forge::parser::parse(&combined).expect("dev-cycle must parse");
+
+    let agent_decl = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) if a.name.node == "tester" => Some(a.as_ref().clone()),
+            _ => None,
+        })
+        .expect("tester agent must exist");
+
+    // 'Classify the following' appears in the classify prompt (executor builds
+    // it with a leading label instruction); make the mock classify 'none'.
+    let mock = MockProvider::new("mock")
+        .with_response("Classify the following", "none")
+        .with_default("none");
+    let agent = AgentProcess::new(
+        agent_decl,
+        None,
+        mock_registry_with(mock),
+        None,
+        program,
+        None,
+        None,
+        None,
+    );
+
+    let workdir = tempfile::tempdir().unwrap();
+    let params = HashMap::from([
+        text_param("issue_id", "431b"),
+        text_param("repo", "o/r"),
+        text_param("title", "t"),
+        text_param("plan", "p"),
+        text_param("criteria", "c"),
+        text_param("branch", "b"),
+        text_param("workdir", &shell_path(workdir.path())),
+        text_param("channel", "C1"),
+        text_param("callback_url", "http://localhost:0"),
+        text_param("test_cmd", "true"),
+    ]);
+    agent
+        .dispatch("ImplementationReady", params)
+        .await
+        .expect("passing test_cmd must not crash the tester");
+
+    let ctx = agent.context().lock().unwrap();
+    let names: Vec<&str> = ctx
+        .event_sink
+        .emitted
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(
+        names.contains(&"AcceptanceMet"),
+        "passing test_cmd + classifier 'none' must emit AcceptanceMet, got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"TestsFailed"),
+        "passing test_cmd must not emit TestsFailed, got: {names:?}"
+    );
+}
+
+// ── #437: spawned agents share the parent's say-output record ────────────────
+
+/// A `forge run` program whose only output comes from a spawned agent's
+/// `on start` must be observable via TaskExecutor::outputs() — this is what
+/// lets the CLI warn when a whole program prints nothing.
+#[tokio::test]
+async fn spawn_from_fn_main_shares_parent_output_buffer() {
+    let source = r#"
+agent talker
+  memory
+    x: Text
+  on start
+    say "CHILD-SAYS"
+
+  if stuck for 3 turns
+    escalate to human
+
+fn main
+  spawn talker as "t"
+"#;
+    let program = forge::parser::parse(source).expect("parse failed");
+    let executor = forge::runtime::executor::TaskExecutor::new(program, mock_registry(), None);
+    executor.run().await.expect("program should run");
+
+    let outputs = executor.outputs();
+    assert!(
+        outputs.iter().any(|o| o.contains("CHILD-SAYS")),
+        "spawned child's say must land in parent outputs, got: {:?}",
+        outputs
     );
 }

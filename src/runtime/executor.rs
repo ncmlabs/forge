@@ -316,6 +316,37 @@ impl TaskExecutor {
                     Err(e) => ConfidentValue::from_io_error(format!("file.read('{path_s}'): {e}")),
                 }
             }
+            // file.write(path, content) -> Text — write UTF-8 content to a
+            // file at `path` (#438). Creates parent directories
+            // automatically. Returns deterministic "ok" on success so
+            // callers can verify with `when x == "ok"`; on failure returns
+            // zero-confidence Text carrying the OS error, mirroring the
+            // `file.read` / `skill.*` contract so `when sure / else` routes
+            // the failure. Server-only (see boundary_checker.rs).
+            ("file", "write") => {
+                let path_s = text_arg(0);
+                let content = text_arg(1);
+                if path_s.is_empty() {
+                    ConfidentValue::from_io_error("file.write: empty path argument".to_string())
+                } else {
+                    let path = std::path::Path::new(&path_s);
+                    match path
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .map(std::fs::create_dir_all)
+                    {
+                        Some(Err(e)) => ConfidentValue::from_io_error(format!(
+                            "file.write('{path_s}'): cannot create parent dir: {e}"
+                        )),
+                        _ => match std::fs::write(path, &content) {
+                            Ok(()) => ConfidentValue::deterministic(Value::Text("ok".to_string())),
+                            Err(e) => ConfidentValue::from_io_error(format!(
+                                "file.write('{path_s}'): {e}"
+                            )),
+                        },
+                    }
+                }
+            }
             ("toml", "parse") => {
                 let text = text_arg(0);
                 let type_name = text_arg(1);
@@ -377,6 +408,18 @@ impl TaskExecutor {
     /// Attach a ForgeConfig for system runtime configuration.
     pub fn with_config(mut self, config: crate::config::ForgeConfig) -> Self {
         self.config = Some(config);
+        self
+    }
+
+    /// Share the caller's `say` output buffer (#437).
+    ///
+    /// Spawned agents normally get a fresh output buffer, so a `forge run`
+    /// parent that spawns agents and says nothing itself looks like a silent
+    /// no-op to `outputs()` even though the children printed to stdout.
+    /// Passing the parent's Arc here makes `run_program`'s observable-output
+    /// check see the whole tree's output.
+    pub fn with_shared_output(mut self, output: Arc<Mutex<Vec<String>>>) -> Self {
+        self.output = output;
         self
     }
 
@@ -849,12 +892,10 @@ impl TaskExecutor {
             Value::Record(f) => f,
             _ => return None,
         };
-        let meta = match fields.get("metadata") {
-            Some(cv) => match &cv.value {
-                Value::Record(m) => m,
-                _ => return None,
-            },
-            None => return None,
+        let cv = fields.get("metadata")?;
+        let meta = match &cv.value {
+            Value::Record(m) => m,
+            _ => return None,
         };
         meta.get("verification")
             .and_then(|cv| VerificationResult::from_value(&cv.value))
@@ -1711,12 +1752,24 @@ impl TaskExecutor {
                     // letting fn main act as a supervisor that waits for spawned agents to
                     // retire (issue #273 — composition of fn main + spawn + on start).
                     if self.agent_context.is_some() {
+                        // Background spawn: still share the output buffer so
+                        // child `say` lines land in the shared record (#437).
+                        // Note: a detached child may print after `forge run`
+                        // checks the buffer — the #437 warning only reflects
+                        // output observed at fn-main completion.
+                        let child_process = child_process.with_shared_output(self.output.clone());
                         tokio::spawn(async move {
+                            let mut child_process = child_process;
                             let _ = child_process.run().await;
                         });
                     } else {
                         // Run inline so fn main waits for the child to retire.
                         // Errors are surfaced (unlike background spawn which discards them).
+                        // Share our output buffer so the parent's `outputs()`
+                        // includes child `say` lines (#437 — `forge run`
+                        // must be able to see the whole program's output).
+                        let mut child_process =
+                            child_process.with_shared_output(self.output.clone());
                         child_process.run().await?;
                     }
 
@@ -2117,7 +2170,10 @@ impl TaskExecutor {
                     if let Expr::Ident(ref ns) = obj_expr.node {
                         if matches!(
                             (ns.as_str(), method.node.as_str()),
-                            ("file", "read") | ("toml", "parse") | ("json", "parse")
+                            ("file", "read")
+                                | ("file", "write")
+                                | ("toml", "parse")
+                                | ("json", "parse")
                         ) {
                             let ns = ns.clone();
                             let method_name = method.node.clone();
@@ -2145,6 +2201,56 @@ impl TaskExecutor {
                                 .unwrap_or_default();
                             let n: f64 = s.trim().parse().unwrap_or(0.0);
                             return Ok(ConfidentValue::deterministic(Value::Number(n)));
+                        }
+                    }
+
+                    // text.replace(s, find, replacement) — substitute every
+                    // occurrence of `find` in `s` with `replacement`. Added
+                    // for T8.5 (#360): templates loaded from TOML are inert
+                    // text (parse-time `{var}` interpolation doesn't apply
+                    // to runtime-loaded strings), so dev-cycle uses chained
+                    // text.replace calls to render commit messages with
+                    // {issue_id}/{title}/{body} substitutions. Empty `find`
+                    // is a no-op (matches Rust's str::replace semantics:
+                    // empty needles otherwise insert between every char).
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "text" && method.node == "replace" {
+                            let mut arg_vals = Vec::new();
+                            for arg in args {
+                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
+                            }
+                            let s = arg_vals
+                                .first()
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_default();
+                            let find = arg_vals
+                                .get(1)
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_default();
+                            let replacement = arg_vals
+                                .get(2)
+                                .map(|v| format!("{}", v.value))
+                                .unwrap_or_default();
+                            let out = if find.is_empty() {
+                                s
+                            } else {
+                                s.replace(&find, &replacement)
+                            };
+                            return Ok(ConfidentValue::deterministic(Value::Text(out)));
+                        }
+                    }
+
+                    // text.short_id() — 8-char lowercase hex prefix of a v4
+                    // UUID. Added for T8.5 (#360): used to suffix dev-cycle
+                    // workdirs so two concurrent invocations with the same
+                    // {repo_slug}/{issue_id} can't collide on disk. ~16M
+                    // distinct values per (repo, issue) pair — adequate for
+                    // a single-host swarm; never load-bearing for security.
+                    if let Expr::Ident(ref ns) = obj_expr.node {
+                        if ns == "text" && method.node == "short_id" {
+                            let id = uuid::Uuid::new_v4().simple().to_string();
+                            let short = id[..8].to_string();
+                            return Ok(ConfidentValue::deterministic(Value::Text(short)));
                         }
                     }
 
@@ -2402,6 +2508,7 @@ impl TaskExecutor {
                                             cost_usd: resp.cost_usd,
                                             confidence: 1.0,
                                             agent_name: self.agent_name.as_deref(),
+                                            phase: None,
                                         });
                                     }
 
@@ -2486,6 +2593,7 @@ impl TaskExecutor {
                                             cost_usd: resp.cost_usd,
                                             confidence: best_score,
                                             agent_name: self.agent_name.as_deref(),
+                                            phase: None,
                                         });
                                     }
 
@@ -3242,9 +3350,10 @@ impl TaskExecutor {
                 }
 
                 // ── LLM expressions ───────────────────────────────────────────
-                Expr::Reason(prompt_expr) => {
-                    let prompt = self.eval_expr(prompt_expr, env).await?;
+                Expr::Reason(reason) => {
+                    let prompt = self.eval_expr(&reason.prompt, env).await?;
                     let prompt_text = format!("{}", prompt.value);
+                    let phase = reason.phase.as_ref().map(|s| s.node.clone());
 
                     if let Some(ref tracer) = self.tracer {
                         tracer.llm_request("reason", &prompt_text);
@@ -3252,7 +3361,17 @@ impl TaskExecutor {
 
                     let request = CompletionRequest::simple(&prompt_text);
                     let hint = crate::llm::CapabilityHint {
-                        quality: Some(crate::llm::QualityTier::Balanced),
+                        // When a phase is declared, it overrides the historical
+                        // QualityTier hint — the runtime consults [llm.routing]
+                        // to pick a provider chain. Bare `reason` calls keep
+                        // the legacy Balanced tier so existing programs are
+                        // unaffected.
+                        quality: if phase.is_some() {
+                            None
+                        } else {
+                            Some(crate::llm::QualityTier::Balanced)
+                        },
+                        phase: phase.clone(),
                         ..Default::default()
                     };
                     let response = self
@@ -3272,6 +3391,7 @@ impl TaskExecutor {
                             cost_usd: response.cost_usd,
                             confidence,
                             agent_name: self.agent_name.as_deref(),
+                            phase: phase.as_deref(),
                         });
                     }
 
@@ -3290,6 +3410,7 @@ impl TaskExecutor {
                     labels.join(", "),
                     input.value,
                 );
+                    let phase = classify.phase.as_ref().map(|s| s.node.clone());
 
                     if let Some(ref tracer) = self.tracer {
                         tracer.llm_request("classify", &prompt);
@@ -3297,7 +3418,12 @@ impl TaskExecutor {
 
                     let request = CompletionRequest::simple(&prompt).with_temperature(0.0);
                     let hint = crate::llm::CapabilityHint {
-                        quality: Some(crate::llm::QualityTier::Fast),
+                        quality: if phase.is_some() {
+                            None
+                        } else {
+                            Some(crate::llm::QualityTier::Fast)
+                        },
+                        phase: phase.clone(),
                         ..Default::default()
                     };
                     let response = self
@@ -3317,6 +3443,7 @@ impl TaskExecutor {
                             cost_usd: response.cost_usd,
                             confidence,
                             agent_name: self.agent_name.as_deref(),
+                            phase: phase.as_deref(),
                         });
                     }
 
@@ -3861,11 +3988,8 @@ fn match_pattern(
                             for (i, sub_pat) in sub_pats.iter().enumerate() {
                                 let key = format!("_{}", i);
                                 if let Some(val) = inner_fields.get(&key) {
-                                    if let Some(mut sub_bindings) = match_pattern(sub_pat, val) {
-                                        bindings.append(&mut sub_bindings);
-                                    } else {
-                                        return None;
-                                    }
+                                    let mut sub_bindings = match_pattern(sub_pat, val)?;
+                                    bindings.append(&mut sub_bindings);
                                 }
                             }
                         }

@@ -133,6 +133,34 @@ Actions `FORGE_WAKE_SECRET`, Slack signing secret shim, etc.).
 | GET  | `/__forge/events`                      | Live SSE trace |
 | GET  | `/__forge/inspect/{agents,topology,wardens,costs,mastery,schedules}` | Introspection |
 
+## Playground Proof-Run Preflight
+
+The T11.3 proof run targets `ncmlabs/forge-playground` as a TypeScript
+proof-run tracker on its `main` branch. Issue `ncmlabs/forge#409` resets the
+older Rust/Go proof surface and reseeds the queue around the app.
+
+Before starting a run against `ncmlabs/forge-playground`, verify the repository
+default branch and TypeScript surface:
+
+```bash
+gh repo view ncmlabs/forge-playground --json defaultBranchRef --jq '.defaultBranchRef.name'
+tmp="$(mktemp -d)"
+gh repo clone ncmlabs/forge-playground "$tmp/forge-playground"
+cd "$tmp/forge-playground"
+test "$(git branch --show-current)" = "main"
+test -f package.json
+test -f package-lock.json
+test -f src/server/app.ts
+test -f src/client/App.tsx
+npm ci
+npm run typecheck
+npm test
+npm run build
+```
+
+See [2026-05 Clone-Dev Playground Proof Run](../../docs/proof-runs/2026-05-clone-dev-playground.md)
+for the full preflight.
+
 ## Acceptance (DoD #356)
 
 With the server running on port 3300:

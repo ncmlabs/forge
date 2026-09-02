@@ -3,6 +3,7 @@
 
 use tempfile::TempDir;
 
+use forge::ast::{Expr, TemplatePart, TopLevel};
 use forge::runtime::knowledge_store::KnowledgeStore;
 
 // ── Knowledge Store Unit-Level Integration ──────────────────────────
@@ -323,4 +324,222 @@ fn learn_from_document_with_category() {
     let docs = store.export_by_category("DOCS");
     assert_eq!(docs.len(), count);
     assert!(docs.iter().all(|e| e.category.as_deref() == Some("DOCS")));
+}
+
+// ── Per-repo store scoping (issue #359 / T8.4) ──────────────────────
+
+/// Two project_ids sharing the same root must produce isolated entries:
+/// repo A's writes are invisible to repo B's recall, and vice versa.
+/// This is the core correctness property the issue calls out — a single
+/// process serving multiple repos must not leak PR-decision lessons across
+/// repo boundaries.
+#[test]
+fn two_project_ids_isolated() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("knowledge").to_string_lossy().to_string();
+
+    // Each repo's entry uses a unique keyword the other repo never sees.
+    {
+        let mut store_a = KnowledgeStore::new_scoped(&root, Some("repo-a"), Some(100), None);
+        store_a.learn_direct("ALPHATOKEN exclusively belongs to repo-a's history");
+    }
+    {
+        let mut store_b = KnowledgeStore::new_scoped(&root, Some("repo-b"), Some(100), None);
+        store_b.learn_direct("BETATOKEN exclusively belongs to repo-b's history");
+    }
+
+    // Reopen each scope. A recall for the OTHER repo's exclusive token must
+    // return zero confidence — neither path-isolation nor the recall filter
+    // should let the foreign entry through.
+    let mut store_a = KnowledgeStore::new_scoped(&root, Some("repo-a"), Some(100), None);
+    assert!(
+        store_a.recall("ALPHATOKEN", 1000).confidence > 0.0,
+        "repo-a should recall its own ALPHATOKEN entry"
+    );
+    assert_eq!(
+        store_a.recall("BETATOKEN", 1000).confidence,
+        0.0,
+        "repo-a must not see repo-b's BETATOKEN entry"
+    );
+
+    let mut store_b = KnowledgeStore::new_scoped(&root, Some("repo-b"), Some(100), None);
+    assert!(
+        store_b.recall("BETATOKEN", 1000).confidence > 0.0,
+        "repo-b should recall its own BETATOKEN entry"
+    );
+    assert_eq!(
+        store_b.recall("ALPHATOKEN", 1000).confidence,
+        0.0,
+        "repo-b must not see repo-a's ALPHATOKEN entry"
+    );
+}
+
+/// Filesystem-level isolation: scoped stores must persist under
+/// `{root}/{project_id}/knowledge.json`, not at the unscoped legacy path.
+#[test]
+fn scoped_store_writes_to_project_subdirectory() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("ks").to_string_lossy().to_string();
+
+    {
+        let mut store = KnowledgeStore::new_scoped(&root, Some("ncmlabs-forge"), Some(100), None);
+        store.learn_direct("scoped persistence check");
+    }
+
+    let scoped_json = tmp.path().join("ks/ncmlabs-forge/knowledge.json");
+    let legacy_json = tmp.path().join("ks/knowledge.json");
+    assert!(
+        scoped_json.exists(),
+        "scoped store must persist at {}",
+        scoped_json.display()
+    );
+    assert!(
+        !legacy_json.exists(),
+        "scoped store must NOT write to the legacy unscoped path {}",
+        legacy_json.display()
+    );
+}
+
+/// `project_id = None` keeps the pre-#359 layout exactly: writes land at
+/// `{root}/knowledge.json` with no subdirectory. This is the contract the
+/// existing 3-arg `new()` constructor preserves.
+#[test]
+fn none_project_id_uses_legacy_layout() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("ks").to_string_lossy().to_string();
+
+    {
+        let mut store = KnowledgeStore::new(&root, Some(100), None);
+        store.learn_direct("legacy layout check");
+    }
+
+    let legacy_json = tmp.path().join("ks/knowledge.json");
+    assert!(
+        legacy_json.exists(),
+        "unscoped store must persist at the legacy {} path",
+        legacy_json.display()
+    );
+}
+
+/// Defensive recall filter: even if a scoped store somehow loads entries
+/// tagged for a different project (e.g. via a mis-configured import or a
+/// hand-edited JSON file), recall must drop them. Path-isolation is the
+/// primary defence; this filter guards the case where path-isolation is
+/// bypassed.
+#[test]
+fn recall_filters_entries_with_mismatched_project_id() {
+    use forge::runtime::knowledge_store::{KnowledgeEntry, KnowledgeSource};
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("ks").to_string_lossy().to_string();
+
+    let mut store = KnowledgeStore::new_scoped(&root, Some("repo-a"), Some(100), None);
+    store.learn_direct("NATIVEAKEY belongs to repo-a");
+
+    // Inject an entry tagged for a different project via merge_imported,
+    // which preserves the original project_id. Path-isolation can't help
+    // here — the contamination is in-memory and on-disk for this scope.
+    let foreign = vec![KnowledgeEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        content: "FOREIGNBKEY snuck in from repo-b".to_string(),
+        source: KnowledgeSource::Direct,
+        confidence: 1.0,
+        category: None,
+        project_id: Some("repo-b".to_string()),
+        created_at: chrono::Utc::now(),
+        last_accessed: chrono::Utc::now(),
+        access_count: 0,
+        success_associations: 0,
+    }];
+    store.merge_imported(foreign);
+
+    // A query that ONLY matches the foreign entry must score zero — the
+    // filter has to drop it before scoring or recall would leak the content.
+    let result = store.recall("FOREIGNBKEY snuck", 1000);
+    assert_eq!(
+        result.confidence, 0.0,
+        "scoped recall must drop entries whose project_id differs from the store's scope"
+    );
+
+    // But native content is still recallable.
+    assert!(
+        store.recall("NATIVEAKEY", 1000).confidence > 0.0,
+        "scoped recall must still surface entries that match the store's scope"
+    );
+}
+
+/// Parser smoke test (#359 / T8.4): the new optional `project_id:` clause in
+/// a `knowledge store:` block must parse, populate `KnowledgeDecl::project_id`,
+/// and accept both literal-Text values (resolvable at config-extraction time)
+/// and identifier expressions (T8.5's per-event resolution use case).
+#[test]
+fn parser_accepts_project_id_clause_in_knowledge_block() {
+    let source = r#"
+agent scoped_agent
+  knowledge store: ".forge-knowledge/test"
+    project_id: "literal-repo-slug"
+    max_entries: 100
+
+  on ping
+    learn "ack"
+"#;
+    let program = forge::parser::parse(source).expect("parse with literal project_id");
+    let agent = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a),
+            _ => None,
+        })
+        .expect("agent decl");
+    let kd = agent.knowledge.as_ref().expect("knowledge decl");
+    let pid_expr = kd.node.project_id.as_ref().expect("project_id parsed");
+    match &pid_expr.node {
+        Expr::Template(parts) => {
+            let text: String = parts
+                .iter()
+                .filter_map(|p| match &p.node {
+                    TemplatePart::Text(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(text, "literal-repo-slug");
+        }
+        other => panic!(
+            "expected Template expr for literal project_id, got {:?}",
+            other
+        ),
+    }
+
+    // Forward-compat: T8.5 will inject `memory.repo_slug`. The grammar accepts
+    // any expression here so the same .forge syntax works once T8.5 lands —
+    // T8.4 just doesn't resolve non-literal expressions yet.
+    let dynamic_source = r#"
+agent dyn_agent
+  memory
+    repo_slug: Text
+  knowledge store: ".forge-knowledge/test"
+    project_id: memory.repo_slug
+
+  on ping
+    learn "ack"
+"#;
+    let program =
+        forge::parser::parse(dynamic_source).expect("parse with member-access project_id");
+    let agent = program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            TopLevel::Agent(a) => Some(a),
+            _ => None,
+        })
+        .expect("agent decl");
+    assert!(
+        agent
+            .knowledge
+            .as_ref()
+            .and_then(|kd| kd.node.project_id.as_ref())
+            .is_some(),
+        "project_id with member-access expr must parse and populate KnowledgeDecl::project_id"
+    );
 }

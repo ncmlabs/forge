@@ -24,6 +24,10 @@ pub struct KnowledgeEntry {
     pub confidence: f32,
     #[serde(default)]
     pub category: Option<String>,
+    /// Repo / project identifier this entry was learned for.
+    /// `None` for legacy entries written before per-project scoping (see issue #359).
+    #[serde(default)]
+    pub project_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_accessed: DateTime<Utc>,
     pub access_count: u64,
@@ -50,7 +54,12 @@ pub enum KnowledgeSource {
 
 #[derive(Debug, Clone)]
 pub struct KnowledgeStore {
+    /// Root directory for the store (the path declared in `knowledge store:`).
     store_path: String,
+    /// Optional repo/project scope. When `Some`, persistence and reads are
+    /// confined to `{store_path}/{project_id}/`, isolating per-repo learning.
+    /// When `None`, behaves identically to the pre-#359 unscoped layout.
+    project_id: Option<String>,
     entries: Vec<KnowledgeEntry>,
     max_entries: usize,
     retention_days: Option<u64>,
@@ -67,6 +76,18 @@ pub type SharedKnowledgeStore = Arc<Mutex<KnowledgeStore>>;
 
 impl KnowledgeStore {
     pub fn new(store_path: &str, max_entries: Option<usize>, retention_days: Option<u64>) -> Self {
+        Self::new_scoped(store_path, None, max_entries, retention_days)
+    }
+
+    /// Per-repo scoped constructor (issue #359 / T8.4). When `project_id` is
+    /// `Some`, persistence resolves to `{store_path}/{project_id}/knowledge.json`
+    /// and recall results are filtered to that project.
+    pub fn new_scoped(
+        store_path: &str,
+        project_id: Option<&str>,
+        max_entries: Option<usize>,
+        retention_days: Option<u64>,
+    ) -> Self {
         // Expand ~ to user home directory for absolute paths
         let expanded_path = if store_path.starts_with("~/") {
             dirs::home_dir()
@@ -75,8 +96,28 @@ impl KnowledgeStore {
         } else {
             store_path.to_string()
         };
+
+        // If a scoped open finds an unscoped legacy file alongside (i.e. the
+        // pre-#359 layout), warn the operator once. We do NOT auto-migrate —
+        // the legacy file may contain entries from multiple repos and silent
+        // attribution would be lossy. Migration is documented in the commit
+        // that introduced this change.
+        if let Some(pid) = project_id {
+            let legacy_json = Path::new(&expanded_path).join("knowledge.json");
+            let scoped_json = Path::new(&expanded_path).join(pid).join("knowledge.json");
+            if legacy_json.exists() && !scoped_json.exists() {
+                eprintln!(
+                    "[forge] knowledge_store: legacy unscoped store detected at {}; \
+                     starting fresh for project_id='{}'. To import existing entries, run: \
+                     mkdir -p {0}/{1} && mv {0}/knowledge.json {0}/{1}/knowledge.json",
+                    expanded_path, pid
+                );
+            }
+        }
+
         let mut store = KnowledgeStore {
             store_path: expanded_path,
+            project_id: project_id.map(|s| s.to_string()),
             entries: Vec::new(),
             max_entries: max_entries.unwrap_or(10_000),
             retention_days,
@@ -89,6 +130,17 @@ impl KnowledgeStore {
         store
     }
 
+    /// Resolved on-disk JSON path. Scoped stores live at `{root}/{pid}/knowledge.json`;
+    /// unscoped stores keep the original `{root}/knowledge.json` layout for backward
+    /// compatibility.
+    fn resolved_json_path(&self) -> std::path::PathBuf {
+        let root = Path::new(&self.store_path);
+        match &self.project_id {
+            Some(pid) => root.join(pid).join("knowledge.json"),
+            None => root.join("knowledge.json"),
+        }
+    }
+
     // ── Learn ──────────────────────────────────────────────
 
     pub fn learn_direct(&mut self, content: &str) {
@@ -98,6 +150,7 @@ impl KnowledgeStore {
             source: KnowledgeSource::Direct,
             confidence: 1.0,
             category: None,
+            project_id: None,
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             access_count: 0,
@@ -113,6 +166,7 @@ impl KnowledgeStore {
             source: KnowledgeSource::Direct,
             confidence: 1.0,
             category: Some(category.to_string()),
+            project_id: None,
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             access_count: 0,
@@ -153,6 +207,7 @@ impl KnowledgeStore {
             },
             confidence,
             category,
+            project_id: None,
             created_at: Utc::now(),
             last_accessed: Utc::now(),
             access_count: 0,
@@ -193,6 +248,7 @@ impl KnowledgeStore {
                 },
                 confidence: 1.0,
                 category: category.clone(),
+                project_id: None,
                 created_at: Utc::now(),
                 last_accessed: Utc::now(),
                 access_count: 0,
@@ -204,7 +260,12 @@ impl KnowledgeStore {
         Ok(count)
     }
 
-    fn add_entry(&mut self, entry: KnowledgeEntry) {
+    fn add_entry(&mut self, mut entry: KnowledgeEntry) {
+        // Stamp the store's scope onto entries written through the learn API
+        // so every persisted entry carries its project provenance (#359).
+        // `merge_imported` preserves the original entry's project_id instead.
+        entry.project_id = self.project_id.clone();
+
         // Content deduplication: exact match
         if self.entries.iter().any(|e| e.content == entry.content) {
             return;
@@ -237,7 +298,15 @@ impl KnowledgeStore {
         let query_terms = tokenize(query);
         let mut scores: Vec<(usize, f32)> = Vec::new();
 
-        for (idx, _entry) in self.entries.iter().enumerate() {
+        for (idx, entry) in self.entries.iter().enumerate() {
+            // Per-project recall scoping (#359): in a scoped store, only entries
+            // tagged with the same project_id are visible. Path-isolation already
+            // prevents cross-project loads in the normal flow; this filter
+            // additionally hardens against contamination via `merge_imported`
+            // or a hand-edited JSON file.
+            if entry.project_id.as_deref() != self.project_id.as_deref() {
+                continue;
+            }
             let score = self.tfidf_score(&query_terms, idx);
             if score > 0.0 {
                 scores.push((idx, score));
@@ -343,20 +412,17 @@ impl KnowledgeStore {
     // ── Persistence ────────────────────────────────────────
 
     fn save(&self) {
-        let dir = Path::new(&self.store_path);
-        if let Some(parent) = dir.parent() {
+        let json_path = self.resolved_json_path();
+        if let Some(parent) = json_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let _ = fs::create_dir_all(dir);
-
-        let json_path = dir.join("knowledge.json");
         if let Ok(json) = serde_json::to_string_pretty(&self.entries) {
             let _ = fs::write(json_path, json);
         }
     }
 
     fn load(&mut self) {
-        let json_path = Path::new(&self.store_path).join("knowledge.json");
+        let json_path = self.resolved_json_path();
         if json_path.exists() {
             if let Ok(data) = fs::read_to_string(&json_path) {
                 if let Ok(entries) = serde_json::from_str::<Vec<KnowledgeEntry>>(&data) {
@@ -704,6 +770,7 @@ mod tests {
                 source: KnowledgeSource::Direct,
                 confidence: 1.0,
                 category: None,
+                project_id: None,
                 created_at: Utc::now(),
                 last_accessed: Utc::now(),
                 access_count: 0,
@@ -715,6 +782,7 @@ mod tests {
                 source: KnowledgeSource::Direct,
                 confidence: 1.0,
                 category: None,
+                project_id: None,
                 created_at: Utc::now(),
                 last_accessed: Utc::now(),
                 access_count: 0,

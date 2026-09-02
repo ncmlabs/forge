@@ -1,0 +1,56 @@
+#! boundary: server
+
+# ================================================================
+# Clone-Dev Stage 1 — security_investigator (T9.2, #363)
+# ================================================================
+# Specialist agent for `domain == "security"` investigations. The
+# audit-skills catalog (audit logs, CVE feeds, RBAC inspection)
+# hasn't shipped yet, so this iteration is `reason`-only and the
+# default suggested_action is `escalate` — security findings should
+# always involve a human reviewer until proven routine.
+#
+# Allow-list:
+#   - skill.audit.* — TBD: skill.audit catalog defined in T9.x.
+#     Forward-compat declaration; uncalled in this iteration.
+#
+# See workflows/clone-dev/stage1/investigators/code_investigator.forge
+# for cross-reference notes (events, warden, routing).
+# ================================================================
+
+use
+  llm.reason
+
+agent security_investigator
+  memory persistent
+    thread_ts: Text
+    domain: Text
+    channel: Text
+    last_context: Text
+    last_summary: Text
+    last_evidence: Text[]
+  allows skill.audit.*
+  subscribe InvestigationRequested where domain == "security"
+
+  on start
+    memory.thread_ts = ""
+    memory.domain = "security"
+    memory.channel = ""
+    memory.last_context = ""
+    memory.last_summary = ""
+    say "[security_investigator] ready"
+
+  on InvestigationRequested(thread_ts: Text, domain: Text, context: Text, channel: Text)
+    memory.thread_ts = thread_ts
+    memory.domain = domain
+    memory.channel = channel
+    memory.last_context = context
+    say "[security_investigator] thread={thread_ts} investigating: {context}"
+    summary = reason "Investigate the security issue: {context}. Note any obvious risk class (auth, secrets, injection, supply chain), what evidence would confirm it, and who should own the response. One paragraph." for security_investigate
+    memory.last_summary = summary
+    memory.last_evidence = [summary]
+    emit Finding(thread_ts: thread_ts, domain: "security", summary: summary, evidence: memory.last_evidence, confidence: 0.5, suggested_action: "escalate")
+
+  if stuck for 3 turns
+    say "[security_investigator] stuck. escalating to slack_adapter."
+    emit WardenEscalation(agent_id: "security_investigator", cause: "stuck>3", detail: memory.last_context, channel: memory.channel)
+    escalate to investigators_ward

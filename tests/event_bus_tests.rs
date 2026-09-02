@@ -64,6 +64,7 @@ fn subscribing_agent(name: &str, event_name: &str, filter: Option<Spanned<Expr>>
         memory: vec![],
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![],
         schedules: vec![],
         correlates: vec![],
@@ -98,6 +99,7 @@ fn emitting_agent(name: &str, trigger_event: &str, emit_event: &str) -> AgentDec
         memory: vec![],
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![],
         schedules: vec![],
         correlates: vec![],
@@ -186,6 +188,19 @@ async fn bus_forward_delivers_to_target() {
 async fn bus_forward_unknown_target() {
     let bus = EventBus::new(None);
     assert!(!bus.forward(&payload("Foo", "src"), "nobody"));
+}
+
+#[tokio::test]
+async fn bus_forward_requires_target_subscription_to_payload_event() {
+    let mut bus = EventBus::new(None);
+    let mut rx_status = bus.subscribe("PostMessage", "slack_adapter", None);
+    let mut rx_approved = bus.subscribe("ImplementationApproved", "implementer", None);
+
+    let ok = bus.forward(&payload("PostMessage", "planner"), "implementer");
+    assert!(!ok);
+
+    assert!(rx_status.try_recv().is_err());
+    assert!(rx_approved.try_recv().is_err());
 }
 
 #[tokio::test]
@@ -483,6 +498,7 @@ async fn multi_agent_event_flow() {
         })],
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![],
         schedules: vec![],
         correlates: vec![],
@@ -643,6 +659,7 @@ async fn agent_handler_emit_produces_event_emit_trace() {
         memory: vec![],
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![],
         schedules: vec![],
         correlates: vec![],
@@ -732,6 +749,7 @@ async fn agent_handler_emit_is_invisible_when_bus_has_no_tracer() {
         memory: vec![],
         memory_persistent: false,
         knowledge: None,
+        allows: Vec::new(),
         timers: vec![],
         schedules: vec![],
         correlates: vec![],
