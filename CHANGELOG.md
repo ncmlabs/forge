@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Clone-dev v1 retrospective (#373): `docs/clone-dev-v1-retrospective.md` —
+  proof-run metrics (3.48-min merge, first-try CI, novice→expert mastery,
+  $0.23 cost), the defect harvest and lessons for v2; roadmap Layer 3 moved
+  to v1 complete. Closes epic #292.
+
 ## [0.2.0] - 2026-08-31
 
 ### Fixed
