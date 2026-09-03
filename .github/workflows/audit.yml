@@ -5,6 +5,12 @@ on:
     - cron: "0 6 * * 1"
   push:
     paths: [Cargo.lock]
+  # Required so the "Audit" check is always reported on pull requests.
+  # The development ruleset (#449-era branch protection) requires this check
+  # on every PR; without a pull_request trigger, any PR that doesn't touch
+  # Cargo.lock can never report it and merge is blocked with
+  # "AuditExpected — Waiting for status to be reported".
+  pull_request:
 
 permissions:
   checks: write
