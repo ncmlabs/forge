@@ -1,18 +1,23 @@
 name: FORGE Surface Audit
 
-# Layer 2 of the derived-surface drift mechanism (issue #229).
-# Every Monday 07:00 UTC (and on manual dispatch), invoke the claude CLI with
-# the audit protocol at scripts/audit-forge-surface.prompt.md. If the agent
-# produces edits — strictly scoped to docs/skills/examples/workflows/CHANGELOG —
-# run the repo's verification gates and open a draft PR against development.
-# Runs on CI budget, not the user's machine.
+# Layer 2 of the derived-surface drift mechanism (issues #229, #449).
+# Weekly (Monday 07:00 UTC) and on manual dispatch: drive the audit agent
+# (workflows/surface-audit.forge) with a forge binary against a zero-cost
+# OpenAI-compatible provider. Edits are strictly scoped to
+# docs/skills/examples/workflows/CHANGELOG by the path-guard, verified by the
+# repo gates, and shipped as a draft PR against development.
+#
+# Provider rework (#449): the audit no longer uses `claude -p`/Anthropic
+# billing. FORGE_CONFIG is assembled from the FORGE_AUDIT_BASE_URL secret
+# (OpenAI-compatible endpoint, e.g. a LAN vLLM or LiteLLM exposed via tunnel)
+# and the model from vars.FORGE_AUDIT_MODEL. If no endpoint is configured the
+# job skips with a neutral notice instead of burning a red slot.
 
 on:
   workflow_dispatch:
-  # schedule (PAUSED 2026-08-31, pre-v0.2.0): the Anthropic key behind `claude -p` has
-  # been out of credit since ~2026-07-20 — every scheduled run failed on
-  # "Credit balance is too low" and burned a runner slot weekly (issue #449).
-  # To re-enable, restore: `- cron: "0 7 * * 1"` together with the LLM rework in #449.
+  schedule:
+    # Restored 2026-09-03 as part of the #449 rework (was paused 2026-08-31).
+    - cron: "0 7 * * 1"
 
 permissions:
   contents: write
@@ -28,14 +33,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      FORGE_AUDIT_BASE_URL: ${{ secrets.FORGE_AUDIT_BASE_URL }}
+      FORGE_AUDIT_API_KEY: ${{ secrets.FORGE_AUDIT_API_KEY }}
     steps:
-      - name: Preflight — require ANTHROPIC_API_KEY
+      - name: Preflight — require configured provider endpoint
         run: |
-          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret is not set; cannot run audit."
-            exit 1
+          if [ -z "${FORGE_AUDIT_BASE_URL:-}" ]; then
+            echo "::notice::FORGE_AUDIT_BASE_URL secret is not set — audit provider not configured, skipping run (see #449)."
+            exit 0
           fi
 
       - uses: actions/checkout@v7
@@ -44,22 +49,57 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install claude CLI
+      - name: Install forge (release binary)
         run: |
           set -euo pipefail
-          npm install -g @anthropic-ai/claude-code
-          claude --version
+          curl -sSfL "https://github.com/ncmlabs/forge/releases/download/v0.2.0/forge-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/forge.tar.gz
+          echo "sha256: $(sha256sum /tmp/forge.tar.gz | cut -d' ' -f1)"
+          mkdir -p /tmp/forge-install
+          tar xzf /tmp/forge.tar.gz -C /tmp/forge-install
+          install -m 0755 /tmp/forge-install/forge /usr/local/bin/forge
+          forge --version
+
+      - name: Write audit provider config
+        run: |
+          set -euo pipefail
+          MODEL="${{ vars.FORGE_AUDIT_MODEL }}"
+          : "${MODEL:=glm-5.3-flash}"
+          API_KEY="${FORGE_AUDIT_API_KEY:-none}"
+          cat > /tmp/forge-audit-config.toml <<EOF
+          [llm]
+          default = "audit-llm"
+
+          [llm.routing]
+          fast     = "audit-llm"
+          balanced = "audit-llm"
+          high     = "audit-llm"
+
+          [llm.budget]
+          max_cost_usd     = 0.00
+          max_total_tokens = 1000000
+
+          [providers.audit-llm]
+          type         = "openai-compat"
+          model        = "${MODEL}"
+          base_url     = "${FORGE_AUDIT_BASE_URL}"
+          api_key      = "${API_KEY}"
+          timeout_secs = 300
+
+          [providers.audit-llm.capabilities]
+          quality_tier       = "high"
+          cost_per_1k_input  = 0.0
+          cost_per_1k_output = 0.0
+          EOF
 
       - name: Configure git identity
         run: |
           git config user.name "forge-surface-audit[bot]"
           git config user.email "forge-surface-audit@users.noreply.github.com"
 
-      - name: Run audit
+      - name: Run audit (LLM pass, path-guard, gates, draft PR)
+        env:
+          FORGE_BINARY: /usr/local/bin/forge
+          FORGE_CONFIG: /tmp/forge-audit-config.toml
+          FORGE_PROVIDER: audit-llm
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash scripts/audit-forge-surface.sh

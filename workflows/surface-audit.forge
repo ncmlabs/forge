@@ -1,0 +1,83 @@
+#! boundary: server
+
+# ================================================================
+# FORGE Surface Audit agent — LLM half of the #229 drift mechanism.
+# ================================================================
+# Rework per issue #449: replaces the retired `claude -p` invocation.
+# The audit protocol (scripts/audit-forge-surface.prompt.md) is executed by
+# this agent through `forge send`, against a zero-cost OpenAI-compatible
+# provider chosen via FORGE_CONFIG + FORGE_PROVIDER (the same pattern the
+# Daily Frame pipeline uses). No Anthropic billing involved.
+#
+# Invocation (from scripts/audit-forge-surface.sh):
+#   forge send workflows/surface-audit.forge audit "<repo-root>" "<iso-week>"
+#
+# What the agent does:
+#   1. Reads the audit protocol with file.read.
+#   2. Grounds itself in recent authoritative-source commits (command: git log)
+#      and the current derived surfaces (file.read).
+#   3. Produces the AUDIT REPORT block (protocol output contract).
+#   4. Materializes its proposed fix as a unified diff at
+#      <root>/.forge-audit.patch via file.write.
+#
+# The agent NEVER touches git: the shell wrapper
+# (scripts/audit-forge-surface.sh) validates the patch with
+# `git apply --check`, applies it, runs the path-guard and the verification
+# gates, and opens the draft PR. LLM proposes — deterministic tooling disposes.
+# ================================================================
+
+use
+  file.read
+  file.write
+  llm.reason
+
+agent surface_auditor
+  memory
+    repo_root: Text
+
+  on start
+    say "surface_auditor ready (zero-cost openai-compat provider; issue #449)"
+
+  on audit(root: Text, week: Text)
+    memory.repo_root = root
+    give run_audit(root, week)
+
+  if stuck for 3 turns
+    escalate to human
+
+task run_audit
+  needs root: Text, week: Text
+  gives Text
+  do
+    protocol = file.read("{root}/scripts/audit-forge-surface.prompt.md")
+    when protocol.sure -> give audit_with_protocol(root, protocol, week)
+    else -> give "AUDIT REPORT:\nprotocol unreadable at scripts/audit-forge-surface.prompt.md\nAUDIT REPORT END"
+
+task audit_with_protocol
+  needs root: Text, protocol: Text, week: Text
+  gives Text
+  do
+    recent = command "git -C {root} log --since=6-weeks-ago --oneline -- src/ grammar/ src/checker/ src/runtime/" timeout 120s
+    reference = file.read("{root}/docs/forge-reference.md")
+    grammar = file.read("{root}/grammar/forge.pest")
+    findings = reason "You are executing the FORGE derived-surface audit protocol below against the repository at {root}. Today is week {week} (ISO week, UTC). Detect drift between the authoritative sources and the derived surfaces, and describe the minimal surgical edits that fix it.\n\n=== AUDIT PROTOCOL ===\n{protocol}\n=== END AUDIT PROTOCOL ===\n\nRecent commits touching authoritative sources (prioritize their derived-surface follow-through):\n{recent}\n\nCurrent docs/forge-reference.md:\n{reference}\n\nCurrent grammar/forge.pest:\n{grammar}\n\nExecute the protocol's Audit procedure using ONLY the material above. Then output the AUDIT REPORT block exactly as the protocol's Output contract requires: a line 'AUDIT REPORT:', one bullet per drift item (authoritative source file -> derived surface updated, with the precise minimal edit), then 'AUDIT REPORT END'. If you find zero drift, the block contains the single line 'no drift detected'. Output ONLY the report block."
+    when findings.sure -> give report_and_patch(root, findings, week)
+    when findings.unsure -> give "AUDIT REPORT:\nprovider returned low confidence; run aborted, no edits applied\nAUDIT REPORT END"
+    else -> give "AUDIT REPORT:\nprovider failed; run aborted, no edits applied\nAUDIT REPORT END"
+
+task report_and_patch
+  needs root: Text, findings: Text, week: Text
+  gives Text
+  do
+    patch = reason "Convert the audit findings below into ONE unified diff in git apply format.\n\nHARD OUTPUT RULES (violations make the diff unusable):\n- The ENTIRE response is the diff. The first characters must be 'diff --git'.\n- No XML/markdown tags (<diff>, ```), no prose, no section headings, no blank-line-separated commentary anywhere between hunks, no duplicate copies.\n- Every hunk must use real, exact context lines from the current files.\n- Touch ONLY allowed derived surfaces: docs/, skills/claude-code/SKILL.md, examples/, workflows/, CHANGELOG.md.\n- Do not invent new example files with guessed syntax. Prefer edits to existing files. Create a file under examples/errors/ ONLY for a missing checker example, and only if you can mirror the exact declaration style of real files in examples/errors/.\n- In the CHANGELOG.md entry use week {week} (not a guessed date): 'FORGE surface audit ({week}): <one-line summary>'.\n- If the findings say 'no drift detected', respond with the single word NODRIFT and nothing else.\n\nFINDINGS:\n{findings}"
+    when patch.sure -> give write_patch(root, patch, findings)
+    when patch.unsure -> give "{findings}\nPATCH: skipped (provider low confidence)"
+    else -> give "{findings}\nPATCH: skipped (provider failed)"
+
+task write_patch
+  needs root: Text, patch: Text, findings: Text
+  gives Text
+  do
+    written = file.write("{root}/.forge-audit.patch", patch)
+    when written.sure -> give findings
+    else -> give "{findings}\nPATCH: could not write patch file"
