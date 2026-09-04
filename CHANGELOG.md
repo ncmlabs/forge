@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Generator contract and shared validation infrastructure (#168):
+  `workflows/toolkit/shared.forge` defines the `Generator` contract
+  (`generate`/`validate`/`repair`), the `GeneratorPhase` lifecycle states,
+  the shared generation/repair events, the deterministic validation flow
+  (temp file → `forge parse` → `forge build --dry-run`), and the max-3-
+  attempts repair pattern that escalates via `GenerationFailed`. The
+  unfreeze point for the toolkit agents (#169–#175).
 - Surface-audit rework (#449): the derived-surface drift audit is now driven
   by the FORGE agent `workflows/surface-audit.forge` via `forge send`, on a
   zero-cost OpenAI-compatible provider selected with `FORGE_CONFIG` +

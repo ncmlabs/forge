@@ -358,6 +358,11 @@ merge = true
 manifest = "workflows/clone-dev/forge.project.toml"
 
 [[cases]]
+name = "toolkit shared generator contract (#168)"
+paths = ["workflows/toolkit/shared.forge"]
+check = "ok"
+
+[[cases]]
 name = "surface-audit drift agent workflow (issues #229/#449)"
 paths = ["workflows/surface-audit.forge"]
 check = "ok"
