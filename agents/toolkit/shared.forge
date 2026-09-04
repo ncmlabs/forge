@@ -1,0 +1,163 @@
+#! boundary: server
+
+# ================================================================
+# Generator contract and shared validation infrastructure — #168
+# ================================================================
+# The unfreeze point for the Layer-2 toolkit agents (#169–#175). Every
+# generator implements the `Generator` contract below and drives its drafts
+# through the shared validation flow (write candidate → `forge parse` →
+# `forge build --dry-run`) and the shared repair pattern (max 3 attempts,
+# then surface GenerationFailed so the owning agent can escalate).
+#
+# Validation runs the REAL repo gates via `command` — a draft that does not
+# parse or dry-run build is never accepted, deterministically. This file is
+# mock-checkable (examples/validation.toml) and live-runnable against any
+# openai-compat provider.
+
+use
+  file.write
+  llm.reason
+
+# ── Types ────────────────────────────────────────────────────────
+
+type ValidationReport
+  valid: Bool
+  parse_ok: Bool
+  build_ok: Bool
+  diagnostics: Text
+
+type GenerationOutcome
+  artifact: Text
+  valid: Bool
+  attempts: Number
+  diagnostics: Text
+
+# ── Events ───────────────────────────────────────────────────────
+
+event GenerationRequested
+  spec: Text
+  kind: Text
+
+event DraftReady
+  artifact: Text
+
+event ArtifactValidated
+  valid: Bool
+  diagnostics: Text
+  attempts: Number
+
+event RepairRequested
+  attempt: Number
+  diagnostics: Text
+
+event GenerationComplete
+  artifact: Text
+  attempts: Number
+
+event GenerationFailed
+  diagnostics: Text
+  attempts: Number
+
+# ── Generator lifecycle ──────────────────────────────────────────
+# The phase machine every toolkit generator walks. `idle` is the spawn
+# state; a generator that exhausts its repair budget lands in `failed`
+# and must escalate to its supervisor (see #169/#173 RepairAgent).
+
+states GeneratorPhase
+  idle -> generating when draft_ready == true
+  generating -> validating when draft_ready == true
+  validating -> done when valid == true
+  validating -> repairing when invalid == true
+  repairing -> validating when repaired == true
+  repairing -> failed when exhausted == true
+  done -> done
+  failed -> failed
+
+# ── Contract ─────────────────────────────────────────────────────
+# Implemented by: task_generator (#169), flow_generator (#170),
+# agent_generator (#171), test_generator (#174), spec_analyzer (#175).
+
+contract Generator
+  can generate(spec: Text) -> GenerationOutcome
+  can validate(root: Text, artifact: Text) -> ValidationReport
+  can repair(root: Text, artifact: Text, diagnostics: Text, attempt: Number) -> Text
+
+# ── Shared validation flow ───────────────────────────────────────
+# write temp file → `forge parse` → `forge build --dry-run` → report.
+# The candidate path is fixed (.forge-tmp/candidate.forge): validators run
+# one draft at a time inside a session, so no unique-name stamping is needed.
+
+task validate_artifact
+  needs root: Text, artifact: Text
+  gives ValidationReport
+  do
+    mkdir_res = command "mkdir -p {root}/.forge-tmp" timeout 30s
+    when mkdir_res.unsure -> give ValidationReport(valid: false, parse_ok: false, build_ok: false, diagnostics: "could not prepare .forge-tmp: {mkdir_res}")
+    when mkdir_res.unreliable -> give ValidationReport(valid: false, parse_ok: false, build_ok: false, diagnostics: "could not prepare .forge-tmp: {mkdir_res}")
+    wrote = file.write("{root}/.forge-tmp/candidate.forge", artifact)
+    when wrote.unsure -> give ValidationReport(valid: false, parse_ok: false, build_ok: false, diagnostics: "could not write candidate: {wrote}")
+    when wrote.unreliable -> give ValidationReport(valid: false, parse_ok: false, build_ok: false, diagnostics: "could not write candidate: {wrote}")
+    parse_res = command "cd {root} && forge parse .forge-tmp/candidate.forge" timeout 60s
+    when parse_res.unsure -> give ValidationReport(valid: false, parse_ok: false, build_ok: false, diagnostics: "parse failed: {parse_res}")
+    when parse_res.unreliable -> give ValidationReport(valid: false, parse_ok: false, build_ok: false, diagnostics: "parse failed: {parse_res}")
+    build_res = command "cd {root} && forge build --dry-run --entry .forge-tmp/candidate.forge" timeout 120s
+    if build_res.sure
+      give ValidationReport(valid: true, parse_ok: true, build_ok: true, diagnostics: "")
+    else
+      give ValidationReport(valid: false, parse_ok: true, build_ok: false, diagnostics: "dry-run build failed: {build_res}")
+
+# ── Repair step ──────────────────────────────────────────────────
+# One LLM repair pass. Falls back to the original artifact on low
+# confidence — the follow-up validation will fail and burn the attempt,
+# which keeps a flaky provider from silently shipping a bad draft.
+
+task repair_artifact
+  needs artifact: Text, diagnostics: Text, attempt: Number
+  gives Text
+  do
+    repaired = reason "The FORGE source below failed verification. Fix it so it parses and dry-run builds. This is repair attempt {attempt} of 3. Diagnostics:\n{diagnostics}\n\nReturn ONLY the corrected FORGE source code, no code fences, no commentary.\n\nSOURCE:\n{artifact}"
+    when repaired.sure -> give repaired
+    else -> give artifact
+
+# ── Repair loop pattern (max 3 iterations, then escalate) ────────
+# Unrolled: draft → validate → repair → validate → repair → validate.
+# Attempt 1 is the draft itself; repairs are attempts 2 and 3. On the
+# third failure the outcome carries valid=false and the FINAL diagnostics;
+# the calling generator agent emits GenerationFailed and escalates to
+# human/supervisor — never retrying past the budget.
+
+task generate_with_repair
+  needs root: Text, spec: Text
+  gives GenerationOutcome
+  do
+    draft = reason "Generate a complete, valid FORGE declaration for this spec. Output ONLY FORGE source code, no code fences, no commentary.\n\nSPEC:\n{spec}"
+    when draft.sure -> give repair_loop(root, draft)
+    when draft.unsure -> give GenerationOutcome(artifact: "", valid: false, attempts: 1, diagnostics: "draft generation returned low confidence")
+    else -> give GenerationOutcome(artifact: "", valid: false, attempts: 1, diagnostics: "draft generation was unreliable")
+
+task repair_loop
+  needs root: Text, draft: Text
+  gives GenerationOutcome
+  do
+    v = validate_artifact(root, draft)
+    if v.valid
+      give GenerationOutcome(artifact: draft, valid: true, attempts: 1, diagnostics: v.diagnostics)
+    r2 = repair_artifact(draft, v.diagnostics, 2)
+    v = validate_artifact(root, r2)
+    if v.valid
+      give GenerationOutcome(artifact: r2, valid: true, attempts: 2, diagnostics: v.diagnostics)
+    r3 = repair_artifact(r2, v.diagnostics, 3)
+    v = validate_artifact(root, r3)
+    if v.valid
+      give GenerationOutcome(artifact: r3, valid: true, attempts: 3, diagnostics: v.diagnostics)
+    give GenerationOutcome(artifact: r3, valid: false, attempts: 3, diagnostics: v.diagnostics)
+
+# ── Canonical entry point ────────────────────────────────────────
+# The contract's `generate` in task form: spec in, validated artifact
+# (or a failed outcome with diagnostics) out.
+
+task generate_canonical
+  needs root: Text, spec: Text
+  gives GenerationOutcome
+  do
+    give generate_with_repair(root, spec)

@@ -358,6 +358,11 @@ merge = true
 manifest = "workflows/clone-dev/forge.project.toml"
 
 [[cases]]
+name = "toolkit shared generator contract (#168)"
+paths = ["agents/toolkit/shared.forge"]
+check = "ok"
+
+[[cases]]
 name = "forge-sensei single-file workflow"
 paths = ["workflows/forge-sensei.forge"]
 check = "ok"
