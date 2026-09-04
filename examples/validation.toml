@@ -359,7 +359,7 @@ manifest = "workflows/clone-dev/forge.project.toml"
 
 [[cases]]
 name = "toolkit shared generator contract (#168)"
-paths = ["agents/toolkit/shared.forge"]
+paths = ["workflows/toolkit/shared.forge"]
 check = "ok"
 
 [[cases]]

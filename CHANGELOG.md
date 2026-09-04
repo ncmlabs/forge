@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Generator contract and shared validation infrastructure (#168):
-  `agents/toolkit/shared.forge` defines the `Generator` contract
+  `workflows/toolkit/shared.forge` defines the `Generator` contract
   (`generate`/`validate`/`repair`), the `GeneratorPhase` lifecycle states,
   the shared generation/repair events, the deterministic validation flow
   (temp file → `forge parse` → `forge build --dry-run`), and the max-3-
