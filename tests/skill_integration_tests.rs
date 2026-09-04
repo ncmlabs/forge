@@ -369,7 +369,73 @@ fn skill_confidence_capped() {
 
 // ── Runtime: exec-based skill finder ────────────────────────────
 
+/// Deterministic stand-in for the live npx path (issue #469): exercises the
+/// exact same `.forge` program shape (command with a raised timeout, pipe to
+/// tail, sure/else dispatch, trace events) but against a local command with
+/// no network dependency, so required CI never gates on the npm registry.
 #[tokio::test]
+async fn exec_runs_local_skills_find() {
+    // Unix-only piping (tail).
+    if cfg!(windows) {
+        eprintln!("Skipping: not supported on Windows");
+        return;
+    }
+
+    let source = r#"
+task search_skills
+  needs query: Text
+  gives Text
+  do
+    result = command "echo 'skills.sh: react-toolkit (1.2k installs)'; echo 'skills.sh: react-forms (830 installs)'" timeout 30s
+    when result.sure -> give result
+    else -> give "search failed"
+
+fn main
+  say search_skills("react")
+"#;
+
+    let program = forge::parser::parse(source).expect("parse failed");
+    let mock = MockProvider::new("mock").with_default("mock");
+    let tracer = Tracer::with_capture();
+    let executor = TaskExecutor::new(program, mock_registry(mock), Some(tracer.clone()));
+    let result = executor.run().await;
+    assert!(
+        result.is_ok(),
+        "local skills find should run: {:?}",
+        result.err()
+    );
+    let outputs = executor.outputs();
+    assert!(
+        !outputs.is_empty(),
+        "should produce output from local skills find"
+    );
+    let all_output = outputs.join("\n");
+    assert!(
+        all_output.contains("skills.sh") || all_output.contains("search failed"),
+        "output should contain skill results or graceful failure, got: {}",
+        all_output
+    );
+
+    // Verify trace events
+    let events = tracer.captured_events();
+    assert!(
+        events.contains(&"command_call".to_string()),
+        "should trace command_call"
+    );
+    assert!(
+        events.contains(&"command_return".to_string()),
+        "should trace command_return"
+    );
+}
+
+/// Live variant of the above against the real `npx skills` CLI — kept for
+/// manual smoke (`cargo test exec_runs_npx_skills_find -- --ignored`).
+/// #[ignore]d from required CI: it performs a real network call to the npm
+/// registry / skills.sh backend, whose latency is outside our control and
+/// which made required CI flaky (3 consecutive 180s timeouts on unrelated
+/// PRs, 2026-09-04 — issue #469).
+#[tokio::test]
+#[ignore] // Run with: cargo test exec_runs_npx_skills_find -- --ignored
 async fn exec_runs_npx_skills_find() {
     // This test uses Unix-only piping (tail) and npx is too slow on Windows CI.
     if cfg!(windows) {

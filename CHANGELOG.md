@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Surface-audit rework (#449): the derived-surface drift audit is now driven
+  by the FORGE agent `workflows/surface-audit.forge` via `forge send`, on a
+  zero-cost OpenAI-compatible provider selected with `FORGE_CONFIG` +
+  `FORGE_PROVIDER` (replacing the retired `claude -p`/Anthropic invocation).
+  The weekly cron is restored and skips neutrally when no provider endpoint
+  is configured.
 - Clone-dev v1 retrospective (#373): `docs/clone-dev-v1-retrospective.md` —
   proof-run metrics (3.48-min merge, first-try CI, novice→expert mastery,
   $0.23 cost), the defect harvest and lessons for v2; roadmap Layer 3 moved
