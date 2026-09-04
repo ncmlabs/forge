@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (temp file → `forge parse` → `forge build --dry-run`), and the max-3-
   attempts repair pattern that escalates via `GenerationFailed`. The
   unfreeze point for the toolkit agents (#169–#175).
+- Surface-audit rework (#449): the derived-surface drift audit is now driven
+  by the FORGE agent `workflows/surface-audit.forge` via `forge send`, on a
+  zero-cost OpenAI-compatible provider selected with `FORGE_CONFIG` +
+  `FORGE_PROVIDER` (replacing the retired `claude -p`/Anthropic invocation).
+  The weekly cron is restored and skips neutrally when no provider endpoint
+  is configured.
 
 ## [0.2.0] - 2026-08-31
 

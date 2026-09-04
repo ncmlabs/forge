@@ -363,6 +363,11 @@ paths = ["agents/toolkit/shared.forge"]
 check = "ok"
 
 [[cases]]
+name = "surface-audit drift agent workflow (issues #229/#449)"
+paths = ["workflows/surface-audit.forge"]
+check = "ok"
+
+[[cases]]
 name = "forge-sensei single-file workflow"
 paths = ["workflows/forge-sensei.forge"]
 check = "ok"
