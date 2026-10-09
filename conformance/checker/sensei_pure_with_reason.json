@@ -6,6 +6,7 @@
   "input": "pure bad_pure\n  needs q: Text\n  gives Text\n  do\n    give reason \"think about {q}\"\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E030",
     "error_contains": ["cannot use", "reason"]
   }
 }

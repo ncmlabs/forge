@@ -5,6 +5,7 @@
   "input": "agent worker\n  on start(msg: Text)\n    say msg\n\npure no_spawn\n  do\n    spawn worker\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E030",
     "error_contains": ["spawn"],
     "error_kind": "error"
   }

@@ -6,6 +6,7 @@
   "input": "warden supervisor\n  manages [ghost_agent]\n  on stuck: nudge, self\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E090",
     "error_contains": ["manages", "not declared"]
   }
 }

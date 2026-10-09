@@ -6,6 +6,7 @@
   "input": "pure bad\n  needs x: Text\n  gives Text\n  do\n    escalate to human\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E032",
     "error_contains": ["cannot use", "escalate"]
   }
 }

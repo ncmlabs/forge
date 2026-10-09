@@ -68,6 +68,7 @@ fn validate_pattern(pat: &str, span: std::ops::Range<usize>, file: &str) -> Opti
     if !pat.starts_with("skill.") {
         return Some(
             Diagnostic::error(
+                "E100",
                 file,
                 format!("allows pattern `{}` must start with `skill.`", pat),
                 span,
@@ -82,6 +83,7 @@ fn validate_pattern(pat: &str, span: std::ops::Range<usize>, file: &str) -> Opti
         if !suffix_ok {
             return Some(
                 Diagnostic::error(
+                    "E101",
                     file,
                     format!("allows pattern `{}` has a malformed wildcard", pat),
                     span,
@@ -194,6 +196,7 @@ fn check_expr(
         if !skill_call_allowed(&path, allows) {
             diagnostics.push(
                 Diagnostic::error(
+                    "E102",
                     file,
                     format!(
                         "agent `{}` is not allowed to call `{}` — add an `allows` pattern that covers it",

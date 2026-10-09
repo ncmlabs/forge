@@ -15,6 +15,7 @@
   ],
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E058",
     "error_contains": ["server-only symbol"]
   }
 }

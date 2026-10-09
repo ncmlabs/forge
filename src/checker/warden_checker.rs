@@ -47,6 +47,7 @@ fn check_manages_exist(
         if !declared.contains(&managed.node) {
             diagnostics.push(
                 Diagnostic::error(
+                    "E090",
                     file,
                     format!(
                         "warden `{}` manages `{}` which is not declared",
@@ -71,6 +72,7 @@ fn check_escalation_ladder(warden: &WardenDecl, file: &str, diagnostics: &mut Ve
             // Count must increase
             if after.node.count <= prev_count {
                 diagnostics.push(Diagnostic::error(
+                    "E091",
                     file,
                     format!(
                         "warden `{}`: `after` count must increase (got {} after {})",
@@ -85,6 +87,7 @@ fn check_escalation_ladder(warden: &WardenDecl, file: &str, diagnostics: &mut Ve
             if after.node.response.node <= prev_response {
                 diagnostics.push(
                     Diagnostic::error(
+                        "E092",
                         file,
                         format!(
                             "warden `{}`: escalation ladder must increase severity (got {:?} after {:?})",
@@ -136,6 +139,7 @@ fn check_failure_type_coverage(warden: &WardenDecl, file: &str, diagnostics: &mu
     if !missing.is_empty() {
         diagnostics.push(
             Diagnostic::warning(
+                "W090",
                 file,
                 format!(
                     "warden `{}` does not cover failure types: {}",

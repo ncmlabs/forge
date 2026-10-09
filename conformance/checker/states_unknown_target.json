@@ -6,6 +6,7 @@
   "input": "states Phase\n  idle -> active\n\nagent broken\n  lifecycle: Phase\n  on start(msg: Text)\n    transition to nonexistent\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E043",
     "error_contains": ["unknown state"]
   }
 }

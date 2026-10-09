@@ -65,6 +65,11 @@
           "default": "error",
           "description": "Expected diagnostic severity"
         },
+        "error_code": {
+          "type": "string",
+          "pattern": "^[EW]\\d{3}$",
+          "description": "Stable diagnostic code the matching diagnostic must carry"
+        },
         "trace_shape": {
           "type": "array",
           "items": { "type": "string" },

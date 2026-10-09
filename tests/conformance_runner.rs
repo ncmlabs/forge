@@ -45,6 +45,8 @@ struct FileInput {
 #[derive(serde::Deserialize)]
 struct Expected {
     outcome: String,
+    /// Stable diagnostic code the matching diagnostic must carry (#474).
+    error_code: Option<String>,
     error_contains: Option<Vec<String>>,
     error_kind: Option<String>,
     trace_shape: Option<Vec<String>>,
@@ -93,7 +95,20 @@ fn check_single(source: &str, filename: &str) -> Vec<Diagnostic> {
     let program = forge::parser::parse(source).expect("parse should succeed for checker tests");
     let mut diags = checker::check_all(&program, filename);
     diags.extend(boundary_checker::check(&[(&program, filename)]));
+    assert_registered_codes(&diags);
     diags
+}
+
+/// #474: every diagnostic emitted by the checkers must carry a registered code.
+fn assert_registered_codes(diags: &[Diagnostic]) {
+    for d in diags {
+        assert!(
+            forge::diagnostic_codes::lookup(d.code).is_some(),
+            "diagnostic {:?} without a registered code: {:?}",
+            d.code,
+            d.message
+        );
+    }
 }
 
 fn check_multi(files: &[(String, String)]) -> Vec<Diagnostic> {
@@ -112,15 +127,22 @@ fn check_multi(files: &[(String, String)]) -> Vec<Diagnostic> {
     }
     let refs: Vec<_> = programs.iter().map(|(p, f)| (p, f.as_str())).collect();
     diags.extend(boundary_checker::check(&refs));
+    assert_registered_codes(&diags);
     diags
 }
 
-fn matches_error(diag: &Diagnostic, substrings: &[String], expected_kind: &str) -> bool {
+fn matches_error(
+    diag: &Diagnostic,
+    substrings: &[String],
+    expected_kind: &str,
+    expected_code: Option<&str>,
+) -> bool {
     let kind_matches = match expected_kind {
         "warning" => matches!(diag.kind, DiagnosticKind::Warning),
         _ => matches!(diag.kind, DiagnosticKind::Error),
     };
-    kind_matches && substrings.iter().all(|s| diag.message.contains(s))
+    let code_matches = expected_code.is_none_or(|code| diag.code == code);
+    kind_matches && code_matches && substrings.iter().all(|s| diag.message.contains(s))
 }
 
 /// Check that `expected` is an ordered subsequence of `actual`.
@@ -239,20 +261,22 @@ fn test_compile_error(test: &ConformanceTest) -> Result<(), String> {
     let diags = run_checkers(&test.input)?;
     let error_contains = test.expected.error_contains.as_deref().unwrap_or(&[]);
     let expected_kind = test.expected.error_kind.as_deref().unwrap_or("error");
+    let expected_code = test.expected.error_code.as_deref();
 
     let has_match = diags
         .iter()
-        .any(|d| matches_error(d, error_contains, expected_kind));
+        .any(|d| matches_error(d, error_contains, expected_kind, expected_code));
     if has_match {
         Ok(())
     } else {
         Err(format!(
-            "expected compile_error with {:?} (kind={}) but got diagnostics: {:?}",
+            "expected compile_error with {:?} (kind={}, code={:?}) but got diagnostics: {:?}",
             error_contains,
             expected_kind,
+            expected_code,
             diags
                 .iter()
-                .map(|d| format!("[{:?}] {}", d.kind, d.message))
+                .map(|d| format!("[{} {:?}] {}", d.code, d.kind, d.message))
                 .collect::<Vec<_>>()
         ))
     }

@@ -6,6 +6,7 @@
   "input": "task helper\n  needs x: Text\n  gives Text\n  do\n    give x\n\npure bad\n  needs x: Text\n  gives Text\n  do\n    give try helper(x) or \"fallback\"\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E031",
     "error_contains": ["cannot use", "try...or"]
   }
 }
