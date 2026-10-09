@@ -911,6 +911,51 @@ warden supervisor
   on budget: nudge, self
   on timeout: restart, self"#,
     },
+    CodeInfo {
+        code: "E100",
+        title: "allows pattern does not start with skill.",
+        explain: r#"Every allow-list entry must be a `skill.<namespace>` pattern; other namespaces are not gated by `allows`.
+
+Wrong:
+agent a
+  allows github.*
+
+Right:
+agent a
+  allows skill.github.*"#,
+    },
+    CodeInfo {
+        code: "E101",
+        title: "allows pattern has a malformed wildcard",
+        explain: r#"Only a trailing `.*` segment is supported; a `*` anywhere else matches nothing.
+
+Wrong:
+agent a
+  allows skill.git*ub
+
+Right:
+agent a
+  allows skill.github.*"#,
+    },
+    CodeInfo {
+        code: "E102",
+        title: "skill call outside the agent's allow-list",
+        explain: r#"The agent declares `allows` patterns and this skill call is not covered by any of them, so the call is rejected.
+
+Wrong:
+agent a
+  allows skill.github.*
+
+  on start
+    issues = skill.exec.ripgrep("TODO")
+
+Right:
+agent a
+  allows skill.github.*, skill.exec.ripgrep
+
+  on start
+    issues = skill.exec.ripgrep("TODO")"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.
