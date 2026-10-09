@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "449c2bf20dae66d2def3a9aaf30bfce9999849f0cf33aa7e1a47adff6c0d2f09",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Give one short title for the sea.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

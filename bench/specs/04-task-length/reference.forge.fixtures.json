@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "b8b4a3326f1c65595ed575813c7f4e20d13ebaea5b8d033f416320aeddf82202",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Summarize tides in one sentence.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

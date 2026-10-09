@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "906c91779c53fb7884534d51aa2d41d3fb9733f0e695fea5f145340d10d76c21",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write one short sentence greeting Ada.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}
