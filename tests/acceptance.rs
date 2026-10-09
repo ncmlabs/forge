@@ -162,6 +162,29 @@ fn accept_boundary_error() {
     );
 }
 
+/// #496 — undefined calls and impossible match patterns are errors.
+#[test]
+fn accept_resolution_error() {
+    let diags = check_file("examples/errors/resolution_error.forge");
+    let errs = errors(&diags);
+    for code in ["E160", "E161", "E162"] {
+        assert!(
+            errs.iter().any(|d| d.code == code),
+            "should report {}, got: {:?}",
+            code,
+            errs.iter()
+                .map(|d| format!("[{}] {}", d.code, d.message))
+                .collect::<Vec<_>>()
+        );
+    }
+    assert!(
+        errs.iter()
+            .any(|d| d.message.contains("tag patterns compare exact text")),
+        "E162 message should explain exact-text comparison, got: {:?}",
+        errs.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
 // ── Runtime acceptance tests ─────────────────────────────────────
 
 #[tokio::test]

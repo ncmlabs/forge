@@ -151,6 +151,16 @@ check = "error"
 expect = ["unhandled uncertain"]
 
 [[cases]]
+name = "resolution expected error"
+paths = ["examples/errors/resolution_error.forge"]
+check = "error"
+expect = [
+  "call to undeclared function `judge`",
+  "pattern `Nonexistent` never matches",
+  "tag patterns compare exact text",
+]
+
+[[cases]]
 name = "llm examples"
 paths = [
   "examples/llm/code_review.forge",

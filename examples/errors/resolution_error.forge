@@ -1,0 +1,33 @@
+# FORGE resolution errors — issue #496.
+# One repro per diagnostic code: `forge check` must report E160, E161 and E162.
+
+use
+  llm.classify
+
+# E160 — `judge` is not a declared task, pure, flow, pool or builtin.
+task undefined_call
+  needs x: Text
+  gives Text
+  do
+    give judge(x)
+
+# E161 — `Nonexistent` is not a declared or builtin type, and the scrutinee's
+# value set is the classify label list, so the arm can never match.
+task impossible_pattern
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["Buy"]
+    match result
+      Nonexistent(who) -> give "never"
+      _ -> give "other"
+
+# E162 — tags compare exact text, so `Positive` never matches "positive".
+task case_mismatched_tag
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["positive"]
+    match result
+      Positive -> give "up"
+      _ -> give "other"
