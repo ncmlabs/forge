@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to v1 complete. Closes epic #292.
 
 ### Changed
+- `forge-principles.md` is now published (previously gitignored); `llms.txt` links it (#497).
 - Roadmap reset to v0.3 — Agent-Native FORGE (#473). The previous roadmap is
   archived at `docs/archive/roadmap-v3.md`. The generator/toolkit, WASM and
   dev-system tracks are deprecated (see roadmap).
