@@ -442,9 +442,22 @@ impl TaskExecutor {
     }
 
     /// Accumulate LLM cost for the run (#475). The tracker is shared with
-    /// spawned children so the envelope reports the whole run.
+    /// spawned children and pool workers so the envelope reports the whole run.
     pub fn with_cost_tracker(mut self, tracker: crate::llm::cost_tracker::CostTracker) -> Self {
         self.cost_tracker = Some(tracker);
+        self
+    }
+
+    /// Inherit a parent run's cost tracker, if it has one (#475). `None` leaves
+    /// the executor untracked rather than clearing an existing tracker, so a
+    /// child built before the tracker was attached keeps working.
+    pub fn with_cost_tracker_opt(
+        mut self,
+        tracker: Option<crate::llm::cost_tracker::CostTracker>,
+    ) -> Self {
+        if let Some(tracker) = tracker {
+            self.cost_tracker = Some(tracker);
+        }
         self
     }
 
@@ -2716,7 +2729,10 @@ impl TaskExecutor {
                                     &self.program,
                                     self.providers.clone(),
                                     self.tracer.clone(),
-                                )?;
+                                )?
+                                .with_shared_output(self.output.clone())
+                                .with_stdout_echo(self.stdout_echo)
+                                .with_cost_tracker_opt(self.cost_tracker.clone());
                                 return pool.send(&event, payload).await;
                             }
                         }
@@ -2966,7 +2982,10 @@ impl TaskExecutor {
                             &self.program,
                             self.providers.clone(),
                             self.tracer.clone(),
-                        )?;
+                        )?
+                        .with_shared_output(self.output.clone())
+                        .with_stdout_echo(self.stdout_echo)
+                        .with_cost_tracker_opt(self.cost_tracker.clone());
                         let event = arg_vals
                             .first()
                             .map(|v| format!("{}", v.value))

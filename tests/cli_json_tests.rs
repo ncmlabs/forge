@@ -183,6 +183,48 @@ fn trace_json_envelope_names_the_trace_command() {
     assert_eq!(doc["data"]["output"], serde_json::json!(["Hello, World!"]));
 }
 
+// ── pool workers (#475) ─────────────────────────────────────────
+
+#[test]
+fn run_json_pool_worker_say_lands_in_data_output() {
+    // tests/fixtures/pool_say.forge runs two LLM workers that each `say`.
+    // `parse_stdout` deserializes the *whole* stdout as one JSON document, so a
+    // worker `say` reaching stdout makes this test fail.
+    let output = forge_env(
+        &["run", "--json", "tests/fixtures/pool_say.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["status"], "success");
+    assert_eq!(
+        doc["data"]["output"],
+        serde_json::json!([
+            "worker says mock response",
+            "worker says mock response",
+            "pool done"
+        ])
+    );
+    assert_eq!(doc["cost"], 0.0);
+}
+
+#[test]
+fn run_json_pool_worker_spend_lands_in_cost() {
+    let dir = temp_dir("pool-cost");
+    let config = priced_mock_config(&dir);
+    let output = forge_env(
+        &["run", "--json", "tests/fixtures/pool_say.forge"],
+        &[("FORGE_CONFIG", &config)],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    assert!(
+        doc["cost"].as_f64().unwrap() > 0.0,
+        "two billed pool workers must show up in cost: {doc}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ── test (record / replay, #478) ────────────────────────────────
 
 #[test]
@@ -420,6 +462,25 @@ fn temp_dir(label: &str) -> std::path::PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create temp dir");
     dir
+}
+
+/// A `forge.config.toml` whose mock provider bills like a paid one, so tests
+/// can assert that LLM spend reaches the envelope's `cost` without a real
+/// provider (the default mock is free).
+fn priced_mock_config(dir: &std::path::Path) -> String {
+    let path = dir.join("forge.config.toml");
+    std::fs::write(
+        &path,
+        "[llm]\n\
+         default = \"mock\"\n\n\
+         [providers.mock]\n\
+         type = \"mock\"\n\n\
+         [providers.mock.capabilities]\n\
+         cost_per_1k_input = 1.0\n\
+         cost_per_1k_output = 1.0\n",
+    )
+    .expect("write priced mock config");
+    path.to_string_lossy().to_string()
 }
 
 // ── parse and explain ───────────────────────────────────────────

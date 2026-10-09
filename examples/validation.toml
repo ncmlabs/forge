@@ -307,3 +307,8 @@ name = "CLI json: record/replay oracle program (#475)"
 paths = ["tests/fixtures/replay_llm.forge"]
 check = "ok"
 run = "mock"
+
+[[cases]]
+name = "CLI json: pool whose workers say and spend (#475)"
+paths = ["tests/fixtures/pool_say.forge"]
+check = "ok"

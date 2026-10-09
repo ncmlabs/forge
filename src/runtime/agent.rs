@@ -484,9 +484,7 @@ impl AgentProcess {
         mut self,
         tracker: Option<crate::llm::cost_tracker::CostTracker>,
     ) -> Self {
-        if let Some(tracker) = tracker {
-            self.executor = self.executor.with_cost_tracker(tracker);
-        }
+        self.executor = self.executor.with_cost_tracker_opt(tracker);
         self
     }
 
