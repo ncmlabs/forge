@@ -2952,15 +2952,20 @@ impl ParseError {
                 message,
                 span_start,
                 span_end,
-            } => crate::diagnostic::Diagnostic::error(
+            } => crate::diagnostic::Diagnostic::coded_error(
+                "E001",
                 file,
                 message.clone(),
                 *span_start..*span_end,
                 "parse error here",
             ),
-            ParseError::Internal(msg) => {
-                crate::diagnostic::Diagnostic::error(file, msg.clone(), 0..0, msg.clone())
-            }
+            ParseError::Internal(msg) => crate::diagnostic::Diagnostic::coded_error(
+                "E002",
+                file,
+                msg.clone(),
+                0..0,
+                msg.clone(),
+            ),
         }
     }
 }
