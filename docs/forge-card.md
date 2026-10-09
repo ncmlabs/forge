@@ -195,18 +195,16 @@ system lobby
     front: lobby_agent
   game >> front
 ```
-**`command`** — `["argv", "array"]` beats a shell string when interpolating values; always branch on `result.success` before using the output — a failed command must never be reinterpreted (the `when` is the uncertainty gate the checker requires for the captured text)
+**`command`** — `["argv", "array"]` beats a shell string when interpolating values; always branch on `result.success` before using the output — a failed command must never be reinterpreted (E150)
 ```forge
 task run_tests
   gives Text
   do
     result = command ["cargo", "test"] in "." timeout 10m
     if result.success
-      when result.sure -> give result.stdout
-      else -> give "no output captured"
+      give result.stdout
     else
-      when result.sure -> give result.stderr
-      else -> give "command failed"
+      give result.stderr
 ```
 **`session`** — external agent sessions; handle the result like any oracle:
 ```forge

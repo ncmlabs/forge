@@ -82,8 +82,14 @@ fn check_stmt(
             }
         }
         Stmt::When(when) => {
-            // Confidence dispatch on the command result itself: the command's
-            // confidence is its exit status, so `.sure` is a success check.
+            // `when x.sure` / `.unsure` / `.unreliable` on the command result
+            // itself is a deterministic exit-status check, not an oracle
+            // guess: `command` sets confidence 0.9 on exit 0 and 0.3
+            // otherwise, so `.sure` (threshold 0.8) is exactly `success` and
+            // the failure path lands in `.unsure` / `else`. For `exec`
+            // (returns Text, no `.success` field) the same dispatch is the
+            // only available gate. Either way the branch is on the command's
+            // own verdict, so it clears the gate.
             for clause in &when.clauses {
                 unchecked.remove(&clause.node.predicate.node.subject.node);
             }
@@ -194,7 +200,9 @@ fn collect_unchecked_refs(
 }
 
 /// Collect names of unchecked results whose `.success` / `.exit_code` is read.
-fn collect_gate_reads(
+/// Shared with `uncertain_checker` (#484): the same read is a deterministic
+/// verdict there, so it also satisfies the confidence gate.
+pub(super) fn collect_gate_reads(
     expr: &Spanned<Expr>,
     unchecked: &HashSet<String>,
     out: &mut HashSet<String>,
