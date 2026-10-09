@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FORGE_PROVIDER` (replacing the retired `claude -p`/Anthropic invocation).
   The weekly cron is restored and skips neutrally when no provider endpoint
   is configured.
+- `[llm.routing]` accepts provider chains per phase (#503): a routing value is
+  either one provider name (`plan = "deepseek"`, unchanged) or an ordered chain
+  (`plan = ["deepseek", "glm"]`) tried primary-first, falling through to the
+  next entry when a provider fails. An empty chain, or a name that no
+  `[providers.*]` entry defines, is a startup error naming the phase, the
+  unknown provider, the known providers and the next step — never a silent
+  fallback to the default or mock provider.
 - Clone-dev v1 retrospective (#373): `docs/clone-dev-v1-retrospective.md` —
   proof-run metrics (3.48-min merge, first-try CI, novice→expert mastery,
   $0.23 cost), the defect harvest and lessons for v2; roadmap Layer 3 moved
