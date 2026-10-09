@@ -7,8 +7,7 @@ task assess
       when verdict.sure -> give "gate open: {verdict}"
       else -> give "gate open: no verdict"
     else
-      when run.sure -> give run.stderr
-      else -> give "gate blocked: command failed"
+      give "gate blocked: command failed"
 
 task banner
   gives Text

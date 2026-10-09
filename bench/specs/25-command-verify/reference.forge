@@ -6,8 +6,7 @@ task verify_tests
       when run.sure -> give "tests: {run.stdout}"
       else -> give "tests: no output"
     else
-      when run.sure -> give "tests failed"
-      else -> give "tests failed"
+      give "tests failed"
 
 task verify_lint
   gives Text
@@ -17,8 +16,7 @@ task verify_lint
       when run.sure -> give "lint: {run.stdout}"
       else -> give "lint: no output"
     else
-      when run.sure -> give "lint gate: failed"
-      else -> give "lint gate: failed"
+      give "lint gate: failed"
 
 task summarize
   gives Text
