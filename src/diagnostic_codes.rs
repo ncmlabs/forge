@@ -786,6 +786,52 @@ agent a
   on verify(msg: Text)
     requires is_valid(msg)"#,
     },
+    CodeInfo {
+        code: "W080",
+        title: "spawned agent has no failure policy",
+        explain: r#"An agent with no `if stuck ...` handler cannot recover its spawned specialists; Principle VII asks for accountability when a spawn goes wrong.
+
+Wrong:
+agent worker
+  on start
+    say "hi"
+
+agent boss
+  on start
+    spawn worker
+
+Right:
+agent worker
+  on start
+    say "hi"
+  if stuck for 3 turns
+    restart
+
+agent boss
+  on start
+    spawn worker"#,
+    },
+    CodeInfo {
+        code: "W081",
+        title: "find references an unknown agent template",
+        explain: r#"`find` targets an agent template that is not declared in the program, so the lookup can never match.
+
+Wrong:
+agent boss
+  on start
+    found = find all "ghost"
+    say "done"
+
+Right:
+agent ghost
+  on start
+    say "hi"
+
+agent boss
+  on start
+    found = find all "ghost"
+    say "done""#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.
