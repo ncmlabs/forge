@@ -37,6 +37,11 @@ bench/
       meta.toml                difficulty, features, oracle_calls
 ```
 
+`tests/bench_corpus_tests.rs` enforces the corpus contract: exactly 30 specs in
+a 10 easy / 12 medium / 8 hard spread, all five files per spec, 5–15 non-blank
+lines per `spec.md` (counted there), a reference that checks with zero
+diagnostics, and a `forge test --expect` replay that exits 0 for every spec.
+
 `meta.toml`:
 
 ```toml

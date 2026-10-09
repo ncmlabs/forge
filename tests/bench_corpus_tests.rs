@@ -138,6 +138,26 @@ fn every_spec_ships_the_required_files() {
     );
 }
 
+/// A spec is what the model reads, so it stays short: 5–15 non-blank lines.
+#[test]
+fn every_spec_is_five_to_fifteen_lines() {
+    let mut failures = Vec::new();
+    for dir in spec_dirs() {
+        let path = dir.join("spec.md");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let lines = text.lines().filter(|line| !line.trim().is_empty()).count();
+        if !(5..=15).contains(&lines) {
+            failures.push(format!("{}: {lines} non-blank lines", relative(&path)));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "every spec.md must hold 5–15 non-blank lines:\n{}",
+        failures.join("\n")
+    );
+}
+
 #[test]
 fn every_reference_checks_with_zero_diagnostics() {
     let mut failures = Vec::new();
@@ -207,22 +227,20 @@ fn every_meta_declares_difficulty_features_and_oracle_calls() {
 #[test]
 fn spec_count_and_difficulty_spread() {
     let dirs = spec_dirs();
-    // A floor while the corpus is landing; the final counts (30 specs,
-    // 10 easy / 12 medium / 8 hard) are pinned in the last corpus commit.
     let mut by_difficulty = std::collections::BTreeMap::new();
     for dir in &dirs {
         let meta = load_meta(&dir.join("meta.toml"));
         *by_difficulty.entry(meta.difficulty).or_insert(0usize) += 1;
     }
-    assert!(
-        !dirs.is_empty(),
-        "expected at least 1 spec, found {}",
-        dirs.len()
+    assert_eq!(
+        dirs.len(),
+        30,
+        "the corpus is exactly 30 specs; found {by_difficulty:?}"
     );
-    assert!(
-        by_difficulty.values().all(|count| *count >= 1),
-        "every difficulty band needs at least one spec: {by_difficulty:?}"
-    );
+    for (difficulty, want) in [("easy", 10usize), ("medium", 12), ("hard", 8)] {
+        let got = by_difficulty.get(difficulty).copied().unwrap_or(0);
+        assert_eq!(got, want, "{difficulty} specs: want {want}, got {got}");
+    }
 }
 
 #[test]

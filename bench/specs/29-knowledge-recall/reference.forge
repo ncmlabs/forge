@@ -1,0 +1,21 @@
+agent librarian
+  knowledge store: ".forge-knowledge/librarian"
+    max_entries: 5000
+  on ingest(fact: Text)
+    learn "{fact}" category: "FACTS"
+  on ask(question: Text)
+    prior = recall "{question}"
+    when prior.sure -> give prior
+    else -> escalate to human
+
+task answer_for
+  needs question: Text
+  gives Text
+  do
+    answer = reason "Answer the question {question}."
+    when answer.sure -> give answer
+    else -> give "no answer"
+
+fn main
+  say "librarian ready"
+  say answer_for("what is fog")
