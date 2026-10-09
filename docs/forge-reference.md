@@ -2292,6 +2292,33 @@ FORGE enforces **taint tracking** on LLM oracle outputs to guarantee that uncert
 
 The uncertain checker rejects any code path where a tainted value reaches `give` without passing through `when` or `match`. The compile error message contains: `unhandled uncertain`.
 
+### Deterministic Gate (E150)
+
+`command` / `exec` results carry a second, stricter taint: they are **unchecked** until the body dispatches them. An unchecked result may not reach `give`, an `emit` argument, or the prompt of a `reason` / `classify` -- that is error **E150** (``command result `x` used before checking `x.success` ``). The rule exists because a failed command must never be reinterpreted as success by an oracle verdict (#431).
+
+The gate is cleared by any of:
+
+| Dispatch | Why it clears |
+|----------|---------------|
+| `if x.success`, `if x.exit_code != 0`, or the same in an `else if` | the deterministic verdict; it counts for both branches and for every statement after the `if` |
+| `match x.exit_code` | a branch on the exit status |
+| `when x.sure` / `.unsure` / `.unreliable` | `command` derives confidence from the exit status (0.9 on exit 0, 0.3 otherwise), so `.sure` (threshold 0.8) is exactly `success` and the failure path lands in `else` |
+
+```forge
+task accept_tests
+  gives Text
+  do
+    tests = command ["cargo", "test"] timeout 10m
+    if tests.success
+      give tests.stdout
+    else
+      give "tests failed: {tests.stderr}"
+```
+
+`command ... background true` handles are exempt (they are inspected through `command.status`). `say` of an unchecked result is allowed -- it is not a decision. `if x.success` also clears the `uncertain` taint above, so command output under a deterministic gate needs no extra `when x.sure`; `exec` returns `Text` with no `.success` field, so confidence dispatch is its supported gate.
+
+Limitations of the static rule: the taint is not propagated through other variables or constructors, so `report = TestReport(failures: tests.stdout)` followed by `classify report.failures` is not flagged; only `reason` / `classify` prompts and arguments are gated (`search` / `recall` / `session` prompts are not); and `transition` statements take no value, so they are never flagged.
+
 ### Correct Pattern: Taint Cleared via `when`
 
 The `when` construct dispatches on confidence levels, forcing the programmer to explicitly handle the uncertain nature of the oracle result:
@@ -2427,6 +2454,23 @@ task watch_once
     when output.sure -> give output.stdout
     else -> give "no output"
 ```
+
+### Deterministic Gate (E150)
+
+A command result is **unchecked** until the body dispatches it. Using `result.stdout` / `result.stderr` in `give`, in an `emit` argument, or in a `reason` / `classify` prompt before the body branched on `result.success` (or `result.exit_code`) is error **E150**: ``command result `result` used before checking `result.success` ``. The rule makes the #431 failure mode impossible -- an oracle verdict cannot reinterpret a failed command as success.
+
+```forge
+task run_tests
+  gives Text
+  do
+    result = command ["cargo", "test"] timeout 10m
+    if result.success
+      give result.stdout
+    else
+      give "tests failed: {result.stderr}"
+```
+
+`if result.success` counts for both branches and for every statement after the `if`, and it also satisfies the `uncertain` gate on the same variable, so `give result.stdout` needs no extra `when result.sure`. `command ... background true` handles are exempt (inspect them through `command.status`). `exec` returns `Text` and exposes no `.success` field, so its supported gate is confidence dispatch (`when result.sure -> ...`). See §17 for the full dispatch table and the limitations of the static rule.
 
 ---
 
@@ -2808,6 +2852,7 @@ Every diagnostic emitted by `forge check`, `forge run`, `forge build`, `forge se
 | `E110`–`E129` | schedule checker |
 | `E130`–`E139` | correlate checker |
 | `E140`–`E149` | webhook checker |
+| `E150`–`E159` | command gate checker |
 
 Warnings reuse the same range with a `W` prefix (for example `W070` is the "requires clause uses an LLM operation" warning).
 

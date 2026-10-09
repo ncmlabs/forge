@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Deterministic command gate (#484): new checker pass and error code `E150` —
+  a `command`/`exec` result may not reach `give`, an `emit` argument, or a
+  `reason`/`classify` prompt before the body checks `x.success` /
+  `x.exit_code`, so a failed command can no longer be overruled by an oracle
+  verdict (#431). Branching on the exit status also satisfies the `uncertain`
+  gate for command output, so `give result.stdout` under `if result.success`
+  needs no second `when result.sure`. `forge explain E150` and the reference
+  (§17/§18) document the rule and its limits; the weekly derived-surface audit
+  now aborts when its `git log` grounding command fails (found by E150).
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced
