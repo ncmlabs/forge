@@ -252,6 +252,176 @@ pure good
   do
     give normalize(x)"#,
     },
+    CodeInfo {
+        code: "E040",
+        title: "unknown lifecycle",
+        explain: r#"An agent names a `lifecycle:` that is not a declared `states` block.
+
+Wrong:
+agent broken
+  lifecycle: BogusStates
+  on start
+    say "hi"
+
+Right:
+states Phase
+  idle -> active
+
+agent fixed
+  lifecycle: Phase
+  on start
+    say "hi""#,
+    },
+    CodeInfo {
+        code: "E041",
+        title: "conflicting lifecycle guards",
+        explain: r#"A handler carries more than one `requires lifecycle == ...` guard, so the current state is ambiguous.
+
+Wrong:
+agent a
+  on tick
+    requires lifecycle == idle
+    requires lifecycle == active
+
+Right:
+agent a
+  on tick
+    requires lifecycle == idle"#,
+    },
+    CodeInfo {
+        code: "E042",
+        title: "unknown state in lifecycle guard",
+        explain: r#"A `requires lifecycle == X` guard names a state that the `states` block does not declare.
+
+Wrong:
+states Phase
+  idle -> active
+
+agent a
+  on tick
+    requires lifecycle == running
+
+Right:
+states Phase
+  idle -> active
+
+agent a
+  on tick
+    requires lifecycle == idle"#,
+    },
+    CodeInfo {
+        code: "E043",
+        title: "unknown state in transition",
+        explain: r#"A `transition to X` target is not a state declared by the agent's `states` block.
+
+Wrong:
+states Phase
+  idle -> active
+
+agent broken
+  lifecycle: Phase
+  on start
+    transition to nonexistent
+
+Right:
+states Phase
+  idle -> active
+
+agent fixed
+  lifecycle: Phase
+  on start
+    requires lifecycle == idle
+    transition to active"#,
+    },
+    CodeInfo {
+        code: "E044",
+        title: "unguarded transition",
+        explain: r#"A transition has no `requires lifecycle == ...` guard, so it can fire from any state.
+
+Wrong:
+agent a
+  lifecycle: Phase
+  on start
+    transition to active
+
+Right:
+agent a
+  lifecycle: Phase
+  on start
+    requires lifecycle == idle
+    transition to active"#,
+    },
+    CodeInfo {
+        code: "E045",
+        title: "illegal transition",
+        explain: r#"The guarded transition is not an edge declared in the `states` block.
+
+Wrong:
+states GamePhase
+  waiting -> playing
+  playing -> done
+
+agent broken
+  lifecycle: GamePhase
+  on start
+    requires lifecycle == done
+    transition to playing
+
+Right:
+states GamePhase
+  waiting -> playing
+  playing -> done
+
+agent fixed
+  lifecycle: GamePhase
+  on start
+    requires lifecycle == waiting
+    transition to playing"#,
+    },
+    CodeInfo {
+        code: "W040",
+        title: "lifecycle guard too complex for static analysis",
+        explain: r#"The lifecycle guard is not a simple state comparison, so the checker cannot verify transitions statically.
+
+Wrong:
+agent a
+  on tick
+    requires lifecycle == pick(state)
+
+Right:
+agent a
+  on tick
+    requires lifecycle == idle"#,
+    },
+    CodeInfo {
+        code: "W041",
+        title: "terminal state",
+        explain: r#"A state has no outgoing transitions: once entered, the lifecycle cannot leave it.
+
+Wrong:
+states Phase
+  idle -> done
+
+Right:
+states Phase
+  idle -> done
+  done -> idle"#,
+    },
+    CodeInfo {
+        code: "W042",
+        title: "unreachable state",
+        explain: r#"A state has no incoming transition and is not an initial state, so nothing can ever enter it.
+
+Wrong:
+states Phase
+  idle -> done
+  orphan -> idle
+
+Right:
+states Phase
+  idle -> done
+  done -> idle"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.

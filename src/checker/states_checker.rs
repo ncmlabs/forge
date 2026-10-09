@@ -222,7 +222,8 @@ fn check_agent(
         Some(data) => data,
         None => {
             diagnostics.push(
-                Diagnostic::error(
+                Diagnostic::coded_error(
+                    "E040",
                     file,
                     format!("unknown lifecycle `{}`", lifecycle_name),
                     lifecycle_ref.span.start..lifecycle_ref.span.end,
@@ -265,7 +266,8 @@ fn check_handler(
                 LifecycleGuard::Opaque(s, e) => (*s, *e),
             };
             diagnostics.push(
-                Diagnostic::error(
+                Diagnostic::coded_error(
+                    "E041",
                     file,
                     format!(
                         "conflicting lifecycle guards in handler `{}`",
@@ -285,7 +287,8 @@ fn check_handler(
             LifecycleGuard::ExactState(state, start, end) => {
                 if !state_names.contains(state.as_str()) {
                     diagnostics.push(
-                        Diagnostic::error(
+                        Diagnostic::coded_error(
+                            "E042",
                             file,
                             format!("unknown state `{}` in lifecycle guard", state),
                             *start..*end,
@@ -297,7 +300,8 @@ fn check_handler(
             }
             LifecycleGuard::Opaque(start, end) => {
                 diagnostics.push(
-                    Diagnostic::warning(
+                    Diagnostic::coded_warning(
+                        "W040",
                         file,
                         format!(
                             "lifecycle guard in handler `{}` is too complex for static analysis",
@@ -338,7 +342,8 @@ fn check_handler(
         // State existence check
         if !state_names.contains(target_name.as_str()) {
             diagnostics.push(
-                Diagnostic::error(
+                Diagnostic::coded_error(
+                    "E043",
                     file,
                     format!("unknown state `{}` in transition", target_name),
                     target.span.start..target.span.end,
@@ -352,7 +357,8 @@ fn check_handler(
         // Unguarded transition check
         if !has_lifecycle_guard {
             diagnostics.push(
-                Diagnostic::error(
+                Diagnostic::coded_error(
+                    "E044",
                     file,
                     format!(
                         "unguarded transition to `{}` in handler `{}`",
@@ -370,7 +376,8 @@ fn check_handler(
         if let Some(from_state) = &guarded_state {
             if !edges.contains(&(from_state.clone(), target_name.clone())) {
                 diagnostics.push(
-                    Diagnostic::error(
+                    Diagnostic::coded_error(
+                        "E045",
                         file,
                         format!(
                             "illegal transition from `{}` to `{}`",
@@ -428,7 +435,8 @@ fn check_structural(
         // Terminal state: no outgoing edges
         if outgoing.is_empty() {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W041",
                     file,
                     format!(
                         "terminal state `{}` in `{}` has no outgoing transitions",
@@ -444,7 +452,8 @@ fn check_structural(
         // Unreachable state: no incoming edges and not initial
         if incoming.is_empty() && !initial_states.contains(state) {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W042",
                     file,
                     format!(
                         "unreachable state `{}` in `{}` has no incoming transitions",
