@@ -415,7 +415,7 @@ entry = "main.forge"
     #[test]
     fn single_file_with_output_override() {
         let manifest = ProjectManifest::from_single_file(
-            Path::new("examples/agents/quiz_tutor.forge"),
+            Path::new("tests/fixtures/agents/quiz_tutor.forge"),
             Some("forge-tutor"),
         );
         assert_eq!(manifest.project.name, "forge-tutor");

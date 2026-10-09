@@ -210,14 +210,14 @@ fn manifest_from_single_file() {
 #[test]
 fn manifest_tictactoe_parses() {
     let manifest = forge::manifest::ProjectManifest::load(std::path::Path::new(
-        "examples/tictactoe/forge.project.toml",
+        "tests/fixtures/tictactoe/forge.project.toml",
     ))
     .expect("should load");
     assert_eq!(manifest.project.name, "tictactoe");
     assert_eq!(manifest.output_name(), "tictactoe");
 
     let sources = manifest
-        .resolve_sources(std::path::Path::new("examples/tictactoe"))
+        .resolve_sources(std::path::Path::new("tests/fixtures/tictactoe"))
         .expect("should resolve");
     assert_eq!(sources.len(), 4); // entry + 3 sources
 }
@@ -227,10 +227,10 @@ fn manifest_tictactoe_parses() {
 #[test]
 fn compose_tictactoe_parses_and_merges() {
     let files = [
-        "examples/tictactoe/platform.forge",
-        "examples/tictactoe/room_agent.forge",
-        "examples/tictactoe/ai_opponent.forge",
-        "examples/tictactoe/matchmaking.forge",
+        "tests/fixtures/tictactoe/platform.forge",
+        "tests/fixtures/tictactoe/room_agent.forge",
+        "tests/fixtures/tictactoe/ai_opponent.forge",
+        "tests/fixtures/tictactoe/matchmaking.forge",
     ];
 
     let source_files: Vec<SourceFile> = files

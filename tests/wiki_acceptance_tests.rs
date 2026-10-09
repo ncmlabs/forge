@@ -33,10 +33,10 @@ fn parse_file(path: &str) -> Program {
 }
 
 fn load_wiki_program() -> Program {
-    let server_src =
-        std::fs::read_to_string("examples/wiki/server.forge").expect("could not read server.forge");
-    let shared_src =
-        std::fs::read_to_string("examples/wiki/shared.forge").expect("could not read shared.forge");
+    let server_src = std::fs::read_to_string("tests/fixtures/wiki/server.forge")
+        .expect("could not read server.forge");
+    let shared_src = std::fs::read_to_string("tests/fixtures/wiki/shared.forge")
+        .expect("could not read shared.forge");
 
     let server_prog = forge::parser::parse(&server_src).expect("parse server.forge failed");
     let shared_prog = forge::parser::parse(&shared_src).expect("parse shared.forge failed");
@@ -60,7 +60,10 @@ fn load_wiki_program() -> Program {
 }
 
 fn check_wiki_files() -> Vec<Diagnostic> {
-    let paths = ["examples/wiki/server.forge", "examples/wiki/shared.forge"];
+    let paths = [
+        "tests/fixtures/wiki/server.forge",
+        "tests/fixtures/wiki/shared.forge",
+    ];
     let programs: Vec<(Program, String)> = paths
         .iter()
         .map(|p| {
@@ -147,7 +150,7 @@ fn text_param(key: &str, val: &str) -> (String, ConfidentValue) {
 
 /// Seed wiki content/ directory into storage, replicating the CLI logic.
 fn seed_wiki_content(storage: &ForgeStorage) {
-    let content_dir = Path::new("examples/wiki/content");
+    let content_dir = Path::new("tests/fixtures/wiki/content");
     seed_content_recursive(content_dir, storage);
 }
 
@@ -251,7 +254,7 @@ async fn spawn_wiki_server_with_static() -> (String, tempfile::TempDir) {
 
     let static_dir = std::env::current_dir()
         .unwrap()
-        .join("examples/wiki/static");
+        .join("tests/fixtures/wiki/static");
 
     let server_config = ServerConfig {
         host: None,
@@ -293,8 +296,8 @@ async fn spawn_wiki_server_with_static() -> (String, tempfile::TempDir) {
 
 #[test]
 fn wiki_server_parses_clean() {
-    let _program = parse_file("examples/wiki/server.forge");
-    let _shared = parse_file("examples/wiki/shared.forge");
+    let _program = parse_file("tests/fixtures/wiki/server.forge");
+    let _shared = parse_file("tests/fixtures/wiki/shared.forge");
 }
 
 #[test]
@@ -1124,7 +1127,7 @@ async fn wiki_fact_check_majority_vote() {
         "YES this is accurate".to_string(),
     ]);
 
-    let program = parse_file("examples/agents/fact_check_pool.forge");
+    let program = parse_file("tests/fixtures/agents/fact_check_pool.forge");
     let executor = TaskExecutor::new(program, mock_registry_from(mock), None);
     let result = executor.run().await;
     assert!(
