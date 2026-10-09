@@ -21,16 +21,16 @@ pub struct ProviderRegistry {
 impl ProviderRegistry {
     pub fn from_config(mut config: ForgeConfig) -> Result<Self, ProviderError> {
         config.resolve_env_vars();
-        // forge.config.toml's [llm.routing] is single-provider per phase. The
-        // chain shape is reserved for clone-dev's overlay (issue #361 wires
-        // that path through `set_routing`).
+        // #503 — each `[llm.routing]` entry is a provider name or an ordered
+        // primary+fallback chain. Startup validation of the names happens
+        // below, once the providers exist.
         let routing = config
             .llm
             .routing
             .clone()
             .unwrap_or_default()
             .into_iter()
-            .map(|(phase, name)| (phase, vec![name]))
+            .map(|(phase, spec)| (phase, spec.providers()))
             .collect();
         let mut registry = Self {
             providers: HashMap::new(),
