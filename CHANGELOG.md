@@ -64,6 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- CLI stack overflow on Windows: the executor polls a program's whole future
+  tree on the calling thread, and Windows sizes the main thread's stack at
+  1 MiB, so `forge run` / `forge test` aborted with "thread 'main' has
+  overflowed its stack" on any deeper program (flows, pools, agents). The CLI
+  now runs on a thread with a 16 MiB stack; `ulimit -s 1024` reproduces and
+  verifies the fix on Linux. Found by the benchmark corpus, which is the first
+  test to run `forge test` as a child process on Windows.
 - Diagnostic rendering (#474): reports name the real source file instead of
   `<unknown>` (the ariadne source id was a bare span), and colour is emitted
   only when stderr is an interactive terminal, so piped or redirected output

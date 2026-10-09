@@ -273,8 +273,27 @@ enum WakeAction {
     },
 }
 
+/// The executor polls a program's whole future tree on the calling thread, and
+/// Windows sizes the main thread's stack at 1 MiB — deep flows, pools and
+/// agents overflow it and abort (`ulimit -s 1024` reproduces this on Linux).
+/// Run the CLI on a thread whose stack we choose instead.
+const MAIN_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+fn main() -> anyhow::Result<()> {
+    let handle = std::thread::Builder::new()
+        .name("forge".to_string())
+        .stack_size(MAIN_STACK_BYTES)
+        .spawn(run)
+        .map_err(|e| anyhow::anyhow!("cannot start the forge runtime: {e}"))?;
+    match handle.join() {
+        Ok(result) => result,
+        // Keep a panic in the CLI a panic of the process, as it was before.
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
