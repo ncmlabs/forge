@@ -1,0 +1,37 @@
+event TaskArrived
+  topic: Text
+
+event WorkAccepted
+  topic: Text
+
+states Worker
+  ready -> busy
+  busy -> ready
+
+agent processor
+  lifecycle: Worker
+  memory
+    topic: Text
+  subscribe TaskArrived
+  on TaskArrived(topic: Text)
+    requires lifecycle == ready on fail: give "busy"
+    memory.topic = topic
+    transition to busy
+    say "processing {topic}"
+    emit WorkAccepted(topic: topic)
+
+agent recorder
+  subscribe WorkAccepted
+  on WorkAccepted(topic: Text)
+    say "accepted {topic}"
+
+task note_for
+  needs topic: Text
+  gives Text
+  do
+    result = reason "Write a note about {topic}."
+    when result.sure -> give result
+    else -> give "no note"
+
+fn main
+  say note_for("tides")

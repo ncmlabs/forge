@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "0908f9ea70168d03709e2d23783b5d37c466b2e2df045d92e097dce54e822109",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Draft one line about tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "8d82f4d4c86614bc7365e8a0d74daa37c858d78e3f6484d126b3f25132b0f92b",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Draft one line from the seed tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "0aeff94ad3fe3772a08b813403c2b4e03a3d6337f3b232c84234334d8d3adc1a",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Improve this line: mock response",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "37b8b0f19ac565d5955a33fc142ebfdfea4a741c6eff10211ff3b4ecf9ef09db",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Shorten this line: mock response",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}
