@@ -422,6 +422,220 @@ states Phase
   idle -> done
   done -> idle"#,
     },
+    CodeInfo {
+        code: "E050",
+        title: "endpoint outside the server boundary",
+        explain: r#"`endpoint` declarations are only legal in files whose boundary is `server`.
+
+Wrong:
+#! boundary: shared
+
+endpoint login(user: Text) -> Text
+  give "ok"
+
+Right:
+#! boundary: server
+
+endpoint login(user: Text) -> Text
+  give "ok""#,
+    },
+    CodeInfo {
+        code: "E051",
+        title: "non-serializable field in a shared type",
+        explain: r#"A `shared` type carries a field typed as an agent, pool or flow reference, which cannot cross the wire.
+
+Wrong:
+#! boundary: shared
+
+agent Worker
+  on start
+    say "hi"
+
+type Job
+  worker: Worker
+
+Right:
+#! boundary: shared
+
+type Job
+  worker: Text"#,
+    },
+    CodeInfo {
+        code: "E052",
+        title: "emit in a client boundary",
+        explain: r#"The event bus is a server-runtime construct, so a one-shot client has no bus to emit onto.
+
+Wrong:
+#! boundary: client
+
+agent a
+  on start
+    emit Ping
+
+Right:
+#! boundary: server
+
+agent a
+  on start
+    emit Ping"#,
+    },
+    CodeInfo {
+        code: "E053",
+        title: "spawn in a client boundary",
+        explain: r#"`spawn` needs a supervising runtime that outlives a single request; a client is a one-shot process.
+
+Wrong:
+#! boundary: client
+
+agent a
+  on start
+    spawn Worker
+
+Right:
+#! boundary: server
+
+agent a
+  on start
+    spawn Worker"#,
+    },
+    CodeInfo {
+        code: "E054",
+        title: "search outside the server boundary",
+        explain: r#"`search` makes network requests and can only be used in server boundary files.
+
+Wrong:
+#! boundary: client
+
+agent a
+  on start
+    search "latest news"
+
+Right:
+#! boundary: server
+
+agent a
+  on start
+    search "latest news""#,
+    },
+    CodeInfo {
+        code: "E055",
+        title: "web call in a shared boundary",
+        explain: r#"`shared` boundary files hold types and pure code; `web.fetch`/`web.post` must live in a server or client file.
+
+Wrong:
+#! boundary: shared
+
+fn fetch_it
+  give web.fetch("https://example.com")
+
+Right:
+#! boundary: server
+
+fn fetch_it
+  give web.fetch("https://example.com")"#,
+    },
+    CodeInfo {
+        code: "E056",
+        title: "data access in a client boundary",
+        explain: r#"Durable storage is a server capability; a client has no storage runtime.
+
+Wrong:
+#! boundary: client
+
+fn main
+  data.store("key", "value")
+
+Right:
+#! boundary: server
+
+fn main
+  data.store("key", "value")"#,
+    },
+    CodeInfo {
+        code: "E057",
+        title: "file I/O outside the server boundary",
+        explain: r#"`file.read`/`file.write` touch the host filesystem and must live in server boundary files.
+
+Wrong:
+#! boundary: client
+
+fn main
+  say file.read("notes.txt")
+
+Right:
+#! boundary: server
+
+fn main
+  say file.read("notes.txt")"#,
+    },
+    CodeInfo {
+        code: "E058",
+        title: "client code references a server-only symbol",
+        explain: r#"A symbol declared in a `server` boundary file is not visible from client code.
+
+Wrong:
+#! boundary: client
+
+fn main
+  result = server_only_task("hello")
+
+Right:
+#! boundary: server
+
+fn main
+  result = server_only_task("hello")"#,
+    },
+    CodeInfo {
+        code: "E059",
+        title: "server code references a client-only symbol",
+        explain: r#"A symbol declared in a `client` boundary file is not visible from server code.
+
+Wrong:
+#! boundary: server
+
+fn main
+  say client_helper()
+
+Right:
+#! boundary: client
+
+fn main
+  say client_helper()"#,
+    },
+    CodeInfo {
+        code: "E060",
+        title: "shared code references a server-only symbol",
+        explain: r#"A symbol declared in a `server` boundary file is not visible from shared code.
+
+Wrong:
+#! boundary: shared
+
+fn helper
+  say server_only_fn()
+
+Right:
+#! boundary: server
+
+fn helper
+  say server_only_fn()"#,
+    },
+    CodeInfo {
+        code: "E061",
+        title: "shared code references a client-only symbol",
+        explain: r#"A symbol declared in a `client` boundary file is not visible from shared code.
+
+Wrong:
+#! boundary: shared
+
+fn helper
+  say client_only_fn()
+
+Right:
+#! boundary: client
+
+fn helper
+  say client_only_fn()"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.

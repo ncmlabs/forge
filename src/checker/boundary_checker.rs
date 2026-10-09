@@ -78,7 +78,8 @@ fn check_endpoint_placement(
                 BoundaryKind::Server => unreachable!(),
             };
             diagnostics.push(
-                Diagnostic::error(
+                Diagnostic::coded_error(
+                    "E050",
                     file,
                     format!(
                         "endpoint `{}` is not allowed in {} boundary",
@@ -218,7 +219,8 @@ fn check_fields_serializable(
                         _ => unreachable!(),
                     };
                     diagnostics.push(
-                        Diagnostic::error(
+                        Diagnostic::coded_error(
+                            "E051",
                             file,
                             format!(
                                 "shared type `{}` contains non-serializable field `{}`",
@@ -324,7 +326,8 @@ fn check_refs_in_stmt(
         Stmt::Emit(name, args) => {
             if boundary == BoundaryKind::Client {
                 diagnostics.push(
-                    Diagnostic::error(
+                    Diagnostic::coded_error(
+                        "E052",
                         file,
                         format!("emit `{}` is not allowed in client boundary", name.node),
                         name.span.start..name.span.end,
@@ -420,7 +423,8 @@ fn check_refs_in_stmt(
         Stmt::Spawn(s) => {
             if boundary == BoundaryKind::Client {
                 diagnostics.push(
-                    Diagnostic::error(
+                    Diagnostic::coded_error(
+                        "E053",
                         file,
                         format!("spawn `{}` is not allowed in client boundary", s.template.node),
                         s.template.span.start..s.template.span.end,
@@ -564,7 +568,8 @@ fn check_refs_in_expr(
                     _ => unreachable!(),
                 };
                 diagnostics.push(
-                    Diagnostic::error(
+                    Diagnostic::coded_error(
+                        "E054",
                         file,
                         format!("search is not allowed in {} boundary", boundary_name),
                         expr.span.start..expr.span.end,
@@ -603,7 +608,8 @@ fn check_refs_in_expr(
                     && boundary == BoundaryKind::Shared
                 {
                     diagnostics.push(
-                        Diagnostic::error(
+                        Diagnostic::coded_error(
+                            "E055",
                             file,
                             format!("web.{}() is not allowed in shared boundary", method.node),
                             inner.span.start..method.span.end,
@@ -625,7 +631,8 @@ fn check_refs_in_expr(
                     && boundary == BoundaryKind::Client
                 {
                     diagnostics.push(
-                        Diagnostic::error(
+                        Diagnostic::coded_error(
+                            "E056",
                             file,
                             format!("data.{}() is not allowed in client boundary", method.node),
                             inner.span.start..method.span.end,
@@ -648,7 +655,8 @@ fn check_refs_in_expr(
                         _ => unreachable!(),
                     };
                     diagnostics.push(
-                        Diagnostic::error(
+                        Diagnostic::coded_error(
+                            "E057",
                             file,
                             format!(
                                 "file.{}() is not allowed in {} boundary",
@@ -709,7 +717,8 @@ fn check_name_ref(
     match file_boundary {
         BoundaryKind::Client => {
             if registry.server_symbols.contains(name) {
-                diagnostics.push(Diagnostic::error(
+                diagnostics.push(Diagnostic::coded_error(
+                    "E058",
                     file,
                     format!("client code references server-only symbol `{}`", name),
                     span_start..span_end,
@@ -719,7 +728,8 @@ fn check_name_ref(
         }
         BoundaryKind::Server => {
             if registry.client_symbols.contains(name) {
-                diagnostics.push(Diagnostic::error(
+                diagnostics.push(Diagnostic::coded_error(
+                    "E059",
                     file,
                     format!("server code references client-only symbol `{}`", name),
                     span_start..span_end,
@@ -729,14 +739,16 @@ fn check_name_ref(
         }
         BoundaryKind::Shared => {
             if registry.server_symbols.contains(name) {
-                diagnostics.push(Diagnostic::error(
+                diagnostics.push(Diagnostic::coded_error(
+                    "E060",
                     file,
                     format!("shared code references server-only symbol `{}`", name),
                     span_start..span_end,
                     "this symbol is declared in a server boundary and cannot be used in shared code",
                 ));
             } else if registry.client_symbols.contains(name) {
-                diagnostics.push(Diagnostic::error(
+                diagnostics.push(Diagnostic::coded_error(
+                    "E061",
                     file,
                     format!("shared code references client-only symbol `{}`", name),
                     span_start..span_end,
