@@ -1,3 +1,5 @@
+> **Archived 2026-10-09.** Superseded by [roadmap.md](../../roadmap.md) (v0.3 — Agent-Native FORGE, #473).
+
 # FORGE — Making It Real
 ## Master Roadmap & Requirements Document
 
