@@ -88,6 +88,20 @@ enum Command {
         /// Path to a forge.project.toml manifest for multi-file execution
         #[arg(long, conflicts_with = "file")]
         manifest: Option<PathBuf>,
+        /// Record every provider response as JSON fixtures for `forge test`
+        #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
+        record: Option<String>,
+    },
+    /// Replay a .forge program from recorded fixtures (no provider calls)
+    Test {
+        /// Path to the .forge source file
+        file: PathBuf,
+        /// Fixture file to replay (default: <file>.fixtures.json beside the program)
+        #[arg(long)]
+        fixtures: Option<PathBuf>,
+        /// File holding the program output this replay must reproduce
+        #[arg(long)]
+        expect: Option<PathBuf>,
     },
     /// Execute with full JSON trace output to stderr
     Trace {
@@ -274,6 +288,7 @@ impl Command {
             Command::Check { .. } => "check",
             Command::Explain { .. } => "explain",
             Command::Run { .. } => "run",
+            Command::Test { .. } => "test",
             Command::Trace { .. } => "trace",
             Command::Agent { .. } => "agent",
             Command::AgentInspect { .. } => "agent-inspect",
@@ -562,17 +577,71 @@ async fn run(command: Command, out: &forge::cli_output::OutputMode) -> anyhow::R
                 }
             }
         }
-        Command::Run { file, manifest } => {
-            if let Some(manifest_path) = manifest {
+        Command::Run {
+            file,
+            manifest,
+            record,
+        } => {
+            if let Some(record) = record {
+                let Some(file) = file else {
+                    anyhow::bail!(
+                        "--record requires a program file: forge run <program.forge> --record [path] \
+                         (--manifest recording is not supported yet)"
+                    );
+                };
+                let path = if record.is_empty() {
+                    forge::llm::fixtures::default_path(&file)
+                } else {
+                    PathBuf::from(record)
+                };
+                forge::llm::fixtures::set_mode(forge::llm::fixtures::FixtureMode::Record(path));
+                run_program(&file, "run", false, out).await?;
+            } else if let Some(manifest_path) = manifest {
                 run_manifest(&manifest_path, false, out).await?;
             } else if let Some(file) = file {
-                run_program(&file, false, out).await?;
+                run_program(&file, "run", false, out).await?;
             } else {
                 anyhow::bail!("either a .forge file or --manifest is required");
             }
         }
+        Command::Test {
+            file,
+            fixtures,
+            expect,
+        } => {
+            let path = fixtures.unwrap_or_else(|| forge::llm::fixtures::default_path(&file));
+            if !path.exists() {
+                if !out.json {
+                    eprintln!(
+                        "no fixtures at {}; record them with: forge run {} --record",
+                        path.display(),
+                        file.display()
+                    );
+                }
+                let env = forge::cli_output::Envelope::error(
+                    "test",
+                    forge::cli_output::ErrorInfo::new(
+                        "io",
+                        format!("no fixtures at {}", path.display()),
+                    )
+                    .with_suggestion(format!("forge run {} --record", file.display())),
+                    "test could not replay: fixtures missing",
+                )
+                .with_data(serde_json::json!({
+                    "file": file.display().to_string(),
+                    "fixtures": path.display().to_string(),
+                }));
+                out.done(&env);
+            }
+            if let Some(expect) = expect {
+                check_expected_output(&file, &path, &expect, out)?;
+            } else {
+                forge::llm::fixtures::set_mode(forge::llm::fixtures::FixtureMode::Replay(path));
+                run_program(&file, "test", false, out).await?;
+            }
+        }
         Command::Trace { file } => {
-            run_program(&file, true, out).await?;
+            run_program(&file, "trace", true, out).await?;
         }
         Command::Agent { file } => {
             if out.json {
@@ -1346,12 +1415,117 @@ fn build_skill_executor_inner(
     (Some(Arc::new(executor)), signatures)
 }
 
+/// `forge test --expect <file>`: replay in a child process so the program's
+/// own stdout can be captured, then require it to match `<file>`.
+/// Trailing whitespace is ignored on both sides.
+///
+/// The child always runs in human mode: its stdout *is* the program output, so
+/// `FORGE_OUTPUT` is cleared for the child and JSON mode reports the comparison
+/// in the parent's envelope (#475).
+fn check_expected_output(
+    file: &Path,
+    fixtures: &Path,
+    expect: &Path,
+    out: &forge::cli_output::OutputMode,
+) -> anyhow::Result<()> {
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("test")
+        .arg(file)
+        .arg("--fixtures")
+        .arg(fixtures)
+        .env_remove("FORGE_OUTPUT")
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run forge test: {e}"))?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if out.json {
+            let env = forge::cli_output::Envelope::error(
+                "test",
+                forge::cli_output::ErrorInfo::new("runtime", message.clone()),
+                "replay failed before comparison",
+            );
+            out.done(&env);
+        }
+        anyhow::bail!("forge test failed: {message}");
+    }
+    let actual = String::from_utf8_lossy(&output.stdout).to_string();
+    if !out.json {
+        print!("{actual}");
+    }
+    let expected = std::fs::read_to_string(expect)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", expect.display()))?;
+    let matched = actual.trim_end() == expected.trim_end();
+    if !matched && !out.json {
+        eprintln!(
+            "output mismatch: {} does not match {}",
+            file.display(),
+            expect.display()
+        );
+        print_output_diff(expected.trim_end(), actual.trim_end());
+    }
+    let data = serde_json::json!({
+        "file": file.display().to_string(),
+        "fixtures": fixtures.display().to_string(),
+        "expect": expect.display().to_string(),
+        "matched": matched,
+        "output": actual.lines().map(|l| l.to_string()).collect::<Vec<_>>(),
+    });
+    let env = if matched {
+        forge::cli_output::Envelope::success(
+            "test",
+            data,
+            format!("replay matches {}", expect.display()),
+        )
+    } else {
+        forge::cli_output::Envelope::error(
+            "test",
+            forge::cli_output::ErrorInfo::new(
+                "runtime",
+                format!(
+                    "output mismatch: {} does not match {}",
+                    file.display(),
+                    expect.display()
+                ),
+            ),
+            "replay output did not match the expected file",
+        )
+        .with_data(data)
+    };
+    out.done(&env);
+}
+
+/// Line-by-line diff, capped so a large mismatch stays readable.
+fn print_output_diff(expected: &str, actual: &str) {
+    let expected: Vec<&str> = expected.lines().collect();
+    let actual: Vec<&str> = actual.lines().collect();
+    eprintln!("--- expected");
+    eprintln!("+++ actual");
+    let mut differing = 0;
+    for i in 0..expected.len().max(actual.len()) {
+        let (want, got) = (expected.get(i), actual.get(i));
+        if want == got {
+            continue;
+        }
+        if let Some(line) = want {
+            eprintln!("-{line}");
+        }
+        if let Some(line) = got {
+            eprintln!("+{line}");
+        }
+        differing += 1;
+        if differing == 20 {
+            eprintln!("… diff truncated at 20 differing lines");
+            break;
+        }
+    }
+}
+
 async fn run_program(
     file: &Path,
+    command: &str,
     trace: bool,
     out: &forge::cli_output::OutputMode,
 ) -> anyhow::Result<()> {
-    let command = if trace { "trace" } else { "run" };
     let source = read_source(file)?;
     let program = parse_or_exit(&source, file, command, out);
     let fname = file.display().to_string();

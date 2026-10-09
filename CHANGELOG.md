@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - JSON output envelope and semantic exit codes (#475): every in-scope command
-  (`parse`, `check`, `explain`, `run`, `trace`, `cost`, `build`, `export`,
-  `import`, `inspect`, `send`, `wake`, `store`) accepts a global `--json` /
+  (`parse`, `check`, `explain`, `run`, `trace`, `test`, `cost`, `build`,
+  `export`, `import`, `inspect`, `send`, `wake`, `store`) accepts a global `--json` /
   `FORGE_OUTPUT=json` and prints one envelope
   (`{status, command, data, context, next_steps, warnings, cost, error,
   duration_ms}`) on stdout. `--fields a,b` trims `data` to the listed keys,
@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `forge explain --list` document each one with a `Wrong:`/`Right:` example.
   Conformance cases assert on `error_code` and `docs/forge-reference.md`
   gains a "Diagnostics and Error Codes" section.
+- `forge run --record` and `forge test` (#478): record every provider response
+  into a per-program JSON fixture file (`<program>.fixtures.json`, or an
+  explicit path) and replay it offline. Replay never calls a provider and
+  reports zero tokens and zero cost; a call with no recorded response is a hard
+  error naming the provider, the prompt head, and the file to re-record.
+  `forge test --expect <file>` also asserts the replayed output matches the
+  file (trailing whitespace ignored) and prints a line diff on a mismatch.
+  Recording starts from a clean fixture file, so a zero-call run leaves no
+  stale file behind. Single-file runs only — `--manifest` is rejected.
 - Surface-audit rework (#449): the derived-surface drift audit is now driven
   by the FORGE agent `workflows/surface-audit.forge` via `forge send`, on a
   zero-cost OpenAI-compatible provider selected with `FORGE_CONFIG` +

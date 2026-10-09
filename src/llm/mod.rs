@@ -2,6 +2,7 @@
 // See issue #8 and providers.md for full specification
 
 pub mod cost_tracker;
+pub mod fixtures;
 pub mod providers;
 pub mod registry;
 
@@ -181,6 +182,10 @@ pub enum ProviderError {
 
     #[error("network error: {0}")]
     Network(String),
+
+    /// Fixture record/replay failure (#478). The message is already user-facing.
+    #[error("{0}")]
+    Fixture(String),
 }
 
 // ── Tool-use types (issue #40 — skill bridge) ───────────────────────────────
@@ -194,7 +199,7 @@ pub struct ToolDefinition {
 }
 
 /// A tool call requested by the LLM.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallRequest {
     pub id: String,
     pub name: String,

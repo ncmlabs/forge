@@ -183,6 +183,101 @@ fn trace_json_envelope_names_the_trace_command() {
     assert_eq!(doc["data"]["output"], serde_json::json!(["Hello, World!"]));
 }
 
+// ── test (record / replay, #478) ────────────────────────────────
+
+#[test]
+fn test_json_replays_recorded_fixtures() {
+    let dir = temp_dir("test-replay");
+    let fixtures = dir.join("llm.fixtures.json");
+    let fixtures_arg = fixtures.to_string_lossy().to_string();
+
+    // Record once on the mock provider (the fixture file is the only artifact).
+    let recorded = forge_env(
+        &[
+            "run",
+            "--json",
+            "tests/fixtures/replay_llm.forge",
+            "--record",
+            &fixtures_arg,
+        ],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&recorded, 0);
+    assert!(fixtures.exists(), "recording must write {}", fixtures_arg);
+
+    let replayed = forge_env(
+        &[
+            "test",
+            "--json",
+            "tests/fixtures/replay_llm.forge",
+            "--fixtures",
+            &fixtures_arg,
+        ],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&replayed, 0);
+    let doc = parse_stdout(&replayed);
+    assert_eq!(doc["command"], "test");
+    assert_eq!(doc["data"]["output"], serde_json::json!(["mock response"]));
+    assert_eq!(doc["cost"], 0.0);
+
+    // --expect compares the replayed stdout against a file.
+    let expect = dir.join("expected.txt");
+    std::fs::write(&expect, "mock response\n").unwrap();
+    let matched = forge_env(
+        &[
+            "test",
+            "--json",
+            "tests/fixtures/replay_llm.forge",
+            "--fixtures",
+            &fixtures_arg,
+            "--expect",
+            expect.to_str().unwrap(),
+        ],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&matched, 0);
+    let doc = parse_stdout(&matched);
+    assert_eq!(doc["data"]["matched"], true);
+
+    std::fs::write(&expect, "something else\n").unwrap();
+    let mismatched = forge_env(
+        &[
+            "test",
+            "--json",
+            "tests/fixtures/replay_llm.forge",
+            "--fixtures",
+            &fixtures_arg,
+            "--expect",
+            expect.to_str().unwrap(),
+        ],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&mismatched, 1);
+    let doc = parse_stdout(&mismatched);
+    assert_eq!(doc["status"], "error");
+    assert_eq!(doc["data"]["matched"], false);
+    assert_eq!(doc["error"]["type"], "runtime");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_json_without_fixtures_exits_one() {
+    let output = forge_env(
+        &["test", "--json", "tests/fixtures/echo_agent.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 1);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["status"], "error");
+    assert_eq!(doc["error"]["type"], "io");
+    assert!(doc["error"]["suggestion"]
+        .as_str()
+        .unwrap()
+        .contains("--record"));
+}
+
 // ── cost, build, export/import/inspect ──────────────────────────
 
 #[test]
