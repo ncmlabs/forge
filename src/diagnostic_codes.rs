@@ -1194,6 +1194,153 @@ agent a
     mode: wake
     emit: Heartbeat"#,
     },
+    CodeInfo {
+        code: "E130",
+        title: "correlate references an unknown event",
+        explain: r#"The event named in `correlate on Event.field` has no top-level `event` declaration.
+
+Wrong:
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake
+
+Right:
+event SlackMention
+  thread_ts: Text
+
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake"#,
+    },
+    CodeInfo {
+        code: "E131",
+        title: "correlate references an unknown event field",
+        explain: r#"The correlation field does not exist on the event declaration.
+
+Wrong:
+event SlackMention
+  thread_ts: Text
+
+agent a
+  correlate on SlackMention.channel
+    mode: wake
+
+Right:
+event SlackMention
+  thread_ts: Text
+
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake"#,
+    },
+    CodeInfo {
+        code: "E132",
+        title: "correlate field is not Text",
+        explain: r#"Correlation keys are compared as strings, so the event field must be `Text`.
+
+Wrong:
+event Tick
+  seq: Number
+
+agent a
+  correlate on Tick.seq
+    mode: wake
+
+Right:
+event Tick
+  seq: Text
+
+agent a
+  correlate on Tick.seq
+    mode: wake"#,
+    },
+    CodeInfo {
+        code: "E133",
+        title: "correlate key is not persisted",
+        explain: r#"The specialist must persist the correlation key between sessions: add a matching `Text` field to `memory persistent`.
+
+Wrong:
+event SlackMention
+  thread_ts: Text
+
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake
+
+Right:
+event SlackMention
+  thread_ts: Text
+
+agent a
+  memory persistent
+    thread_ts: Text
+  correlate on SlackMention.thread_ts
+    mode: wake"#,
+    },
+    CodeInfo {
+        code: "E134",
+        title: "correlate block is missing mode:",
+        explain: r#"Every correlate block must declare how it routes matched events: `mode: wake` or `mode: spawn`.
+
+Wrong:
+agent a
+  correlate on SlackMention.thread_ts
+
+Right:
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake"#,
+    },
+    CodeInfo {
+        code: "E135",
+        title: "wake correlate delivers nothing",
+        explain: r#"`mode: wake` must deliver an event: add `emit:` with a matching handler, or an `on <event>` handler on the agent.
+
+Wrong:
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake
+
+Right:
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake
+  on SlackMention
+    say "matched""#,
+    },
+    CodeInfo {
+        code: "E136",
+        title: "duplicate correlate block",
+        explain: r#"Only one correlate block per `(event, field)` pair is allowed in an agent.
+
+Wrong:
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake
+  correlate on SlackMention.thread_ts
+    mode: spawn
+
+Right:
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake"#,
+    },
+    CodeInfo {
+        code: "E137",
+        title: "duplicate correlate option",
+        explain: r#"An option appears twice in the same correlate block; keep one.
+
+Wrong:
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake
+    mode: spawn
+
+Right:
+agent a
+  correlate on SlackMention.thread_ts
+    mode: wake"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.

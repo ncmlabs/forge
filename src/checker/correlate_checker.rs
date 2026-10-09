@@ -84,7 +84,8 @@ impl CheckError {
                 event,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E130",
                 file,
                 format!(
                     "correlate block in agent `{}` references unknown event `{}`",
@@ -101,7 +102,8 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E131",
                 file,
                 format!(
                     "event `{}` has no field `{}` (required by correlate block in agent `{}`)",
@@ -119,7 +121,8 @@ impl CheckError {
                 actual_type,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E132",
                 file,
                 format!(
                     "correlate field `{}.{}` must be `Text` but is `{}` (in agent `{}`)",
@@ -135,7 +138,8 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E133",
                 file,
                 format!(
                     "agent `{}` correlates on field `{}` but has no matching `memory persistent` field with type `Text`",
@@ -155,7 +159,8 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E134",
                 file,
                 format!(
                     "correlate block `{}.{}` in agent `{}` is missing a `mode:` clause",
@@ -172,7 +177,8 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E135",
                 file,
                 format!(
                     "correlate `{}.{}` in agent `{}` has `mode: wake` but no `emit:` and no `on {}` handler",
@@ -192,7 +198,8 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E136",
                 file,
                 format!(
                     "duplicate correlate block `{}.{}` in agent `{}`",
@@ -210,7 +217,8 @@ impl CheckError {
                 option,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E137",
                 file,
                 format!(
                     "duplicate `{}` option in correlate block `{}.{}` (agent `{}`)",
