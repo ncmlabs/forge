@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "52bf4e72f872766a885cb7c7953cf6fcfe1fae8406b9e0a00b24d2d81c6dec27",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Analyze a repository with count=3 files.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}
