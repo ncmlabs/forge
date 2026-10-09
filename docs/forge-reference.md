@@ -1222,6 +1222,53 @@ Execute a FORGE program and emit a detailed JSON trace to stderr for debugging.
 forge trace program.forge 2> trace.json
 ```
 
+#### Record and replay
+
+`forge run --record` stores every provider response in a JSON fixture file;
+`forge test` replays that file. A replayed run makes no provider calls and
+reports zero tokens and zero cost, so iterating on a program is free.
+
+```bash
+forge run program.forge --record               # → program.forge.fixtures.json
+forge run program.forge --record out/fx.json   # explicit path
+forge test program.forge                       # replay
+forge test program.forge --fixtures out/fx.json
+forge test program.forge --expect expected.txt # replay, then assert stdout
+```
+
+`--expect <file>` requires the replayed output to match the file, ignoring
+trailing whitespace on both sides; a mismatch exits 1 and prints a short
+line diff.
+
+The file is one JSON document per program, keyed by a SHA-256 hash of the
+provider name, system prompt, prompt, JSON mode, and tool names. Repeating an
+identical prompt replays the recorded responses in order (index 0, 1, …). The
+file is rewritten after each call, so a recording interrupted by a crash still
+replays what it captured.
+
+A call with no recorded response is a hard error — never a silent fallback to a
+live provider:
+
+```
+no recorded response for provider 'mock' (prompt starts: "…"); re-record with: forge run <program.forge> --record <fixtures.json>
+```
+
+`--record` may carry an optional path, so give the program file first
+(`forge run program.forge --record`) — otherwise the path is read as the file.
+
+**Limitations**
+
+- Fixtures are keyed by request content plus occurrence order, not by call
+  site. Identical prompts replay in arrival order, so re-record after changing
+  the program, its inputs, or its control flow.
+- Embedding providers are not recorded or replayed. Programs that use
+  `data.embed` / `data.search` still reach the embedding endpoint.
+- Missing-fixture errors get a diagnostic code with the JSON envelope (#475).
+- Manifest runs are not supported yet: `--record` and `forge test` take a single
+  `.forge` file, and `--manifest` plus `--record` is rejected.
+- The configured provider must still be constructible, so a real provider still
+  needs its API key present. It is never called during replay.
+
 ---
 
 ## 7. Events
