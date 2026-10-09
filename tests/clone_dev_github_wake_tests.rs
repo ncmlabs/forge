@@ -38,7 +38,7 @@ const ISSUE_CREATOR_PATH: &str = "workflows/clone-dev/stage1/issue_creator.forge
 const TRIAGE_SPECIALIST_PATH: &str = "workflows/clone-dev/stage2/triage_specialist.forge";
 const DEV_CYCLE_AGENTS_PATH: &str = "workflows/dev-cycle/agents.forge";
 const GATE_TWO_PATH: &str = "workflows/dev-cycle/gate_two.forge";
-const SLACK_ADAPTER_PATH: &str = "examples/agents/slack-adapter/agents.forge";
+const SLACK_ADAPTER_PATH: &str = "tests/fixtures/agents/slack-adapter/agents.forge";
 
 const TYPESCRIPT_TEST_CMD: &str = "npm ci && npm run typecheck && npm test && npm run build";
 

@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archived at `docs/archive/roadmap-v3.md`. The generator/toolkit, WASM and
   dev-system tracks are deprecated (see roadmap).
 
+### Removed
+- Showcase examples moved to ncmlabs/forge-examples (#488); test fixtures
+  relocated to `tests/fixtures/`.
+
 ### Fixed
 - Diagnostic rendering (#474): reports name the real source file instead of
   `<unknown>` (the ariadne source id was a bare span), and colour is emitted

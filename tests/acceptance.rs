@@ -200,9 +200,9 @@ async fn accept_research_run_without_search_provider() {
 #[tokio::test]
 async fn accept_tictactoe_game() {
     // Load room_agent (the agent under test) and platform (pure functions + states)
-    let room_source = std::fs::read_to_string("examples/tictactoe/room_agent.forge")
+    let room_source = std::fs::read_to_string("tests/fixtures/tictactoe/room_agent.forge")
         .expect("could not read room_agent.forge");
-    let platform_source = std::fs::read_to_string("examples/tictactoe/platform.forge")
+    let platform_source = std::fs::read_to_string("tests/fixtures/tictactoe/platform.forge")
         .expect("could not read platform.forge");
 
     let room_program = forge::parser::parse(&room_source).expect("parse room_agent failed");
@@ -389,7 +389,7 @@ async fn accept_tictactoe_game() {
 
 #[test]
 fn accept_fact_check_pool_parse() {
-    let diags = check_file("examples/agents/fact_check_pool.forge");
+    let diags = check_file("tests/fixtures/agents/fact_check_pool.forge");
     let errs = errors(&diags);
     assert!(
         errs.is_empty(),
@@ -400,7 +400,7 @@ fn accept_fact_check_pool_parse() {
 
 #[tokio::test]
 async fn accept_fact_check_pool_run() {
-    let program = parse_file("examples/agents/fact_check_pool.forge");
+    let program = parse_file("tests/fixtures/agents/fact_check_pool.forge");
     // Mock provider returns 3 identical responses for the 3 pool workers
     let mock = MockProvider::new("mock").with_default("YES this claim is factually accurate");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
