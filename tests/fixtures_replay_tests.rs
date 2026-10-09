@@ -218,3 +218,70 @@ fn record_rejects_manifest_runs() {
         stderr_of(&output)
     );
 }
+
+#[test]
+fn test_expect_accepts_the_recorded_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    stage_program(dir.path());
+
+    let recorded = forge(&mock_config(), dir.path())
+        .args(["run", "classify.forge", "--record"])
+        .output()
+        .expect("record run");
+    assert!(recorded.status.success(), "{}", stderr_of(&recorded));
+
+    // Trailing whitespace on either side must not matter.
+    std::fs::write(
+        dir.path().join("expected.txt"),
+        format!(
+            "{}\n  \n",
+            String::from_utf8_lossy(&recorded.stdout).trim_end()
+        ),
+    )
+    .expect("write expected output");
+
+    let output = forge(&mock_config(), dir.path())
+        .args(["test", "classify.forge", "--expect", "expected.txt"])
+        .output()
+        .expect("expect run");
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&recorded.stdout),
+        "--expect still prints the program output"
+    );
+}
+
+#[test]
+fn test_expect_mismatch_exits_nonzero_with_a_diff() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    stage_program(dir.path());
+
+    let recorded = forge(&mock_config(), dir.path())
+        .args(["run", "classify.forge", "--record"])
+        .output()
+        .expect("record run");
+    assert!(recorded.status.success(), "{}", stderr_of(&recorded));
+
+    std::fs::write(dir.path().join("wrong.txt"), "this is not the output\n")
+        .expect("write wrong expectation");
+
+    let output = forge(&mock_config(), dir.path())
+        .args(["test", "classify.forge", "--expect", "wrong.txt"])
+        .output()
+        .expect("expect run");
+    assert!(
+        !output.status.success(),
+        "a wrong expectation fails the run"
+    );
+    let stderr = stderr_of(&output);
+    assert!(stderr.contains("output mismatch"), "{stderr}");
+    assert!(stderr.contains("-this is not the output"), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "+{}",
+            String::from_utf8_lossy(&recorded.stdout).trim_end()
+        )),
+        "the diff shows the actual output: {stderr}"
+    );
+}

@@ -92,6 +92,9 @@ enum Command {
         /// Fixture file to replay (default: <file>.fixtures.json beside the program)
         #[arg(long)]
         fixtures: Option<PathBuf>,
+        /// File holding the program output this replay must reproduce
+        #[arg(long)]
+        expect: Option<PathBuf>,
     },
     /// Execute with full JSON trace output to stderr
     Trace {
@@ -413,7 +416,11 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("either a .forge file or --manifest is required");
             }
         }
-        Command::Test { file, fixtures } => {
+        Command::Test {
+            file,
+            fixtures,
+            expect,
+        } => {
             let path = fixtures.unwrap_or_else(|| forge::llm::fixtures::default_path(&file));
             if !path.exists() {
                 eprintln!(
@@ -423,8 +430,12 @@ async fn main() -> anyhow::Result<()> {
                 );
                 std::process::exit(1);
             }
-            forge::llm::fixtures::set_mode(forge::llm::fixtures::FixtureMode::Replay(path));
-            run_program(&file, false).await?;
+            if let Some(expect) = expect {
+                check_expected_output(&file, &path, &expect)?;
+            } else {
+                forge::llm::fixtures::set_mode(forge::llm::fixtures::FixtureMode::Replay(path));
+                run_program(&file, false).await?;
+            }
         }
         Command::Trace { file } => {
             run_program(&file, true).await?;
@@ -932,6 +943,66 @@ fn build_skill_executor_inner(
         executor = executor.with_tracer(Arc::new(t.clone()));
     }
     (Some(Arc::new(executor)), signatures)
+}
+
+/// `forge test --expect <file>`: replay in a child process so the program's
+/// own stdout can be captured, then require it to match `<file>`.
+/// Trailing whitespace is ignored on both sides.
+fn check_expected_output(file: &Path, fixtures: &Path, expect: &Path) -> anyhow::Result<()> {
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("test")
+        .arg(file)
+        .arg("--fixtures")
+        .arg(fixtures)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run forge test: {e}"))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "forge test failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+
+    let actual = String::from_utf8_lossy(&output.stdout);
+    let expected = std::fs::read_to_string(expect)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", expect.display()))?;
+    if actual.trim_end() != expected.trim_end() {
+        eprintln!(
+            "output mismatch: {} does not match {}",
+            file.display(),
+            expect.display()
+        );
+        print_output_diff(expected.trim_end(), actual.trim_end());
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Line-by-line diff, capped so a large mismatch stays readable.
+fn print_output_diff(expected: &str, actual: &str) {
+    let expected: Vec<&str> = expected.lines().collect();
+    let actual: Vec<&str> = actual.lines().collect();
+    eprintln!("--- expected");
+    eprintln!("+++ actual");
+    let mut differing = 0;
+    for i in 0..expected.len().max(actual.len()) {
+        let (want, got) = (expected.get(i), actual.get(i));
+        if want == got {
+            continue;
+        }
+        if let Some(line) = want {
+            eprintln!("-{line}");
+        }
+        if let Some(line) = got {
+            eprintln!("+{line}");
+        }
+        differing += 1;
+        if differing == 20 {
+            eprintln!("… diff truncated at 20 differing lines");
+            break;
+        }
+    }
 }
 
 async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
