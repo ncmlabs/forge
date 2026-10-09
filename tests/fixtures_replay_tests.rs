@@ -79,6 +79,25 @@ fn record_then_replay_round_trip_via_cli() {
         String::from_utf8_lossy(&recorded.stdout),
         "replay reproduces the recorded stdout"
     );
+
+    // Principle IV — deterministic across runs, and replay never rewrites the file.
+    let fixtures = dir.path().join("classify.forge.fixtures.json");
+    let before = std::fs::read(&fixtures).expect("read fixtures");
+    let replayed_again = forge(&mock_config(), dir.path())
+        .args(["test", "classify.forge"])
+        .output()
+        .expect("second replay run");
+    assert!(
+        replayed_again.status.success(),
+        "{}",
+        stderr_of(&replayed_again)
+    );
+    assert_eq!(replayed_again.stdout, replayed.stdout, "two replays agree");
+    assert_eq!(
+        std::fs::read(&fixtures).expect("read fixtures"),
+        before,
+        "replay leaves the fixture file untouched"
+    );
 }
 
 #[test]
