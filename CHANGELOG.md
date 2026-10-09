@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Diagnostic error codes (#474): every diagnostic now carries a stable code
+  (`Exxx` errors, `Wxxx` warnings) from the registry in
+  `src/diagnostic_codes.rs`, and `forge explain <code>` /
+  `forge explain --list` document each one with a `Wrong:`/`Right:` example.
+  Conformance cases assert on `error_code` and `docs/forge-reference.md`
+  gains a "Diagnostics and Error Codes" section.
 - `forge run --record` and `forge test` (#478): record every provider response
   into a per-program JSON fixture file (`<program>.fixtures.json`, or an
   explicit path) and replay it offline. Replay never calls a provider and
@@ -24,6 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proof-run metrics (3.48-min merge, first-try CI, novice→expert mastery,
   $0.23 cost), the defect harvest and lessons for v2; roadmap Layer 3 moved
   to v1 complete. Closes epic #292.
+
+### Changed
+- Roadmap reset to v0.3 — Agent-Native FORGE (#473). The previous roadmap is
+  archived at `docs/archive/roadmap-v3.md`. The generator/toolkit, WASM and
+  dev-system tracks are deprecated (see roadmap).
+
+### Fixed
+- Diagnostic rendering (#474): reports name the real source file instead of
+  `<unknown>` (the ariadne source id was a bare span), and colour is emitted
+  only when stderr is an interactive terminal, so piped or redirected output
+  is plain text; `NO_COLOR` disables colour on a terminal.
+- Clippy `double_must_use` errors on stable 1.99 from `async-trait` expansion;
+  bumped `async-trait` in `Cargo.lock` (#489).
+- RUSTSEC-2026-0285: bumped `rustls` to 0.23.45 in `Cargo.lock` (#472).
 
 ## [0.2.0] - 2026-08-31
 

@@ -113,7 +113,7 @@ impl BuildPipeline {
         let merged_fname = source_files
             .first()
             .map(|sf| sf.path.clone())
-            .unwrap_or_default();
+            .ok_or_else(|| anyhow::anyhow!("no source files to check"))?;
         let ctx = crate::resolver::CheckContext::new(&merged_fname);
         if let Err(errors) = ctx.check(&composed.program) {
             let registry = crate::resolver::CapabilityRegistry::builtin();

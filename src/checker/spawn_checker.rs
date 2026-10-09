@@ -80,6 +80,7 @@ fn check_stmt(
                 if agent.stuck_policy.is_none() {
                     diagnostics.push(
                         Diagnostic::warning(
+                            "W080",
                             file,
                             format!(
                                 "spawning agent `{}` which has no failure policy",
@@ -132,6 +133,7 @@ fn check_find_in_expr(
             if !agents.contains_key(t.node.as_str()) {
                 diagnostics.push(
                     Diagnostic::warning(
+                        "W081",
                         file,
                         format!("find references unknown agent template `{}`", t.node),
                         t.span.start..t.span.end,

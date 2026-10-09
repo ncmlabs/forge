@@ -65,6 +65,15 @@ enum Command {
         #[arg(long)]
         merge: bool,
     },
+    /// Explain a diagnostic code, or list every registered code
+    Explain {
+        /// Diagnostic code to explain, e.g. E030 or W070
+        #[arg(required_unless_present = "list")]
+        code: Option<String>,
+        /// List every registered code and its title
+        #[arg(long)]
+        list: bool,
+    },
     /// Execute a .forge program
     Run {
         /// Path to the .forge source file
@@ -355,6 +364,26 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 std::process::exit(1);
+            }
+        }
+        Command::Explain { code, list } => {
+            if list {
+                for info in forge::diagnostic_codes::CODES {
+                    println!("{} — {}", info.code, info.title);
+                }
+            } else {
+                let code = code.unwrap_or_default();
+                match forge::diagnostic_codes::lookup(&code) {
+                    Some(info) => {
+                        println!("{} — {}", info.code, info.title);
+                        println!();
+                        println!("{}", info.explain);
+                    }
+                    None => {
+                        eprintln!("unknown code {}; run `forge explain --list`", code);
+                        std::process::exit(1);
+                    }
+                }
             }
         }
         Command::Run {
@@ -1331,10 +1360,12 @@ fn try_build_executor_multi(
     })?;
 
     // Semantic checkers on merged program (states, requires, spawn, etc.)
+    // The first source path identifies the merged program; an empty id would
+    // render as `<unknown>` (#474).
     let merged_fname = source_files
         .first()
         .map(|sf| sf.path.clone())
-        .unwrap_or_default();
+        .ok_or_else(|| anyhow::anyhow!("no source files to check"))?;
     diagnostics.extend(forge::checker::check_all(&composed.program, &merged_fname));
 
     // Render all diagnostics, but only fail on errors (not warnings)

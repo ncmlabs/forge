@@ -6,6 +6,7 @@
   "input": "pure bad\n  needs x: Text\n  gives Text\n  do\n    give classify x into [\"a\", \"b\"]\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E030",
     "error_contains": ["cannot use", "classify"]
   }
 }

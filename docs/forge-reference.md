@@ -2820,3 +2820,48 @@ Examples are not all validated the same way:
 | Multi-file examples | Validate through `forge.project.toml` or a merged-source command, not by checking dependent files in isolation |
 
 When an example intentionally exercises a checker limitation, document the limitation beside the example or in the issue verification notes rather than treating a nonzero checker result as a passing smoke test.
+
+---
+
+## 26. Diagnostics and Error Codes
+
+Every diagnostic emitted by `forge check`, `forge run`, `forge build`, `forge serve` and the watcher carries a stable code (`Exxx` for errors, `Wxxx` for warnings). The full registry lives in `src/diagnostic_codes.rs`.
+
+| Range | Source |
+|-------|--------|
+| `E001`–`E009` | parser |
+| `E010`–`E019` | resolver (capabilities, composition, arity, argument types) |
+| `E020`–`E029` | uncertain checker |
+| `E030`–`E039` | pure checker |
+| `E040`–`E049` | states checker |
+| `E050`–`E069` | boundary checker |
+| `E070`–`E079` | requires checker |
+| `E080`–`E089` | spawn checker |
+| `E090`–`E099` | warden checker |
+| `E100`–`E109` | allows checker |
+| `E110`–`E129` | schedule checker |
+| `E130`–`E139` | correlate checker |
+| `E140`–`E149` | webhook checker |
+
+Warnings reuse the same range with a `W` prefix (for example `W070` is the "requires clause uses an LLM operation" warning).
+
+Codes are part of the CLI contract: they are never renumbered or reused. `forge explain <code>` prints the code, its title, and a short explanation with a `Wrong:` and a `Right:` snippet:
+
+```bash
+forge explain E030     # pure function uses a stochastic operation
+forge explain --list   # every registered code and title
+```
+
+An unknown code exits 1 with `unknown code <X>; run \`forge explain --list\``.
+
+Diagnostics report the real source path (never `<unknown>`). Colour is emitted only when stderr is an interactive terminal: piping or redirecting output produces plain text, and setting `NO_COLOR` disables colour even on a terminal.
+
+Conformance cases assert on codes instead of message substrings:
+
+```json
+"expected": {
+  "outcome": "compile_error",
+  "error_code": "E030",
+  "error_contains": ["cannot use", "reason"]
+}
+```
