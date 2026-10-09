@@ -10,6 +10,8 @@ pub enum DiagnosticKind {
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub kind: DiagnosticKind,
+    /// Stable code from [`crate::diagnostic_codes::CODES`] (e.g. `E030`).
+    pub code: &'static str,
     pub message: String,
     pub file: String,
     pub span: Range<usize>,
@@ -18,7 +20,10 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    pub fn error(
+    /// Build an error diagnostic. `code` must be registered in
+    /// [`crate::diagnostic_codes::CODES`].
+    pub fn coded_error(
+        code: &'static str,
         file: impl Into<String>,
         message: impl Into<String>,
         span: Range<usize>,
@@ -26,6 +31,7 @@ impl Diagnostic {
     ) -> Self {
         Self {
             kind: DiagnosticKind::Error,
+            code,
             message: message.into(),
             file: file.into(),
             span,
@@ -34,7 +40,10 @@ impl Diagnostic {
         }
     }
 
-    pub fn warning(
+    /// Build a warning diagnostic. `code` must be registered in
+    /// [`crate::diagnostic_codes::CODES`].
+    pub fn coded_warning(
+        code: &'static str,
         file: impl Into<String>,
         message: impl Into<String>,
         span: Range<usize>,
@@ -42,12 +51,34 @@ impl Diagnostic {
     ) -> Self {
         Self {
             kind: DiagnosticKind::Warning,
+            code,
             message: message.into(),
             file: file.into(),
             span,
             label: label.into(),
             help: None,
         }
+    }
+
+    /// Transitional uncoded constructor (#474): every call site is converted to
+    /// [`Self::coded_error`] checker by checker, then this is deleted.
+    pub fn error(
+        file: impl Into<String>,
+        message: impl Into<String>,
+        span: Range<usize>,
+        label: impl Into<String>,
+    ) -> Self {
+        Self::coded_error("", file, message, span, label)
+    }
+
+    /// Transitional uncoded constructor (#474), see [`Self::error`].
+    pub fn warning(
+        file: impl Into<String>,
+        message: impl Into<String>,
+        span: Range<usize>,
+        label: impl Into<String>,
+    ) -> Self {
+        Self::coded_warning("", file, message, span, label)
     }
 
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
