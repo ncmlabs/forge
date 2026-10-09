@@ -1289,10 +1289,12 @@ fn try_build_executor_multi(
     })?;
 
     // Semantic checkers on merged program (states, requires, spawn, etc.)
+    // The first source path identifies the merged program; an empty id would
+    // render as `<unknown>` (#474).
     let merged_fname = source_files
         .first()
         .map(|sf| sf.path.clone())
-        .unwrap_or_default();
+        .ok_or_else(|| anyhow::anyhow!("no source files to check"))?;
     diagnostics.extend(forge::checker::check_all(&composed.program, &merged_fname));
 
     // Render all diagnostics, but only fail on errors (not warnings)
