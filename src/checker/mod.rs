@@ -3,6 +3,7 @@
 
 pub mod allows_checker;
 pub mod boundary_checker;
+pub mod command_gate_checker;
 pub mod correlate_checker;
 pub mod pure_checker;
 pub mod requires_checker;
@@ -32,22 +33,26 @@ pub fn check_all(program: &Program, file: &str) -> Vec<Diagnostic> {
     // Pass 4: uncertain value enforcement (Principle I — Honesty)
     diagnostics.extend(uncertain_checker::check(program, file));
 
-    // Pass 5: warden policy enforcement
+    // Pass 5: command gate enforcement (#484 — a failed command cannot be
+    // overruled by an oracle verdict)
+    diagnostics.extend(command_gate_checker::check(program, file));
+
+    // Pass 6: warden policy enforcement
     diagnostics.extend(warden_checker::check(program, file));
 
-    // Pass 6: spawn statement validation (Principle VII — Accountability)
+    // Pass 7: spawn statement validation (Principle VII — Accountability)
     diagnostics.extend(spawn_checker::check(program, file));
 
-    // Pass 7: schedule block validation (Principle I/III — honesty + token economy)
+    // Pass 8: schedule block validation (Principle I/III — honesty + token economy)
     diagnostics.extend(schedule_checker::check(program, file));
 
-    // Pass 8: correlate block validation (Principle I/II — honesty + determinism)
+    // Pass 9: correlate block validation (Principle I/II — honesty + determinism)
     diagnostics.extend(correlate_checker::check(program, file));
 
-    // Pass 9: webhook block validation (Principle I/IX — honesty + boundary separation)
+    // Pass 10: webhook block validation (Principle I/IX — honesty + boundary separation)
     diagnostics.extend(webhook_checker::check(program, file));
 
-    // Pass 10: per-agent skill allow-list enforcement (#363 / T9.2 —
+    // Pass 11: per-agent skill allow-list enforcement (#363 / T9.2 —
     // Principle IX boundary separation per-agent).
     diagnostics.extend(allows_checker::check(program, file));
 

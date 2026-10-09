@@ -88,7 +88,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | Issue | Title | Status |
 | ----- | ----- | ------ |
 | [#483](https://github.com/ncmlabs/forge/issues/483) | bench: LLM authoring benchmark — pass@1 / pass@3-repair across models (supersedes #168) (part 1 corpus done) | Open |
-| [#484](https://github.com/ncmlabs/forge/issues/484) | checker: deterministic gate beats oracle — failed command cannot be overruled by reason | Open |
+| [#484](https://github.com/ncmlabs/forge/issues/484) | checker: deterministic gate beats oracle — failed command cannot be overruled by reason | Done ✅ |
 
 ## Suggested order
 

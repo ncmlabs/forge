@@ -121,6 +121,12 @@ expect = ["server-only symbol"]
 merge = true
 
 [[cases]]
+name = "command gate expected error"
+paths = ["examples/errors/command_gate_error.forge"]
+check = "error"
+expect = ["used before checking"]
+
+[[cases]]
 name = "exec pure expected error"
 paths = ["examples/errors/exec_pure_error.forge"]
 check = "error"
