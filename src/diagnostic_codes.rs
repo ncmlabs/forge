@@ -1470,6 +1470,56 @@ pure judge
 fn main
   say judge("x")"#,
     },
+    CodeInfo {
+        code: "E161",
+        title: "impossible match pattern",
+        explain: r#"A constructor pattern names something the scrutinee can never hold: not a declared or built-in type, and not one of the scrutinee's statically known values (`classify ... into [...]` labels, or the literal `give`s of the producing function). The arm is dead code and silently falls through to `_`.
+
+Wrong:
+task t
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["Buy"]
+    match result
+      Nonexistent(who) -> give "never"
+      _ -> give "other"
+
+Right:
+task t
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["Buy"]
+    match result
+      Buy(who) -> give "buy"
+      _ -> give "other""#,
+    },
+    CodeInfo {
+        code: "E162",
+        title: "case-mismatched tag pattern",
+        explain: r#"Tags compare exact text, so an arm whose name differs only in case from a known value never matches and silently falls through to `_`.
+
+Wrong:
+task t
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["Positive"]
+    match result
+      POSITIVE -> give "up"
+      _ -> give "other"
+
+Right:
+task t
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["Positive"]
+    match result
+      Positive -> give "up"
+      _ -> give "other""#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.

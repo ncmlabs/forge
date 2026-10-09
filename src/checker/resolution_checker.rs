@@ -8,7 +8,7 @@
 // reasons about values it can prove statically (classify labels, all-literal
 // `give`s, and records built by a declared type constructor).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diagnostic::Diagnostic;
@@ -38,12 +38,24 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "Text",
 ];
 
+/// Statically known values a scrutinee can hold.
+#[derive(Clone)]
+enum Values {
+    /// Literal text values: `classify ... into [...]` labels, or the `give`s of
+    /// a pure/task whose every `give` is a Text literal.
+    Literals(Vec<String>),
+    /// `_type` tag of a record built by a call to a declared type name.
+    Record(String),
+}
+
 /// Program-level name index, built once per file.
 struct Index {
     /// Names that resolve as a bare call target.
     callable: HashSet<String>,
     /// Declared `type` names plus [`BUILTIN_TYPES`].
     types: HashSet<String>,
+    /// Pure/task names whose every `give` is a Text literal → those literals.
+    literal_gives: HashMap<String, Vec<String>>,
 }
 
 impl Index {
@@ -51,14 +63,21 @@ impl Index {
         let mut index = Self {
             callable: BUILTIN_CALLS.iter().map(|s| s.to_string()).collect(),
             types: BUILTIN_TYPES.iter().map(|s| s.to_string()).collect(),
+            literal_gives: HashMap::new(),
         };
         for item in &program.items {
             match &item.node {
                 TopLevel::Task(d) => {
                     index.callable.insert(d.name.node.clone());
+                    if let Some(vals) = task_literal_gives(d) {
+                        index.literal_gives.insert(d.name.node.clone(), vals);
+                    }
                 }
                 TopLevel::Pure(d) => {
                     index.callable.insert(d.name.node.clone());
+                    if let Some(vals) = literal_gives_in(&d.body) {
+                        index.literal_gives.insert(d.name.node.clone(), vals);
+                    }
                 }
                 TopLevel::Flow(d) => {
                     index.callable.insert(d.name.node.clone());
@@ -136,18 +155,36 @@ pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
 
 impl Index {
     fn stmts(&self, stmts: &[Spanned<Stmt>], file: &str, diagnostics: &mut Vec<Diagnostic>) {
-        self.stmts_with(stmts, file, diagnostics);
+        self.stmts_with(stmts, &mut HashMap::new(), file, diagnostics);
     }
 
-    fn stmts_with(&self, stmts: &[Spanned<Stmt>], file: &str, diagnostics: &mut Vec<Diagnostic>) {
+    fn stmts_with(
+        &self,
+        stmts: &[Spanned<Stmt>],
+        bindings: &mut HashMap<String, Values>,
+        file: &str,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
         for stmt in stmts {
-            self.stmt(stmt, file, diagnostics);
+            self.stmt(stmt, bindings, file, diagnostics);
         }
     }
 
-    fn stmt(&self, stmt: &Spanned<Stmt>, file: &str, diagnostics: &mut Vec<Diagnostic>) {
+    fn stmt(
+        &self,
+        stmt: &Spanned<Stmt>,
+        bindings: &mut HashMap<String, Values>,
+        file: &str,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
         match &stmt.node {
-            Stmt::Bind(_, expr) => self.expr(expr, file, diagnostics),
+            Stmt::Bind(name, expr) => {
+                match bind_value(expr, self) {
+                    Some(values) => bindings.insert(name.node.clone(), values),
+                    None => bindings.remove(&name.node),
+                };
+                self.expr(expr, file, diagnostics);
+            }
             Stmt::Give(e, _) | Stmt::Say(e) | Stmt::ExprStmt(e) => self.expr(e, file, diagnostics),
             Stmt::MemoryUpdate(_, index, value) => {
                 if let Some(i) = index {
@@ -172,38 +209,70 @@ impl Index {
             }
             Stmt::Match(m) => {
                 self.expr(&m.subject, file, diagnostics);
+                let values = scrutinee_values(&m.subject, bindings);
                 for arm in &m.arms {
-                    self.stmt(&arm.node.body, file, diagnostics);
+                    self.pattern(
+                        &arm.node.pattern,
+                        values.as_ref(),
+                        &m.subject,
+                        file,
+                        diagnostics,
+                    );
+                    let mut inner = bindings.clone();
+                    self.stmt(&arm.node.body, &mut inner, file, diagnostics);
                 }
             }
-            _ => self.stmt_rest(stmt, file, diagnostics),
+            _ => self.stmt_rest(stmt, bindings, file, diagnostics),
         }
     }
 
     /// Statement forms that only nest or forward expressions.
-    fn stmt_rest(&self, stmt: &Spanned<Stmt>, file: &str, diagnostics: &mut Vec<Diagnostic>) {
+    fn stmt_rest(
+        &self,
+        stmt: &Spanned<Stmt>,
+        bindings: &HashMap<String, Values>,
+        file: &str,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
         match &stmt.node {
             Stmt::IfElse(ie) => {
                 self.expr(&ie.condition, file, diagnostics);
-                self.stmts_with(&ie.then_body, file, diagnostics);
+                let mut then_b = bindings.clone();
+                self.stmts_with(&ie.then_body, &mut then_b, file, diagnostics);
                 for (cond, body) in &ie.else_ifs {
                     self.expr(cond, file, diagnostics);
-                    self.stmts_with(body, file, diagnostics);
+                    let mut b = bindings.clone();
+                    self.stmts_with(body, &mut b, file, diagnostics);
                 }
                 if let Some(body) = &ie.else_body {
-                    self.stmts_with(body, file, diagnostics);
+                    let mut b = bindings.clone();
+                    self.stmts_with(body, &mut b, file, diagnostics);
                 }
             }
             Stmt::For(f) => {
                 self.expr(&f.iterable, file, diagnostics);
-                self.stmts_with(&f.body, file, diagnostics);
+                let mut body_b = bindings.clone();
+                body_b.remove(&f.binding.node);
+                self.stmts_with(&f.body, &mut body_b, file, diagnostics);
             }
             Stmt::When(w) => {
                 for clause in &w.clauses {
-                    self.stmt(&clause.node.body, file, diagnostics);
+                    let mut body_b = bindings.clone();
+                    self.stmts_with(
+                        std::slice::from_ref(&clause.node.body),
+                        &mut body_b,
+                        file,
+                        diagnostics,
+                    );
                 }
                 if let Some(else_clause) = &w.else_body {
-                    self.stmt(&else_clause.node.body, file, diagnostics);
+                    let mut body_b = bindings.clone();
+                    self.stmts_with(
+                        std::slice::from_ref(&else_clause.node.body),
+                        &mut body_b,
+                        file,
+                        diagnostics,
+                    );
                 }
             }
             Stmt::StartTimer { context, .. } | Stmt::CancelTimer { context, .. } => {
@@ -305,6 +374,61 @@ impl Index {
             Expr::Session(_) | Expr::Find(_) => {}
         }
     }
+
+    /// E161/E162 — a constructor pattern checked against a known value set.
+    fn pattern(
+        &self,
+        pattern: &Spanned<Pattern>,
+        values: Option<&Values>,
+        subject: &Spanned<Expr>,
+        file: &str,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let (Some(values), Pattern::Constructor(name, _)) = (values, &pattern.node) else {
+            return;
+        };
+        match values {
+            Values::Literals(literals) => {
+                if literals.iter().any(|l| l == name) {
+                    return;
+                }
+                if let Some(exact) = literals.iter().find(|l| l.eq_ignore_ascii_case(name)) {
+                    diagnostics.push(case_mismatch(name, exact, pattern, file));
+                } else if !self.types.contains(name) {
+                    diagnostics.push(impossible_pattern(name, subject, values, pattern, file));
+                }
+            }
+            Values::Record(type_name) => {
+                if type_name != name && !self.types.contains(name) {
+                    diagnostics.push(impossible_pattern(name, subject, values, pattern, file));
+                }
+            }
+        }
+    }
+}
+
+/// A binding's statically known value set, if any.
+fn bind_value(expr: &Spanned<Expr>, index: &Index) -> Option<Values> {
+    match &expr.node {
+        Expr::Classify(c) => Some(Values::Literals(
+            c.labels.iter().map(|l| l.node.clone()).collect(),
+        )),
+        Expr::Call(c) if index.literal_gives.contains_key(&c.name.node) => {
+            Some(Values::Literals(index.literal_gives[&c.name.node].clone()))
+        }
+        Expr::Call(c) if index.types.contains(&c.name.node) => {
+            Some(Values::Record(c.name.node.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// The value set of a scrutinee — only identifiers bound in the same body.
+fn scrutinee_values(expr: &Spanned<Expr>, bindings: &HashMap<String, Values>) -> Option<Values> {
+    match &expr.node {
+        Expr::Ident(name) => bindings.get(name).cloned(),
+        _ => None,
+    }
 }
 
 fn spawn_option_expr(option: &SpawnOption) -> Option<&Spanned<Expr>> {
@@ -313,6 +437,77 @@ fn spawn_option_expr(option: &SpawnOption) -> Option<&Spanned<Expr>> {
         SpawnOption::Isolate(config) => Some(&config.branch),
         SpawnOption::KnowledgeFilter(_) => None,
     }
+}
+
+/// Literal `give` values of a task, or `None` if any `give` is not a Text
+/// literal (in which case the task's value set is not statically known).
+fn task_literal_gives(decl: &TaskDecl) -> Option<Vec<String>> {
+    let mut out = match &decl.body.node {
+        TaskBody::Do(stmts) => literal_gives_in(stmts)?,
+        TaskBody::Is(_) => return None,
+    };
+    if let Some(if_fails) = &decl.if_fails {
+        out.extend(literal_gives_in(if_fails)?);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn literal_gives_in(stmts: &[Spanned<Stmt>]) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    for stmt in stmts {
+        out.extend(literal_gives_stmt(stmt)?);
+    }
+    Some(out)
+}
+
+fn literal_gives_stmt(stmt: &Spanned<Stmt>) -> Option<Vec<String>> {
+    match &stmt.node {
+        Stmt::Give(e, _) => literal_text(e).map(|text| vec![text]),
+        Stmt::When(w) => {
+            let mut out = Vec::new();
+            for clause in &w.clauses {
+                out.extend(literal_gives_stmt(&clause.node.body)?);
+            }
+            if let Some(else_clause) = &w.else_body {
+                out.extend(literal_gives_stmt(&else_clause.node.body)?);
+            }
+            Some(out)
+        }
+        Stmt::IfElse(ie) => {
+            let mut out = literal_gives_in(&ie.then_body)?;
+            for (_, body) in &ie.else_ifs {
+                out.extend(literal_gives_in(body)?);
+            }
+            if let Some(body) = &ie.else_body {
+                out.extend(literal_gives_in(body)?);
+            }
+            Some(out)
+        }
+        Stmt::Match(m) => {
+            let mut out = Vec::new();
+            for arm in &m.arms {
+                out.extend(literal_gives_stmt(&arm.node.body)?);
+            }
+            Some(out)
+        }
+        Stmt::For(f) => literal_gives_in(&f.body),
+        _ => Some(Vec::new()),
+    }
+}
+
+/// A template with no interpolation is a compile-time Text literal.
+fn literal_text(expr: &Spanned<Expr>) -> Option<String> {
+    let Expr::Template(parts) = &expr.node else {
+        return None;
+    };
+    let mut text = String::new();
+    for part in parts {
+        match &part.node {
+            TemplatePart::Text(t) => text.push_str(t),
+            TemplatePart::Interp(_) | TemplatePart::RawInterp(_) => return None,
+        }
+    }
+    Some(text)
 }
 
 // ── Diagnostics ─────────────────────────────────────────────────
@@ -331,6 +526,65 @@ fn undefined_call(name: &Spanned<String>, index: &Index, file: &str) -> Diagnost
         "no task, pure, flow, pool or built-in matches this name",
     )
     .with_help(help)
+}
+
+fn impossible_pattern(
+    name: &str,
+    subject: &Spanned<Expr>,
+    values: &Values,
+    pattern: &Spanned<Pattern>,
+    file: &str,
+) -> Diagnostic {
+    let described = describe(values);
+    Diagnostic::error(
+        "E161",
+        file,
+        format!(
+            "pattern `{name}` never matches {} — it can only be {described}",
+            subject_label(subject)
+        ),
+        pattern.span.start..pattern.span.end,
+        "this arm is dead code and falls through",
+    )
+    .with_help(format!(
+        "`{name}` is not a declared or built-in type; use one of {described}, or declare `type {name}`"
+    ))
+}
+
+fn case_mismatch(name: &str, exact: &str, pattern: &Spanned<Pattern>, file: &str) -> Diagnostic {
+    // A lowercase exact spelling cannot be written as a tag pattern (lowercase
+    // patterns are bindings), so point at the label instead.
+    let help = if exact.starts_with(|c: char| c.is_ascii_uppercase()) {
+        format!("use the exact spelling `{exact}`")
+    } else {
+        format!("capitalise the `classify` label to `{name}` — a lowercase pattern is a binding, not a tag")
+    };
+    Diagnostic::error(
+        "E162",
+        file,
+        format!("pattern `{name}` never matches `\"{exact}\"` — tag patterns compare exact text"),
+        pattern.span.start..pattern.span.end,
+        "this arm is dead code and falls through",
+    )
+    .with_help(help)
+}
+
+fn subject_label(subject: &Spanned<Expr>) -> String {
+    match &subject.node {
+        Expr::Ident(name) => format!("`{name}`"),
+        _ => "the scrutinee".to_string(),
+    }
+}
+
+fn describe(values: &Values) -> String {
+    match values {
+        Values::Literals(literals) => literals
+            .iter()
+            .map(|l| format!("\"{l}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+        Values::Record(type_name) => format!("a `{type_name}` record"),
+    }
 }
 
 /// Closest candidate within edit distance 2, if any.
@@ -435,6 +689,104 @@ fn main
     #[test]
     fn resolution_allows_the_fn_name() {
         let src = "fn main\n  say main()\n";
+        assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
+    }
+
+    // ── E161/E162 — impossible and case-mismatched patterns ─────
+
+    const CLASSIFY_TASK: &str = "task t\n  needs pick: Text\n  gives Text\n  do\n";
+
+    fn classify_task(arms: &str) -> String {
+        format!(
+            "{CLASSIFY_TASK}    result = classify pick into [\"Buy\"]\n    match result\n{arms}"
+        )
+    }
+
+    #[test]
+    fn resolution_flags_undeclared_variant_against_classify_labels() {
+        let src =
+            classify_task("      Nonexistent(who) -> give \"never\"\n      _ -> give \"other\"\n");
+        let ds = diags(&src);
+        assert_eq!(codes(&src), vec!["E161"], "{ds:?}");
+        assert!(ds[0].message.contains("Nonexistent"), "{:?}", ds[0].message);
+        assert!(ds[0].message.contains("\"Buy\""), "{:?}", ds[0].message);
+    }
+
+    #[test]
+    fn resolution_allows_classify_label_exact_match() {
+        let src = classify_task("      Buy(who) -> give \"buy\"\n      _ -> give \"other\"\n");
+        assert_eq!(codes(&src), Vec::<&str>::new(), "{:?}", diags(&src));
+    }
+
+    #[test]
+    fn resolution_flags_case_mismatched_tag() {
+        let src = "task t\n  needs pick: Text\n  gives Text\n  do\n    result = classify pick into [\"positive\"]\n    match result\n      Positive -> give \"up\"\n      _ -> give \"other\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E162"], "{ds:?}");
+        assert_eq!(
+            ds[0].message,
+            "pattern `Positive` never matches `\"positive\"` — tag patterns compare exact text"
+        );
+        assert_eq!(
+            ds[0].help.as_deref(),
+            Some(
+                "capitalise the `classify` label to `Positive` — a lowercase pattern is a binding, not a tag"
+            )
+        );
+    }
+
+    #[test]
+    fn resolution_flags_case_mismatched_uppercase_tag() {
+        let src = classify_task("      BUY -> give \"buy\"\n      _ -> give \"other\"\n");
+        let ds = diags(&src);
+        assert_eq!(codes(&src), vec!["E162"], "{ds:?}");
+        assert_eq!(ds[0].help.as_deref(), Some("use the exact spelling `Buy`"));
+    }
+
+    #[test]
+    fn resolution_ignores_unknown_value_sets() {
+        // `pick` is a parameter — nothing is known about it.
+        let src = "task t\n  needs pick: Text\n  gives Text\n  do\n    match pick\n      Whatever -> give \"no\"\n      _ -> give \"other\"\n";
+        assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
+    }
+
+    #[test]
+    fn resolution_ignores_declared_type_patterns_and_wildcards() {
+        // A declared type is never flagged even when the value set is known,
+        // and neither are `_` or binding patterns.
+        let src = "type Order\n  id: Text\n\ntask t\n  needs pick: Text\n  gives Text\n  do\n    result = classify pick into [\"Buy\"]\n    match result\n      Order -> give \"order\"\n      _ -> give \"other\"\n      anything -> give \"{anything}\"\n";
+        assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
+    }
+
+    #[test]
+    fn resolution_uses_literal_gives_as_the_value_set() {
+        let src = "pure verdict\n  gives Text\n  do\n    give \"yes\"\n\ntask t\n  gives Text\n  do\n    v = verdict()\n    match v\n      Nope -> give \"a\"\n      _ -> give \"b\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E161"], "{ds:?}");
+        assert!(ds[0].message.contains("\"yes\""), "{:?}", ds[0].message);
+    }
+
+    #[test]
+    fn resolution_ignores_non_literal_gives() {
+        let src = "pure verdict\n  needs x: Text\n  gives Text\n  do\n    give x\n\ntask t\n  needs x: Text\n  gives Text\n  do\n    v = verdict(x)\n    match v\n      Nope -> give \"a\"\n      _ -> give \"b\"\n";
+        assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
+    }
+
+    #[test]
+    fn resolution_uses_declared_type_constructors_as_the_value_set() {
+        let src = "type Order\n  id: Text\n\ntask t\n  gives Text\n  do\n    o = Order(\"a\")\n    match o\n      Other -> give \"a\"\n      Order -> give \"b\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E161"], "{ds:?}");
+        assert!(
+            ds[0].message.contains("`Order` record"),
+            "{:?}",
+            ds[0].message
+        );
+    }
+
+    #[test]
+    fn resolution_tracks_only_the_last_binding_before_the_match() {
+        let src = "task t\n  needs pick: Text\n  gives Text\n  do\n    result = classify pick into [\"Buy\"]\n    result = pick\n    match result\n      Buy -> give \"buy\"\n      _ -> give \"other\"\n";
         assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
     }
 }
