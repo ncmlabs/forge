@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "915d4aea328a3bb19d25aef7e2bbbcd34f07116239dc7180fe21a0eb97a45d75",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Plan the work for tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

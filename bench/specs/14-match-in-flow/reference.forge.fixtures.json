@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "920b22a6d11a1cc649c6dc5d4f9a07b6837409a40cd0c1ff9aba1dee5c714808",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Classify the following into exactly one of these categories: Bug, Feature, Question\n\nInput: the app crashes on launch\n\nR",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}
