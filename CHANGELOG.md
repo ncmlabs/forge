@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- JSON output envelope and semantic exit codes (#475): every in-scope command
+  (`parse`, `check`, `explain`, `run`, `trace`, `cost`, `build`, `export`,
+  `import`, `inspect`, `send`, `wake`, `store`) accepts a global `--json` /
+  `FORGE_OUTPUT=json` and prints one envelope
+  (`{status, command, data, context, next_steps, warnings, cost, error,
+  duration_ms}`) on stdout. `--fields a,b` trims `data` to the listed keys,
+  `run --json` reports the program's `say` output in `data.output` instead of
+  stdout, and `cost` carries the run's LLM spend. `serve`, `agent`,
+  `agent-inspect` and `fleet` report `{"type":"unsupported"}` and exit `1`.
+  Documented in `docs/forge-reference.md` §27.
 - Diagnostic error codes (#474): every diagnostic now carries a stable code
   (`Exxx` errors, `Wxxx` warnings) from the registry in
   `src/diagnostic_codes.rs`, and `forge explain <code>` /
@@ -26,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to v1 complete. Closes epic #292.
 
 ### Changed
+- `forge check` now exits `2` (not `1`) when a file has warnings but no errors,
+  and other commands use the same semantic table: `0` success, `1` error,
+  `2` warnings-only, `3` partial, `10` needs-input, `11` async-pending (#475).
+  Human-readable output is unchanged.
 - Roadmap reset to v0.3 — Agent-Native FORGE (#473). The previous roadmap is
   archived at `docs/archive/roadmap-v3.md`. The generator/toolkit, WASM and
   dev-system tracks are deprecated (see roadmap).
