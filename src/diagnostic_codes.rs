@@ -832,6 +832,85 @@ agent boss
     found = find all "ghost"
     say "done""#,
     },
+    CodeInfo {
+        code: "E090",
+        title: "warden manages an undeclared symbol",
+        explain: r#"A warden's `manages` list names an agent or warden that is not declared in the file.
+
+Wrong:
+agent bot
+  on start
+    say "hi"
+
+warden supervisor
+  manages [ghost]
+
+Right:
+agent bot
+  on start
+    say "hi"
+
+warden supervisor
+  manages [bot]"#,
+    },
+    CodeInfo {
+        code: "E091",
+        title: "warden `after` count does not increase",
+        explain: r#"Escalation steps must appear in increasing turn order, so each `after N:` count must be greater than the previous one.
+
+Wrong:
+warden supervisor
+  manages [bot]
+  on stuck: nudge, self
+    after 3: restart
+    after 2: escalate
+
+Right:
+warden supervisor
+  manages [bot]
+  on stuck: nudge, self
+    after 3: restart
+    after 5: escalate"#,
+    },
+    CodeInfo {
+        code: "E092",
+        title: "warden escalation ladder does not increase severity",
+        explain: r#"Responses must escalate in severity: nudge < downgrade < restart < replace < escalate.
+
+Wrong:
+warden supervisor
+  manages [bot]
+  on stuck: restart, self
+    after 3: nudge
+
+Right:
+warden supervisor
+  manages [bot]
+  on stuck: nudge, self
+    after 3: restart"#,
+    },
+    CodeInfo {
+        code: "W090",
+        title: "warden does not cover every failure type",
+        explain: r#"A warden without policies for all six failure types leaves those failures unsupervised.
+
+Wrong:
+warden supervisor
+  manages [bot]
+  on stuck: nudge, self
+    after 3: restart
+
+Right:
+warden supervisor
+  manages [bot]
+  on stuck: nudge, self
+    after 3: restart
+  on crash: restart, self
+  on hallucination: nudge, self
+  on contradiction: nudge, self
+  on budget: nudge, self
+  on timeout: restart, self"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.
