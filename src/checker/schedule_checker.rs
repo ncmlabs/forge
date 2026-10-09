@@ -113,7 +113,8 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E110",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` is missing a `when:` clause",
@@ -129,7 +130,8 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E111",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` is missing a `mode:` clause",
@@ -145,7 +147,8 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E112",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `mode: spawn` but no `prompt:`",
@@ -161,7 +164,8 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E113",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `mode: wake` but no `emit:` and no `on {}.tick` handler",
@@ -178,7 +182,8 @@ impl CheckError {
                 dup_span_start,
                 dup_span_end,
                 ..
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E114",
                 file,
                 format!(
                     "duplicate schedule name `{}` in agent `{}`",
@@ -195,7 +200,8 @@ impl CheckError {
                 option,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E115",
                 file,
                 format!(
                     "duplicate `{}` option in schedule `{}` (agent `{}`)",
@@ -213,7 +219,8 @@ impl CheckError {
                 reason,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E116",
                 file,
                 format!(
                     "invalid cron expression in schedule `{}` (agent `{}`): {}",
@@ -231,7 +238,8 @@ impl CheckError {
                 minute,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E117",
                 file,
                 format!(
                     "invalid time literal in schedule `{}` (agent `{}`): {:02}:{:02}",
@@ -247,7 +255,8 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E118",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `when: every 0...` — duration must be positive",
@@ -264,7 +273,8 @@ impl CheckError {
                 collides_with,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E119",
                 file,
                 format!(
                     "schedule name `{}` in agent `{}` collides with {}",
@@ -280,7 +290,8 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::warning(
+            } => Diagnostic::coded_warning(
+                "W110",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `mode: spawn` with an extraneous `emit:`",
@@ -296,7 +307,8 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::warning(
+            } => Diagnostic::coded_warning(
+                "W111",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `mode: wake` with an extraneous `prompt:`",

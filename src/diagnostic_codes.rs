@@ -956,6 +956,244 @@ agent a
   on start
     issues = skill.exec.ripgrep("TODO")"#,
     },
+    CodeInfo {
+        code: "E110",
+        title: "schedule is missing a when: clause",
+        explain: r#"Every schedule must declare when it fires: `when: daily at "HH:MM"`, `when: every <duration>` or `when: cron "..."`.
+
+Wrong:
+agent a
+  schedule hb
+    mode: wake
+    emit: Heartbeat
+
+Right:
+agent a
+  schedule hb
+    when: every 6h
+    mode: wake
+    emit: Heartbeat"#,
+    },
+    CodeInfo {
+        code: "E111",
+        title: "schedule is missing a mode: clause",
+        explain: r#"Every schedule must declare how it fires: `mode: spawn` (with a `prompt:`) or `mode: wake` (with an `emit:` or a `.tick` handler).
+
+Wrong:
+agent a
+  schedule hb
+    when: every 6h
+
+Right:
+agent a
+  schedule hb
+    when: every 6h
+    mode: wake
+    emit: Heartbeat"#,
+    },
+    CodeInfo {
+        code: "E112",
+        title: "spawn schedule is missing a prompt:",
+        explain: r#"`mode: spawn` starts a stateless turn, so it must say what that turn should do.
+
+Wrong:
+agent a
+  schedule hb
+    when: every 6h
+    mode: spawn
+
+Right:
+agent a
+  schedule hb
+    when: every 6h
+    mode: spawn
+    prompt: "check the queue""#,
+    },
+    CodeInfo {
+        code: "E113",
+        title: "wake schedule delivers nothing",
+        explain: r#"`mode: wake` must deliver an event: declare `emit:` with a matching `on` handler, or add a `on <schedule>.tick` handler.
+
+Wrong:
+agent a
+  schedule hb
+    when: every 6h
+    mode: wake
+
+Right:
+agent a
+  schedule hb
+    when: every 6h
+    mode: wake
+    emit: Heartbeat
+  on Heartbeat
+    say "tick""#,
+    },
+    CodeInfo {
+        code: "E114",
+        title: "duplicate schedule name",
+        explain: r#"Schedule names must be unique within an agent.
+
+Wrong:
+agent a
+  schedule hb
+    when: every 6h
+    mode: wake
+    emit: Heartbeat
+  schedule hb
+    when: every 1d
+    mode: wake
+    emit: Heartbeat
+
+Right:
+agent a
+  schedule hb
+    when: every 6h
+    mode: wake
+    emit: Heartbeat
+  schedule daily
+    when: every 1d
+    mode: wake
+    emit: Heartbeat"#,
+    },
+    CodeInfo {
+        code: "E115",
+        title: "duplicate schedule option",
+        explain: r#"An option appears twice in the same schedule block; keep one.
+
+Wrong:
+agent a
+  schedule hb
+    when: every 6h
+    when: every 1d
+    mode: wake
+    emit: Heartbeat
+
+Right:
+agent a
+  schedule hb
+    when: every 6h
+    mode: wake
+    emit: Heartbeat"#,
+    },
+    CodeInfo {
+        code: "E116",
+        title: "invalid cron expression",
+        explain: r#"FORGE cron uses standard 5-field Unix syntax: `m h dom mon dow` (for example `0 9 * * *` for 09:00 daily).
+
+Wrong:
+agent a
+  schedule hb
+    when: cron "every morning"
+    mode: wake
+    emit: Heartbeat
+
+Right:
+agent a
+  schedule hb
+    when: cron "0 9 * * *"
+    mode: wake
+    emit: Heartbeat"#,
+    },
+    CodeInfo {
+        code: "E117",
+        title: "invalid time literal",
+        explain: r#"Time literals are 24-hour `"HH:MM"`: hour 0-23 and minute 0-59.
+
+Wrong:
+agent a
+  schedule hb
+    when: daily at "25:00"
+    mode: wake
+    emit: Heartbeat
+
+Right:
+agent a
+  schedule hb
+    when: daily at "09:00"
+    mode: wake
+    emit: Heartbeat"#,
+    },
+    CodeInfo {
+        code: "E118",
+        title: "zero schedule duration",
+        explain: r#"An `every` interval must be positive, otherwise the schedule can never fire.
+
+Wrong:
+agent a
+  schedule hb
+    when: every 0s
+    mode: wake
+    emit: Heartbeat
+
+Right:
+agent a
+  schedule hb
+    when: every 30s
+    mode: wake
+    emit: Heartbeat"#,
+    },
+    CodeInfo {
+        code: "E119",
+        title: "schedule name collides with a timer or event name",
+        explain: r#"Names must be unique across timers, schedules and handler events within an agent.
+
+Wrong:
+agent a
+  timer hb: 300s
+  schedule hb
+    when: every 6h
+    mode: wake
+    emit: Heartbeat
+
+Right:
+agent a
+  timer hb: 300s
+  schedule heartbeat
+    when: every 6h
+    mode: wake
+    emit: Heartbeat"#,
+    },
+    CodeInfo {
+        code: "W110",
+        title: "spawn schedule has an extraneous emit:",
+        explain: r#"`emit:` is ignored under `mode: spawn`; remove it or switch to `mode: wake`.
+
+Wrong:
+agent a
+  schedule hb
+    when: every 6h
+    mode: spawn
+    prompt: "check the queue"
+    emit: Heartbeat
+
+Right:
+agent a
+  schedule hb
+    when: every 6h
+    mode: spawn
+    prompt: "check the queue""#,
+    },
+    CodeInfo {
+        code: "W111",
+        title: "wake schedule has an extraneous prompt:",
+        explain: r#"`prompt:` is ignored under `mode: wake`; remove it or switch to `mode: spawn`.
+
+Wrong:
+agent a
+  schedule hb
+    when: every 6h
+    mode: wake
+    emit: Heartbeat
+    prompt: "check the queue"
+
+Right:
+agent a
+  schedule hb
+    when: every 6h
+    mode: wake
+    emit: Heartbeat"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.
