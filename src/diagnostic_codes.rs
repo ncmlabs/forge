@@ -19,6 +19,7 @@
 //! | E110–E129   | schedule checker      |
 //! | E130–E139   | correlate checker     |
 //! | E140–E149   | webhook checker       |
+//! | E160–E169   | resolution checker    |
 //!
 //! Warnings use the same range prefixed with `W` instead of `E`.
 
@@ -1450,6 +1451,25 @@ agent a
     mode: wake
     emit: ApprovalResponse"#,
     },
+    CodeInfo {
+        code: "E160",
+        title: "undeclared call target",
+        explain: r#"A plain call names a task, pure, flow or pool that does not exist, so the call can only fail at runtime.
+
+Wrong:
+fn main
+  say judge("x")
+
+Right:
+pure judge
+  needs x: Text
+  gives Text
+  do
+    give x
+
+fn main
+  say judge("x")"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.
@@ -1525,6 +1545,7 @@ mod tests {
             include_str!("checker/correlate_checker.rs"),
             include_str!("checker/pure_checker.rs"),
             include_str!("checker/requires_checker.rs"),
+            include_str!("checker/resolution_checker.rs"),
             include_str!("checker/schedule_checker.rs"),
             include_str!("checker/spawn_checker.rs"),
             include_str!("checker/states_checker.rs"),
