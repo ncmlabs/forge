@@ -19,7 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit path) and replay it offline. Replay never calls a provider and
   reports zero tokens and zero cost; a call with no recorded response is a hard
   error naming the provider, the prompt head, and the file to re-record.
-  Single-file runs only — `--manifest` is rejected.
+  `forge test --expect <file>` also asserts the replayed output matches the
+  file (trailing whitespace ignored) and prints a line diff on a mismatch.
+  Recording starts from a clean fixture file, so a zero-call run leaves no
+  stale file behind. Single-file runs only — `--manifest` is rejected.
 - Surface-audit rework (#449): the derived-surface drift audit is now driven
   by the FORGE agent `workflows/surface-audit.forge` via `forge send`, on a
   zero-cost OpenAI-compatible provider selected with `FORGE_CONFIG` +
