@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "34f1c1946e29f5537b2df2c91d017b05b196f0705ed04b8583f40ccbcf51ba2c",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Classify the following into exactly one of these categories: bug, question, spam\n\nInput: the parser crashes when I nest ",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

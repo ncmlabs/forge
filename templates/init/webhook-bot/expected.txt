@@ -1,0 +1,2 @@
+webhook-bot: POST /webhook/inbound or POST /wake/triage_bot/inbound
+classified sample as mock response
