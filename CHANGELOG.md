@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   $0.23 cost), the defect harvest and lessons for v2; roadmap Layer 3 moved
   to v1 complete. Closes epic #292.
 
+### Fixed
+- Clippy `double_must_use` errors on stable 1.99 from `async-trait` expansion;
+  bumped `async-trait` in `Cargo.lock` (#489).
+
 ## [0.2.0] - 2026-08-31
 
 ### Fixed
