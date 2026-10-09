@@ -472,6 +472,24 @@ impl AgentProcess {
         self
     }
 
+    /// Inherit the spawning parent's `say` echo setting (#475) so a child
+    /// agent never writes to stdout under `forge run --json`.
+    pub fn with_stdout_echo(mut self, echo: bool) -> Self {
+        self.executor = self.executor.with_stdout_echo(echo);
+        self
+    }
+
+    /// Inherit the spawning parent's run cost tracker (#475).
+    pub fn with_cost_tracker_opt(
+        mut self,
+        tracker: Option<crate::llm::cost_tracker::CostTracker>,
+    ) -> Self {
+        if let Some(tracker) = tracker {
+            self.executor = self.executor.with_cost_tracker(tracker);
+        }
+        self
+    }
+
     /// Set working directory for sandbox isolation (issue #194).
     pub fn with_working_dir(mut self, dir: std::path::PathBuf) -> Self {
         self.executor = self.executor.with_working_dir(dir);
