@@ -25,11 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   $0.23 cost), the defect harvest and lessons for v2; roadmap Layer 3 moved
   to v1 complete. Closes epic #292.
 
+### Changed
+- Roadmap reset to v0.3 — Agent-Native FORGE (#473). The previous roadmap is
+  archived at `docs/archive/roadmap-v3.md`. The generator/toolkit, WASM and
+  dev-system tracks are deprecated (see roadmap).
+
 ### Fixed
 - Diagnostic rendering (#474): reports name the real source file instead of
   `<unknown>` (the ariadne source id was a bare span), and colour is emitted
   only when stderr is an interactive terminal, so piped or redirected output
   is plain text; `NO_COLOR` disables colour on a terminal.
+- Clippy `double_must_use` errors on stable 1.99 from `async-trait` expansion;
+  bumped `async-trait` in `Cargo.lock` (#489).
+- RUSTSEC-2026-0285: bumped `rustls` to 0.23.45 in `Cargo.lock` (#472).
 
 ## [0.2.0] - 2026-08-31
 
