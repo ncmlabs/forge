@@ -1135,7 +1135,7 @@ fn labeled_issue_sig() -> std::collections::HashMap<String, forge::types::Capabi
 
 #[tokio::test]
 async fn skill_finder_example_validates() {
-    let program = parse_file("examples/command/skill_finder.forge");
+    let program = parse_file("tests/fixtures/command/skill_finder.forge");
     let filename = "skill_finder.forge";
     let diags = forge::checker::check_all(&program, filename);
     let errs: Vec<_> = diags

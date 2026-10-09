@@ -163,6 +163,9 @@ fn discover_forge_examples(root: &Path) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
     collect_forge_files(&root.join("examples"), root, &mut paths);
     collect_forge_files(&root.join("workflows"), root, &mut paths);
+    // #488: showcase examples core tests still read were relocated out of
+    // `examples/` into `tests/fixtures/`; they stay classified here too.
+    collect_forge_files(&root.join("tests/fixtures"), root, &mut paths);
     paths
 }
 

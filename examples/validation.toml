@@ -6,6 +6,9 @@
 # `run = "mock"` means the example may execute in required CI with FORGE_MOCK=1.
 # `run = "live_only"` means runtime execution requires external agents, providers,
 # credentials, or side effects and is skipped by required CI.
+#
+# Paths under `tests/fixtures/` are showcase examples that moved out of core
+# (#488) but that core tests still read; they are validated here as well.
 
 [[cases]]
 name = "agent examples"
@@ -143,29 +146,29 @@ paths = ["examples/agents/cross-project-bridge/main.forge"]
 check = "ok"
 
 [[cases]]
-name = "command examples"
+name = "command examples (fixtures)"
 paths = [
-  "examples/command/command_argv.forge",
-  "examples/command/command_background.forge",
-  "examples/command/command_background_cancel.forge",
-  "examples/command/command_env.forge",
-  "examples/command/command_fail.forge",
-  "examples/command/command_stderr.forge",
-  "examples/command/command_success.forge",
-  "examples/command/command_timeout.forge",
-  "examples/command/command_workdir.forge",
-  "examples/command/exec_compose.forge",
-  "examples/command/exec_fail.forge",
-  "examples/command/exec_multi.forge",
-  "examples/command/skill_finder.forge",
+  "tests/fixtures/command/command_argv.forge",
+  "tests/fixtures/command/command_background.forge",
+  "tests/fixtures/command/command_background_cancel.forge",
+  "tests/fixtures/command/command_env.forge",
+  "tests/fixtures/command/command_fail.forge",
+  "tests/fixtures/command/command_stderr.forge",
+  "tests/fixtures/command/command_success.forge",
+  "tests/fixtures/command/command_timeout.forge",
+  "tests/fixtures/command/command_workdir.forge",
+  "tests/fixtures/command/exec_compose.forge",
+  "tests/fixtures/command/exec_fail.forge",
+  "tests/fixtures/command/exec_multi.forge",
+  "tests/fixtures/command/skill_finder.forge",
 ]
 check = "ok"
 
 [[cases]]
 name = "mock-runnable exec examples"
 paths = [
-  "examples/command/exec_success.forge",
-  "examples/command/exec_when_dispatch.forge",
+  "tests/fixtures/command/exec_success.forge",
+  "tests/fixtures/command/exec_when_dispatch.forge",
   "examples/command/skill_bot.forge",
 ]
 check = "ok"
@@ -319,6 +322,15 @@ check = "ok"
 name = "development lifecycle workflow"
 paths = ["workflows/dev-cycle.forge"]
 check = "ok"
+
+[[cases]]
+name = "label router unit-test harness (tests/fixtures)"
+paths = [
+  "workflows/clone-dev/stage2/label_router.forge",
+  "tests/fixtures/label_router_harness.forge",
+]
+check = "ok"
+merge = true
 
 [[cases]]
 name = "executable dev-cycle (server boundary; T10.2 #368)"
