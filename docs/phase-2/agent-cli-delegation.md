@@ -31,7 +31,7 @@ This matches three independent signals:
 
 ### Local references
 
-- [roadmap.md](/Users/claudiu/Work/ncmlabs/forge-165/roadmap.md)
+- [roadmap.md](../../roadmap.md)
 - [workflows/dev-cycle.forge](/Users/claudiu/Work/ncmlabs/forge-165/workflows/dev-cycle.forge)
 - [docs/2026-04-10-forge-confidence-verification-paper.md](/Users/claudiu/Work/ncmlabs/forge-165/docs/2026-04-10-forge-confidence-verification-paper.md)
 - [Claude Code SDK result schema](/Users/claudiu/Work/marci/claude-code/src/entrypoints/sdk/coreSchemas.ts)

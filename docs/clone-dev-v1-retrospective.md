@@ -29,7 +29,7 @@ that scope stated plainly.
 ## Architecture
 
 - Design spec: `docs/proof-runs/2026-05-clone-dev-playground.md` and the
-  milestone issues T1.1–T11.4 (see `roadmap.md`, Layer 3 table).
+  milestone issues T1.1–T11.4 (see `docs/archive/roadmap-v3.md`, Layer 3 table).
 - Topology: `workflows/clone-dev/` — mastermind intake (conversational
   classifier, T9.1), investigators with skill allow-lists (T9.2), solution
   proposer (T9.3), issue creator (T9.4), label router (T8.3), and the dev-cycle
@@ -135,7 +135,7 @@ pattern later adopted for the Daily Frame pipeline and the surface-audit rework
 
 ## Epic close
 
-- `roadmap.md` Layer 3 table already records T11.3 ✅; with this retrospective,
+- `docs/archive/roadmap-v3.md` Layer 3 table already records T11.3 ✅; with this retrospective,
   T11.4 ✅ and epic **#292 closes as: v1 proven (1-issue deep loop, $0.23,
   novice→expert mastery, zero silent failures tolerated), batch sweep deferred
   to v2.**
