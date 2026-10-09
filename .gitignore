@@ -5,7 +5,6 @@
 .forge-data/
 .forge-security-allow
 docs/superpowers/
-forge-principles.md
 providers.md
 forge.config.toml
 config/forge.config.toml

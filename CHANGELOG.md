@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
+  traps, the determinism boundary, uncertainty dispatch, one idiom per
+  primitive, the common checker errors, and where to go next. Every fenced
+  `forge` block is extracted and checked in CI by `tests/forge_card_tests.rs`,
+  and the card is capped at 300 lines; `llms.txt` at the repo root is the
+  machine entry point.
 - Diagnostic error codes (#474): every diagnostic now carries a stable code
   (`Exxx` errors, `Wxxx` warnings) from the registry in
   `src/diagnostic_codes.rs`, and `forge explain <code>` /
@@ -26,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to v1 complete. Closes epic #292.
 
 ### Changed
+- `forge-principles.md` is now published (previously gitignored); `llms.txt` links it (#497).
 - Roadmap reset to v0.3 — Agent-Native FORGE (#473). The previous roadmap is
   archived at `docs/archive/roadmap-v3.md`. The generator/toolkit, WASM and
   dev-system tracks are deprecated (see roadmap).
