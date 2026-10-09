@@ -56,7 +56,7 @@ export default defineConfig({
 
   webServer: [
     {
-      command: 'cargo run -- serve examples/wiki/server.forge -s examples/wiki/shared.forge',
+      command: 'cargo run -- serve tests/fixtures/wiki/server.forge -s tests/fixtures/wiki/shared.forge',
       cwd: '../../',
       url: 'http://localhost:3000/home',
       reuseExistingServer: true,
@@ -71,7 +71,7 @@ export default defineConfig({
       },
     },
     {
-      command: 'cargo run -- serve examples/sentinel/server.forge -s examples/sentinel/shared.forge',
+      command: 'cargo run -- serve tests/fixtures/sentinel/server.forge -s tests/fixtures/sentinel/shared.forge',
       cwd: '../../',
       url: 'http://localhost:3001/dashboard',
       reuseExistingServer: true,
@@ -86,7 +86,7 @@ export default defineConfig({
       },
     },
     {
-      command: 'cargo run -- serve examples/observer/server.forge -s examples/observer/shared.forge',
+      command: 'cargo run -- serve tests/fixtures/observer/server.forge -s tests/fixtures/observer/shared.forge',
       cwd: '../../',
       url: 'http://localhost:3002/static/index.html',
       reuseExistingServer: true,

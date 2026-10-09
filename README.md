@@ -425,9 +425,12 @@ This is not a toy example — it is the actual `forge-sensei` program that teach
 
 ## See it in action
 
-The showcases built with FORGE — the wiki, sentinel and tictactoe — are moving
-to their own public repository, `ncmlabs/forge-examples` ([#488](https://github.com/ncmlabs/forge/issues/488)),
-so that this repository stays the language and the runtime.
+The showcases built with FORGE — the wiki, sentinel and tictactoe — have moved
+to their own public repository,
+[`ncmlabs/forge-examples`](https://github.com/ncmlabs/forge-examples/tree/main)
+([#488](https://github.com/ncmlabs/forge/issues/488)), so that this repository
+stays the language and the runtime. What remains under `examples/` is the small
+corpus the conformance suite and the docs use (`basics/`, `errors/`, `llm/`).
 
 ---
 

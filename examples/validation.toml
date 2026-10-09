@@ -6,105 +6,50 @@
 # `run = "mock"` means the example may execute in required CI with FORGE_MOCK=1.
 # `run = "live_only"` means runtime execution requires external agents, providers,
 # credentials, or side effects and is skipped by required CI.
+#
+# Paths under `tests/fixtures/` are showcase examples that moved out of core
+# (#488) but that core tests still read; they are validated here as well.
 
 [[cases]]
-name = "agent examples"
+name = "fact-check pool agent fixture"
 paths = [
-  "examples/agents/debate.forge",
-  "examples/agents/fact_check_pool.forge",
-  "examples/agents/learning_agent.forge",
-  "examples/agents/support_bot.forge",
-  "examples/agents/toolkit_demo.forge",
+  "tests/fixtures/agents/fact_check_pool.forge",
 ]
 check = "ok"
-
-[[cases]]
-name = "slack responder agent"
-paths = [
-  "examples/agents/slack-responder/main.forge",
-]
-check = "ok"
-manifest = "examples/agents/slack-responder/forge.project.toml"
-
-[[cases]]
-name = "inbound triager agent"
-paths = [
-  "examples/agents/inbound-triager/main.forge",
-]
-check = "ok"
-manifest = "examples/agents/inbound-triager/forge.project.toml"
 
 [[cases]]
 name = "approval gate agent"
 paths = [
-  "examples/agents/approval-gate/main.forge",
-  "examples/agents/approval-gate/server.forge",
+  "tests/fixtures/agents/approval-gate/main.forge",
 ]
 check = "ok"
-manifest = "examples/agents/approval-gate/forge.project.toml"
+manifest = "tests/fixtures/agents/approval-gate/forge.project.toml"
 
 [[cases]]
 name = "PR review bot"
-paths = ["examples/agents/pr-review-bot/server.forge"]
+paths = ["tests/fixtures/agents/pr-review-bot/server.forge"]
 check = "ok"
-manifest = "examples/agents/pr-review-bot/forge.project.toml"
+manifest = "tests/fixtures/agents/pr-review-bot/forge.project.toml"
 
 [[cases]]
-name = "Slack adapter agent (+ smoke harness)"
+name = "slack-adapter agents library (fixture)"
 paths = [
-  "examples/agents/slack-adapter/main.forge",
-  "examples/agents/slack-adapter/agents.forge",
-  "examples/agents/slack-adapter/smoke.forge",
+  "tests/fixtures/agents/slack-adapter/main.forge",
+  "tests/fixtures/agents/slack-adapter/agents.forge",
 ]
 check = "ok"
 merge = true
-manifest = "examples/agents/slack-adapter/forge.project.toml"
+manifest = "tests/fixtures/agents/slack-adapter/forge.project.toml"
 
 [[cases]]
 name = "clone-dev walking skeleton"
-paths = ["examples/agents/clone-dev-skeleton/main.forge"]
+paths = ["tests/fixtures/agents/clone-dev-skeleton/main.forge"]
 check = "ok"
-manifest = "examples/agents/clone-dev-skeleton/forge.project.toml"
-
-[[cases]]
-name = "mastermind-pattern reference example (T1.2)"
-paths = ["examples/agents/mastermind-pattern/main.forge"]
-check = "ok"
-manifest = "examples/agents/mastermind-pattern/forge.project.toml"
-
-[[cases]]
-name = "PR history miner agent"
-paths = ["examples/agents/pr-history-miner/main.forge"]
-check = "ok"
-manifest = "examples/agents/pr-history-miner/forge.project.toml"
-
-[[cases]]
-name = "dev-cycle lesson smoke test (T5.1)"
-paths = ["examples/agents/dev-cycle-lesson-smoke/main.forge"]
-check = "ok"
-manifest = "examples/agents/dev-cycle-lesson-smoke/forge.project.toml"
-
-[[cases]]
-name = "dev-cycle mastery smoke test (T5.2)"
-paths = ["examples/agents/dev-cycle-mastery-smoke/main.forge"]
-check = "ok"
-manifest = "examples/agents/dev-cycle-mastery-smoke/forge.project.toml"
-
-[[cases]]
-name = "mastery-cadence-smoke (T5 scheduler MVP, #332)"
-paths = ["examples/agents/mastery-cadence-smoke/main.forge"]
-check = "ok"
-manifest = "examples/agents/mastery-cadence-smoke/forge.project.toml"
-
-[[cases]]
-name = "wake-rehydration-smoke (#333)"
-paths = ["examples/agents/wake-rehydration-smoke/main.forge"]
-check = "ok"
-manifest = "examples/agents/wake-rehydration-smoke/forge.project.toml"
+manifest = "tests/fixtures/agents/clone-dev-skeleton/forge.project.toml"
 
 [[cases]]
 name = "mock-runnable quiz tutor agent"
-paths = ["examples/agents/quiz_tutor.forge"]
+paths = ["tests/fixtures/agents/quiz_tutor.forge"]
 check = "ok"
 run = "mock"
 
@@ -138,35 +83,29 @@ paths = ["examples/basics/correlate_e2e.forge"]
 check = "ok"
 
 [[cases]]
-name = "cross-project bridge webhook demo (#335)"
-paths = ["examples/agents/cross-project-bridge/main.forge"]
-check = "ok"
-
-[[cases]]
-name = "command examples"
+name = "command examples (fixtures)"
 paths = [
-  "examples/command/command_argv.forge",
-  "examples/command/command_background.forge",
-  "examples/command/command_background_cancel.forge",
-  "examples/command/command_env.forge",
-  "examples/command/command_fail.forge",
-  "examples/command/command_stderr.forge",
-  "examples/command/command_success.forge",
-  "examples/command/command_timeout.forge",
-  "examples/command/command_workdir.forge",
-  "examples/command/exec_compose.forge",
-  "examples/command/exec_fail.forge",
-  "examples/command/exec_multi.forge",
-  "examples/command/skill_finder.forge",
+  "tests/fixtures/command/command_argv.forge",
+  "tests/fixtures/command/command_background.forge",
+  "tests/fixtures/command/command_background_cancel.forge",
+  "tests/fixtures/command/command_env.forge",
+  "tests/fixtures/command/command_fail.forge",
+  "tests/fixtures/command/command_stderr.forge",
+  "tests/fixtures/command/command_success.forge",
+  "tests/fixtures/command/command_timeout.forge",
+  "tests/fixtures/command/command_workdir.forge",
+  "tests/fixtures/command/exec_compose.forge",
+  "tests/fixtures/command/exec_fail.forge",
+  "tests/fixtures/command/exec_multi.forge",
+  "tests/fixtures/command/skill_finder.forge",
 ]
 check = "ok"
 
 [[cases]]
 name = "mock-runnable exec examples"
 paths = [
-  "examples/command/exec_success.forge",
-  "examples/command/exec_when_dispatch.forge",
-  "examples/command/skill_bot.forge",
+  "tests/fixtures/command/exec_success.forge",
+  "tests/fixtures/command/exec_when_dispatch.forge",
 ]
 check = "ok"
 run = "mock"
@@ -236,90 +175,42 @@ run = "mock"
 [[cases]]
 name = "observer web example"
 paths = [
-  "examples/observer/server.forge",
-  "examples/observer/shared.forge",
+  "tests/fixtures/observer/server.forge",
+  "tests/fixtures/observer/shared.forge",
 ]
 check = "ok"
 
 [[cases]]
 name = "sentinel web example"
 paths = [
-  "examples/sentinel/server.forge",
-  "examples/sentinel/shared.forge",
+  "tests/fixtures/sentinel/server.forge",
+  "tests/fixtures/sentinel/shared.forge",
 ]
 check = "ok"
-config = "examples/sentinel/forge.config.toml"
+config = "tests/fixtures/sentinel/forge.config.toml"
 merge = true
-
-[[cases]]
-name = "basic server example"
-paths = ["examples/server/hello_server.forge"]
-check = "ok"
-
-[[cases]]
-name = "session examples"
-paths = [
-  "examples/session/session_contradiction.forge",
-  "examples/session/session_hooks.forge",
-  "examples/session/session_isolate.forge",
-  "examples/session/session_placeholder.forge",
-  "examples/session/session_status.forge",
-  "examples/session/session_verification.forge",
-]
-check = "ok"
-
-[[cases]]
-name = "live session examples"
-paths = [
-  "examples/session/session_claude_e2e.forge",
-  "examples/session/session_claude_knowledge_live.forge",
-  "examples/session/session_contradiction_live.forge",
-  "examples/session/session_engine_codex_live.forge",
-  "examples/session/session_engine_live.forge",
-  "examples/session/session_verification_live.forge",
-]
-check = "ok"
-run = "live_only"
-
-[[cases]]
-name = "local skill project example"
-paths = ["examples/skill_project/main.forge"]
-check = "ok"
-manifest = "examples/skill_project/forge.project.toml"
-
-[[cases]]
-name = "github skill example"
-paths = ["examples/skills/github_ops.forge"]
-check = "ok"
-manifest = "examples/skills/forge.project.toml"
-run = "live_only"
 
 [[cases]]
 name = "tic-tac-toe multi-file example"
 paths = [
-  "examples/tictactoe/platform.forge",
-  "examples/tictactoe/room_agent.forge",
-  "examples/tictactoe/ai_opponent.forge",
-  "examples/tictactoe/matchmaking.forge",
+  "tests/fixtures/tictactoe/platform.forge",
+  "tests/fixtures/tictactoe/room_agent.forge",
+  "tests/fixtures/tictactoe/ai_opponent.forge",
+  "tests/fixtures/tictactoe/matchmaking.forge",
 ]
 check = "ok"
-manifest = "examples/tictactoe/forge.project.toml"
+manifest = "tests/fixtures/tictactoe/forge.project.toml"
 merge = true
 
 [[cases]]
 name = "wiki multi-file example"
 paths = [
-  "examples/wiki/server.forge",
-  "examples/wiki/shared.forge",
+  "tests/fixtures/wiki/server.forge",
+  "tests/fixtures/wiki/shared.forge",
 ]
 check = "ok"
-config = "examples/wiki/forge.config.toml"
+config = "tests/fixtures/wiki/forge.config.toml"
 merge = true
-
-[[cases]]
-name = "wiki client boundary example"
-paths = ["examples/wiki/client.forge"]
-check = "ok"
 
 [[cases]]
 name = "development lifecycle workflow"
@@ -327,12 +218,21 @@ paths = ["workflows/dev-cycle.forge"]
 check = "ok"
 
 [[cases]]
+name = "label router unit-test harness (tests/fixtures)"
+paths = [
+  "workflows/clone-dev/stage2/label_router.forge",
+  "tests/fixtures/label_router_harness.forge",
+]
+check = "ok"
+merge = true
+
+[[cases]]
 name = "executable dev-cycle (server boundary; T10.2 #368)"
 paths = [
   "workflows/dev-cycle/main.forge",
   "workflows/dev-cycle/agents.forge",
   "workflows/dev-cycle/gate_two.forge",
-  "examples/agents/slack-adapter/agents.forge",
+  "tests/fixtures/agents/slack-adapter/agents.forge",
 ]
 check = "ok"
 merge = true
@@ -357,7 +257,7 @@ paths = [
   "workflows/clone-dev/stage2/triage_specialist.forge",
   "workflows/dev-cycle/agents.forge",
   "workflows/dev-cycle/gate_two.forge",
-  "examples/agents/slack-adapter/agents.forge",
+  "tests/fixtures/agents/slack-adapter/agents.forge",
 ]
 check = "ok"
 merge = true

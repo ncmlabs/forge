@@ -54,7 +54,7 @@ use forge::runtime::skill_registry::SkillRegistry;
 const GATE_TWO_PATH: &str = "workflows/dev-cycle/gate_two.forge";
 const TYPES_PATH: &str = "workflows/clone-dev/shared/types.forge";
 const DEV_CYCLE_AGENTS_PATH: &str = "workflows/dev-cycle/agents.forge";
-const SLACK_ADAPTER_PATH: &str = "examples/agents/slack-adapter/agents.forge";
+const SLACK_ADAPTER_PATH: &str = "tests/fixtures/agents/slack-adapter/agents.forge";
 
 const HANDLER_WINDOW: Duration = Duration::from_secs(20);
 const SLACK_POLL_TIMEOUT: Duration = Duration::from_secs(15);

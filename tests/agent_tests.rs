@@ -2617,7 +2617,7 @@ async fn dev_cycle_swarm_mastery_agents_subscribe_correctly() {
 /// 1 worker, and its warden. Parses from source.
 #[tokio::test]
 async fn slack_adapter_main_forge_has_seven_events_and_handlers() {
-    let source = std::fs::read_to_string("examples/agents/slack-adapter/agents.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/slack-adapter/agents.forge")
         .expect("could not read slack-adapter main.forge");
     let program =
         forge::parser::parse(&source).expect("slack-adapter main.forge must parse cleanly");
@@ -2706,7 +2706,7 @@ async fn slack_adapter_main_forge_has_seven_events_and_handlers() {
 /// — the rate-limit-backpressure shape called for in #298.
 #[tokio::test]
 async fn slack_adapter_declares_single_worker_pool() {
-    let source = std::fs::read_to_string("examples/agents/slack-adapter/agents.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/slack-adapter/agents.forge")
         .expect("could not read slack-adapter main.forge");
     let program = forge::parser::parse(&source).expect("slack-adapter must parse");
 
@@ -2728,7 +2728,7 @@ async fn slack_adapter_declares_single_worker_pool() {
 /// template library the issue calls for.
 #[tokio::test]
 async fn slack_adapter_has_five_template_tasks() {
-    let source = std::fs::read_to_string("examples/agents/slack-adapter/agents.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/slack-adapter/agents.forge")
         .expect("could not read slack-adapter main.forge");
     let program = forge::parser::parse(&source).expect("slack-adapter must parse");
 
@@ -2760,7 +2760,7 @@ async fn slack_adapter_has_five_template_tasks() {
 /// `PostApproval` and `PostMessage` events for the adapter to handle.
 #[tokio::test]
 async fn pr_review_bot_emits_events_instead_of_calling_slack_skill() {
-    let source = std::fs::read_to_string("examples/agents/pr-review-bot/server.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/pr-review-bot/server.forge")
         .expect("could not read pr-review-bot server.forge");
     assert!(
         !source.contains("skill.slack"),
@@ -2789,7 +2789,7 @@ async fn pr_review_bot_emits_events_instead_of_calling_slack_skill() {
 /// `PostApproval`, `PostMessage`, and `WardenEscalation`.
 #[tokio::test]
 async fn approval_gate_emits_events_instead_of_calling_slack_skill() {
-    let source = std::fs::read_to_string("examples/agents/approval-gate/main.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/approval-gate/main.forge")
         .expect("could not read approval-gate main.forge");
     assert!(
         !source.contains("skill.slack"),
@@ -2820,7 +2820,7 @@ async fn approval_gate_emits_events_instead_of_calling_slack_skill() {
 /// five fields the DoD specifies — the mastermind's `task_graph` DAG node.
 #[tokio::test]
 async fn clone_dev_skeleton_declares_task_node_type() {
-    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/clone-dev-skeleton/main.forge")
         .expect("could not read clone-dev-skeleton main.forge");
     let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
 
@@ -2865,7 +2865,7 @@ async fn clone_dev_skeleton_declares_task_node_type() {
 /// consumes and emits.
 #[tokio::test]
 async fn clone_dev_skeleton_declares_task_graph_events() {
-    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/clone-dev-skeleton/main.forge")
         .expect("could not read clone-dev-skeleton main.forge");
     let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
 
@@ -2921,7 +2921,7 @@ async fn clone_dev_skeleton_declares_task_graph_events() {
 /// drop one.
 #[tokio::test]
 async fn clone_dev_skeleton_declares_task_graph_pure_functions() {
-    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/clone-dev-skeleton/main.forge")
         .expect("could not read clone-dev-skeleton main.forge");
     let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
 
@@ -2956,7 +2956,7 @@ async fn clone_dev_skeleton_declares_task_graph_pure_functions() {
 /// both graph-affecting events.
 #[tokio::test]
 async fn clone_dev_mastermind_has_typed_graph_and_handlers() {
-    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/clone-dev-skeleton/main.forge")
         .expect("could not read clone-dev-skeleton main.forge");
     let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
 
@@ -3025,7 +3025,7 @@ async fn clone_dev_mastermind_has_typed_graph_and_handlers() {
 /// contract to hit without plumbing real producers.
 #[tokio::test]
 async fn clone_dev_skeleton_exposes_graph_smoke_endpoints() {
-    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/clone-dev-skeleton/main.forge")
         .expect("could not read clone-dev-skeleton main.forge");
     let program = forge::parser::parse(&source).expect("skeleton must parse (T4.1)");
 
@@ -3053,7 +3053,7 @@ async fn clone_dev_skeleton_exposes_graph_smoke_endpoints() {
 /// webhook return path (#335) reads `source_task_id` back out on merge.
 #[tokio::test]
 async fn clone_dev_skeleton_declares_cross_project_requested_event() {
-    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/clone-dev-skeleton/main.forge")
         .expect("could not read clone-dev-skeleton main.forge");
     let program = forge::parser::parse(&source).expect("skeleton must parse (T4.2)");
 
@@ -3089,7 +3089,7 @@ async fn clone_dev_skeleton_declares_cross_project_requested_event() {
 /// records the `TaskBlocked` edge that the #335 return path clears.
 #[tokio::test]
 async fn clone_dev_mastermind_handles_cross_project_requested() {
-    let source = std::fs::read_to_string("examples/agents/clone-dev-skeleton/main.forge")
+    let source = std::fs::read_to_string("tests/fixtures/agents/clone-dev-skeleton/main.forge")
         .expect("could not read clone-dev-skeleton main.forge");
     let program = forge::parser::parse(&source).expect("skeleton must parse (T4.2)");
 
