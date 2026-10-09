@@ -26,7 +26,7 @@
 # One `org_warden` supervises all three. Observer shows the 3-hop
 # trace automatically via `event_emit`/`event_delivered` SSE.
 #
-# Fork history: forked from examples/agents/pr-review-bot/server.forge.
+# Fork history: forked from tests/fixtures/agents/pr-review-bot/server.forge.
 # The pr_reviewer body is kept largely intact — only the subscription
 # and field-unpacking changed so it consumes TaskRouted instead of
 # ReviewPRRequested.
@@ -35,8 +35,8 @@
 #   FORGE_CONFIG=forge.config.toml SLACK_BOT_TOKEN=xoxb-... \
 #   ANTHROPIC_API_KEY=... \
 #   cargo run -- serve \
-#     --manifest examples/agents/clone-dev-skeleton/forge.project.toml \
-#     examples/agents/clone-dev-skeleton/main.forge --port 3211
+#     --manifest tests/fixtures/agents/clone-dev-skeleton/forge.project.toml \
+#     tests/fixtures/agents/clone-dev-skeleton/main.forge --port 3211
 #
 # Acceptance (see README.md):
 #   curl -X POST http://localhost:3211/clone_dev -d 'kind=pr_review' ...

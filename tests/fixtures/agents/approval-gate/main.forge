@@ -24,7 +24,7 @@
 #   - LLM provider configured
 #
 # Usage:
-#   forge run --manifest examples/agents/approval-gate/forge.project.toml
+#   forge run --manifest tests/fixtures/agents/approval-gate/forge.project.toml
 #
 # Issue: #182 (Approval gate pattern)
 # ================================================================

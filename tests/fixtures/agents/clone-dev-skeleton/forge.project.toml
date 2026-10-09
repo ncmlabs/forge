@@ -7,5 +7,5 @@ description = "Walking skeleton: mastermind routes inbound tasks to pr_reviewer 
 entry = "main.forge"
 
 [skills]
-slack = { path = "../../../skills/slack" }
-github = { path = "../../../skills/github" }
+slack = { path = "../../../../skills/slack" }
+github = { path = "../../../../skills/github" }

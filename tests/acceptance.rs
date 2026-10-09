@@ -389,7 +389,7 @@ async fn accept_tictactoe_game() {
 
 #[test]
 fn accept_fact_check_pool_parse() {
-    let diags = check_file("examples/agents/fact_check_pool.forge");
+    let diags = check_file("tests/fixtures/agents/fact_check_pool.forge");
     let errs = errors(&diags);
     assert!(
         errs.is_empty(),
@@ -400,7 +400,7 @@ fn accept_fact_check_pool_parse() {
 
 #[tokio::test]
 async fn accept_fact_check_pool_run() {
-    let program = parse_file("examples/agents/fact_check_pool.forge");
+    let program = parse_file("tests/fixtures/agents/fact_check_pool.forge");
     // Mock provider returns 3 identical responses for the 3 pool workers
     let mock = MockProvider::new("mock").with_default("YES this claim is factually accurate");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);

@@ -14,7 +14,7 @@
 name = "agent examples"
 paths = [
   "examples/agents/debate.forge",
-  "examples/agents/fact_check_pool.forge",
+  "tests/fixtures/agents/fact_check_pool.forge",
   "examples/agents/learning_agent.forge",
   "examples/agents/support_bot.forge",
   "examples/agents/toolkit_demo.forge",
@@ -40,34 +40,34 @@ manifest = "examples/agents/inbound-triager/forge.project.toml"
 [[cases]]
 name = "approval gate agent"
 paths = [
-  "examples/agents/approval-gate/main.forge",
+  "tests/fixtures/agents/approval-gate/main.forge",
   "examples/agents/approval-gate/server.forge",
 ]
 check = "ok"
-manifest = "examples/agents/approval-gate/forge.project.toml"
+manifest = "tests/fixtures/agents/approval-gate/forge.project.toml"
 
 [[cases]]
 name = "PR review bot"
-paths = ["examples/agents/pr-review-bot/server.forge"]
+paths = ["tests/fixtures/agents/pr-review-bot/server.forge"]
 check = "ok"
-manifest = "examples/agents/pr-review-bot/forge.project.toml"
+manifest = "tests/fixtures/agents/pr-review-bot/forge.project.toml"
 
 [[cases]]
 name = "Slack adapter agent (+ smoke harness)"
 paths = [
-  "examples/agents/slack-adapter/main.forge",
-  "examples/agents/slack-adapter/agents.forge",
+  "tests/fixtures/agents/slack-adapter/main.forge",
+  "tests/fixtures/agents/slack-adapter/agents.forge",
   "examples/agents/slack-adapter/smoke.forge",
 ]
 check = "ok"
 merge = true
-manifest = "examples/agents/slack-adapter/forge.project.toml"
+manifest = "tests/fixtures/agents/slack-adapter/forge.project.toml"
 
 [[cases]]
 name = "clone-dev walking skeleton"
-paths = ["examples/agents/clone-dev-skeleton/main.forge"]
+paths = ["tests/fixtures/agents/clone-dev-skeleton/main.forge"]
 check = "ok"
-manifest = "examples/agents/clone-dev-skeleton/forge.project.toml"
+manifest = "tests/fixtures/agents/clone-dev-skeleton/forge.project.toml"
 
 [[cases]]
 name = "mastermind-pattern reference example (T1.2)"
@@ -107,7 +107,7 @@ manifest = "examples/agents/wake-rehydration-smoke/forge.project.toml"
 
 [[cases]]
 name = "mock-runnable quiz tutor agent"
-paths = ["examples/agents/quiz_tutor.forge"]
+paths = ["tests/fixtures/agents/quiz_tutor.forge"]
 check = "ok"
 run = "mock"
 
@@ -338,7 +338,7 @@ paths = [
   "workflows/dev-cycle/main.forge",
   "workflows/dev-cycle/agents.forge",
   "workflows/dev-cycle/gate_two.forge",
-  "examples/agents/slack-adapter/agents.forge",
+  "tests/fixtures/agents/slack-adapter/agents.forge",
 ]
 check = "ok"
 merge = true
@@ -363,7 +363,7 @@ paths = [
   "workflows/clone-dev/stage2/triage_specialist.forge",
   "workflows/dev-cycle/agents.forge",
   "workflows/dev-cycle/gate_two.forge",
-  "examples/agents/slack-adapter/agents.forge",
+  "tests/fixtures/agents/slack-adapter/agents.forge",
 ]
 check = "ok"
 merge = true

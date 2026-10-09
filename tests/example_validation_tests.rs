@@ -72,7 +72,7 @@ fn example_manifest_covers_every_forge_example() {
     let stale: Vec<_> = classified.difference(&discovered).cloned().collect();
     // Duplicate paths across cases are allowed: with multi-file composition
     // (introduced by #313, exercised by #356), shared library files like
-    // `examples/agents/slack-adapter/agents.forge` legitimately appear in
+    // `tests/fixtures/agents/slack-adapter/agents.forge` legitimately appear in
     // multiple cases — once for the standalone program, once for each
     // downstream compound that sources it.
 

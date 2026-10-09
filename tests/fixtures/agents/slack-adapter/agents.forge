@@ -6,7 +6,7 @@
 # Single outbound Slack surface behind typed events.
 #
 # Sourced by:
-#   examples/agents/slack-adapter/main.forge  (standalone runner)
+#   tests/fixtures/agents/slack-adapter/main.forge  (standalone runner)
 #   workflows/dev-cycle/main.forge            (dev-cycle runs this
 #                                              adapter alongside its
 #                                              specialists since #356

@@ -11,8 +11,8 @@
 #
 # Run:
 #   SLACK_BOT_TOKEN=xoxb-... cargo run -- serve \
-#     --manifest examples/agents/slack-adapter/forge.project.toml \
-#     examples/agents/slack-adapter/main.forge --port 3212
+#     --manifest tests/fixtures/agents/slack-adapter/forge.project.toml \
+#     tests/fixtures/agents/slack-adapter/main.forge --port 3212
 # ================================================================
 
 # ── Warden ─────────────────────────────────────────────────────

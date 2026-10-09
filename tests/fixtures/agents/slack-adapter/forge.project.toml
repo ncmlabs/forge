@@ -10,4 +10,4 @@ sources = [
 ]
 
 [skills]
-slack = { path = "../../../skills/slack" }
+slack = { path = "../../../../skills/slack" }

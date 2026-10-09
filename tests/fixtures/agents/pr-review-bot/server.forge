@@ -15,8 +15,8 @@
 # Run from repo root:
 #   FORGE_CONFIG=forge.config.toml SLACK_BOT_TOKEN=xoxb-... \
 #   cargo run -- serve \
-#     --manifest examples/agents/pr-review-bot/forge.project.toml \
-#     examples/agents/pr-review-bot/server.forge --port 3211
+#     --manifest tests/fixtures/agents/pr-review-bot/forge.project.toml \
+#     tests/fixtures/agents/pr-review-bot/server.forge --port 3211
 # ================================================================
 
 use
