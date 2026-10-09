@@ -149,10 +149,32 @@ pub struct EmbeddingsConfig {
     pub cost_per_1k_tokens: Option<f32>,
 }
 
+/// One `[llm.routing]` entry (#503): either a single provider name — the
+/// pre-#503 form, `plan = "deepseek"` — or an ordered chain,
+/// `plan = ["deepseek", "glm"]`, tried primary-first.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum RouteSpec {
+    One(String),
+    Chain(Vec<String>),
+}
+
+impl RouteSpec {
+    /// Providers to try, in order. Empty chains are rejected at registry
+    /// startup (`ProviderRegistry::from_config`), which owns the startup
+    /// error type.
+    pub fn providers(&self) -> Vec<String> {
+        match self {
+            RouteSpec::One(name) => vec![name.clone()],
+            RouteSpec::Chain(chain) => chain.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct LLMConfig {
     pub default: String,
-    pub routing: Option<HashMap<String, String>>,
+    pub routing: Option<HashMap<String, RouteSpec>>,
     pub budget: Option<BudgetConfig>,
 }
 
@@ -713,6 +735,55 @@ prefix = "/assets"
         };
         assert_eq!(cfg.root_or_default(), "static");
         assert_eq!(cfg.prefix_or_default(), "/static");
+    }
+
+    // ── #503 — [llm.routing] string and chain forms ────────────────────
+
+    #[test]
+    fn routing_parses_string_form() {
+        let toml_str = r#"
+[llm]
+default = "deepseek"
+
+[llm.routing]
+plan = "deepseek"
+
+[providers.deepseek]
+type = "mock"
+"#;
+        let config: ForgeConfig = toml::from_str(toml_str).unwrap();
+        let routing = config.llm.routing.expect("routing present");
+        assert_eq!(routing["plan"].providers(), vec!["deepseek".to_string()]);
+    }
+
+    #[test]
+    fn routing_parses_chain_form() {
+        let toml_str = r#"
+[llm]
+default = "deepseek"
+
+[llm.routing]
+plan = ["deepseek", "glm"]
+implement = "deepseek"
+
+[providers.deepseek]
+type = "mock"
+
+[providers.glm]
+type = "mock"
+"#;
+        let config: ForgeConfig = toml::from_str(toml_str).unwrap();
+        let routing = config.llm.routing.expect("routing present");
+        assert_eq!(
+            routing["plan"].providers(),
+            vec!["deepseek".to_string(), "glm".to_string()]
+        );
+        // Mixed table: the single-string form still resolves to a one-step
+        // chain, so pre-#503 configs keep working unchanged.
+        assert_eq!(
+            routing["implement"].providers(),
+            vec!["deepseek".to_string()]
+        );
     }
 
     #[test]

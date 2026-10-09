@@ -881,10 +881,21 @@ Sends a prompt to the LLM and returns a Text response with confidence metadata.
 
 The optional `for <phase>` clause (issue #361) attaches a routing phase key
 to the call-site. When set, the runtime consults the configured `[llm.routing]`
-table (in `clone-dev.toml` for the clone-developer track) and dispatches to
-the configured provider chain. The phase identifier accepts any name —
-including reserved words like `classify` — since the position after `for`
-is unambiguous.
+table and dispatches to the configured provider chain. The phase identifier
+accepts any name — including reserved words like `classify` — since the
+position after `for` is unambiguous.
+
+Each `[llm.routing]` value is either a single provider name or an ordered
+chain (issue #503). A chain is tried primary-first: when a provider fails the
+next entry answers, so `plan = ["deepseek", "glm"]` only reaches `glm` if
+`deepseek` is unavailable. Empty chains and names that no `[providers.*]`
+entry defines are startup errors, never a silent fallback:
+
+```toml
+[llm.routing]
+plan      = ["deepseek", "glm"]   # chain: deepseek first, glm on failure
+implement = "deepseek"            # single provider, unchanged form
+```
 
 **Examples:**
 ```

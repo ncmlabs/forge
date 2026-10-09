@@ -2,10 +2,11 @@
 [llm]
 default = "claude-haiku"
 
-# Optional: automatic routing by task category
+# Optional: automatic routing by task category. A value is either one provider
+# name or an ordered chain — the first provider that answers wins.
 [llm.routing]
 fast     = "claude-haiku"
-balanced = "claude-sonnet"
+balanced = ["claude-sonnet", "ollama-llama"]
 high     = "claude-opus"
 local    = "ollama-llama"
 
