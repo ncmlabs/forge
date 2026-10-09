@@ -6,6 +6,7 @@
   "input": "endpoint login(user: Text, pass: Text) -> Text\n  give \"ok\"\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E050",
     "error_contains": ["not allowed in", "boundary"]
   }
 }
