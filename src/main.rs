@@ -287,8 +287,21 @@ enum WakeAction {
     },
 }
 
+/// The runtime runs on its own thread so the stack is the same everywhere:
+/// Windows hands the main thread 1 MiB, which FORGE's async state machines for
+/// `flow` waves and spawned agents overflow (#481). 8 MiB matches Linux.
+fn main() -> anyhow::Result<()> {
+    const STACK_BYTES: usize = 8 * 1024 * 1024;
+    std::thread::Builder::new()
+        .stack_size(STACK_BYTES)
+        .spawn(forge_main)
+        .expect("failed to spawn the forge runtime thread")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn forge_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {

@@ -62,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- Windows stack overflow (#481): the CLI ran its async runtime on the OS main
+  thread, which Windows gives only 1 MiB — a `flow` with parallel oracle stages
+  or a spawned agent overflowed it and aborted (`thread 'main' has overflowed
+  its stack`). The runtime now runs on a thread with an explicit 8 MiB stack on
+  every platform, the same budget Linux already gave it.
 - Diagnostic rendering (#474): reports name the real source file instead of
   `<unknown>` (the ariadne source id was a bare span), and colour is emitted
   only when stderr is an interactive terminal, so piped or redirected output
