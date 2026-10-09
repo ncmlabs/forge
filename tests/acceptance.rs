@@ -122,6 +122,22 @@ fn accept_session_uncertain_error() {
 }
 
 #[test]
+fn accept_command_gate_error() {
+    // #484: a command result must not reach an oracle verdict unchecked
+    // (the #431 shape: a failed test command classified as accepted).
+    let diags = check_file("examples/errors/command_gate_error.forge");
+    let errs = errors(&diags);
+    assert!(
+        errs.iter()
+            .any(|d| d.code == "E150" && d.message.contains("used before checking")),
+        "should detect an unchecked command result, got: {:?}",
+        errs.iter()
+            .map(|d| format!("[{}] {}", d.code, d.message))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn accept_pure_error() {
     let diags = check_file("examples/errors/pure_error.forge");
     let errs = errors(&diags);
