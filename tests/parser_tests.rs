@@ -1279,7 +1279,7 @@ fn parse_classify_forge_file() {
 
 #[test]
 fn parse_room_agent_forge_file() {
-    let src = std::fs::read_to_string("examples/tictactoe/room_agent.forge").unwrap();
+    let src = std::fs::read_to_string("tests/fixtures/tictactoe/room_agent.forge").unwrap();
     let prog = parse(&src).unwrap();
     assert!(prog.boundary.is_some());
     // event, event, states, type, agent = 5 items
@@ -1288,7 +1288,7 @@ fn parse_room_agent_forge_file() {
 
 #[test]
 fn parse_platform_forge_file() {
-    let src = std::fs::read_to_string("examples/tictactoe/platform.forge").unwrap();
+    let src = std::fs::read_to_string("tests/fixtures/tictactoe/platform.forge").unwrap();
     let prog = parse(&src).unwrap();
     // use, pure, pure, contract, pool, system = 6 items
     assert!(prog.items.len() >= 5);

@@ -72,7 +72,7 @@ fn example_manifest_covers_every_forge_example() {
     let stale: Vec<_> = classified.difference(&discovered).cloned().collect();
     // Duplicate paths across cases are allowed: with multi-file composition
     // (introduced by #313, exercised by #356), shared library files like
-    // `examples/agents/slack-adapter/agents.forge` legitimately appear in
+    // `tests/fixtures/agents/slack-adapter/agents.forge` legitimately appear in
     // multiple cases — once for the standalone program, once for each
     // downstream compound that sources it.
 
@@ -163,6 +163,9 @@ fn discover_forge_examples(root: &Path) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
     collect_forge_files(&root.join("examples"), root, &mut paths);
     collect_forge_files(&root.join("workflows"), root, &mut paths);
+    // #488: showcase examples core tests still read were relocated out of
+    // `examples/` into `tests/fixtures/`; they stay classified here too.
+    collect_forge_files(&root.join("tests/fixtures"), root, &mut paths);
     paths
 }
 

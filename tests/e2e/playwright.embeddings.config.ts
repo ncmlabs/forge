@@ -21,7 +21,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'cargo run -- serve examples/wiki/server.forge -s examples/wiki/shared.forge',
+    command: 'cargo run -- serve tests/fixtures/wiki/server.forge -s tests/fixtures/wiki/shared.forge',
     cwd: '../../',
     url: 'http://localhost:3000/home',
     reuseExistingServer: true,

@@ -8,7 +8,7 @@ entry = "main.forge"
 sources = [
   "agents.forge",
   "gate_two.forge",
-  "../../examples/agents/slack-adapter/agents.forge",
+  "../../tests/fixtures/agents/slack-adapter/agents.forge",
 ]
 
 [skills]

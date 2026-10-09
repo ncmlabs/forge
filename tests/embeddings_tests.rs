@@ -17,10 +17,10 @@ use forge::runtime::vector_index::VectorIndex;
 // ── Helpers ────────────────────────────────────────────────────────
 
 fn load_wiki_program() -> forge::ast::Program {
-    let server_src =
-        std::fs::read_to_string("examples/wiki/server.forge").expect("could not read server.forge");
-    let shared_src =
-        std::fs::read_to_string("examples/wiki/shared.forge").expect("could not read shared.forge");
+    let server_src = std::fs::read_to_string("tests/fixtures/wiki/server.forge")
+        .expect("could not read server.forge");
+    let shared_src = std::fs::read_to_string("tests/fixtures/wiki/shared.forge")
+        .expect("could not read shared.forge");
 
     let server_prog = forge::parser::parse(&server_src).expect("parse server.forge failed");
     let shared_prog = forge::parser::parse(&shared_src).expect("parse shared.forge failed");
@@ -56,7 +56,7 @@ fn wiki_mock_registry() -> Arc<ProviderRegistry> {
 }
 
 fn seed_wiki_content(storage: &ForgeStorage) {
-    let content_dir = Path::new("examples/wiki/content");
+    let content_dir = Path::new("tests/fixtures/wiki/content");
     seed_content_recursive(content_dir, storage);
 }
 

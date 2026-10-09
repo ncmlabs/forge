@@ -19,8 +19,10 @@
 //   - HTTP /wake/... HMAC layer (covered by tests/webhook_integration_tests.rs)
 //   - Real Slack delivery (PostMessage emission is verified; no skill.slack.* call)
 //   - Cross-process redb rehydration (covered for the underlying primitive
-//     by examples/agents/wake-rehydration-smoke and #334 tests; this test
-//     verifies in-process correlation reuses the same agent instance)
+//     by the wake-rehydration-smoke example in
+//     https://github.com/ncmlabs/forge-examples/tree/main/agents and #334
+//     tests; this test verifies in-process correlation reuses the same agent
+//     instance)
 // ──────────────────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
