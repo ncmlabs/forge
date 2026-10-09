@@ -636,6 +636,156 @@ Right:
 fn helper
   say client_only_fn()"#,
     },
+    CodeInfo {
+        code: "W070",
+        title: "requires clause uses the LLM operation `reason`",
+        explain: r#"LLM operations are stochastic; preconditions should be deterministic so the guard is reproducible.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires reason "is {msg} valid?"
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
+    CodeInfo {
+        code: "W071",
+        title: "requires clause uses the LLM operation `classify`",
+        explain: r#"`classify` is stochastic; use a `pure` function for preconditions.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires classify msg
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
+    CodeInfo {
+        code: "W072",
+        title: "requires clause uses the LLM operation `search`",
+        explain: r#"`search` is stochastic and network-bound; use a `pure` function for preconditions.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires search "policy for {msg}"
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
+    CodeInfo {
+        code: "W073",
+        title: "requires clause uses the knowledge operation `recall`",
+        explain: r#"Knowledge retrieval is non-deterministic; preconditions should be deterministic.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires recall "{msg}"
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
+    CodeInfo {
+        code: "W074",
+        title: "requires clause uses try...or",
+        explain: r#"`try...or` wraps a stochastic operation, which makes the precondition non-deterministic.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires try classify(msg) or false
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
+    CodeInfo {
+        code: "W075",
+        title: "requires clause calls a task",
+        explain: r#"Tasks may be stochastic or side-effecting; preconditions should call `pure` functions only.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires helper(msg)
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
+    CodeInfo {
+        code: "W076",
+        title: "requires clause uses `find`",
+        explain: r#"`find` reads live runtime state, which is not deterministic.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires find "room_42" != none
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
+    CodeInfo {
+        code: "W077",
+        title: "requires clause uses `exec`",
+        explain: r#"`exec` runs an external process; its result is not deterministic.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires exec("date") != ""
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
+    CodeInfo {
+        code: "W078",
+        title: "requires clause uses command/session",
+        explain: r#"`command` and `session` run external processes; their results are not deterministic.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires command("ls") != ""
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
+    CodeInfo {
+        code: "W079",
+        title: "requires clause uses `session`",
+        explain: r#"A `session` delegates to an external agent, which is not deterministic.
+
+Wrong:
+agent a
+  on verify(msg: Text)
+    requires session("reviewer") != ""
+
+Right:
+agent a
+  on verify(msg: Text)
+    requires is_valid(msg)"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.

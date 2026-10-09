@@ -49,7 +49,8 @@ fn check_requires_expr(
     match &expr.node {
         Expr::Reason(_) => {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W070",
                     file,
                     "requires clause uses LLM operation `reason`",
                     expr.span.start..expr.span.end,
@@ -60,7 +61,8 @@ fn check_requires_expr(
         }
         Expr::Classify(_) => {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W071",
                     file,
                     "requires clause uses LLM operation `classify`",
                     expr.span.start..expr.span.end,
@@ -71,7 +73,8 @@ fn check_requires_expr(
         }
         Expr::Search(_) => {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W072",
                     file,
                     "requires clause uses LLM operation `search`",
                     expr.span.start..expr.span.end,
@@ -82,7 +85,8 @@ fn check_requires_expr(
         }
         Expr::Recall(_) => {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W073",
                     file,
                     "requires clause uses knowledge operation `recall`",
                     expr.span.start..expr.span.end,
@@ -93,7 +97,8 @@ fn check_requires_expr(
         }
         Expr::TryOr(a, b) => {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W074",
                     file,
                     "requires clause uses `try...or` which wraps stochastic operations",
                     expr.span.start..expr.span.end,
@@ -107,7 +112,8 @@ fn check_requires_expr(
         Expr::Call(c) => {
             if task_names.contains(&c.name.node) {
                 diagnostics.push(
-                    Diagnostic::warning(
+                    Diagnostic::coded_warning(
+                        "W075",
                         file,
                         format!(
                             "requires clause calls task `{}` which may be stochastic",
@@ -163,7 +169,8 @@ fn check_requires_expr(
         }
         Expr::Find(_) => {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W076",
                     file,
                     "requires clause uses `find` which queries runtime state",
                     expr.span.start..expr.span.end,
@@ -174,7 +181,8 @@ fn check_requires_expr(
         }
         Expr::Exec(_) => {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W077",
                     file,
                     "requires clause uses `exec` which runs an external process",
                     expr.span.start..expr.span.end,
@@ -185,7 +193,8 @@ fn check_requires_expr(
         }
         Expr::Command(_) | Expr::CommandMethod(_, _) | Expr::SessionMethod(_, _) => {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W078",
                     file,
                     "requires clause uses `command`/`session` which runs an external process",
                     expr.span.start..expr.span.end,
@@ -196,7 +205,8 @@ fn check_requires_expr(
         }
         Expr::Session(_) => {
             diagnostics.push(
-                Diagnostic::warning(
+                Diagnostic::coded_warning(
+                    "W079",
                     file,
                     "requires clause uses `session` which delegates to an external agent",
                     expr.span.start..expr.span.end,
