@@ -72,6 +72,17 @@ enum Command {
         /// Path to a forge.project.toml manifest for multi-file execution
         #[arg(long, conflicts_with = "file")]
         manifest: Option<PathBuf>,
+        /// Record every provider response as JSON fixtures for `forge test`
+        #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
+        record: Option<String>,
+    },
+    /// Replay a .forge program from recorded fixtures (no provider calls)
+    Test {
+        /// Path to the .forge source file
+        file: PathBuf,
+        /// Fixture file to replay (default: <file>.fixtures.json beside the program)
+        #[arg(long)]
+        fixtures: Option<PathBuf>,
     },
     /// Execute with full JSON trace output to stderr
     Trace {
@@ -346,14 +357,45 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
-        Command::Run { file, manifest } => {
-            if let Some(manifest_path) = manifest {
+        Command::Run {
+            file,
+            manifest,
+            record,
+        } => {
+            if let Some(record) = record {
+                let Some(file) = file else {
+                    anyhow::bail!(
+                        "--record requires a program file: forge run <program.forge> --record [path] \
+                         (--manifest recording is not supported yet)"
+                    );
+                };
+                let path = if record.is_empty() {
+                    forge::llm::fixtures::default_path(&file)
+                } else {
+                    PathBuf::from(record)
+                };
+                forge::llm::fixtures::set_mode(forge::llm::fixtures::FixtureMode::Record(path));
+                run_program(&file, false).await?;
+            } else if let Some(manifest_path) = manifest {
                 run_manifest(&manifest_path, false).await?;
             } else if let Some(file) = file {
                 run_program(&file, false).await?;
             } else {
                 anyhow::bail!("either a .forge file or --manifest is required");
             }
+        }
+        Command::Test { file, fixtures } => {
+            let path = fixtures.unwrap_or_else(|| forge::llm::fixtures::default_path(&file));
+            if !path.exists() {
+                eprintln!(
+                    "no fixtures at {}; record them with: forge run {} --record",
+                    path.display(),
+                    file.display()
+                );
+                std::process::exit(1);
+            }
+            forge::llm::fixtures::set_mode(forge::llm::fixtures::FixtureMode::Replay(path));
+            run_program(&file, false).await?;
         }
         Command::Trace { file } => {
             run_program(&file, true).await?;
