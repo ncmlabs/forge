@@ -10,7 +10,7 @@ Authoring loop, in this order: `forge check app.forge` (parse + resolve + check 
 
 ## 2. Syntax rules that trip agents
 
-- **Exact 2-space indentation.** Levels are 2 / 4 / 6 / 8 spaces (i1–i4) and nesting stops at i4; 3 spaces or a tab is a parse error.
+- **Exact 2-space indentation.** Levels are 2 / 4 / 6 / 8 spaces (i1–i4) and nesting stops at i4; 3 spaces or a tab is a parse error, and a block nested inside `fn main` (whose own body is i1) still puts its body at i3, `else` at i2 — keep `fn main` thin and put branching in a `task` or `pure`.
 - **No braces, no semicolons, no parentheses around conditions.** Newlines separate statements.
 - **No blank lines inside a body.** A blank line ends the block, and the indented line after it fails to parse.
 - **`needs` / `gives` / `do`.** `needs name: Type` (the type is required), `gives Type`, body inside `do` at i1 → i2. `fn main` has none of them: its body sits at i1.
@@ -89,20 +89,17 @@ flow brief
     when merged.sure -> give merged
     else -> give "synthesis failed"
 ```
-**`type` / `match`**
+**`match`** — arms are tag patterns: `Buy` matches the `"Buy"` label returned by `classify`, `_` catches everything else
 ```forge
-type Verdict
-  winner: Text
-  detail: Text
-
-pure describe
-  needs pick: Text
+task route
+  needs message: Text
   gives Text
   do
-    result = judge(pick)
+    result = classify message into ["Buy", "Support", "Other"]
     match result
-      Winner(who) -> give Verdict(winner: who, detail: "row")
-      _ -> give Verdict(winner: "none", detail: "unknown")
+      Buy -> give "sales"
+      Support -> give "helpdesk"
+      _ -> give "triage"
 ```
 **`if` / `else if` / `for`**
 ```forge
@@ -120,15 +117,18 @@ pure rate
     else
       give "low"
 ```
-**`event` / `subscribe` / `emit`**
+**`event` / `subscribe` / `emit`** — never emit the event you subscribe to; declare a second event for the reply
 ```forge
 event Mention
+  thread: Text
+
+event Replied
   thread: Text
 
 agent listener
   subscribe Mention where thread == "main"
   on Mention(thread: Text)
-    emit Mention(thread: thread)
+    emit Replied(thread: thread)
     say "echo {thread}"
 ```
 **`states` / `agent` / `memory` / `requires` / `transition`**
@@ -195,15 +195,18 @@ system lobby
     front: lobby_agent
   game >> front
 ```
-**`command`** — `["argv", "array"]` beats a shell string when interpolating values:
+**`command`** — `["argv", "array"]` beats a shell string when interpolating values; always branch on `result.success` before using the output — a failed command must never be reinterpreted (the `when` is the uncertainty gate the checker requires for the captured text)
 ```forge
 task run_tests
   gives Text
   do
     result = command ["cargo", "test"] in "." timeout 10m
-    when result.sure -> give result.stdout
-    when result.unsure -> give result.stderr
-    else -> give "tests failed"
+    if result.success
+      when result.sure -> give result.stdout
+      else -> give "no output captured"
+    else
+      when result.sure -> give result.stderr
+      else -> give "command failed"
 ```
 **`session`** — external agent sessions; handle the result like any oracle:
 ```forge
@@ -229,8 +232,6 @@ agent librarian
 **`spawn` / `find` / `retire`** — a spawned agent needs a failure policy or `forge check` warns:
 ```forge
 agent specialist
-  memory
-    topic: Text
   on start
     say "specialist up"
   if stuck for 3 turns
@@ -239,6 +240,7 @@ agent specialist
 agent foreman
   on dispatch(topic: Text)
     child = spawn specialist as "spec_{topic}"
+    say "spawned {child}"
   on cleanup(topic: Text)
     existing = find "spec_{topic}"
     retire "spec_{topic}"
