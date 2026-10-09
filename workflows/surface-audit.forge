@@ -15,7 +15,8 @@
 # What the agent does:
 #   1. Reads the audit protocol with file.read.
 #   2. Grounds itself in recent authoritative-source commits (command: git log)
-#      and the current derived surfaces (file.read).
+#      and the current derived surfaces (file.read). A failed git log aborts the
+#      audit (#484 / E150) instead of auditing an error.
 #   3. Produces the AUDIT REPORT block (protocol output contract).
 #   4. Materializes its proposed fix as a unified diff at
 #      <root>/.forge-audit.patch via file.write.
@@ -58,6 +59,8 @@ task audit_with_protocol
   gives Text
   do
     recent = command "git -C {root} log --since=6-weeks-ago --oneline -- src/ grammar/ src/checker/ src/runtime/" timeout 120s
+    if not recent.success
+      give "AUDIT REPORT:\ncould not read recent commits; audit aborted\nAUDIT REPORT END"
     reference = file.read("{root}/docs/forge-reference.md")
     grammar = file.read("{root}/grammar/forge.pest")
     findings = reason "You are executing the FORGE derived-surface audit protocol below against the repository at {root}. Today is week {week} (ISO week, UTC). Detect drift between the authoritative sources and the derived surfaces, and describe the minimal surgical edits that fix it.\n\n=== AUDIT PROTOCOL ===\n{protocol}\n=== END AUDIT PROTOCOL ===\n\nRecent commits touching authoritative sources (prioritize their derived-surface follow-through):\n{recent}\n\nCurrent docs/forge-reference.md:\n{reference}\n\nCurrent grammar/forge.pest:\n{grammar}\n\nExecute the protocol's Audit procedure using ONLY the material above. Then output the AUDIT REPORT block exactly as the protocol's Output contract requires: a line 'AUDIT REPORT:', one bullet per drift item (authoritative source file -> derived surface updated, with the precise minimal edit), then 'AUDIT REPORT END'. If you find zero drift, the block contains the single line 'no drift detected'. Output ONLY the report block."
