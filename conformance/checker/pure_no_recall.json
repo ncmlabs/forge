@@ -6,6 +6,7 @@
   "input": "pure bad\n  needs q: Text\n  gives Text\n  do\n    give recall \"{q}\"\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E030",
     "error_contains": ["cannot use", "recall"]
   }
 }

@@ -67,6 +67,7 @@ Validation notes:
 - Manifest/project skill examples must be validated through their `forge.project.toml`.
 - Multi-file examples may need manifest or merged-source validation; do not assume each dependent file checks in isolation.
 - Known checker limitation: multi-state lifecycle guards such as `lifecycle == a or lifecycle == b` are currently opaque warnings and may make `forge check` exit nonzero.
+- Every diagnostic carries a stable code (`Exxx` errors, `Wxxx` warnings): `forge explain <code>` prints the reason with a `Wrong:`/`Right:` example, `forge explain --list` enumerates all codes. Piped/redirected output is plain text; `NO_COLOR` also disables colour.
 ```
 
 ## Capabilities

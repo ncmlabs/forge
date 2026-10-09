@@ -5,6 +5,7 @@ pub mod compose;
 pub mod config;
 pub mod cost_estimator;
 pub mod diagnostic;
+pub mod diagnostic_codes;
 pub mod fleet;
 pub mod llm;
 pub mod manifest;

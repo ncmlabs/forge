@@ -6,6 +6,7 @@
   "input": "agent broken\n  lifecycle: BogusStates\n  on start\n    say \"hello\"\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E040",
     "error_contains": ["unknown lifecycle"]
   }
 }

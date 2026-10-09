@@ -5,6 +5,7 @@
   "input": "pure no_find\n  do\n    bot = find \"room_42\"\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E030",
     "error_contains": ["find"],
     "error_kind": "error"
   }

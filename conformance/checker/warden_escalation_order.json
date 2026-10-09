@@ -6,6 +6,7 @@
   "input": "agent bot\n  on handle(msg: Text)\n    say msg\n\nwarden supervisor\n  manages [bot]\n  on stuck: restart, self\n    after 3: nudge\n",
   "expected": {
     "outcome": "compile_error",
+    "error_code": "E092",
     "error_contains": ["escalation ladder must increase severity"]
   }
 }

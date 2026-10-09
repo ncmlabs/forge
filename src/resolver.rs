@@ -70,6 +70,7 @@ impl ResolveError {
                     ))
                 };
                 let mut diag = Diagnostic::error(
+                    "E010",
                     file,
                     format!("unknown capability '{}'", name),
                     *span_start..*span_end,
@@ -86,6 +87,7 @@ impl ResolveError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E011",
                 file,
                 format!("composition type mismatch: `{}` → `{}`", left, right),
                 *span_start..*span_end,
@@ -98,6 +100,7 @@ impl ResolveError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E012",
                 file,
                 format!(
                     "capability '{}' expects {} arguments but got {}",
@@ -113,6 +116,7 @@ impl ResolveError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E013",
                 file,
                 format!(
                     "argument type mismatch for '{}': expected `{}`, got `{}`",

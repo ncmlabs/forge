@@ -67,6 +67,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E140",
                 file,
                 format!(
                     "webhook block `{}` in agent `{}` is missing a `mode:` clause",
@@ -83,6 +84,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E141",
                 file,
                 format!(
                     "webhook block `{}` in agent `{}` is missing an `emit:` clause",
@@ -100,6 +102,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E142",
                 file,
                 format!(
                     "webhook `{}` in agent `{}` emits unknown event `{}`",
@@ -117,6 +120,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E143",
                 file,
                 format!(
                     "webhook `{}` in agent `{}` has `mode: wake` with `emit: {}` but the agent has no `on {}` handler",
@@ -136,6 +140,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E144",
                 file,
                 format!(
                     "duplicate webhook block `{}` in agent `{}`",
@@ -153,6 +158,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E145",
                 file,
                 format!(
                     "duplicate `{}` option in webhook block `{}` (agent `{}`)",

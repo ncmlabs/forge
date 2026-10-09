@@ -114,6 +114,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E110",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` is missing a `when:` clause",
@@ -130,6 +131,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E111",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` is missing a `mode:` clause",
@@ -146,6 +148,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E112",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `mode: spawn` but no `prompt:`",
@@ -162,6 +165,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E113",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `mode: wake` but no `emit:` and no `on {}.tick` handler",
@@ -179,6 +183,7 @@ impl CheckError {
                 dup_span_end,
                 ..
             } => Diagnostic::error(
+                "E114",
                 file,
                 format!(
                     "duplicate schedule name `{}` in agent `{}`",
@@ -196,6 +201,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E115",
                 file,
                 format!(
                     "duplicate `{}` option in schedule `{}` (agent `{}`)",
@@ -214,6 +220,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E116",
                 file,
                 format!(
                     "invalid cron expression in schedule `{}` (agent `{}`): {}",
@@ -232,6 +239,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E117",
                 file,
                 format!(
                     "invalid time literal in schedule `{}` (agent `{}`): {:02}:{:02}",
@@ -248,6 +256,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E118",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `when: every 0...` — duration must be positive",
@@ -265,6 +274,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::error(
+                "E119",
                 file,
                 format!(
                     "schedule name `{}` in agent `{}` collides with {}",
@@ -281,6 +291,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::warning(
+                "W110",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `mode: spawn` with an extraneous `emit:`",
@@ -297,6 +308,7 @@ impl CheckError {
                 span_start,
                 span_end,
             } => Diagnostic::warning(
+                "W111",
                 file,
                 format!(
                     "schedule `{}` in agent `{}` has `mode: wake` with an extraneous `prompt:`",

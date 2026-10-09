@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `forge` block is extracted and checked in CI by `tests/forge_card_tests.rs`,
   and the card is capped at 300 lines; `llms.txt` at the repo root is the
   machine entry point.
+- Diagnostic error codes (#474): every diagnostic now carries a stable code
+  (`Exxx` errors, `Wxxx` warnings) from the registry in
+  `src/diagnostic_codes.rs`, and `forge explain <code>` /
+  `forge explain --list` document each one with a `Wrong:`/`Right:` example.
+  Conformance cases assert on `error_code` and `docs/forge-reference.md`
+  gains a "Diagnostics and Error Codes" section.
 - Surface-audit rework (#449): the derived-surface drift audit is now driven
   by the FORGE agent `workflows/surface-audit.forge` via `forge send`, on a
   zero-cost OpenAI-compatible provider selected with `FORGE_CONFIG` +
@@ -31,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dev-system tracks are deprecated (see roadmap).
 
 ### Fixed
+- Diagnostic rendering (#474): reports name the real source file instead of
+  `<unknown>` (the ariadne source id was a bare span), and colour is emitted
+  only when stderr is an interactive terminal, so piped or redirected output
+  is plain text; `NO_COLOR` disables colour on a terminal.
 - Clippy `double_must_use` errors on stable 1.99 from `async-trait` expansion;
   bumped `async-trait` in `Cargo.lock` (#489).
 - RUSTSEC-2026-0285: bumped `rustls` to 0.23.45 in `Cargo.lock` (#472).
