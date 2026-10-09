@@ -21,21 +21,13 @@ Authoring loop, in this order: `forge check app.forge` (parse + resolve + check 
 
 `task` may call oracles and perform effects; `pure` may not — it is deterministic and always returns confidence 1.0. Forbidden in `pure`: `reason`, `classify`, `search`, `recall`, `exec`, `command`, `session`, `file.read`, `skill.*`, `escalate`, `try ... or`, and any call to a `task`.
 
-Wrong — `reason` in a pure function:
+Wrong — `reason` in a pure function; the fix is to move the oracle call into a `task` (§5 shows both):
 ```forge-error
 pure summarize
   needs text: Text
   gives Text
   do
     give reason "summarize {text}"
-```
-Right — deterministic work only:
-```forge
-pure summarize
-  needs text: Text
-  gives Text
-  do
-    give "summary: {text}"
 ```
 
 ## 4. Uncertainty: bind, then dispatch
@@ -62,3 +54,244 @@ task analyze
     when result.unsure -> give "uncertain: {result}"
     else -> give "unknown"
 ```
+
+## 5. One idiom per primitive
+
+**`pure` / `task` / `when`**
+```forge
+pure slugify
+  needs title: Text
+  gives Text
+  do
+    give "post-{title}"
+
+task summarize
+  needs topic: Text
+  gives Text
+  do
+    draft = reason "One sentence about {topic}"
+    when draft.sure -> give slugify(draft)
+    when draft.unsure -> give "uncertain: {draft}"
+    else -> give "unknown"
+```
+**`flow`** — stages without `needs` run in the same wave, in parallel:
+```forge
+flow brief
+  needs topic: Text
+  gives Text
+  stage gather_web
+    notes = reason "Summarize {topic}"
+  stage gather_papers
+    notes = reason "Cite papers on {topic}"
+  stage synthesize
+    needs gather_web.notes, gather_papers.notes
+    merged = reason "Combine: {gather_web.notes} {gather_papers.notes}"
+    when merged.sure -> give merged
+    else -> give "synthesis failed"
+```
+**`type` / `match`**
+```forge
+type Verdict
+  winner: Text
+  detail: Text
+
+pure describe
+  needs pick: Text
+  gives Text
+  do
+    result = judge(pick)
+    match result
+      Winner(who) -> give Verdict(winner: who, detail: "row")
+      _ -> give Verdict(winner: "none", detail: "unknown")
+```
+**`if` / `else if` / `for`**
+```forge
+pure rate
+  needs scores: Number[]
+  gives Text
+  do
+    total = 0
+    for score in scores
+      total = total + score
+    if total > 10
+      give "high"
+    else if total > 5
+      give "medium"
+    else
+      give "low"
+```
+**`event` / `subscribe` / `emit`**
+```forge
+event Mention
+  thread: Text
+
+agent listener
+  subscribe Mention where thread == "main"
+  on Mention(thread: Text)
+    emit Mention(thread: thread)
+    say "echo {thread}"
+```
+**`states` / `agent` / `memory` / `requires` / `transition`**
+```forge
+states Phase
+  waiting -> active
+  active -> waiting
+
+agent responder
+  lifecycle: Phase
+  memory
+    thread: Text
+  on Mention(thread: Text)
+    requires lifecycle == waiting on fail: give "busy"
+    memory.thread = thread
+    transition to active
+```
+**`pool`**
+```forge
+task FactChecker
+  needs claim: Text
+  gives Text
+  do
+    verdict = reason "Is this true? {claim}"
+    when verdict.sure -> give verdict
+    else -> give "unverified"
+
+pool checkers
+  workers: FactChecker * 3
+  strategy: majority
+  timeout: 15s
+
+fn main
+  say checkers.send("check", "the sky is blue")
+```
+**`warden`** — cover all six failure types; `manages` must name a declared agent/pool/flow:
+```forge
+agent bot
+  on start
+    say "ready"
+
+warden supervisor
+  manages [bot]
+  on stuck: nudge, self
+  on crash: restart, all
+  on hallucination: replace, downstream
+  on contradiction: escalate, self
+  on budget: downgrade, self
+  on timeout: restart, self
+```
+**`contract` / `system`**
+```forge
+contract GameRoom
+  can join(player: Text) -> Text
+agent room_agent
+  on start
+    say "room ready"
+agent lobby_agent
+  on start
+    say "lobby ready"
+system lobby
+  use
+    game: room_agent
+    front: lobby_agent
+  game >> front
+```
+**`command`** — `["argv", "array"]` beats a shell string when interpolating values:
+```forge
+task run_tests
+  gives Text
+  do
+    result = command ["cargo", "test"] in "." timeout 10m
+    when result.sure -> give result.stdout
+    when result.unsure -> give result.stderr
+    else -> give "tests failed"
+```
+**`session`** — external agent sessions; handle the result like any oracle:
+```forge
+task review_patch
+  gives AgentResult
+  do
+    result = session "code-review" agent "claude" prompt "Review this patch" timeout 5m gives AgentResult
+    when result.sure -> give result
+    else -> give AgentResult(plan: "failed", confidence: 0.0)
+```
+**`knowledge` / `learn` / `recall`**
+```forge
+agent librarian
+  knowledge store: ".forge-knowledge/librarian"
+    max_entries: 5000
+  on ingest(fact: Text)
+    learn "{fact}" category: "FACTS"
+  on ask(question: Text)
+    prior = recall "{question}"
+    when prior.sure -> give prior
+    else -> escalate to human
+```
+**`spawn` / `find` / `retire`** — a spawned agent needs a failure policy or `forge check` warns:
+```forge
+agent specialist
+  memory
+    topic: Text
+  on start
+    say "specialist up"
+  if stuck for 3 turns
+    escalate to human
+
+agent foreman
+  on dispatch(topic: Text)
+    child = spawn specialist as "spec_{topic}"
+  on cleanup(topic: Text)
+    existing = find "spec_{topic}"
+    retire "spec_{topic}"
+```
+**`skill.*`** — resolves only through a project manifest, so validate it with `forge run --manifest forge.project.toml`, not a bare `forge check` (the block below is not extracted by CI):
+```toml
+[skills]
+repo_check = {}
+```
+```text
+use
+  skill.repo_check
+
+fn main
+  report = skill.repo_check.analyze()
+  say report
+```
+**`file.read` / `json.parse`** — `toml.parse` has the same shape; `file.read` is server-only:
+```forge
+#! boundary: server
+
+use
+  file.read
+  json.parse
+type Host
+  name: Text
+  port: Number
+task load_host
+  needs path: Text
+  gives Text
+  do
+    host = json.parse(file.read(path), "Host")
+    when host.sure -> give "{host.name}:{host.port}"
+    else -> give "unreadable config"
+```
+
+## 6. Common errors
+
+- `expected statement` — bad indentation (3 spaces, a tab) or `when` without `->`; use exact 2-space levels and one-line `when x.sure -> ...`.
+- `expected eoi, top level` — a blank line inside `do`, a handler, or `fn main`; delete the blank line.
+- ``unhandled uncertain: ...`` — an oracle result reached `give` raw or inline; bind it, then dispatch with `when x.sure` / `.unsure` / `else`.
+- ``pure function `<f>` cannot use `<op>` `` — an oracle or effect inside `pure`; move that line into a `task`.
+- ``pure function `<f>` cannot call task `<t>` `` — `pure` may only call `pure`; pass the value in as an argument.
+- ``illegal transition from `<a>` to `<b>` `` — add that edge to the `states` block, or fix the state name.
+- ``unguarded transition to `<s>` in handler `<h>` `` — add `requires lifecycle == <from>` as the handler's first line.
+- ``unknown capability `<name>` `` — the `use` list names something that is not built in and not in the project manifest; fix the name.
+- `file.read() is not allowed in shared boundary` — add `#! boundary: server` as line 1 (`search`, `data.*`, and `endpoint` are server-only too).
+
+Run `forge explain <code>` for any error code (see #474).
+
+## 7. Where to go next
+
+- `docs/forge-reference.md` — the full language reference.
+- `examples/` — runnable programs; `examples/errors/` fail on purpose.
+- <https://github.com/ncmlabs/forge-examples> — the examples repo.
+- `llms.txt` — the machine entry point, and it points back here.
