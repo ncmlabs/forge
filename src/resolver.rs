@@ -69,7 +69,8 @@ impl ResolveError {
                         available.join(", ")
                     ))
                 };
-                let mut diag = Diagnostic::error(
+                let mut diag = Diagnostic::coded_error(
+                    "E010",
                     file,
                     format!("unknown capability '{}'", name),
                     *span_start..*span_end,
@@ -85,7 +86,8 @@ impl ResolveError {
                 right,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E011",
                 file,
                 format!("composition type mismatch: `{}` → `{}`", left, right),
                 *span_start..*span_end,
@@ -97,7 +99,8 @@ impl ResolveError {
                 actual,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E012",
                 file,
                 format!(
                     "capability '{}' expects {} arguments but got {}",
@@ -112,7 +115,8 @@ impl ResolveError {
                 actual,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E013",
                 file,
                 format!(
                     "argument type mismatch for '{}': expected `{}`, got `{}`",
