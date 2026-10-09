@@ -306,8 +306,31 @@ impl Command {
     }
 }
 
+/// Stack for the thread that drives the runtime. The executor polls a program's
+/// whole future tree on the calling thread, and Windows sizes the main thread's
+/// stack at 1 MiB, so a deep program (flow, pool, agent) overflows it (observed
+/// as 0xC00000FD from a `forge run` child process, #475; `ulimit -s 1024`
+/// reproduces it on Linux). CI sets `RUST_MIN_STACK=8388608` for the same
+/// reason, but that only covers threads cargo and tokio spawn, not `main`.
+/// Matching the 8 MiB default Linux and macOS already give `main` keeps
+/// `forge run` platform-independent.
+const MAIN_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+fn main() -> anyhow::Result<()> {
+    let handle = std::thread::Builder::new()
+        .name("forge".to_string())
+        .stack_size(MAIN_STACK_BYTES)
+        .spawn(cli_main)
+        .map_err(|e| anyhow::anyhow!("cannot start the forge runtime: {e}"))?;
+    match handle.join() {
+        Ok(result) => result,
+        // Keep a panic in the CLI a panic of the process, as it was before.
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 #[tokio::main]
-async fn main() {
+async fn cli_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let out = forge::cli_output::OutputMode::from_flags(cli.json, cli.fields);
     let command = cli.command;
@@ -315,6 +338,7 @@ async fn main() {
     if let Err(e) = run(command, &out).await {
         out.fail(name, &e);
     }
+    Ok(())
 }
 
 async fn run(command: Command, out: &forge::cli_output::OutputMode) -> anyhow::Result<()> {
