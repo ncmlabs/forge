@@ -111,11 +111,16 @@ fn expected_txt_matches_across_line_endings() {
         .expect("init run");
     assert!(init.status.success(), "{}", stderr_of(&init));
 
-    // The committed `expected.txt` is LF and the template records LF output;
-    // Windows stdout is CRLF, so `--expect` must not care which side used which.
+    // The committed `expected.txt` is LF and the template records LF output; a
+    // Windows checkout (`core.autocrlf`) and Windows stdout are CRLF, so
+    // `--expect` must not care which side used which. Normalise to LF first so
+    // this writes the same bytes on either host.
     let expected = std::fs::read_to_string(project.join("expected.txt")).expect("read expected");
-    std::fs::write(project.join("expected.txt"), expected.replace('\n', "\r\n"))
-        .expect("rewrite expected with CRLF");
+    std::fs::write(
+        project.join("expected.txt"),
+        expected.replace("\r\n", "\n").replace('\n', "\r\n"),
+    )
+    .expect("rewrite expected with CRLF");
 
     let replay = forge(&project)
         .args([
