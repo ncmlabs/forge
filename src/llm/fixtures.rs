@@ -105,21 +105,21 @@ fn fixture_err(message: String) -> ProviderError {
     ProviderError::Fixture(message)
 }
 
-fn save(path: &Path, calls: &[RecordedCall]) -> Result<(), ProviderError> {
+/// Persist the whole fixture file. Failures come back as plain messages: a
+/// failed write must never discard a response the run already paid for.
+fn save(path: &Path, calls: &[RecordedCall]) -> Result<(), String> {
     let file = FixtureFile {
         version: VERSION,
         calls: calls.to_vec(),
     };
-    let json = serde_json::to_string_pretty(&file)
-        .map_err(|e| fixture_err(format!("failed to encode fixtures: {e}")))?;
+    let json = serde_json::to_string_pretty(&file).map_err(|e| format!("cannot encode: {e}"))?;
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
             std::fs::create_dir_all(dir)
-                .map_err(|e| fixture_err(format!("failed to create {}: {e}", dir.display())))?;
+                .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         }
     }
-    std::fs::write(path, json)
-        .map_err(|e| fixture_err(format!("failed to write fixtures {}: {e}", path.display())))
+    std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
 fn load(path: &Path) -> Result<FixtureFile, ProviderError> {
@@ -181,7 +181,13 @@ impl LLMProvider for RecordingProvider {
                 provider_name: resp.provider_name.clone(),
             },
         });
-        save(&self.path, &calls)?;
+        save(&self.path, &calls).unwrap_or_else(|e| {
+            // The response is already paid for: warn, keep it, keep going.
+            eprintln!(
+                "[forge] warning: could not write fixtures to {}: {e}",
+                self.path.display()
+            );
+        });
         Ok(resp)
     }
 }
@@ -466,6 +472,22 @@ mod tests {
         );
         assert!(msg.contains("re-record with: forge run"), "{msg}");
         assert!(msg.contains(path.to_str().unwrap()), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_fixture_write_does_not_lose_the_response() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture_path(&dir);
+        let mut recording = one(mock("paid response"));
+        wrap_providers(&mut recording, &FixtureMode::Record(path.clone())).unwrap();
+        // Block the write: a directory at the fixture path makes fs::write fail.
+        std::fs::create_dir(&path).unwrap();
+
+        let resp = complete(&recording, "hi")
+            .await
+            .expect("a failed fixture write must not discard the response");
+        assert_eq!(resp.content, "paid response");
+        assert!(path.is_dir(), "the blocked path is left alone");
     }
 
     #[tokio::test]
