@@ -291,8 +291,19 @@ pub fn wrap_providers(
 ) -> Result<(), ProviderError> {
     match mode {
         FixtureMode::Record(path) => {
-            // A recording run starts fresh in memory; the first recorded call
-            // overwrites the file, so a stale fixture can never replay.
+            // Start clean: a record run that makes no calls (or crashes early)
+            // must not leave a stale file behind for `forge test` to replay.
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(fixture_err(format!(
+                        "failed to remove stale fixtures {}: {e}",
+                        path.display()
+                    )))
+                }
+            }
+            // The run's calls live in memory; each one rewrites the whole file.
             let calls = Arc::new(Mutex::new(Vec::new()));
             for (name, inner) in providers.iter_mut() {
                 *inner = Arc::new(RecordingProvider {
@@ -472,6 +483,27 @@ mod tests {
         );
         assert!(msg.contains("re-record with: forge run"), "{msg}");
         assert!(msg.contains(path.to_str().unwrap()), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn recording_starts_from_a_clean_fixture_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture_path(&dir);
+        std::fs::write(&path, r#"{"version":1,"calls":[]}"#).unwrap();
+
+        let mut recording = one(mock("fresh"));
+        wrap_providers(&mut recording, &FixtureMode::Record(path.clone())).unwrap();
+        assert!(
+            !path.exists(),
+            "recording removes the stale file before the run"
+        );
+        assert!(!path.exists(), "a zero-call run writes nothing back");
+
+        complete(&recording, "hi").await.unwrap();
+        let file: FixtureFile = serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
+            .expect("the fresh recording is valid JSON");
+        assert_eq!(file.calls.len(), 1, "only this run's calls are recorded");
+        assert_eq!(file.calls[0].response.content, "fresh");
     }
 
     #[tokio::test]
