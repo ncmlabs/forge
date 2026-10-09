@@ -1233,7 +1233,12 @@ forge run program.forge --record               # → program.forge.fixtures.json
 forge run program.forge --record out/fx.json   # explicit path
 forge test program.forge                       # replay
 forge test program.forge --fixtures out/fx.json
+forge test program.forge --expect expected.txt # replay, then assert stdout
 ```
+
+`--expect <file>` requires the replayed output to match the file, ignoring
+trailing whitespace on both sides; a mismatch exits 1 and prints a short
+line diff.
 
 The file is one JSON document per program, keyed by a SHA-256 hash of the
 provider name, system prompt, prompt, JSON mode, and tool names. Repeating an
@@ -1251,10 +1256,18 @@ no recorded response for provider 'mock' (prompt starts: "…"); re-record with:
 `--record` may carry an optional path, so give the program file first
 (`forge run program.forge --record`) — otherwise the path is read as the file.
 
-Limitations: `--record` and `forge test` handle a single `.forge` file
-(`--manifest` is rejected). The configured provider must still be constructible
-(a real provider still needs its API key), but it is never called during
-replay, and embedding providers are not recorded.
+**Limitations**
+
+- Fixtures are keyed by request content plus occurrence order, not by call
+  site. Identical prompts replay in arrival order, so re-record after changing
+  the program, its inputs, or its control flow.
+- Embedding providers are not recorded or replayed. Programs that use
+  `data.embed` / `data.search` still reach the embedding endpoint.
+- Missing-fixture errors get a diagnostic code with the JSON envelope (#475).
+- Manifest runs are not supported yet: `--record` and `forge test` take a single
+  `.forge` file, and `--manifest` plus `--record` is rejected.
+- The configured provider must still be constructible, so a real provider still
+  needs its API key present. It is never called during replay.
 
 ---
 
