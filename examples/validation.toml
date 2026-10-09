@@ -287,3 +287,23 @@ name = "forge-sensei client workflow"
 paths = ["workflows/forge-sensei/client/client.forge"]
 check = "ok"
 manifest = "workflows/forge-sensei/client/forge.project.toml"
+
+# ── #475 CLI JSON fixtures ──────────────────────────────────────────────────
+# Small programs used only by `tests/cli_json_tests.rs`; classified here so the
+# manifest covers every `.forge` file in the repo.
+
+[[cases]]
+name = "CLI json: agent with a deterministic handler (#475)"
+paths = ["tests/fixtures/echo_agent.forge"]
+check = "ok"
+
+[[cases]]
+name = "CLI json: warnings-only states program (#475)"
+paths = ["tests/fixtures/warnings_only.forge"]
+check = "ok"
+
+[[cases]]
+name = "CLI json: record/replay oracle program (#475)"
+paths = ["tests/fixtures/replay_llm.forge"]
+check = "ok"
+run = "mock"

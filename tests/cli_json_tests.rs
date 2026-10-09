@@ -316,7 +316,7 @@ fn package_round_trip_json() {
     let exported = forge(&[
         "export",
         "--json",
-        "examples/agents/dev-cycle-mastery-smoke/main.forge",
+        "tests/fixtures/echo_agent.forge",
         "--output",
         &pkg_arg,
     ]);
