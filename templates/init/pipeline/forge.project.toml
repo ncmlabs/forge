@@ -1,0 +1,7 @@
+[project]
+name = "{{name}}"
+version = "0.1.0"
+description = "Parallel flow scaffolded by forge init --template pipeline"
+
+[build]
+entry = "main.forge"
