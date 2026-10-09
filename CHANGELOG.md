@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Resolution checker (#496): `forge check` now rejects a plain call to an
+  undeclared `task`/`pure`/`flow`/`pool` (`E160`, with a closest-name hint),
+  a match arm that can never match a scrutinee whose values are statically
+  known (`E161` — `classify ... into [labels]`, a producing function whose
+  every `give` is a Text literal, or a declared type constructor), and a tag
+  pattern that differs from a known value only in case (`E162` — tags compare
+  exact text). Scrutinees with unknown value sets are never flagged. The pass
+  is `src/checker/resolution_checker.rs`, with `BUILTIN_CALLS`/`BUILTIN_TYPES`
+  listing what resolves; codes are registered in `src/diagnostic_codes.rs` and
+  documented in `docs/forge-reference.md` §17 and `docs/forge-card.md` §6. The
+  corpus scan found three real bugs — a missing `pick_random` in the
+  tic-tac-toe example, a missing `repo_config_for` in the standalone dev-cycle
+  build, and event handlers called as functions in forge-sensei — all fixed
+  here.
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced
