@@ -46,7 +46,8 @@ impl CheckError {
                 op,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E030",
                 file,
                 format!("pure function `{}` cannot use `{}`", name, op),
                 *span_start..*span_end,
@@ -60,7 +61,8 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E031",
                 file,
                 format!("pure function `{}` cannot use `try...or`", name),
                 *span_start..*span_end,
@@ -71,7 +73,8 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E032",
                 file,
                 format!("pure function `{}` cannot use `escalate`", name),
                 *span_start..*span_end,
@@ -83,7 +86,8 @@ impl CheckError {
                 callee,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E033",
                 file,
                 format!("pure function `{}` cannot call task `{}`", name, callee),
                 *span_start..*span_end,
