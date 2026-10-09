@@ -66,7 +66,9 @@ fn check_stmt(
         Stmt::Bind(name, expr) => {
             if expr_is_oracle(expr) {
                 tainted.insert(name.node.clone());
-                if matches!(expr.node, Expr::Command(_) | Expr::Exec(_)) {
+                // Only a foreground `command` record exposes `.success` /
+                // `.exit_code`, so only it can be dispatched by reading them.
+                if super::command_gate_checker::is_command_record(expr) {
                     command_bound.insert(name.node.clone());
                 } else {
                     command_bound.remove(&name.node);
@@ -266,7 +268,9 @@ task t
     }
 
     #[test]
-    fn exit_code_branch_dispatches_exec_uncertainty() {
+    fn exec_exit_status_branch_is_not_a_gate() {
+        // `exec` returns Text: `result.exit_code` cannot dispatch it (#507).
+        // The E150 twin of this case lives in `command_gate_checker`.
         let msgs = uncertain_errors(
             r#"
 task t
@@ -277,6 +281,21 @@ task t
       give "failed"
     else
       give result
+"#,
+        );
+        assert_eq!(msgs.len(), 1, "exec has no exit_code field: {msgs:?}");
+    }
+
+    #[test]
+    fn when_dispatch_clears_exec_uncertainty() {
+        let msgs = uncertain_errors(
+            r#"
+task t
+  gives Text
+  do
+    result = exec "cargo test"
+    when result.sure -> give result
+    else -> give "FAILED"
 "#,
         );
         assert!(msgs.is_empty(), "unexpected E020: {msgs:?}");

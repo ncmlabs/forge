@@ -42,31 +42,42 @@ pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
 
 fn check_stmts(stmts: &[Spanned<Stmt>], file: &str, diagnostics: &mut Vec<Diagnostic>) {
     let mut unchecked: HashSet<String> = HashSet::new();
+    // Names bound from a foreground `command` record: only these expose
+    // `.success` / `.exit_code`, so only these can be gated by reading them.
+    let mut records: HashSet<String> = HashSet::new();
 
     for stmt in stmts {
-        check_stmt(stmt, &mut unchecked, file, diagnostics);
+        check_stmt(stmt, &mut unchecked, &mut records, file, diagnostics);
     }
 }
 
 fn check_stmt(
     stmt: &Spanned<Stmt>,
     unchecked: &mut HashSet<String>,
+    records: &mut HashSet<String>,
     file: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match &stmt.node {
         Stmt::Bind(name, expr) => {
             match command_binding(expr) {
-                // Background handles are checked through `command.status`.
-                Some(true) => {
-                    unchecked.remove(&name.node);
-                }
-                Some(false) => {
+                Some(Binding::CommandRecord) => {
                     unchecked.insert(name.node.clone());
+                    records.insert(name.node.clone());
+                }
+                Some(Binding::Exec) => {
+                    unchecked.insert(name.node.clone());
+                    records.remove(&name.node);
+                }
+                // Background handles are checked through `command.status`.
+                Some(Binding::BackgroundHandle) => {
+                    unchecked.remove(&name.node);
+                    records.remove(&name.node);
                 }
                 None => {
                     // Reassignment to anything else clears the gate.
                     unchecked.remove(&name.node);
+                    records.remove(&name.node);
                     // An oracle verdict must not be built on a raw command
                     // result: that is the #431 shape.
                     if matches!(expr.node, Expr::Reason(_) | Expr::Classify(_)) {
@@ -94,51 +105,57 @@ fn check_stmt(
                 unchecked.remove(&clause.node.predicate.node.subject.node);
             }
             for clause in &when.clauses {
-                check_stmt(&clause.node.body, unchecked, file, diagnostics);
+                check_stmt(&clause.node.body, unchecked, records, file, diagnostics);
             }
             if let Some(else_clause) = &when.else_body {
-                check_stmt(&else_clause.node.body, unchecked, file, diagnostics);
+                check_stmt(
+                    &else_clause.node.body,
+                    unchecked,
+                    records,
+                    file,
+                    diagnostics,
+                );
             }
         }
         Stmt::Match(m) => {
             // A branch on `.success` / `.exit_code` is the deterministic gate.
             let mut reads = HashSet::new();
-            collect_gate_reads(&m.subject, unchecked, &mut reads);
+            collect_gate_reads(&m.subject, records, &mut reads);
             for name in reads {
                 unchecked.remove(&name);
             }
             for arm in &m.arms {
-                check_stmt(&arm.node.body, unchecked, file, diagnostics);
+                check_stmt(&arm.node.body, unchecked, records, file, diagnostics);
             }
         }
         Stmt::IfElse(ie) => {
             // The gate counts for both branches and for every statement
             // after the `if`, so clear before walking any body.
             let mut reads = HashSet::new();
-            collect_gate_reads(&ie.condition, unchecked, &mut reads);
+            collect_gate_reads(&ie.condition, records, &mut reads);
             for (cond, _) in &ie.else_ifs {
-                collect_gate_reads(cond, unchecked, &mut reads);
+                collect_gate_reads(cond, records, &mut reads);
             }
             for name in reads {
                 unchecked.remove(&name);
             }
             for s in &ie.then_body {
-                check_stmt(s, unchecked, file, diagnostics);
+                check_stmt(s, unchecked, records, file, diagnostics);
             }
             for (_cond, body) in &ie.else_ifs {
                 for s in body {
-                    check_stmt(s, unchecked, file, diagnostics);
+                    check_stmt(s, unchecked, records, file, diagnostics);
                 }
             }
             if let Some(body) = &ie.else_body {
                 for s in body {
-                    check_stmt(s, unchecked, file, diagnostics);
+                    check_stmt(s, unchecked, records, file, diagnostics);
                 }
             }
         }
         Stmt::For(f) => {
             for s in &f.body {
-                check_stmt(s, unchecked, file, diagnostics);
+                check_stmt(s, unchecked, records, file, diagnostics);
             }
         }
         // `say` is not a decision, and `transition` takes no value.
@@ -146,14 +163,34 @@ fn check_stmt(
     }
 }
 
-/// `Some(true)` for a background command handle (exempt), `Some(false)` for a
-/// foreground `command`/`exec` result.
-fn command_binding(expr: &Spanned<Expr>) -> Option<bool> {
+/// How a `command`/`exec` expression binds: `None` for anything else.
+fn command_binding(expr: &Spanned<Expr>) -> Option<Binding> {
     match &expr.node {
-        Expr::Command(c) => Some(c.background.as_ref().is_some_and(|b| b.node)),
-        Expr::Exec(_) => Some(false),
+        Expr::Command(c) if c.background.as_ref().is_some_and(|b| b.node) => {
+            Some(Binding::BackgroundHandle)
+        }
+        Expr::Command(_) => Some(Binding::CommandRecord),
+        Expr::Exec(_) => Some(Binding::Exec),
         _ => None,
     }
+}
+
+/// How a `command`/`exec` expression binds.
+enum Binding {
+    /// Foreground `command`: a record with `.success` / `.exit_code`.
+    CommandRecord,
+    /// `exec`: returns `Text`, so those fields do not exist.
+    Exec,
+    /// `command ... background true`: a handle inspected via `command.status`.
+    BackgroundHandle,
+}
+
+/// True when the bound expression is a foreground `command` record, whose
+/// `.success` / `.exit_code` fields are the deterministic gate. Shared with
+/// `uncertain_checker` (#484). `exec` returns `Text` (#507) and a background
+/// `command` returns a handle, so neither exposes those fields.
+pub(super) fn is_command_record(expr: &Spanned<Expr>) -> bool {
+    matches!(command_binding(expr), Some(Binding::CommandRecord))
 }
 
 // ── Expression walking ──────────────────────────────────────────
@@ -199,24 +236,26 @@ fn collect_unchecked_refs(
     }
 }
 
-/// Collect names of unchecked results whose `.success` / `.exit_code` is read.
+/// Collect names of unchecked command records whose `.success` / `.exit_code`
+/// is read. `records` holds only foreground `command` bindings, so a read on an
+/// `exec` binding or a background handle is never treated as a gate (#507).
 /// Shared with `uncertain_checker` (#484): the same read is a deterministic
 /// verdict there, so it also satisfies the confidence gate.
 pub(super) fn collect_gate_reads(
     expr: &Spanned<Expr>,
-    unchecked: &HashSet<String>,
+    records: &HashSet<String>,
     out: &mut HashSet<String>,
 ) {
     if let Expr::FieldAccess(inner, field) = &expr.node {
         if field.node == "success" || field.node == "exit_code" {
             if let Some(name) = base_name(inner) {
-                if unchecked.contains(name) {
+                if records.contains(name) {
                     out.insert(name.to_string());
                 }
             }
         }
     }
-    walk_children(expr, &mut |child| collect_gate_reads(child, unchecked, out));
+    walk_children(expr, &mut |child| collect_gate_reads(child, records, out));
 }
 
 fn walk_children(expr: &Spanned<Expr>, f: &mut impl FnMut(&Spanned<Expr>)) {
@@ -388,6 +427,38 @@ task t
   do
     x = exec "cargo test"
     give x
+"#,
+        );
+    }
+
+    #[test]
+    fn exec_exit_status_is_not_a_gate() {
+        // `exec` returns Text: `x.exit_code` is a type error at runtime, so it
+        // cannot be the deterministic gate (#507).
+        assert_flagged(
+            r#"
+task t
+  gives Text
+  do
+    x = exec "cargo test"
+    if x.exit_code != 0
+      give "failed"
+    else
+      give x
+"#,
+        );
+    }
+
+    #[test]
+    fn when_dispatch_clears_exec() {
+        assert_clean(
+            r#"
+task t
+  gives Text
+  do
+    x = exec "cargo test"
+    when x.sure -> give x
+    else -> give "FAILED"
 "#,
         );
     }
