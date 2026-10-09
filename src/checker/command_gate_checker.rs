@@ -86,7 +86,13 @@ fn check_stmt(
                 }
             }
         }
-        Stmt::Give(expr, _metas) => gate_expr(expr, unchecked, file, diagnostics),
+        Stmt::Give(expr, metas) => {
+            gate_expr(expr, unchecked, file, diagnostics);
+            // `give "ok" with detail: x.stdout` promotes the metadata too.
+            for meta in metas {
+                gate_expr(&meta.node.value, unchecked, file, diagnostics);
+            }
+        }
         Stmt::Emit(_name, args) => {
             for arg in args {
                 gate_expr(&arg.node.value, unchecked, file, diagnostics);
@@ -445,6 +451,19 @@ task t
       give "failed"
     else
       give x
+"#,
+        );
+    }
+
+    #[test]
+    fn give_metadata_is_gated() {
+        assert_flagged(
+            r#"
+task t
+  gives Text
+  do
+    x = command "cargo test"
+    give "ok" with detail: x.stdout
 "#,
         );
     }
