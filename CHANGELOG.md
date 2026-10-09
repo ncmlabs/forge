@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
+  traps, the determinism boundary, uncertainty dispatch, one idiom per
+  primitive, the common checker errors, and where to go next. Every fenced
+  `forge` block is extracted and checked in CI by `tests/forge_card_tests.rs`,
+  and the card is capped at 300 lines; `llms.txt` at the repo root is the
+  machine entry point.
 - Surface-audit rework (#449): the derived-surface drift audit is now driven
   by the FORGE agent `workflows/surface-audit.forge` via `forge send`, on a
   zero-cost OpenAI-compatible provider selected with `FORGE_CONFIG` +
