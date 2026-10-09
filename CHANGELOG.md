@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   $0.23 cost), the defect harvest and lessons for v2; roadmap Layer 3 moved
   to v1 complete. Closes epic #292.
 
+### Changed
+- Roadmap reset to v0.3 — Agent-Native FORGE (#473). The previous roadmap is
+  archived at `docs/archive/roadmap-v3.md`. The generator/toolkit, WASM and
+  dev-system tracks are deprecated (see roadmap).
+
 ## [0.2.0] - 2026-08-31
 
 ### Fixed
