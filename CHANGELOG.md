@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- LLM authoring benchmark corpus (#483, part 1): `bench/specs/` holds 30
+  natural-language specs (10 easy, 12 medium, 8 hard) covering tasks, pure
+  functions, flows, confidence dispatch, `match`, agents, states, `requires`,
+  events, pools, wardens, contracts, systems, `command`, knowledge and spawn —
+  including four specs where a `command` result is the deterministic gate
+  before any oracle decision (#484). Each spec ships a `spec.md` the model
+  receives, a `reference.forge` that is never shown to it, the recorded
+  `reference.forge.fixtures.json` + `expected.txt` produced by
+  `FORGE_CONFIG=bench/mock.config.toml forge run reference.forge --record`, and
+  a `meta.toml`. `tests/bench_corpus_tests.rs` enforces the shape: every
+  reference checks with zero diagnostics and replays to its expected output
+  offline, exactly 30 specs in the 10/12/8 spread. The model-running harness
+  (pass@1, pass@3-repair) is part 2.
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced
