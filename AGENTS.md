@@ -131,7 +131,7 @@ Run a principles audit after implementation and before commit. Treat principle v
 ## Changelog And Shipping
 
 - Update `CHANGELOG.md` for every user-facing change.
-- When an issue is confirmed done, update `roadmap.md` in the same closeout loop so the relevant milestone, issue status, and Phase progress counters stay accurate.
+- When an issue is confirmed done, update `roadmap.md` in the same closeout loop so its status is flipped to `Done ✅` and the milestone and track tables stay accurate.
 - Use Keep a Changelog categories:
   - `Added`
   - `Changed`
