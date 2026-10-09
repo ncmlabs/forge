@@ -55,7 +55,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 
 | Issue | Title | Status |
 | ----- | ----- | ------ |
-| [#473](https://github.com/ncmlabs/forge/issues/473) | docs: reset roadmap to v0.3 — Agent-Native FORGE | In progress |
+| [#473](https://github.com/ncmlabs/forge/issues/473) | docs: reset roadmap to v0.3 — Agent-Native FORGE | Done ✅ |
 | [#485](https://github.com/ncmlabs/forge/issues/485) | lean: remove web app stack from core (templates, static/Tailwind, hot-reload, markdown) | Open |
 | [#486](https://github.com/ncmlabs/forge/issues/486) | lean: close WASM/browser targets; keep server/shared boundary checker | Open |
 | [#487](https://github.com/ncmlabs/forge/issues/487) | lean: extract clone-dev into ncmlabs/forge-clone-dev | Open |
@@ -71,7 +71,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | [#477](https://github.com/ncmlabs/forge/issues/477) | cli: forge run --dry-run static execution plan (LLM sites, cost, effects) | Open |
 | [#478](https://github.com/ncmlabs/forge/issues/478) | test: forge run --record and forge test replay through MockProvider | Open |
 | [#479](https://github.com/ncmlabs/forge/issues/479) | runtime: end-of-run summary (calls, tokens, cost, confidence, warden events) | Open |
-| [#489](https://github.com/ncmlabs/forge/issues/489) | ci: clippy -D warnings fails on stable 1.99 (double_must_use via async-trait 0.1.89) | Open |
+| [#489](https://github.com/ncmlabs/forge/issues/489) | ci: clippy -D warnings fails on stable 1.99 (double_must_use via async-trait 0.1.89) | Done ✅ |
 
 ### Authorability — make the language writable from one page
 
