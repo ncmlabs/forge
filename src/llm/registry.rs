@@ -52,6 +52,11 @@ impl ProviderRegistry {
             }
         }
 
+        // #503 — every routing entry must name a provider that exists. This
+        // is a startup error: a typo in `[llm.routing]` must never resolve to
+        // the default or the mock provider later on (#453 contract).
+        registry.validate_routing()?;
+
         // T8.6 (#361) — clone-dev startup overlay. When the runtime is
         // launched with `$FORGE_CLONEDEV_CONFIG=<path>`, the resolved
         // CloneDevConfig's [llm.routing] (primary + fallback) overrides
@@ -117,6 +122,42 @@ impl ProviderRegistry {
     /// `CloneDevConfig` rebuilds this map keyed by phase name.
     pub fn set_routing(&mut self, table: HashMap<String, Vec<String>>) {
         self.routing = table;
+    }
+
+    /// #503 — reject a `[llm.routing]` table that could never serve a phase:
+    /// an empty chain, or a name that no `[providers.*]` entry defines. Both
+    /// are startup errors, so config-only typos fail loudly instead of
+    /// silently falling back to the default provider.
+    fn validate_routing(&self) -> Result<(), ProviderError> {
+        for (phase, chain) in &self.routing {
+            if chain.is_empty() {
+                return Err(ProviderError::Unavailable {
+                    provider: phase.clone(),
+                    reason: format!(
+                        "[llm.routing] phase '{}' has an empty provider chain; \
+                         list at least one provider or remove the entry",
+                        phase
+                    ),
+                });
+            }
+            for name in chain {
+                if !self.providers.contains_key(name) {
+                    let mut known: Vec<&str> = self.providers.keys().map(String::as_str).collect();
+                    known.sort_unstable();
+                    return Err(ProviderError::Unavailable {
+                        provider: name.clone(),
+                        reason: format!(
+                            "[llm.routing] phase '{}' names unknown provider '{}'; known: {}; \
+                             add it under [providers] or correct the name",
+                            phase,
+                            name,
+                            known.join(", ")
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Set the chain for a single phase. Convenience for tests and granular
@@ -631,6 +672,7 @@ type = "mock"
 
         // Set the env var across the build, then unset to avoid leaking
         // into other tests that share this process.
+        let _guard = env_guard();
         std::env::set_var("FORGE_CLONEDEV_CONFIG", &path);
         let registry = ProviderRegistry::from_config(config).expect("registry build");
         std::env::remove_var("FORGE_CLONEDEV_CONFIG");
@@ -648,6 +690,108 @@ type = "mock"
             .cloned()
             .expect("implement chain present");
         assert_eq!(imp, vec!["gpt-4o".to_string()]);
+    }
+
+    /// #503 — `from_config` reads the process-global `FORGE_CLONEDEV_CONFIG`,
+    /// so tests that toggle it must not overlap tests that build a registry
+    /// from a config-declared routing table.
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    // ── #503 — [llm.routing] provider chains from config ───────────────
+
+    #[tokio::test]
+    async fn config_chain_advances_to_second_provider() {
+        // The chain declared in `[llm.routing]` is what drives resolution:
+        // when the first provider fails, the second answers.
+        let toml = r#"
+[llm]
+default = "primary"
+
+[llm.routing]
+plan = ["primary", "secondary"]
+
+[providers.primary]
+type = "mock"
+
+[providers.secondary]
+type = "mock"
+"#;
+        let config: crate::config::ForgeConfig = toml::from_str(toml).expect("config parse");
+        // Only the build reads the process-global env; the chain is baked in.
+        let mut registry = {
+            let _guard = env_guard();
+            ProviderRegistry::from_config(config).expect("registry build")
+        };
+
+        // Swap the config-built mocks: primary always fails, secondary answers.
+        registry.register("primary", Arc::new(FailingProvider::new("primary")));
+        registry.register(
+            "secondary",
+            Arc::new(MockProvider::new("secondary").with_default("served")),
+        );
+
+        let hint = CapabilityHint {
+            phase: Some("plan".into()),
+            ..Default::default()
+        };
+        let resp = registry
+            .resolve_and_complete(CompletionRequest::simple("x"), Some(&hint))
+            .await
+            .unwrap();
+        assert_eq!(resp.provider_name, "secondary");
+        assert_eq!(resp.content, "served");
+    }
+
+    #[test]
+    fn config_chain_with_unknown_provider_is_startup_error() {
+        let toml = r#"
+[llm]
+default = "mock"
+
+[llm.routing]
+plan = ["mock", "ghost"]
+
+[providers.mock]
+type = "mock"
+"#;
+        let config: crate::config::ForgeConfig = toml::from_str(toml).expect("config parse");
+        let err = match ProviderRegistry::from_config(config) {
+            Ok(_) => panic!("unknown provider in a chain must fail at startup"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("[llm.routing] phase 'plan' names unknown provider 'ghost'"),
+            "{err}"
+        );
+        assert!(err.contains("known: mock"), "{err}");
+        // The DoD asks for a next step, not just a diagnosis.
+        assert!(err.contains("[providers]"), "{err}");
+    }
+
+    #[test]
+    fn config_empty_chain_is_startup_error() {
+        let toml = r#"
+[llm]
+default = "mock"
+
+[llm.routing]
+plan = []
+
+[providers.mock]
+type = "mock"
+"#;
+        let config: crate::config::ForgeConfig = toml::from_str(toml).expect("config parse");
+        let err = match ProviderRegistry::from_config(config) {
+            Ok(_) => panic!("empty chain must fail at startup"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("phase 'plan' has an empty provider chain"),
+            "{err}"
+        );
     }
 
     #[tokio::test]
