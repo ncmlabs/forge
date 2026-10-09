@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Diagnostic error codes (#474): every diagnostic now carries a stable code
+  (`Exxx` errors, `Wxxx` warnings) from the registry in
+  `src/diagnostic_codes.rs`, and `forge explain <code>` /
+  `forge explain --list` document each one with a `Wrong:`/`Right:` example.
+  Conformance cases assert on `error_code` and `docs/forge-reference.md`
+  gains a "Diagnostics and Error Codes" section.
 - Surface-audit rework (#449): the derived-surface drift audit is now driven
   by the FORGE agent `workflows/surface-audit.forge` via `forge send`, on a
   zero-cost OpenAI-compatible provider selected with `FORGE_CONFIG` +
@@ -18,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proof-run metrics (3.48-min merge, first-try CI, novice→expert mastery,
   $0.23 cost), the defect harvest and lessons for v2; roadmap Layer 3 moved
   to v1 complete. Closes epic #292.
+
+### Fixed
+- Diagnostic rendering (#474): reports name the real source file instead of
+  `<unknown>` (the ariadne source id was a bare span), and colour is emitted
+  only when stderr is an interactive terminal, so piped or redirected output
+  is plain text; `NO_COLOR` disables colour on a terminal.
 
 ## [0.2.0] - 2026-08-31
 
