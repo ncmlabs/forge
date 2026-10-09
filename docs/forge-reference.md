@@ -2345,15 +2345,15 @@ The uncertain checker rejects any code path where a tainted value reaches `give`
 
 ### Deterministic Gate (E150)
 
-`command` / `exec` results carry a second, stricter taint: they are **unchecked** until the body dispatches them. An unchecked result may not reach `give`, an `emit` argument, or the prompt of a `reason` / `classify` -- that is error **E150** (``command result `x` used before checking `x.success` ``). The rule exists because a failed command must never be reinterpreted as success by an oracle verdict (#431).
+`command` / `exec` results carry a second, stricter taint: they are **unchecked** until the body dispatches them. An unchecked result may not reach `give` (including its `with key: value` metadata), an `emit` argument, a `memory` assignment, or the prompt of a `reason` / `classify` -- that is error **E150** (``command result `x` used before checking `x.success` ``). The rule exists because a failed command must never be reinterpreted as success by an oracle verdict (#431).
 
-The gate is cleared by any of:
+What clears the gate depends on what the binding actually is at runtime:
 
-| Dispatch | Why it clears |
-|----------|---------------|
-| `if x.success`, `if x.exit_code != 0`, or the same in an `else if` | the deterministic verdict; it counts for both branches and for every statement after the `if` |
-| `match x.exit_code` | a branch on the exit status |
-| `when x.sure` / `.unsure` / `.unreliable` | `command` derives confidence from the exit status (0.9 on exit 0, 0.3 otherwise), so `.sure` (threshold 0.8) is exactly `success` and the failure path lands in `else` |
+| Dispatch | `command` record | `exec` (`Text`) | `command ... background true` handle |
+|----------|------------------|-----------------|--------------------------------------|
+| `if x.success`, `if x.exit_code != 0`, or the same in an `else if` | clears -- the deterministic verdict; counts for both branches and for every statement after the `if` | **not a gate**: `exec` returns `Text`, so these fields do not exist (#507) | **not a gate**: a handle has no such fields; inspect it with `command.status` |
+| `match x.exit_code` | clears | not a gate (#507) | not a gate |
+| `when x.sure` / `.unsure` / `.unreliable` | clears -- `command` derives confidence from the exit status (0.9 on exit 0, 0.3 otherwise), so `.sure` (threshold 0.8) is exactly `success` | clears -- the only gate for `exec` | clears |
 
 ```forge
 task accept_tests
@@ -2366,9 +2366,14 @@ task accept_tests
       give "tests failed: {tests.stderr}"
 ```
 
-`command ... background true` handles are exempt (they are inspected through `command.status`). `say` of an unchecked result is allowed -- it is not a decision. `if x.success` also clears the `uncertain` taint above, so command output under a deterministic gate needs no extra `when x.sure`; `exec` returns `Text` with no `.success` field, so confidence dispatch is its supported gate.
+`if x.success` also clears the `uncertain` taint above, so command output under a deterministic gate needs no extra `when x.sure`. Reading `.success` / `.exit_code` on an `exec` binding or a background handle is not a gate in either checker; only confidence dispatch clears those. `say` of an unchecked result is allowed -- it is not a decision.
 
-Limitations of the static rule: the taint is not propagated through other variables or constructors, so `report = TestReport(failures: tests.stdout)` followed by `classify report.failures` is not flagged; only `reason` / `classify` prompts and arguments are gated (`search` / `recall` / `session` prompts are not); and `transition` statements take no value, so they are never flagged.
+Limitations of the static rule:
+
+- The taint is not propagated through plain variables or constructors, so `report = TestReport(failures: tests.stdout)` followed by `classify report.failures` is not flagged.
+- Only `reason` / `classify` prompts and arguments are gated; `search` / `recall` / `session` prompts are not.
+- `transition` statements take no value, so they are never flagged.
+- `command ... background true` handles are exempt from E150 (they are inspected through `command.status`); their `when h.sure` dispatch is not yet equivalent to a success check on the runtime confidence (tracked in #507).
 
 ### Correct Pattern: Taint Cleared via `when`
 
@@ -2508,7 +2513,7 @@ task watch_once
 
 ### Deterministic Gate (E150)
 
-A command result is **unchecked** until the body dispatches it. Using `result.stdout` / `result.stderr` in `give`, in an `emit` argument, or in a `reason` / `classify` prompt before the body branched on `result.success` (or `result.exit_code`) is error **E150**: ``command result `result` used before checking `result.success` ``. The rule makes the #431 failure mode impossible -- an oracle verdict cannot reinterpret a failed command as success.
+A command result is **unchecked** until the body dispatches it. Using `result.stdout` / `result.stderr` in `give` (including its `with key: value` metadata), in an `emit` argument, in a `memory` assignment, or in a `reason` / `classify` prompt before the body branched on `result.success` (or `result.exit_code`) is error **E150**: ``command result `result` used before checking `result.success` ``. The rule makes the #431 failure mode impossible -- an oracle verdict cannot reinterpret a failed command as success.
 
 ```forge
 task run_tests
@@ -2521,7 +2526,14 @@ task run_tests
       give "tests failed: {result.stderr}"
 ```
 
-`if result.success` counts for both branches and for every statement after the `if`, and it also satisfies the `uncertain` gate on the same variable, so `give result.stdout` needs no extra `when result.sure`. `command ... background true` handles are exempt (inspect them through `command.status`). `exec` returns `Text` and exposes no `.success` field, so its supported gate is confidence dispatch (`when result.sure -> ...`). See §17 for the full dispatch table and the limitations of the static rule.
+`if result.success` counts for both branches and for every statement after the `if`, and it also satisfies the `uncertain` gate on the same variable, so `give result.stdout` needs no extra `when result.sure`.
+
+The field gate is only valid on a foreground `command` record, because only that value has `.success` / `.exit_code`:
+
+- `exec` returns `Text`, so `if x.exit_code != 0` on an `exec` binding is a runtime type error and is **not** a gate -- `when x.sure -> ...` is the supported dispatch for `exec`, and the checker reports the binding as unchecked (#507).
+- A `command ... background true` handle has no such fields either; inspect it with `command.status(handle)` (also #507).
+
+See §17 for the full dispatch table and the limitations of the static rule.
 
 ---
 
