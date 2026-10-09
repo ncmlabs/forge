@@ -1832,8 +1832,12 @@ agent room_agent
 
 The `forge agent <file>` command launches an interactive REPL for manual handler testing. Type an event name with optional arguments to dispatch it:
 
+The transcript below uses `support_bot.forge`, which lives in
+[`ncmlabs/forge-examples/agents`](https://github.com/ncmlabs/forge-examples/tree/main/agents)
+since #488:
+
 ```
-$ forge agent examples/agents/support_bot.forge
+$ forge agent support_bot.forge
 FORGE Agent: support_bot
   memory: topic, message_count, escalation_count
   handlers: message, resolve, session_timeout.expired

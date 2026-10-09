@@ -36,7 +36,7 @@ fn errors(diags: &[Diagnostic]) -> Vec<&Diagnostic> {
 
 #[tokio::test]
 async fn exec_success_echoes_output() {
-    let program = parse_file("examples/command/exec_success.forge");
+    let program = parse_file("tests/fixtures/command/exec_success.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -55,7 +55,7 @@ async fn exec_success_echoes_output() {
 
 #[tokio::test]
 async fn exec_fail_routes_to_else() {
-    let program = parse_file("examples/command/exec_fail.forge");
+    let program = parse_file("tests/fixtures/command/exec_fail.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -81,7 +81,7 @@ async fn exec_fail_routes_to_else() {
 
 #[tokio::test]
 async fn exec_when_dispatch_routes_correctly() {
-    let program = parse_file("examples/command/exec_when_dispatch.forge");
+    let program = parse_file("tests/fixtures/command/exec_when_dispatch.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -109,7 +109,7 @@ async fn exec_when_dispatch_routes_correctly() {
 
 #[tokio::test]
 async fn exec_multi_captures_pwd() {
-    let program = parse_file("examples/command/exec_multi.forge");
+    let program = parse_file("tests/fixtures/command/exec_multi.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -129,7 +129,7 @@ async fn exec_multi_captures_pwd() {
 
 #[tokio::test]
 async fn exec_compose_with_reason() {
-    let program = parse_file("examples/command/exec_compose.forge");
+    let program = parse_file("tests/fixtures/command/exec_compose.forge");
     let mock = MockProvider::new("mock").with_default("5 files found");
     let executor = TaskExecutor::new(program, mock_registry(mock), None);
     let result = executor.run().await;
@@ -189,7 +189,7 @@ fn exec_uncertain_error_detected() {
 
 #[tokio::test]
 async fn exec_produces_trace_events() {
-    let program = parse_file("examples/command/exec_success.forge");
+    let program = parse_file("tests/fixtures/command/exec_success.forge");
     let mock = MockProvider::new("mock").with_default("mock");
     let tracer = Tracer::with_capture();
     let executor = TaskExecutor::new(program, mock_registry(mock), Some(tracer.clone()));
@@ -212,7 +212,7 @@ async fn exec_produces_trace_events() {
 #[test]
 fn cli_check_exec_success_exits_zero() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_forge"))
-        .args(["check", "examples/command/exec_success.forge"])
+        .args(["check", "tests/fixtures/command/exec_success.forge"])
         .output()
         .expect("failed to execute forge binary");
     assert!(
