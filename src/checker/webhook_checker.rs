@@ -66,7 +66,8 @@ impl CheckError {
                 trigger,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E140",
                 file,
                 format!(
                     "webhook block `{}` in agent `{}` is missing a `mode:` clause",
@@ -82,7 +83,8 @@ impl CheckError {
                 trigger,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E141",
                 file,
                 format!(
                     "webhook block `{}` in agent `{}` is missing an `emit:` clause",
@@ -99,7 +101,8 @@ impl CheckError {
                 event,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E142",
                 file,
                 format!(
                     "webhook `{}` in agent `{}` emits unknown event `{}`",
@@ -116,7 +119,8 @@ impl CheckError {
                 event,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E143",
                 file,
                 format!(
                     "webhook `{}` in agent `{}` has `mode: wake` with `emit: {}` but the agent has no `on {}` handler",
@@ -135,7 +139,8 @@ impl CheckError {
                 trigger,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E144",
                 file,
                 format!(
                     "duplicate webhook block `{}` in agent `{}`",
@@ -152,7 +157,8 @@ impl CheckError {
                 option,
                 span_start,
                 span_end,
-            } => Diagnostic::error(
+            } => Diagnostic::coded_error(
+                "E145",
                 file,
                 format!(
                     "duplicate `{}` option in webhook block `{}` (agent `{}`)",

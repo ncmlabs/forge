@@ -1341,6 +1341,115 @@ agent a
   correlate on SlackMention.thread_ts
     mode: wake"#,
     },
+    CodeInfo {
+        code: "E140",
+        title: "webhook block is missing mode:",
+        explain: r#"Every webhook must declare how it routes the inbound request: `mode: wake` or `mode: spawn`.
+
+Wrong:
+agent a
+  webhook approval
+    emit: ApprovalResponse
+
+Right:
+agent a
+  webhook approval
+    mode: wake
+    emit: ApprovalResponse"#,
+    },
+    CodeInfo {
+        code: "E141",
+        title: "webhook block is missing emit:",
+        explain: r#"A webhook must deliver a typed event so the receiver is a declared handler.
+
+Wrong:
+agent a
+  webhook approval
+    mode: wake
+
+Right:
+agent a
+  webhook approval
+    mode: wake
+    emit: ApprovalResponse"#,
+    },
+    CodeInfo {
+        code: "E142",
+        title: "webhook emits an unknown event",
+        explain: r#"The emitted event has no top-level `event` declaration in scope.
+
+Wrong:
+agent a
+  webhook approval
+    mode: wake
+    emit: Ghost
+
+Right:
+event ApprovalResponse
+  request_id: Text
+
+agent a
+  webhook approval
+    mode: wake
+    emit: ApprovalResponse"#,
+    },
+    CodeInfo {
+        code: "E143",
+        title: "wake webhook has no matching handler",
+        explain: r#"`mode: wake` rehydrates the session only if the emitted event is handled by the agent.
+
+Wrong:
+agent a
+  webhook approval
+    mode: wake
+    emit: ApprovalResponse
+
+Right:
+agent a
+  webhook approval
+    mode: wake
+    emit: ApprovalResponse
+  on ApprovalResponse
+    say "approved""#,
+    },
+    CodeInfo {
+        code: "E144",
+        title: "duplicate webhook block",
+        explain: r#"Only one webhook block per trigger name is allowed in an agent.
+
+Wrong:
+agent a
+  webhook approval
+    mode: wake
+    emit: ApprovalResponse
+  webhook approval
+    mode: spawn
+    emit: ApprovalResponse
+
+Right:
+agent a
+  webhook approval
+    mode: wake
+    emit: ApprovalResponse"#,
+    },
+    CodeInfo {
+        code: "E145",
+        title: "duplicate webhook option",
+        explain: r#"An option appears twice in the same webhook block; keep one.
+
+Wrong:
+agent a
+  webhook approval
+    mode: wake
+    mode: spawn
+    emit: ApprovalResponse
+
+Right:
+agent a
+  webhook approval
+    mode: wake
+    emit: ApprovalResponse"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.
