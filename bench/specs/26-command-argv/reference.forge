@@ -1,13 +1,12 @@
 task count_files
   gives Text
   do
-    run = command ["sh", "-c", "printf '3 files'"] in "." timeout 30s
+    run = command ["sh", "-c", "printf 'no such directory' >&2; exit 4"] in "." timeout 30s
     if run.success
       when run.sure -> give "count={run.stdout}"
       else -> give "count=unknown"
     else
-      when run.sure -> give "count failed"
-      else -> give "count failed"
+      give "count failed"
 
 task analyze
   needs count: Text

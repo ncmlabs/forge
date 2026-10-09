@@ -1,2 +1,2 @@
-preflight ok
+preflight failed
 finish: mock response

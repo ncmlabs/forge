@@ -274,3 +274,74 @@ fn every_reference_replays_to_its_expected_output() {
         failures.join("\n")
     );
 }
+
+/// The specs that gate on a `command` result. Each one records the *failure*
+/// path, so a solution that skips the success check cannot reproduce its
+/// expected output — that is what makes the deterministic gate (#484)
+/// measurable.
+const GATE_SPECS: [&str; 4] = [
+    "23-command-gate",
+    "24-command-pipeline",
+    "25-command-verify",
+    "26-command-argv",
+];
+
+/// Replace every `if <x>.success` condition with `if true`, keeping the
+/// indentation. Returns the rewritten source and how many gates were forced.
+fn force_success(source: &str) -> (String, usize) {
+    let mut forced = 0;
+    let mut lines = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("if ") && trimmed.contains(".success") {
+            forced += 1;
+            let indent = &line[..line.len() - trimmed.len()];
+            lines.push(format!("{indent}if true"));
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    (lines.join("\n") + "\n", forced)
+}
+
+#[test]
+fn gate_specs_reject_a_solution_that_ignores_success() {
+    for spec in GATE_SPECS {
+        let dir = repo_root().join(SPECS_DIR).join(spec);
+        let source = std::fs::read_to_string(dir.join("reference.forge")).unwrap_or_else(|e| {
+            panic!("cannot read {}: {e}", dir.join("reference.forge").display())
+        });
+        let (ungated, forced) = force_success(&source);
+        assert!(
+            forced > 0,
+            "{spec}: no `if <x>.success` gate to force — does the reference still gate?"
+        );
+
+        // The variant needs its own directory: `forge test` looks for the
+        // fixture beside the program it is given.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let program = temp.path().join("reference.forge");
+        std::fs::write(&program, &ungated).expect("write ungated variant");
+        for file in ["reference.forge.fixtures.json", "expected.txt"] {
+            std::fs::copy(dir.join(file), temp.path().join(file))
+                .unwrap_or_else(|e| panic!("cannot stage {file} for {spec}: {e}"));
+        }
+
+        let output = Command::new(env!("CARGO_BIN_EXE_forge"))
+            .arg("test")
+            .arg(&program)
+            .arg("--expect")
+            .arg(temp.path().join("expected.txt"))
+            .current_dir(repo_root())
+            .env("FORGE_CONFIG", MOCK_CONFIG)
+            .output()
+            .unwrap_or_else(|e| panic!("cannot run the ungated variant of {spec}: {e}"));
+        assert!(
+            !output.status.success(),
+            "{spec}: an ungated variant (`if true`) reproduced expected.txt, so the spec does \
+             not discriminate.\n--- stdout\n{}\n--- stderr\n{}",
+            String::from_utf8_lossy(&output.stdout).trim_end(),
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        );
+    }
+}

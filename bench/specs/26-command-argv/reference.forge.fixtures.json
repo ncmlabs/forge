@@ -2,10 +2,10 @@
   "version": 1,
   "calls": [
     {
-      "key": "52bf4e72f872766a885cb7c7953cf6fcfe1fae8406b9e0a00b24d2d81c6dec27",
+      "key": "aafe245341e754f2562cacba4400154fce2dffb04aa3775654d9626a9a65f03e",
       "index": 0,
       "provider": "mock",
-      "prompt_preview": "Analyze a repository with count=3 files.",
+      "prompt_preview": "Analyze a repository with count failed.",
       "response": {
         "content": "mock response",
         "tool_calls": [],

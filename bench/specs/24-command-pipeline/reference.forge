@@ -1,13 +1,11 @@
 task preflight
   gives Text
   do
-    probe = command ["sh", "-c", "printf ready"]
+    probe = command ["sh", "-c", "exit 3"]
     if probe.success
-      when probe.sure -> give "preflight ok"
-      else -> give "preflight ok"
+      give "preflight ok"
     else
-      when probe.sure -> give "preflight failed"
-      else -> give "preflight failed"
+      give "preflight failed"
 
 task finish
   gives Text
@@ -18,8 +16,7 @@ task finish
       when label.sure -> give "finish: {label}"
       else -> give "finish: unlabeled"
     else
-      when stamp.sure -> give "finish failed"
-      else -> give "finish failed"
+      give "finish failed"
 
 fn main
   say preflight()
