@@ -312,3 +312,8 @@ run = "mock"
 name = "CLI json: pool whose workers say and spend (#475)"
 paths = ["tests/fixtures/pool_say.forge"]
 check = "ok"
+
+[[cases]]
+name = "CLI json: agent handler that says (#475)"
+paths = ["tests/fixtures/say_agent.forge"]
+check = "ok"

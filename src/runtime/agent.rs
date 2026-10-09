@@ -514,6 +514,12 @@ impl AgentProcess {
         &self.context
     }
 
+    /// The `say` lines this agent produced, in order (#475). Shares the
+    /// spawning parent's buffer when `with_shared_output` was used.
+    pub fn outputs(&self) -> Vec<String> {
+        self.executor.outputs()
+    }
+
     /// Attach a warden signal channel for reporting stuck status.
     /// Also wires the signal into the session manager for contradiction
     /// reporting (issue #205).

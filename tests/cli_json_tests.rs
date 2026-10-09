@@ -409,6 +409,41 @@ fn send_json_returns_the_handler_value() {
 }
 
 #[test]
+fn send_json_keeps_the_handler_say_out_of_stdout() {
+    let dir = temp_dir("send-say");
+    let storage = dir.join("storage");
+    let envs = [
+        ("FORGE_MOCK", "1"),
+        ("FORGE_STORAGE_ROOT", storage.to_str().unwrap()),
+    ];
+
+    let output = forge_env(
+        &["send", "--json", "tests/fixtures/say_agent.forge", "ping"],
+        &envs,
+    );
+    assert_exit(&output, 0);
+    // One JSON document on the whole stdout: a handler `say` leaking here would
+    // break this parse.
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["status"], "success");
+    assert_eq!(doc["data"]["result"], "pong");
+    assert_eq!(
+        doc["data"]["output"],
+        serde_json::json!(["handler says ping"])
+    );
+
+    // Human mode keeps the handler's `say` and the returned value.
+    let human = forge_env(&["send", "tests/fixtures/say_agent.forge", "ping"], &envs);
+    assert_exit(&human, 0);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        stdout.contains("handler says ping") && stdout.contains("pong"),
+        "human send should print the say and the value: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn wake_and_store_json() {
     let dir = temp_dir("wake");
     let storage = dir.join("storage");

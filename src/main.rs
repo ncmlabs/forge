@@ -3284,7 +3284,10 @@ async fn send_to_agent(
         storage,
         Some(instance_registry),
         None,
-    );
+    )
+    // `forge send --json` must not let a handler `say` reach stdout; the lines
+    // go into the envelope's `data.output` instead (#475).
+    .with_stdout_echo(!out.json);
 
     // Build params from positional args matching handler param names
     let handler = agent_decl
@@ -3333,6 +3336,7 @@ async fn send_to_agent(
                     "agent": agent_decl.name.node,
                     "event": event,
                     "result": value,
+                    "output": agent.outputs(),
                 }),
                 format!("dispatched {event} to {}", agent_decl.name.node),
             )
@@ -3354,6 +3358,7 @@ async fn send_to_agent(
                 "agent": agent_decl.name.node,
                 "event": event,
                 "result": serde_json::Value::Null,
+                "output": agent.outputs(),
             }))
             // A failed dispatch may still have spent LLM tokens; the run path
             // does not measure them, so report the cost as unknown.
