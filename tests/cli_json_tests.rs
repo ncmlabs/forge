@@ -515,6 +515,91 @@ fn out_of_scope_commands_report_unsupported() {
     }
 }
 
+// ── usage errors (#475) ─────────────────────────────────────────
+
+#[test]
+fn usage_error_exits_one_with_a_json_envelope() {
+    // Missing required argument.
+    let missing = forge(&["check", "--json"]);
+    assert_exit(&missing, 1);
+    let doc = parse_stdout(&missing);
+    assert_eq!(doc["status"], "error");
+    assert_eq!(doc["command"], "check");
+    assert_eq!(doc["error"]["type"], "usage");
+    assert_eq!(doc["error"]["suggestion"], "run forge check --help");
+    let message = doc["error"]["message"].as_str().unwrap();
+    assert!(message.contains("Usage"), "clap's message: {message}");
+    assert!(!message.contains('\u{1b}'), "no ANSI in JSON: {message:?}");
+
+    // Unknown flag.
+    let unknown = forge(&["run", "--json", "--bogus", "examples/basics/hello.forge"]);
+    assert_exit(&unknown, 1);
+    let doc = parse_stdout(&unknown);
+    assert_eq!(doc["command"], "run");
+    assert_eq!(doc["error"]["type"], "usage");
+    assert_eq!(doc["error"]["suggestion"], "run forge run --help");
+
+    // FORGE_OUTPUT=json is the other JSON trigger.
+    let env_mode = forge_env(&["check"], &[("FORGE_OUTPUT", "json")]);
+    assert_exit(&env_mode, 1);
+    let doc = parse_stdout(&env_mode);
+    assert_eq!(doc["command"], "check");
+    assert_eq!(doc["error"]["type"], "usage");
+
+    // No subcommand at all: empty `command`, top-level help suggestion.
+    let bare = forge(&["--json"]);
+    assert_exit(&bare, 1);
+    let doc = parse_stdout(&bare);
+    assert_eq!(doc["command"], "");
+    assert_eq!(doc["error"]["suggestion"], "run forge --help");
+}
+
+#[test]
+fn usage_error_exits_one_in_human_mode() {
+    for args in [
+        vec!["check"],
+        vec!["run", "--bogus", "examples/basics/hello.forge"],
+    ] {
+        let output = forge_env(&args, &[("FORGE_MOCK", "1")]);
+        // Exit 1, never clap's 2: exit 2 means "warnings only" and nothing else.
+        assert_ne!(
+            output.status.code(),
+            Some(2),
+            "a usage error must not collide with the warnings-only code: {args:?}"
+        );
+        assert_exit(&output, 1);
+        assert!(
+            output.stdout.is_empty(),
+            "human usage errors keep stdout empty: {:?}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Usage"),
+            "clap's message goes to stderr for {args:?}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn help_and_version_keep_exit_zero() {
+    let help = forge(&["--help"]);
+    assert_exit(&help, 0);
+    assert!(String::from_utf8_lossy(&help.stdout).contains("Usage"));
+
+    let sub_help = forge(&["check", "--help"]);
+    assert_exit(&sub_help, 0);
+    assert!(String::from_utf8_lossy(&sub_help.stdout).contains("Usage"));
+
+    let version = forge(&["--version"]);
+    assert_exit(&version, 0);
+    assert!(
+        String::from_utf8_lossy(&version.stdout).starts_with("forge "),
+        "version output: {:?}",
+        String::from_utf8_lossy(&version.stdout)
+    );
+}
+
 fn temp_dir(label: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("forge-cli-json-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -331,7 +331,10 @@ fn main() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn cli_main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => usage_exit(e),
+    };
     let out = forge::cli_output::OutputMode::from_flags(cli.json, cli.fields);
     let command = cli.command;
     let name = command.name();
@@ -339,6 +342,56 @@ async fn cli_main() -> anyhow::Result<()> {
         out.fail(name, &e);
     }
     Ok(())
+}
+
+/// A command line clap could not parse. `--help` and `--version` print as usual
+/// and exit `0`; every other usage error exits `1`, not clap's default `2`,
+/// which this CLI reserves for "warnings only". In JSON mode the error is one
+/// envelope on stdout instead of clap's stderr text (#475).
+fn usage_exit(e: clap::Error) -> ! {
+    if !e.use_stderr() {
+        let _ = e.print();
+        forge::cli_output::exit(forge::cli_output::ExitCode::Success);
+    }
+    if usage_json_mode() {
+        let command = argv_subcommand().unwrap_or_default();
+        let suggestion = if command.is_empty() {
+            "run forge --help".to_string()
+        } else {
+            format!("run forge {command} --help")
+        };
+        // `Error::render`'s `Display` is colour-unaware, so no ANSI escape
+        // reaches the JSON string.
+        let env = forge::cli_output::Envelope::error(
+            command,
+            forge::cli_output::ErrorInfo::new("usage", e.render().to_string())
+                .with_suggestion(suggestion),
+            "the command line could not be parsed",
+        );
+        forge::cli_output::emit(&env, None);
+    }
+    let _ = e.print();
+    forge::cli_output::exit(forge::cli_output::ExitCode::Error);
+}
+
+/// JSON mode for a command line that did not parse, so the parsed `--json` flag
+/// is unavailable: `--json` in argv, or `FORGE_OUTPUT=json`.
+fn usage_json_mode() -> bool {
+    forge::cli_output::OutputMode::from_flags(
+        std::env::args().any(|arg| arg == "--json"),
+        Vec::new(),
+    )
+    .json
+}
+
+/// The subcommand named in argv, for the usage-error envelope's `command` field.
+/// Asked of clap's own command definition so the names cannot drift.
+fn argv_subcommand() -> Option<String> {
+    let names: Vec<String> = <Cli as CommandFactory>::command()
+        .get_subcommands()
+        .map(|command| command.get_name().to_string())
+        .collect();
+    std::env::args().skip(1).find(|arg| names.contains(arg))
 }
 
 async fn run(command: Command, out: &forge::cli_output::OutputMode) -> anyhow::Result<()> {
