@@ -7,6 +7,7 @@ pub mod cost_estimator;
 pub mod diagnostic;
 pub mod diagnostic_codes;
 pub mod fleet;
+pub mod init;
 pub mod llm;
 pub mod manifest;
 pub mod parser;

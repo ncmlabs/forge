@@ -225,6 +225,20 @@ enum Command {
         #[command(subcommand)]
         action: StoreAction,
     },
+    /// Scaffold a new project from a template (issue #481)
+    Init {
+        /// Directory to scaffold into
+        dir: PathBuf,
+        /// Template to scaffold
+        #[arg(long, default_value = "pipeline")]
+        template: String,
+        /// Write into a non-empty directory
+        #[arg(long)]
+        force: bool,
+        /// Print the files that would be written, and write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -652,6 +666,22 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Store { action } => {
             run_store_command(action)?;
+        }
+        Command::Init {
+            dir,
+            template,
+            force,
+            dry_run,
+        } => {
+            let files = forge::init::scaffold(&dir, &template, force, dry_run)?;
+            if dry_run {
+                println!("would write into {}:", dir.display());
+            } else {
+                println!("created {}:", dir.display());
+            }
+            for path in files {
+                println!("  {path}");
+            }
         }
     }
 
