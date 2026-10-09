@@ -67,7 +67,7 @@ fn check_agent(agent: &AgentDecl, file: &str, diagnostics: &mut Vec<Diagnostic>)
 fn validate_pattern(pat: &str, span: std::ops::Range<usize>, file: &str) -> Option<Diagnostic> {
     if !pat.starts_with("skill.") {
         return Some(
-            Diagnostic::coded_error(
+            Diagnostic::error(
                 "E100",
                 file,
                 format!("allows pattern `{}` must start with `skill.`", pat),
@@ -82,7 +82,7 @@ fn validate_pattern(pat: &str, span: std::ops::Range<usize>, file: &str) -> Opti
         let suffix_ok = pat.ends_with(".*") && idx == pat.len() - 1;
         if !suffix_ok {
             return Some(
-                Diagnostic::coded_error(
+                Diagnostic::error(
                     "E101",
                     file,
                     format!("allows pattern `{}` has a malformed wildcard", pat),
@@ -195,7 +195,7 @@ fn check_expr(
     if let Some(path) = skill_call_path(&expr.node) {
         if !skill_call_allowed(&path, allows) {
             diagnostics.push(
-                Diagnostic::coded_error(
+                Diagnostic::error(
                     "E102",
                     file,
                     format!(

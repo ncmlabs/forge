@@ -66,7 +66,7 @@ impl CheckError {
                 trigger,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E140",
                 file,
                 format!(
@@ -83,7 +83,7 @@ impl CheckError {
                 trigger,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E141",
                 file,
                 format!(
@@ -101,7 +101,7 @@ impl CheckError {
                 event,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E142",
                 file,
                 format!(
@@ -119,7 +119,7 @@ impl CheckError {
                 event,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E143",
                 file,
                 format!(
@@ -139,7 +139,7 @@ impl CheckError {
                 trigger,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E144",
                 file,
                 format!(
@@ -157,7 +157,7 @@ impl CheckError {
                 option,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E145",
                 file,
                 format!(

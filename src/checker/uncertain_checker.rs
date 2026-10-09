@@ -171,7 +171,7 @@ fn emit_unhandled_error(
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     diagnostics.push(
-        Diagnostic::coded_error(
+        Diagnostic::error(
             "E020",
             file,
             format!(
@@ -187,7 +187,7 @@ fn emit_unhandled_error(
 
 fn emit_inline_oracle_error(expr: &Spanned<Expr>, file: &str, diagnostics: &mut Vec<Diagnostic>) {
     diagnostics.push(
-        Diagnostic::coded_error(
+        Diagnostic::error(
             "E021",
             file,
             "unhandled uncertain: oracle result given without confidence dispatch".to_string(),

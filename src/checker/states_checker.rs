@@ -222,7 +222,7 @@ fn check_agent(
         Some(data) => data,
         None => {
             diagnostics.push(
-                Diagnostic::coded_error(
+                Diagnostic::error(
                     "E040",
                     file,
                     format!("unknown lifecycle `{}`", lifecycle_name),
@@ -266,7 +266,7 @@ fn check_handler(
                 LifecycleGuard::Opaque(s, e) => (*s, *e),
             };
             diagnostics.push(
-                Diagnostic::coded_error(
+                Diagnostic::error(
                     "E041",
                     file,
                     format!(
@@ -287,7 +287,7 @@ fn check_handler(
             LifecycleGuard::ExactState(state, start, end) => {
                 if !state_names.contains(state.as_str()) {
                     diagnostics.push(
-                        Diagnostic::coded_error(
+                        Diagnostic::error(
                             "E042",
                             file,
                             format!("unknown state `{}` in lifecycle guard", state),
@@ -300,7 +300,7 @@ fn check_handler(
             }
             LifecycleGuard::Opaque(start, end) => {
                 diagnostics.push(
-                    Diagnostic::coded_warning(
+                    Diagnostic::warning(
                         "W040",
                         file,
                         format!(
@@ -342,7 +342,7 @@ fn check_handler(
         // State existence check
         if !state_names.contains(target_name.as_str()) {
             diagnostics.push(
-                Diagnostic::coded_error(
+                Diagnostic::error(
                     "E043",
                     file,
                     format!("unknown state `{}` in transition", target_name),
@@ -357,7 +357,7 @@ fn check_handler(
         // Unguarded transition check
         if !has_lifecycle_guard {
             diagnostics.push(
-                Diagnostic::coded_error(
+                Diagnostic::error(
                     "E044",
                     file,
                     format!(
@@ -376,7 +376,7 @@ fn check_handler(
         if let Some(from_state) = &guarded_state {
             if !edges.contains(&(from_state.clone(), target_name.clone())) {
                 diagnostics.push(
-                    Diagnostic::coded_error(
+                    Diagnostic::error(
                         "E045",
                         file,
                         format!(
@@ -435,7 +435,7 @@ fn check_structural(
         // Terminal state: no outgoing edges
         if outgoing.is_empty() {
             diagnostics.push(
-                Diagnostic::coded_warning(
+                Diagnostic::warning(
                     "W041",
                     file,
                     format!(
@@ -452,7 +452,7 @@ fn check_structural(
         // Unreachable state: no incoming edges and not initial
         if incoming.is_empty() && !initial_states.contains(state) {
             diagnostics.push(
-                Diagnostic::coded_warning(
+                Diagnostic::warning(
                     "W042",
                     file,
                     format!(

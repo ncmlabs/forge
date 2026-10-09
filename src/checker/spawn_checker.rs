@@ -79,7 +79,7 @@ fn check_stmt(
             if let Some(agent) = agents.get(template_name.as_str()) {
                 if agent.stuck_policy.is_none() {
                     diagnostics.push(
-                        Diagnostic::coded_warning(
+                        Diagnostic::warning(
                             "W080",
                             file,
                             format!(
@@ -132,7 +132,7 @@ fn check_find_in_expr(
         if let Some(t) = template {
             if !agents.contains_key(t.node.as_str()) {
                 diagnostics.push(
-                    Diagnostic::coded_warning(
+                    Diagnostic::warning(
                         "W081",
                         file,
                         format!("find references unknown agent template `{}`", t.node),

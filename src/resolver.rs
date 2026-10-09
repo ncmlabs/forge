@@ -69,7 +69,7 @@ impl ResolveError {
                         available.join(", ")
                     ))
                 };
-                let mut diag = Diagnostic::coded_error(
+                let mut diag = Diagnostic::error(
                     "E010",
                     file,
                     format!("unknown capability '{}'", name),
@@ -86,7 +86,7 @@ impl ResolveError {
                 right,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E011",
                 file,
                 format!("composition type mismatch: `{}` → `{}`", left, right),
@@ -99,7 +99,7 @@ impl ResolveError {
                 actual,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E012",
                 file,
                 format!(
@@ -115,7 +115,7 @@ impl ResolveError {
                 actual,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E013",
                 file,
                 format!(

@@ -113,7 +113,7 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E110",
                 file,
                 format!(
@@ -130,7 +130,7 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E111",
                 file,
                 format!(
@@ -147,7 +147,7 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E112",
                 file,
                 format!(
@@ -164,7 +164,7 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E113",
                 file,
                 format!(
@@ -182,7 +182,7 @@ impl CheckError {
                 dup_span_start,
                 dup_span_end,
                 ..
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E114",
                 file,
                 format!(
@@ -200,7 +200,7 @@ impl CheckError {
                 option,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E115",
                 file,
                 format!(
@@ -219,7 +219,7 @@ impl CheckError {
                 reason,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E116",
                 file,
                 format!(
@@ -238,7 +238,7 @@ impl CheckError {
                 minute,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E117",
                 file,
                 format!(
@@ -255,7 +255,7 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E118",
                 file,
                 format!(
@@ -273,7 +273,7 @@ impl CheckError {
                 collides_with,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E119",
                 file,
                 format!(
@@ -290,7 +290,7 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_warning(
+            } => Diagnostic::warning(
                 "W110",
                 file,
                 format!(
@@ -307,7 +307,7 @@ impl CheckError {
                 name,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_warning(
+            } => Diagnostic::warning(
                 "W111",
                 file,
                 format!(

@@ -22,7 +22,7 @@ pub struct Diagnostic {
 impl Diagnostic {
     /// Build an error diagnostic. `code` must be registered in
     /// [`crate::diagnostic_codes::CODES`].
-    pub fn coded_error(
+    pub fn error(
         code: &'static str,
         file: impl Into<String>,
         message: impl Into<String>,
@@ -42,7 +42,7 @@ impl Diagnostic {
 
     /// Build a warning diagnostic. `code` must be registered in
     /// [`crate::diagnostic_codes::CODES`].
-    pub fn coded_warning(
+    pub fn warning(
         code: &'static str,
         file: impl Into<String>,
         message: impl Into<String>,
@@ -58,27 +58,6 @@ impl Diagnostic {
             label: label.into(),
             help: None,
         }
-    }
-
-    /// Transitional uncoded constructor (#474): every call site is converted to
-    /// [`Self::coded_error`] checker by checker, then this is deleted.
-    pub fn error(
-        file: impl Into<String>,
-        message: impl Into<String>,
-        span: Range<usize>,
-        label: impl Into<String>,
-    ) -> Self {
-        Self::coded_error("", file, message, span, label)
-    }
-
-    /// Transitional uncoded constructor (#474), see [`Self::error`].
-    pub fn warning(
-        file: impl Into<String>,
-        message: impl Into<String>,
-        span: Range<usize>,
-        label: impl Into<String>,
-    ) -> Self {
-        Self::coded_warning("", file, message, span, label)
     }
 
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
@@ -125,8 +104,9 @@ mod tests {
 
     #[test]
     fn warning_creates_warning_kind() {
-        let diag = Diagnostic::warning("test.forge", "unused state", 0..5, "not reachable");
+        let diag = Diagnostic::warning("W040", "test.forge", "unused state", 0..5, "not reachable");
         assert!(matches!(diag.kind, DiagnosticKind::Warning));
+        assert_eq!(diag.code, "W040");
         assert_eq!(diag.message, "unused state");
     }
 }

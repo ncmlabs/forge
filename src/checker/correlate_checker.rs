@@ -84,7 +84,7 @@ impl CheckError {
                 event,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E130",
                 file,
                 format!(
@@ -102,7 +102,7 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E131",
                 file,
                 format!(
@@ -121,7 +121,7 @@ impl CheckError {
                 actual_type,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E132",
                 file,
                 format!(
@@ -138,7 +138,7 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E133",
                 file,
                 format!(
@@ -159,7 +159,7 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E134",
                 file,
                 format!(
@@ -177,7 +177,7 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E135",
                 file,
                 format!(
@@ -198,7 +198,7 @@ impl CheckError {
                 field,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E136",
                 file,
                 format!(
@@ -217,7 +217,7 @@ impl CheckError {
                 option,
                 span_start,
                 span_end,
-            } => Diagnostic::coded_error(
+            } => Diagnostic::error(
                 "E137",
                 file,
                 format!(
