@@ -102,6 +102,34 @@ fn init_defaults_to_the_pipeline_template() {
 }
 
 #[test]
+fn expected_txt_matches_across_line_endings() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = dir.path().join("demo");
+    let init = forge(dir.path())
+        .args(["init", "demo", "--template", "agent"])
+        .output()
+        .expect("init run");
+    assert!(init.status.success(), "{}", stderr_of(&init));
+
+    // The committed `expected.txt` is LF and the template records LF output;
+    // Windows stdout is CRLF, so `--expect` must not care which side used which.
+    let expected = std::fs::read_to_string(project.join("expected.txt")).expect("read expected");
+    std::fs::write(project.join("expected.txt"), expected.replace('\n', "\r\n"))
+        .expect("rewrite expected with CRLF");
+
+    let replay = forge(&project)
+        .args([
+            "test".as_ref(),
+            project.join("main.forge").as_os_str(),
+            "--expect".as_ref(),
+            project.join("expected.txt").as_os_str(),
+        ])
+        .output()
+        .expect("test run");
+    assert!(replay.status.success(), "{}", stderr_of(&replay));
+}
+
+#[test]
 fn init_refuses_a_non_empty_directory_without_force() {
     let dir = tempfile::tempdir().expect("tempdir");
     let project = dir.path().join("demo");

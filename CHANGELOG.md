@@ -62,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- `forge test --expect` line endings (#481): the output comparison ignored
+  trailing whitespace but not the line ending, so an LF `expected.txt`
+  committed to a repo never matched CRLF stdout on Windows (and a
+  Windows-recorded expectation never matched on Linux). Both sides are now
+  compared with `\r\n` normalised to `\n`.
 - Windows stack overflow (#481): the CLI ran its async runtime on the OS main
   thread, which Windows gives only 1 MiB — a `flow` with parallel oracle stages
   or a spawned agent overflowed it and aborted (`thread 'main' has overflowed

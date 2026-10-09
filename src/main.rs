@@ -990,7 +990,7 @@ fn build_skill_executor_inner(
 
 /// `forge test --expect <file>`: replay in a child process so the program's
 /// own stdout can be captured, then require it to match `<file>`.
-/// Trailing whitespace is ignored on both sides.
+/// Trailing whitespace and line endings are ignored on both sides.
 fn check_expected_output(file: &Path, fixtures: &Path, expect: &Path) -> anyhow::Result<()> {
     let output = std::process::Command::new(std::env::current_exe()?)
         .arg("test")
@@ -1010,7 +1010,7 @@ fn check_expected_output(file: &Path, fixtures: &Path, expect: &Path) -> anyhow:
     let actual = String::from_utf8_lossy(&output.stdout);
     let expected = std::fs::read_to_string(expect)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", expect.display()))?;
-    if actual.trim_end() != expected.trim_end() {
+    if !output_matches(&actual, &expected) {
         eprintln!(
             "output mismatch: {} does not match {}",
             file.display(),
@@ -1020,6 +1020,13 @@ fn check_expected_output(file: &Path, fixtures: &Path, expect: &Path) -> anyhow:
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// `--expect` equality: trailing whitespace is ignored, and so is the line
+/// ending — Windows stdout is CRLF while a committed `expected.txt` is LF, and
+/// either side may have been written on either platform.
+fn output_matches(actual: &str, expected: &str) -> bool {
+    actual.replace("\r\n", "\n").trim_end() == expected.replace("\r\n", "\n").trim_end()
 }
 
 /// Line-by-line diff, capped so a large mismatch stays readable.
