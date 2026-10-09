@@ -77,7 +77,21 @@ impl ProviderRegistry {
             }
         }
 
+        if let Some(mode) = crate::llm::fixtures::mode() {
+            registry.apply_fixture_mode(mode)?;
+        }
+
         Ok(registry)
+    }
+
+    /// Replace every registered provider with its fixture recorder/replayer
+    /// (#478). `from_config` calls this when a mode is set; tests call it
+    /// directly so they never have to touch the process-global mode.
+    pub fn apply_fixture_mode(
+        &mut self,
+        mode: &crate::llm::fixtures::FixtureMode,
+    ) -> Result<(), ProviderError> {
+        crate::llm::fixtures::wrap_providers(&mut self.providers, mode)
     }
 
     /// Manual builder for tests
@@ -659,5 +673,71 @@ type = "mock"
             .await
             .unwrap();
         assert_eq!(resp.provider_name, "pinned");
+    }
+
+    #[tokio::test]
+    async fn apply_fixture_mode_replaces_every_provider() {
+        // #478 — the wrapping runs over the whole provider map, so a phase
+        // chain or a fallback cannot dodge the recorder/replayer.
+        use crate::llm::fixtures::FixtureMode;
+
+        let toml = r#"
+[llm]
+default = "mock"
+
+[providers.mock]
+type = "mock"
+
+[providers.alt]
+type = "mock"
+"#;
+        let config: crate::config::ForgeConfig = toml::from_str(toml).expect("config parse");
+        let path =
+            std::env::temp_dir().join(format!("forge-478-{}.fixtures.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let mut recording = ProviderRegistry::from_config(config.clone()).expect("registry build");
+        recording
+            .apply_fixture_mode(&FixtureMode::Record(path.clone()))
+            .expect("record mode");
+        let live_default = recording
+            .resolve_and_complete(
+                CompletionRequest::simple("a prompt long enough to bill"),
+                None,
+            )
+            .await
+            .expect("live default call");
+        let live_alt = recording
+            .get("alt")
+            .expect("alt registered")
+            .complete(CompletionRequest::simple("a prompt long enough to bill"))
+            .await
+            .expect("live alt call");
+        assert!(live_default.tokens_in > 0, "control: the live call billed");
+
+        let mut replaying = ProviderRegistry::from_config(config).expect("registry build");
+        assert_eq!(replaying.provider_names().len(), 2);
+        replaying
+            .apply_fixture_mode(&FixtureMode::Replay(path.clone()))
+            .expect("replay mode");
+        let replayed_default = replaying
+            .resolve_and_complete(
+                CompletionRequest::simple("a prompt long enough to bill"),
+                None,
+            )
+            .await
+            .expect("replayed default call");
+        let replayed_alt = replaying
+            .get("alt")
+            .expect("alt registered")
+            .complete(CompletionRequest::simple("a prompt long enough to bill"))
+            .await
+            .expect("replayed alt call");
+
+        assert_eq!(replayed_default.content, live_default.content);
+        assert_eq!(replayed_alt.content, live_alt.content);
+        assert_eq!(replayed_default.tokens_in, 0);
+        assert_eq!(replayed_alt.tokens_in, 0);
+        let _ = std::fs::remove_file(&path);
     }
 }
