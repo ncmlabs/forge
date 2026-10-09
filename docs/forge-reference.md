@@ -2479,6 +2479,8 @@ task watch_once
     else -> give "no output"
 ```
 
+Background `status()` and `output()` confidence follows the exit status, like foreground `command`: 0.9 on success, 0.3 on failure, and `output()` reports 0.5 while the process is still running.
+
 ---
 
 ## 19. Sessions, AgentResult, and Verification Metadata
