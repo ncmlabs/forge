@@ -1,0 +1,17 @@
+# FORGE
+
+> FORGE is a language for oracle-augmented computation: LLM calls are primitives, uncertainty is a compile-time type, and independent work runs in parallel.
+
+## Start here
+
+- [docs/forge-card.md](docs/forge-card.md): the one-page card — syntax traps, one idiom per primitive, the common checker errors; every code block in it is checked in CI.
+- [docs/forge-reference.md](docs/forge-reference.md): the complete language reference — tasks, flows, control flow, events, states, agents, types, pools, wardens, contracts, systems, uncertainty, sessions, knowledge, skills, and built-ins.
+- [wiki/content/principles.md](https://github.com/ncmlabs/forge-examples/blob/main/wiki/content/principles.md): the nine first principles behind the language.
+- [examples/](examples/): runnable FORGE programs; `examples/errors/` fail on purpose.
+- [forge-examples](https://github.com/ncmlabs/forge-examples): the standalone examples repository.
+
+## Also useful
+
+- [grammar/forge.pest](grammar/forge.pest): the PEG grammar — the final word on syntax.
+- [CHANGELOG.md](CHANGELOG.md): what changed, per release.
+- [roadmap.md](roadmap.md): where the language is going.
