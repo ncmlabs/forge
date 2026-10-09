@@ -98,6 +98,11 @@ fn check_stmt(
                 gate_expr(&arg.node.value, unchecked, file, diagnostics);
             }
         }
+        Stmt::MemoryUpdate(_field, _index, value) => {
+            // `memory.out = x.stdout` and `memory.out[i] = x.stdout` both store
+            // the value for later decisions.
+            gate_expr(value, unchecked, file, diagnostics);
+        }
         Stmt::When(when) => {
             // `when x.sure` / `.unsure` / `.unreliable` on the command result
             // itself is a deterministic exit-status check, not an oracle
@@ -478,6 +483,34 @@ task t
     x = exec "cargo test"
     when x.sure -> give x
     else -> give "FAILED"
+"#,
+        );
+    }
+
+    #[test]
+    fn memory_assignment_is_gated() {
+        assert_flagged(
+            r#"
+agent a
+  memory
+    out: Text
+  on start
+    x = command "cargo test"
+    memory.out = x.stdout
+"#,
+        );
+    }
+
+    #[test]
+    fn memory_index_assignment_is_gated() {
+        assert_flagged(
+            r#"
+agent a
+  memory
+    out: Text[]
+  on start
+    x = command "cargo test"
+    memory.out[0] = x.stdout
 "#,
         );
     }
