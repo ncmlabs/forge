@@ -1194,6 +1194,35 @@ FORGE_MOCK=1 forge test suite.forge
 
 ### CLI Commands
 
+#### `forge init <dir>`
+Scaffold a project from a template: `pipeline` (the default), `agent`, or
+`webhook-bot`. Each writes `forge.project.toml`, `forge.config.toml` (mock
+provider by default), `main.forge`, a recorded `main.forge.fixtures.json`,
+`expected.txt`, `.gitignore`, and an `AGENTS.md` pointing at the card and this
+loop.
+
+```bash
+forge init demo                            # pipeline
+forge init demo --template agent
+forge init demo --template webhook-bot
+forge init demo --dry-run                  # list the files, write nothing
+forge init . --force                       # write into a non-empty directory
+```
+
+The scaffolded project checks and replays clean with no API key and no provider
+call:
+
+```bash
+cd demo
+forge check main.forge
+forge test main.forge --expect expected.txt
+```
+
+A non-empty `<dir>` is refused with exit code 1 unless `--force` is given;
+`--force` overwrites the template files and never removes anything else, and
+`--dry-run` still applies that refusal. In every file, `{{name}}` is replaced by
+the directory's base name — that is the only substitution.
+
 #### `forge parse <file>`
 Parse a FORGE program and print its abstract syntax tree (AST).
 

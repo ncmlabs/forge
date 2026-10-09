@@ -7,6 +7,7 @@
 FORGE is a language for oracle-augmented computation: LLM calls are primitives, uncertainty is a compile-time type, and independent work runs in parallel. Deterministic logic lives in `pure`, stochastic logic in `task`, and agents are first-class with memory, lifecycle states, events, and supervision.
 
 Authoring loop, in this order: `forge check app.forge` (parse + resolve + check — fix every error first) → `FORGE_MOCK=1 forge run app.forge` (the whole program on the mock provider: no API key, no tokens, no cost) → `forge run app.forge` (only once the mock run is clean).
+New project: `forge init <dir> --template pipeline|agent|webhook-bot`.
 
 ## 2. Syntax rules that trip agents
 

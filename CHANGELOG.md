@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `forge init <dir>` (#481): scaffold a runnable project from a template —
+  `pipeline` (default), `agent`, or `webhook-bot`. Each writes
+  `forge.project.toml`, a mock-default `forge.config.toml` with a commented
+  real-provider block (`${ENV}` references only), `main.forge`, a recorded
+  `main.forge.fixtures.json`, `expected.txt`, `.gitignore`, and an `AGENTS.md`
+  pointing at the card and the CLI loop. All three templates pass
+  `forge check` with zero diagnostics and `forge test --expect` on a fresh
+  scaffold, at $0 (mock provider). `--dry-run` lists the files and writes
+  nothing; a non-empty directory is refused with exit 1 unless `--force`.
+  Templates live in `templates/init/<template>/` and are embedded with
+  `include_str!`; `{{name}}` is replaced by the directory's base name.
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced
