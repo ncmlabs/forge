@@ -277,7 +277,9 @@ enum WakeAction {
 /// Windows sizes the main thread's stack at 1 MiB — deep flows, pools and
 /// agents overflow it and abort (`ulimit -s 1024` reproduces this on Linux).
 /// Run the CLI on a thread whose stack we choose instead.
-const MAIN_STACK_BYTES: usize = 16 * 1024 * 1024;
+// ponytail: 8 MiB, and it matches CI's RUST_MIN_STACK. The upgrade path is to
+// flatten the executor's future nesting so no stack bump is needed at all.
+const MAIN_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 fn main() -> anyhow::Result<()> {
     let handle = std::thread::Builder::new()
