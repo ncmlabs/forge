@@ -2,7 +2,7 @@
 
 # FORGE Observer — standalone runtime inspector
 # Connects to any running FORGE server via /__forge/* endpoints.
-# Start: forge serve examples/observer/server.forge -s examples/observer/shared.forge
+# Start: forge serve tests/fixtures/observer/server.forge -s tests/fixtures/observer/shared.forge
 
 endpoint home() -> Html
   give "<!DOCTYPE html><html><head><meta http-equiv='refresh' content='0; url=/static/index.html'></head></html>"

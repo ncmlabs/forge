@@ -233,19 +233,19 @@ run = "mock"
 [[cases]]
 name = "observer web example"
 paths = [
-  "examples/observer/server.forge",
-  "examples/observer/shared.forge",
+  "tests/fixtures/observer/server.forge",
+  "tests/fixtures/observer/shared.forge",
 ]
 check = "ok"
 
 [[cases]]
 name = "sentinel web example"
 paths = [
-  "examples/sentinel/server.forge",
-  "examples/sentinel/shared.forge",
+  "tests/fixtures/sentinel/server.forge",
+  "tests/fixtures/sentinel/shared.forge",
 ]
 check = "ok"
-config = "examples/sentinel/forge.config.toml"
+config = "tests/fixtures/sentinel/forge.config.toml"
 merge = true
 
 [[cases]]
@@ -294,23 +294,23 @@ run = "live_only"
 [[cases]]
 name = "tic-tac-toe multi-file example"
 paths = [
-  "examples/tictactoe/platform.forge",
-  "examples/tictactoe/room_agent.forge",
-  "examples/tictactoe/ai_opponent.forge",
-  "examples/tictactoe/matchmaking.forge",
+  "tests/fixtures/tictactoe/platform.forge",
+  "tests/fixtures/tictactoe/room_agent.forge",
+  "tests/fixtures/tictactoe/ai_opponent.forge",
+  "tests/fixtures/tictactoe/matchmaking.forge",
 ]
 check = "ok"
-manifest = "examples/tictactoe/forge.project.toml"
+manifest = "tests/fixtures/tictactoe/forge.project.toml"
 merge = true
 
 [[cases]]
 name = "wiki multi-file example"
 paths = [
-  "examples/wiki/server.forge",
-  "examples/wiki/shared.forge",
+  "tests/fixtures/wiki/server.forge",
+  "tests/fixtures/wiki/shared.forge",
 ]
 check = "ok"
-config = "examples/wiki/forge.config.toml"
+config = "tests/fixtures/wiki/forge.config.toml"
 merge = true
 
 [[cases]]

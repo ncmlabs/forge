@@ -6,8 +6,8 @@
 # The ultimate dogfooding showcase: a real documentation wiki
 # built with FORGE, demonstrating all 14 language primitives.
 #
-# Start: forge serve examples/wiki/server.forge \
-#          -s examples/wiki/shared.forge --watch
+# Start: forge serve tests/fixtures/wiki/server.forge \
+#          -s tests/fixtures/wiki/shared.forge --watch
 # ================================================================
 
 use
@@ -611,4 +611,4 @@ endpoint api_semantic_search(q: Text) -> Text
 fn main
   say "=== FORGE Wiki ==="
   say "Content is seeded automatically from content/ directory by forge serve."
-  say "Run: forge serve examples/wiki/server.forge -s examples/wiki/shared.forge --watch"
+  say "Run: forge serve tests/fixtures/wiki/server.forge -s tests/fixtures/wiki/shared.forge --watch"

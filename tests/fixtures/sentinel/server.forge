@@ -7,8 +7,8 @@
 # language primitives including exec, skill bridge, and >>
 # composition.
 #
-# Start: forge serve examples/sentinel/server.forge \
-#          -s examples/sentinel/shared.forge --watch
+# Start: forge serve tests/fixtures/sentinel/server.forge \
+#          -s tests/fixtures/sentinel/shared.forge --watch
 # ================================================================
 
 use
@@ -522,4 +522,4 @@ endpoint api_commits() -> Text
 fn main
   say "=== FORGE Sentinel ==="
   say "AI-powered repo health dashboard — FORGE monitoring FORGE."
-  say "Run: forge serve examples/sentinel/server.forge -s examples/sentinel/shared.forge --watch"
+  say "Run: forge serve tests/fixtures/sentinel/server.forge -s tests/fixtures/sentinel/shared.forge --watch"
