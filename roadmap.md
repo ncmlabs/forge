@@ -57,7 +57,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | ----- | ----- | ------ |
 | [#473](https://github.com/ncmlabs/forge/issues/473) | docs: reset roadmap to v0.3 — Agent-Native FORGE | Done ✅ |
 | [#485](https://github.com/ncmlabs/forge/issues/485) | lean: remove web app stack from core (templates, static/Tailwind, hot-reload, markdown) | Open |
-| [#486](https://github.com/ncmlabs/forge/issues/486) | lean: close WASM/browser targets; keep server/shared boundary checker | Open |
+| [#486](https://github.com/ncmlabs/forge/issues/486) | lean: close WASM/browser targets; keep server/shared boundary checker | Done ✅ |
 | [#487](https://github.com/ncmlabs/forge/issues/487) | lean: extract clone-dev into ncmlabs/forge-clone-dev | Open |
 | [#488](https://github.com/ncmlabs/forge/issues/488) | examples: create public ncmlabs/forge-examples and move showcases | Open |
 
@@ -65,7 +65,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 
 | Issue | Title | Status |
 | ----- | ----- | ------ |
-| [#474](https://github.com/ncmlabs/forge/issues/474) | diagnostics: stable error codes, real file path, plain output off-TTY, forge explain | Open |
+| [#474](https://github.com/ncmlabs/forge/issues/474) | diagnostics: stable error codes, real file path, plain output off-TTY, forge explain | Done ✅ |
 | [#475](https://github.com/ncmlabs/forge/issues/475) | cli: JSON output envelope, semantic exit codes and --fields for every command | Open |
 | [#476](https://github.com/ncmlabs/forge/issues/476) | cli: forge schema and forge help --json introspection | Open |
 | [#477](https://github.com/ncmlabs/forge/issues/477) | cli: forge run --dry-run static execution plan (LLM sites, cost, effects) | Open |
@@ -77,7 +77,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 
 | Issue | Title | Status |
 | ----- | ----- | ------ |
-| [#480](https://github.com/ncmlabs/forge/issues/480) | docs: forge-card.md + llms.txt — the one-page language for agents | Open |
+| [#480](https://github.com/ncmlabs/forge/issues/480) | docs: forge-card.md + llms.txt — the one-page language for agents | Done ✅ |
 | [#481](https://github.com/ncmlabs/forge/issues/481) | cli: forge init <template> project scaffolding | Open |
 | [#482](https://github.com/ncmlabs/forge/issues/482) | skills: installable write-forge skill for Claude Code and Codex | Open |
 | [#229](https://github.com/ncmlabs/forge/issues/229) | Automate FORGE derived-surface drift detection (continuous #229) | Open |

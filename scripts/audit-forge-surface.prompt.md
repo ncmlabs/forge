@@ -17,6 +17,7 @@ You are running a non-interactive FORGE derived-surface audit. Your job is to de
 ## Derived surfaces (THESE you may edit)
 
 - `docs/forge-reference.md`
+- `docs/forge-card.md` — the card must stay consistent with the reference and grammar, and stay ≤ 300 lines
 - `docs/training-development-workflow.md`
 - `skills/claude-code/SKILL.md` (FORGE preamble block)
 - `examples/**/*.forge`
