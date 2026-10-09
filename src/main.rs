@@ -3275,6 +3275,10 @@ async fn send_to_agent(
         tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
     );
 
+    // A `send` handler can call `reason`; accumulating its spend here is what
+    // lets the envelope report a measured `cost` instead of `null` (#475).
+    let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
+
     let agent = AgentProcess::new(
         agent_decl.clone(),
         states_decl.as_ref(),
@@ -3287,7 +3291,8 @@ async fn send_to_agent(
     )
     // `forge send --json` must not let a handler `say` reach stdout; the lines
     // go into the envelope's `data.output` instead (#475).
-    .with_stdout_echo(!out.json);
+    .with_stdout_echo(!out.json)
+    .with_cost_tracker_opt(Some(cost_tracker.clone()));
 
     // Build params from positional args matching handler param names
     let handler = agent_decl
@@ -3340,8 +3345,7 @@ async fn send_to_agent(
                 }),
                 format!("dispatched {event} to {}", agent_decl.name.node),
             )
-            // Agent dispatch is not cost-tracked on this path (#475).
-            .with_unknown_cost();
+            .with_cost(cost_tracker.summary().total_cost_usd as f64);
             out.done(&env);
         }
         Err(e) => {
@@ -3360,9 +3364,9 @@ async fn send_to_agent(
                 "result": serde_json::Value::Null,
                 "output": agent.outputs(),
             }))
-            // A failed dispatch may still have spent LLM tokens; the run path
-            // does not measure them, so report the cost as unknown.
-            .with_unknown_cost()
+            // A failed dispatch may still have spent LLM tokens before it
+            // failed; the tracker holds whatever it spent.
+            .with_cost(cost_tracker.summary().total_cost_usd as f64)
             .with_next_steps(vec![format!("forge agent-inspect {}", file.display())]);
             out.done(&env);
         }

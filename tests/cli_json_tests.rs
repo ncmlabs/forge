@@ -403,8 +403,31 @@ fn send_json_returns_the_handler_value() {
     assert_eq!(doc["status"], "success");
     assert_eq!(doc["data"]["agent"], "echo");
     assert_eq!(doc["data"]["result"], "pong");
-    // Agent dispatch is not cost-tracked, so the cost is explicitly unknown.
-    assert!(doc["cost"].is_null());
+    // The send path carries a cost tracker now: a deterministic handler spent
+    // nothing, and that is a measured `0.0`, not `null` (#475).
+    assert_eq!(doc["cost"], 0.0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn send_json_reports_llm_handler_spend() {
+    let dir = temp_dir("send-cost");
+    let storage = dir.join("storage");
+    let config = priced_mock_config(&dir);
+    let output = forge_env(
+        &["send", "--json", "tests/fixtures/say_agent.forge", "ask"],
+        &[
+            ("FORGE_CONFIG", &config),
+            ("FORGE_STORAGE_ROOT", storage.to_str().unwrap()),
+        ],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["status"], "success");
+    assert!(
+        doc["cost"].as_f64().unwrap() > 0.0,
+        "the handler's LLM spend must reach the envelope's cost: {doc}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
