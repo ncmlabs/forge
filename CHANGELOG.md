@@ -42,7 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Templates live in `templates/init/<template>/` and are embedded with
   `include_str!`; `{{name}}` is replaced by the directory's base name, which
   must be a valid project name — `[A-Za-z0-9_-]` plus a non-leading `.` —
-  otherwise the run exits 1 before writing anything.
+  otherwise the run exits 1 before writing anything. `--force` also refuses to
+  write through a symlinked template path.
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced

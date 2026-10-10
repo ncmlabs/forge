@@ -123,10 +123,11 @@ pub fn render(contents: &str, name: &str) -> String {
 /// Write `template` into `dir` and return the relative paths written — or, for
 /// `dry_run`, the paths that would be written, with nothing touched.
 ///
-/// A non-empty `dir` is refused unless `force`, and the directory's base name
-/// must be a valid project name; both refusals apply to `dry_run` too, because
-/// a preview must predict the run it previews. With `force`, only the template
-/// files are overwritten, never anything else.
+/// A non-empty `dir` is refused unless `force`, the directory's base name must
+/// be a valid project name, and no template path may be a symlink; every
+/// refusal applies to `dry_run` too, because a preview must predict the run it
+/// previews. With `force`, only the template files are overwritten, never
+/// anything else.
 pub fn scaffold(
     dir: &Path,
     template: &str,
@@ -155,6 +156,18 @@ pub fn scaffold(
     let name = project_name(dir)?;
     validate_name(&name)?;
 
+    // Check every target before writing any of them: `--force` must not follow
+    // a symlink out of the project, and a refusal must leave `dir` untouched.
+    for (path, _) in files {
+        let target = dir.join(path);
+        if is_symlink(&target)? {
+            bail!(
+                "{} is a symlink; refusing to overwrite through it",
+                target.display()
+            );
+        }
+    }
+
     let paths: Vec<&'static str> = files.iter().map(|(path, _)| *path).collect();
     if dry_run {
         return Ok(paths);
@@ -167,6 +180,16 @@ pub fn scaffold(
             .with_context(|| format!("cannot write {}", target.display()))?;
     }
     Ok(paths)
+}
+
+/// `symlink_metadata` does not follow the link, so this is true only for the
+/// path itself; a missing path is simply not a symlink.
+fn is_symlink(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => Ok(meta.file_type().is_symlink()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e).with_context(|| format!("cannot inspect {}", path.display())),
+    }
 }
 
 /// The name lands in `forge.project.toml`, `AGENTS.md` and `main.forge` bodies,
@@ -316,6 +339,38 @@ mod tests {
                 std::fs::read_to_string(target.join("forge.project.toml")).expect("read project");
             assert!(project.contains(&format!("name = \"{name}\"")), "{project}");
         }
+    }
+
+    /// Unix symlinks: `--force` must not write through a link that points out
+    /// of the project, and the refusal must happen before the first write.
+    #[cfg(unix)]
+    #[test]
+    fn force_refuses_to_write_through_a_symlink() {
+        let outside = tempfile::tempdir().expect("tempdir");
+        let outside_file = outside.path().join("outside.txt");
+        std::fs::write(&outside_file, "keep me").expect("write outside");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project = dir.path().join("demo");
+        std::fs::create_dir(&project).expect("create dir");
+        std::os::unix::fs::symlink(&outside_file, project.join("main.forge")).expect("symlink");
+
+        let err = scaffold(&project, "pipeline", true, false)
+            .expect_err("a symlinked target must be refused")
+            .to_string();
+        assert!(
+            err.contains("main.forge is a symlink; refusing to overwrite through it"),
+            "{err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&outside_file).expect("read outside"),
+            "keep me",
+            "the file behind the symlink is untouched"
+        );
+        assert!(
+            !project.join("forge.project.toml").exists(),
+            "all targets are checked before the first write"
+        );
     }
 
     #[test]

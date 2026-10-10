@@ -1239,7 +1239,11 @@ predict the run it previews:
 
 - a non-empty `<dir>` without `--force` — `<dir> is not empty; use --force to write into it`;
 - a base name outside `[A-Za-z0-9_-]` plus `.` (never leading) —
-  `project name '<n>' is not valid; use letters, digits, '-', '_' (rename the directory)`.
+  `project name '<n>' is not valid; use letters, digits, '-', '_' (rename the directory)`;
+- a template path that is already a symlink —
+  `<path> is a symlink; refusing to overwrite through it`. Every target is
+  checked before the first write, so `--force` never follows a link out of the
+  project and a refusal leaves `<dir>` exactly as it was.
 
 #### `forge parse <file>`
 Parse a FORGE program and print its abstract syntax tree (AST).

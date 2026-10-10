@@ -176,6 +176,44 @@ fn init_accepts_dashes_underscores_and_dots_in_the_name() {
     }
 }
 
+/// Unix symlinks: `--force` must not follow a link out of the project.
+#[cfg(unix)]
+#[test]
+fn init_force_refuses_to_write_through_a_symlink() {
+    let outside = tempfile::tempdir().expect("tempdir");
+    let outside_file = outside.path().join("outside.txt");
+    std::fs::write(&outside_file, "keep me").expect("write outside");
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let project = dir.path().join("demo");
+    std::fs::create_dir(&project).expect("create dir");
+    std::os::unix::fs::symlink(&outside_file, project.join("main.forge")).expect("symlink");
+
+    let output = forge(dir.path())
+        .args(["init", "demo", "--force"])
+        .output()
+        .expect("init run");
+    assert_eq!(output.status.code(), Some(1), "a symlinked target exits 1");
+    let stderr = stderr_of(&output);
+    assert!(
+        stderr.contains("main.forge is a symlink; refusing to overwrite through it"),
+        "{stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&outside_file).expect("read outside"),
+        "keep me",
+        "the file behind the symlink is untouched"
+    );
+    assert!(
+        !project.join("forge.project.toml").exists(),
+        "a refusal writes nothing"
+    );
+    assert!(
+        project.join("main.forge").is_symlink(),
+        "the symlink is left alone"
+    );
+}
+
 #[test]
 fn init_refuses_a_non_empty_directory_without_force() {
     let dir = tempfile::tempdir().expect("tempdir");
