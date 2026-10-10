@@ -429,7 +429,7 @@ async fn run(command: Command, out: &forge::cli_output::OutputMode) -> anyhow::R
                     )
                     .with_data(serde_json::json!({
                         "file": file.display().to_string(),
-                        "diagnostics": [forge::cli_output::diagnostic_json(&diag, &source)],
+                        "diagnostics": [forge::cli_output::diagnostic_json(&diag, Some(&source))],
                     }));
                     out.done(&env);
                 }
@@ -522,11 +522,12 @@ async fn run(command: Command, out: &forge::cli_output::OutputMode) -> anyhow::R
                 "diagnostics": all_diagnostics
                     .iter()
                     .map(|d| {
+                        // No parsed source for this file means no position to
+                        // report; `diagnostic_json` then emits null line/col.
                         let source = parsed_programs
                             .iter()
                             .find(|(_, f, _)| f == &d.file)
-                            .map(|(_, _, s)| s.as_str())
-                            .unwrap_or("");
+                            .map(|(_, _, s)| s.as_str());
                         forge::cli_output::diagnostic_json(d, source)
                     })
                     .collect::<Vec<_>>(),
@@ -1300,7 +1301,7 @@ fn parse_or_exit(
             )
             .with_data(serde_json::json!({
                 "file": file.display().to_string(),
-                "diagnostics": [forge::cli_output::diagnostic_json(&diag, source)],
+                "diagnostics": [forge::cli_output::diagnostic_json(&diag, Some(source))],
             }));
             out.done(&env)
         }
@@ -1657,7 +1658,7 @@ async fn run_program(
             "result": serde_json::Value::Null,
             "diagnostics": diagnostics
                 .iter()
-                .map(|d| forge::cli_output::diagnostic_json(d, &source))
+                .map(|d| forge::cli_output::diagnostic_json(d, Some(&source)))
                 .collect::<Vec<_>>(),
         });
         let hint = format!("forge check --json {}", file.display());
@@ -1830,8 +1831,7 @@ async fn run_manifest(
                     let source = source_files
                         .iter()
                         .find(|sf| sf.path == d.file)
-                        .map(|sf| sf.source.as_str())
-                        .unwrap_or("");
+                        .map(|sf| sf.source.as_str());
                     forge::cli_output::diagnostic_json(d, source)
                 })
                 .collect::<Vec<_>>(),

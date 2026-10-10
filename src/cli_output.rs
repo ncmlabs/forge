@@ -324,10 +324,18 @@ pub fn value_json(v: &crate::runtime::confidence::Value) -> Value {
 }
 
 /// JSON view of a diagnostic: stable code, severity, file and 1-based line/col
-/// computed from the byte span.
-pub fn diagnostic_json(d: &crate::diagnostic::Diagnostic, source: &str) -> Value {
-    let (line, col) = line_col(source, d.span.start);
-    let (end_line, end_col) = line_col(source, d.span.end);
+/// computed from the byte span. `line`/`col`/`end_line`/`end_col` are `null`
+/// when the source is unknown (the diagnostic names a file that was not
+/// parsed), so a missing position is never reported as a fake 1:1 (#475).
+pub fn diagnostic_json(d: &crate::diagnostic::Diagnostic, source: Option<&str>) -> Value {
+    let (line, col, end_line, end_col) = match source {
+        Some(source) => {
+            let (line, col) = line_col(source, d.span.start);
+            let (end_line, end_col) = line_col(source, d.span.end);
+            (Some(line), Some(col), Some(end_line), Some(end_col))
+        }
+        None => (None, None, None, None),
+    };
     let severity = match d.kind {
         crate::diagnostic::DiagnosticKind::Error => "error",
         crate::diagnostic::DiagnosticKind::Warning => "warning",
@@ -500,7 +508,7 @@ mod tests {
             "here",
         )
         .with_help("wrap it");
-        let value = diagnostic_json(&diag, source);
+        let value = diagnostic_json(&diag, Some(source));
         assert_eq!(value["code"], "E020");
         assert_eq!(value["severity"], "error");
         assert_eq!(value["line"], 5);
@@ -513,6 +521,22 @@ mod tests {
             explain_next_steps(&[diag, warning]),
             vec!["forge explain E020".to_string()]
         );
+    }
+
+    #[test]
+    fn diagnostic_json_without_a_parsed_source_reports_null_position() {
+        use crate::diagnostic::Diagnostic;
+        // `forge check` can see a diagnostic whose file is not one of the parsed
+        // sources; there is no span to translate, so the position is `null`
+        // rather than a fake 1:1.
+        let diag = Diagnostic::error("E020", "other.forge", "uncertain", 4..10, "here");
+        let value = diagnostic_json(&diag, None);
+        assert!(value["line"].is_null(), "{value}");
+        assert!(value["col"].is_null(), "{value}");
+        assert!(value["end_line"].is_null(), "{value}");
+        assert!(value["end_col"].is_null(), "{value}");
+        assert_eq!(value["file"], "other.forge");
+        assert_eq!(value["code"], "E020");
     }
 
     #[test]

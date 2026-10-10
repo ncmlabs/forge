@@ -2943,7 +2943,7 @@ Exit codes are semantic in both modes: `--json` does not change them, and human 
 | Command | `data` |
 |---------|--------|
 | `parse` | `{file, ast}` (the debug AST tree) |
-| `check` | `{files, diagnostics:[{code, severity, file, line, col, end_line, end_col, message, label, help}]}` |
+| `check` | `{files, diagnostics:[{code, severity, file, line, col, end_line, end_col, message, label, help}]}` — `line`/`col` are `null` when the diagnostic names a file that was not parsed (no span to translate), never a fake `1:1` |
 | `explain` | `{code, title, explain}` or `{codes:[{code, title}]}` with `--list` |
 | `run`, `trace`, `test` | `{file, output:[say lines], result}` — `say` never writes to stdout in JSON mode. `test` replays recorded fixtures (#478) and adds `{fixtures, expect, matched}` with `--expect` |
 | `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], total_tokens_in, total_tokens_out, estimated_cost_usd}` |
