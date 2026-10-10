@@ -2983,3 +2983,105 @@ Conformance cases assert on codes instead of message substrings:
   "error_contains": ["cannot use", "reason"]
 }
 ```
+
+---
+
+## 27. Machine-readable output (`--json`)
+
+Every in-scope CLI command can emit one JSON document instead of human text. JSON mode is on when `--json` is passed or when `FORGE_OUTPUT=json` is set; human output stays the default otherwise.
+
+```bash
+forge check --json examples/errors/uncertain_error.forge
+FORGE_OUTPUT=json forge explain E020
+forge check --json --fields diagnostics src/main.forge
+```
+
+### Envelope
+
+```json
+{
+  "status": "success",
+  "command": "check",
+  "data": { "files": ["a.forge"], "diagnostics": [] },
+  "context": "1 file(s) checked, no diagnostics",
+  "next_steps": [],
+  "warnings": [],
+  "cost": 0.0,
+  "error": null,
+  "duration_ms": 3
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `status` | `success`, `error`, `warning` or `pending` |
+| `command` | subcommand that produced the document (`check`, `run`, `explain`, ...) |
+| `data` | command payload; filterable with `--fields` |
+| `context` | one human sentence describing what happened |
+| `next_steps` | concrete commands to run next (`forge explain <code>` for check errors) |
+| `warnings` | non-fatal findings, also present in `data.diagnostics` for `check` |
+| `cost` | USD spent by this command; `0.0` on paths with no LLM calls, `null` when spend cannot be measured (no path in the CLI reports `null` today — LLM spend on `run`, `trace`, `test`, `send` and pool workers is measured) |
+| `error` | `null` on success, else `{type, code, message, suggestion}` |
+| `duration_ms` | wall-clock time of the command |
+
+`error.type` is `io`, `parse`, `config`, `runtime` for failures, `usage` when the command line itself was invalid, `check` when static diagnostics blocked execution, and `unsupported` for commands without a JSON contract.
+
+### Exit codes
+
+| Code | Name | Meaning |
+|------|------|---------|
+| `0` | success | command completed |
+| `1` | error | command failed, a run was blocked by diagnostics, or the command line was invalid |
+| `2` | warning | `check` found warnings but no errors — this code means "warnings only" and nothing else |
+| `3` | partial | reserved for partially completed work |
+| `10` | needs input | reserved for approval / needs-input paths |
+| `11` | async pending | reserved for async work that is still running |
+
+Exit codes are semantic in both modes: `--json` does not change them, and human mode now uses them too (`forge check` on a warnings-only file exits `2`, where it previously exited `1`).
+
+### Usage errors
+
+A command line clap cannot parse exits `1` in both modes — never clap's default `2`, which would collide with "warnings only". `--help` and `--version` keep printing and exit `0`. In JSON mode the error is one envelope on stdout:
+
+```json
+{
+  "status": "error",
+  "command": "check",
+  "error": {
+    "type": "usage",
+    "message": "error: the following required arguments were not provided:\n  <FILES>...\n\nUsage: forge check <FILES>...",
+    "suggestion": "run forge check --help"
+  }
+}
+```
+
+`command` is the subcommand named in argv, or `""` when none was given (the suggestion is then `run forge --help`). The message is clap's, with ANSI styling stripped, so the JSON string is plain text.
+
+### `data` payloads
+
+| Command | `data` |
+|---------|--------|
+| `parse` | `{file, ast}` (the debug AST tree) |
+| `check` | `{files, diagnostics:[{code, severity, file, line, col, end_line, end_col, message, label, help}]}` — `line`/`col` are `null` when the diagnostic names a file that was not parsed (no span to translate), never a fake `1:1` |
+| `explain` | `{code, title, explain}` or `{codes:[{code, title}]}` with `--list` |
+| `run`, `trace`, `test` | `{file, output:[say lines], result}` — `say` never writes to stdout in JSON mode, wherever it runs: `fn main`, a spawned agent, or a pool worker (their lines join the same `output`). `cost` covers the whole run, spawned children and pool workers included. `test` replays recorded fixtures (#478) and adds `{fixtures, expect, matched}` with `--expect` |
+| `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], total_tokens_in, total_tokens_out, estimated_cost_usd}` |
+| `build` | `{path, output_name, binary_path, program_kind, release, dry_run, built}` |
+| `export` | `{agent, layers, output, entries}` |
+| `import` | `{package, into, imported, confidence_cap}` |
+| `inspect` | `{package, inspection}` |
+| `send` | `{file, agent, event, result, output}` — the handler's `say` lines are in `output`, never on stdout, and `cost` is the dispatch's measured LLM spend (`0.0` when the handler made no LLM call) |
+| `wake` | `{action, ...}` per subcommand (`rotate` includes the one-time `secret`) |
+| `store recover` | `{action, root, dry_run, healthy, broken, stores:[...]}` |
+
+### `--fields`
+
+`--fields a,b` keeps only those top-level keys of `data`. Unknown names are dropped, and the rest of the envelope is untouched:
+
+```bash
+forge check --json --fields diagnostics src/main.forge
+```
+
+### Commands without JSON support
+
+`serve`, `agent` (REPL), `agent-inspect` and `fleet` are interactive or long-running. In JSON mode they emit `{"status":"error","error":{"type":"unsupported", ...}}` and exit `1` instead of starting.
