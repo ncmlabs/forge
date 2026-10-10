@@ -81,6 +81,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | Issue | Title | Status |
 | ----- | ----- | ------ |
 | [#480](https://github.com/ncmlabs/forge/issues/480) | docs: forge-card.md + llms.txt — the one-page language for agents | Done ✅ |
+| [#496](https://github.com/ncmlabs/forge/issues/496) | checker: undefined calls, undeclared match variants and case-mismatched tag patterns pass forge check | Done ✅ |
 | [#481](https://github.com/ncmlabs/forge/issues/481) | cli: forge init <template> project scaffolding | Done ✅ |
 | [#482](https://github.com/ncmlabs/forge/issues/482) | skills: installable write-forge skill for Claude Code and Codex | Open |
 | [#229](https://github.com/ncmlabs/forge/issues/229) | Automate FORGE derived-surface drift detection (continuous #229) | Open |

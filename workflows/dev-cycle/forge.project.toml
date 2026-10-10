@@ -7,6 +7,7 @@ description = "Full issue lifecycle: plan → implement → test → review → 
 entry = "main.forge"
 sources = [
   "agents.forge",
+  "config.forge",
   "gate_two.forge",
   "../../tests/fixtures/agents/slack-adapter/agents.forge",
 ]

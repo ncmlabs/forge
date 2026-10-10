@@ -22,6 +22,16 @@ pure next_player
     else
       give "X"
 
+# Fallback move for the AI opponent when the analysis oracle is unsure
+# (#496: `ai_opponent.forge` called this without it being declared).
+task pick_random
+  needs board: Text[9]
+  gives Text
+  do
+    move = reason "Pick a random empty cell index (0-8) for O on this board: {board}. Reply with only the index."
+    when move.sure -> give move
+    else -> give "4"
+
 contract GameRoom
   can join(player: Text) -> Text
   can move(player: Text, cell: Number) -> GameResult

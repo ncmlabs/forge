@@ -157,6 +157,16 @@ check = "error"
 expect = ["unhandled uncertain"]
 
 [[cases]]
+name = "resolution expected error"
+paths = ["examples/errors/resolution_error.forge"]
+check = "error"
+expect = [
+  "call to undeclared function `judge`",
+  "pattern `Nonexistent` never matches",
+  "tag patterns compare exact text",
+]
+
+[[cases]]
 name = "llm examples"
 paths = [
   "examples/llm/code_review.forge",
@@ -231,6 +241,7 @@ name = "executable dev-cycle (server boundary; T10.2 #368)"
 paths = [
   "workflows/dev-cycle/main.forge",
   "workflows/dev-cycle/agents.forge",
+  "workflows/dev-cycle/config.forge",
   "workflows/dev-cycle/gate_two.forge",
   "tests/fixtures/agents/slack-adapter/agents.forge",
 ]

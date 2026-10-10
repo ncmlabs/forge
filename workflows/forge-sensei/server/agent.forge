@@ -103,11 +103,7 @@ exportable agent forge_sensei
 
   on assess_detailed(test_input: Text, expected: Text)
     memory.interaction_count = memory.interaction_count + 1
-    categories = categorize_for_recall("{test_input} expects {expected}")
-    prior = recall "{categories} {test_input}"
-    when prior.sure -> give predict_outcome(test_input, prior)
-    when prior.unsure -> give predict_outcome(test_input, prior)
-    else -> give AssessmentResult(passed: false, prediction: "NO_KNOWLEDGE", expected: expected, gap_topic: categories)
+    give run_assessment(test_input, expected)
 
   # ── Batch Assess: iterate tests with state transitions ─────
 
@@ -118,7 +114,7 @@ exportable agent forge_sensei
     gaps = ""
     for test in tests
       total = total + 1
-      result = assess_detailed(test, expectations[total - 1])
+      result = run_assessment(test, expectations[total - 1])
       if result.passed
         passed = passed + 1
       match result
@@ -167,15 +163,20 @@ exportable agent forge_sensei
   # ── Schedule fire: daily mastery review (#332) ──────────────
   # WakeService fires this handler once per day at 09:00 UTC with the
   # prompt from the `schedule mastery_review` block above. The handler
-  # computes a mastery score from recent interactions and calls
-  # `update_mastery` — replacing the old external CLI trigger.
+  # computes a mastery score from recent interactions and reports it.
+  #
+  # #496: it used to call `update_mastery(score)`, but `update_mastery` is an
+  # event handler and handlers are not callable — the call could only raise
+  # NotCallable. Mastery updates arrive through the `update_mastery` event
+  # (see `endpoint api_update_mastery`); this handler proposes the score.
 
   on mastery_review(prompt: Text)
     memory.interaction_count = memory.interaction_count + 1
     recent = recall "interactions"
     score = reason "{prompt}\n\nRecent interactions: {recent}\n\nReturn ONLY a number in [0,100]."
-    update_mastery(score)
-    say "mastery_review fired (scheduled)"
+    when score.sure -> say "Mastery review score: {score}"
+    when score.unsure -> say "Mastery review inconclusive; mastery unchanged."
+    else -> say "Mastery review could not run."
 
   if stuck for 3 turns
     say "forge-sensei is stuck. Escalating for human guidance."

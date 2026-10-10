@@ -7,6 +7,7 @@ pub mod command_gate_checker;
 pub mod correlate_checker;
 pub mod pure_checker;
 pub mod requires_checker;
+pub mod resolution_checker;
 pub mod schedule_checker;
 pub mod spawn_checker;
 pub mod states_checker;
@@ -55,6 +56,10 @@ pub fn check_all(program: &Program, file: &str) -> Vec<Diagnostic> {
     // Pass 11: per-agent skill allow-list enforcement (#363 / T9.2 —
     // Principle IX boundary separation per-agent).
     diagnostics.extend(allows_checker::check(program, file));
+
+    // Pass 12: resolution — undeclared calls and impossible match patterns
+    // (#496, Principle IX — checker/runtime separation).
+    diagnostics.extend(resolution_checker::check(program, file));
 
     // boundary_checker::check() is called separately from main.rs (multi-program signature)
     diagnostics

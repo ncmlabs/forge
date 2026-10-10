@@ -20,6 +20,7 @@
 //! | E130–E139   | correlate checker     |
 //! | E140–E149   | webhook checker       |
 //! | E150–E159   | command gate checker  |
+//! | E160–E169   | resolution checker    |
 //!
 //! Warnings use the same range prefixed with `W` instead of `E`.
 
@@ -1477,6 +1478,77 @@ task accept_tests
     else
       give "tests failed: {tests.stderr}""#,
     },
+    CodeInfo {
+        code: "E160",
+        title: "undeclared call target",
+        explain: r#"A plain call names a task, pure, flow or pool that does not exist, so the call can only fail at runtime. `fn main` is the entry point, not a call target.
+
+`forge check` only sees the files it is handed, not the project manifest: if the missing name is declared in a sibling source, check the files together with `forge check --merge <files>`.
+
+Wrong:
+fn main
+  say judge("x")
+
+Right:
+pure judge
+  needs x: Text
+  gives Text
+  do
+    give x
+
+fn main
+  say judge("x")"#,
+    },
+    CodeInfo {
+        code: "E161",
+        title: "impossible match pattern",
+        explain: r#"A constructor pattern names something the scrutinee can never hold: not a declared or built-in type, and not one of the scrutinee's statically known values (`classify ... into [...]` labels, or the literal `give`s of the producing function). The arm is dead code and silently falls through to `_`.
+
+Wrong:
+task t
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["Buy"]
+    match result
+      Nonexistent(who) -> give "never"
+      _ -> give "other"
+
+Right:
+task t
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["Buy"]
+    match result
+      Buy(who) -> give "buy"
+      _ -> give "other""#,
+    },
+    CodeInfo {
+        code: "E162",
+        title: "case-mismatched tag pattern",
+        explain: r#"Tags compare exact text, so an arm whose name differs only in case from a known value never matches and silently falls through to `_`.
+
+Wrong:
+task t
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["Positive"]
+    match result
+      POSITIVE -> give "up"
+      _ -> give "other"
+
+Right:
+task t
+  needs pick: Text
+  gives Text
+  do
+    result = classify pick into ["Positive"]
+    match result
+      Positive -> give "up"
+      _ -> give "other""#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.
@@ -1553,6 +1625,7 @@ mod tests {
             include_str!("checker/correlate_checker.rs"),
             include_str!("checker/pure_checker.rs"),
             include_str!("checker/requires_checker.rs"),
+            include_str!("checker/resolution_checker.rs"),
             include_str!("checker/schedule_checker.rs"),
             include_str!("checker/spawn_checker.rs"),
             include_str!("checker/states_checker.rs"),

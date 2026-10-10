@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contacted and no executor is built. With no files the manifest's sources are
   checked as one composition, the way `forge run --manifest` builds them, and
   explicit files are checked instead. Undeclared skills still fail with `E010`.
+- Resolution checker (#496): `forge check` now rejects a plain call to an
+  undeclared `task`/`pure`/`flow`/`pool` (`E160`, with a closest-name hint),
+  a match arm that can never match a scrutinee whose values are statically
+  known (`E161` — `classify ... into [labels]`, a producing function whose
+  every `give` is a Text literal, or a declared type constructor), and a tag
+  pattern that differs from a known value only in case (`E162` — tags compare
+  exact text). Scrutinees with unknown value sets are never flagged. The pass
+  is `src/checker/resolution_checker.rs`, with `BUILTIN_CALLS`/`BUILTIN_TYPES`
+  listing what resolves; codes are registered in `src/diagnostic_codes.rs` and
+  documented in `docs/forge-reference.md` §17 and `docs/forge-card.md` §6. The
+  corpus scan found three real bugs — a missing `pick_random` in the
+  tic-tac-toe example, a missing `repo_config_for` in the standalone dev-cycle
+  build, and event handlers called as functions in forge-sensei — all fixed
+  here.
 - JSON output envelope and semantic exit codes (#475): every in-scope command
   (`parse`, `check`, `explain`, `run`, `trace`, `test`, `cost`, `build`,
   `export`, `import`, `inspect`, `send`, `wake`, `store`) accepts a global `--json` /
