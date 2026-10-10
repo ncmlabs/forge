@@ -3,5 +3,6 @@ use
 
 agent greeter
   on start(who: Text)
-    greeting = hello(who)
-    give greeting
+    greeting = skill.greeter.hello(who)
+    when greeting.sure -> say greeting
+    else -> say "greeting uncertain"

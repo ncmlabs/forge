@@ -2528,7 +2528,7 @@ The scrutinee's value set is known in exactly three cases: it is bound from `cla
 
 Patterns naming a declared or built-in type are never flagged, and neither are `_` or bindings. `E160` suggests the closest declared name within edit distance 2.
 
-`forge check` only sees the files it is handed, so a call that looks undeclared may live in a sibling source of the same project (a `forge.project.toml` `sources` entry). When the file imports a package or carries a boundary directive — or when no close name is found at all — the `E160` help adds: *if it is declared in another file of this project, check the files together: `forge check --merge <files>`*.
+`forge check` only sees the files it is handed, so a call that looks undeclared may live in a sibling source of the same project (a `forge.project.toml` `sources` entry). When the file imports a package or carries a boundary directive — or when no close name is found at all — the `E160` help adds: *if it is declared in another file of this project, check the files together: `forge check --merge <files>` or `forge check --manifest forge.project.toml`*.
 
 ```forge
 task route
