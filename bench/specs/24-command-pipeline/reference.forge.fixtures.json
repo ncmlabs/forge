@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "9e582dc7d8dbdd5cb357e22e9fee44244798afb518766626ebb9362bf58e5944",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Label a finished run that printed done",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

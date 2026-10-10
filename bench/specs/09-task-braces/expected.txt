@@ -1,0 +1,3 @@
+{"quote": "mock response"}
+line one
+line two

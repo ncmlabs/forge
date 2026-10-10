@@ -1,0 +1,26 @@
+task fetch_notes
+  needs source: Text
+  gives Text
+  do
+    result = reason "Collect notes from {source}."
+    when result.sure -> give result
+    else -> give "no notes"
+
+flow brief
+  needs topic: Text
+  gives Text
+
+  stage gather_web
+    notes = fetch_notes("the web about {topic}")
+
+  stage gather_papers
+    notes = fetch_notes("papers about {topic}")
+
+  stage synthesize
+    needs gather_web.notes, gather_papers.notes
+    merged = reason "Combine {gather_web.notes} and {gather_papers.notes}."
+    when merged.sure -> give "brief: {merged}"
+    else -> give "brief unavailable"
+
+fn main
+  say brief("tides")

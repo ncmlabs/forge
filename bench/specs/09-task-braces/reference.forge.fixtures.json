@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "220cf6f15de7fbdfb4de2b72b0fea94830190cd7db28f0bcf5bc1c42ed699e23",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Quote fog in five words.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

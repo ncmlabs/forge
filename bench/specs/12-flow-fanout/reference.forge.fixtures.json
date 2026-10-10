@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "7f76d1c9fe83ba212256cf5a4ae6bb867fc2bcfeb2079d5a72606493a096a63a",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "List one short risk about tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "ce91d6d08682209eff4b6cb73e19b95c0f9d02073eb39f88636e9e315e1a35c4",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "List two short facts about tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "e38b1db0d2b07234d6a2301e50d075de7bc9bdd209e86371f5cfdce22e745681",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "List one short use of tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "60b73a9c848abaa9f942946ede982b8523000355ed5dbec96452d53897147b88",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Summarize mock response mock response mock response",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+task fact_check
+  needs claim: Text
+  gives Text
+  do
+    verdict = reason "Is this claim true? {claim}"
+    when verdict.sure -> give verdict
+    else -> give "unverified"
+
+pool fact_checkers
+  workers: fact_check * 3
+  strategy: majority
+  timeout: 15s
+
+pure verdict_line
+  needs verdict: Text
+  gives Text
+  do
+    give "verdict: {verdict}"
+
+fn main
+  result = fact_checkers.send("check", "the sky is blue")
+  say verdict_line(result)

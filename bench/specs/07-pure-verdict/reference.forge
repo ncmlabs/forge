@@ -1,0 +1,21 @@
+pure verdict_for
+  needs tags: Text[], needle: Text
+  gives Text
+  do
+    if tags.contains(needle)
+      give "priority"
+    else
+      give "normal"
+
+task note_for
+  needs verdict: Text
+  gives Text
+  do
+    result = reason "Write one line about a {verdict} review."
+    when result.sure -> give result
+    else -> give "no note"
+
+fn main
+  tags = ["urgent", "backend"]
+  verdict = verdict_for(tags, "urgent")
+  say "{verdict}: {note_for(verdict)}"

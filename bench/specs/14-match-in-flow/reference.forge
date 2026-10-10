@@ -1,0 +1,16 @@
+flow triage
+  needs message: Text
+  gives Text
+
+  stage label
+    kind = classify message into ["Bug", "Feature", "Question"]
+
+  stage dispatch
+    needs label.kind
+    match label.kind
+      Bug -> give "routed to engineering"
+      Feature -> give "routed to product"
+      _ -> give "routed to support"
+
+fn main
+  say triage("the app crashes on launch")
