@@ -50,7 +50,9 @@ enum Values {
 
 /// Program-level name index, built once per file.
 struct Index {
-    /// Names that resolve as a bare call target.
+    /// Names that resolve as a bare call target. Declared names only — the
+    /// builtins in [`BUILTIN_CALLS`] are kept separate so a suggestion can
+    /// prefer a declaration over a builtin at the same edit distance.
     callable: HashSet<String>,
     /// Declared `type` names plus [`BUILTIN_TYPES`].
     types: HashSet<String>,
@@ -65,7 +67,7 @@ struct Index {
 impl Index {
     fn build(program: &Program) -> Self {
         let mut index = Self {
-            callable: BUILTIN_CALLS.iter().map(|s| s.to_string()).collect(),
+            callable: HashSet::new(),
             types: BUILTIN_TYPES.iter().map(|s| s.to_string()).collect(),
             literal_gives: HashMap::new(),
             composed: program.boundary.is_some()
@@ -106,7 +108,9 @@ impl Index {
     /// `Expr::Call` builds a tagged record for any uppercase name, so an
     /// uppercase call always resolves at runtime.
     fn is_callable(&self, name: &str) -> bool {
-        name.starts_with(|c: char| c.is_uppercase()) || self.callable.contains(name)
+        name.starts_with(|c: char| c.is_uppercase())
+            || self.callable.contains(name)
+            || BUILTIN_CALLS.contains(&name)
     }
 }
 
@@ -633,16 +637,20 @@ fn describe(values: &Values) -> String {
     }
 }
 
-/// Closest candidate within edit distance 2, if any.
-fn closest_name<'a>(
-    name: &str,
-    candidates: impl Iterator<Item = &'a String>,
-) -> Option<&'a String> {
-    candidates
-        .map(|c| (edit_distance(name, c), c))
-        .filter(|(d, _)| *d <= 2)
-        .min_by_key(|(d, _)| *d)
-        .map(|(_, c)| c)
+/// Closest candidate within edit distance 2, if any. Ties break by name first
+/// so the suggestion never depends on hash order, and a declared name beats a
+/// builtin at the same distance.
+fn closest_name<'a>(name: &str, declared: impl Iterator<Item = &'a String>) -> Option<&'a str> {
+    declared
+        .map(|c| (edit_distance(name, c), 0u8, c.as_str()))
+        .chain(
+            BUILTIN_CALLS
+                .iter()
+                .map(|b| (edit_distance(name, b), 1u8, *b)),
+        )
+        .filter(|(d, _, _)| *d <= 2)
+        .min_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(b.2)))
+        .map(|(_, _, name)| name)
 }
 
 fn edit_distance(a: &str, b: &str) -> usize {
@@ -765,6 +773,32 @@ fn main
         let ds = diags(src);
         assert_eq!(codes(src), vec!["E160"], "{ds:?}");
         assert!(ds[0].message.contains("`main`"), "{:?}", ds[0].message);
+    }
+
+    #[test]
+    fn resolution_suggestion_breaks_ties_by_name_order() {
+        // `ab` is one edit from both `aa` and `ac`: the alphabetically first
+        // wins, so the help cannot depend on HashSet iteration order.
+        let src = "task aa\n  gives Text\n  do\n    give \"a\"\n\ntask ac\n  gives Text\n  do\n    give \"c\"\n\nfn main\n  say ab()\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E160"], "{ds:?}");
+        assert_eq!(ds[0].help.as_deref(), Some("did you mean `aa`?"));
+    }
+
+    #[test]
+    fn resolution_suggestion_prefers_a_declared_name_over_a_builtin() {
+        // `assed` is one edit from the builtin `asset` and from the declared
+        // `asses`: the declaration wins.
+        let src = "task asses\n  gives Text\n  do\n    give \"a\"\n\nfn main\n  say assed()\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E160"], "{ds:?}");
+        assert_eq!(ds[0].help.as_deref(), Some("did you mean `asses`?"));
+
+        // Builtins still get suggested when nothing declared is closer.
+        let src = "fn main\n  say winning_line([1, 2])\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E160"], "{ds:?}");
+        assert_eq!(ds[0].help.as_deref(), Some("did you mean `winning_lines`?"));
     }
 
     // ── E160 — walk coverage outside plain statements ───────────
