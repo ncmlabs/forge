@@ -85,9 +85,6 @@ impl Index {
                 TopLevel::Pool(d) => {
                     index.callable.insert(d.name.node.clone());
                 }
-                TopLevel::FnMain(_) => {
-                    index.callable.insert("main".to_string());
-                }
                 TopLevel::TypeDef(d) => {
                     index.types.insert(d.name.node.clone());
                 }
@@ -687,9 +684,14 @@ fn main
     }
 
     #[test]
-    fn resolution_allows_the_fn_name() {
+    fn resolution_flags_calling_main() {
+        // `fn main` is the entry point, not a call target: `Expr::Call` in the
+        // executor never resolves it, so `main()` can only fail at runtime.
+        // This test used to allow it (issue #496 review, item 2).
         let src = "fn main\n  say main()\n";
-        assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E160"], "{ds:?}");
+        assert!(ds[0].message.contains("`main`"), "{:?}", ds[0].message);
     }
 
     // ── E161/E162 — impossible and case-mismatched patterns ─────

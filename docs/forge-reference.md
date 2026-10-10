@@ -2468,7 +2468,7 @@ Dispatching on a name that cannot exist is the same silent-failure class: the co
 
 | Code | Rule |
 |------|------|
-| `E160` | A plain call target that resolves to nothing: not a declared `task`/`pure`/`flow`/`pool`, not `fn main`, not a runtime builtin (`asset`, `winning_lines`) and not an uppercase type-constructor name |
+| `E160` | A plain call target that resolves to nothing: not a declared `task`/`pure`/`flow`/`pool`, not a runtime builtin (`asset`, `winning_lines`) and not an uppercase type-constructor name. `fn main` is the program entry point, not a call target — `main()` is an `E160` |
 | `E161` | A constructor pattern that can never match the scrutinee, **when the scrutinee's value set is statically known** |
 | `E162` | The same, but the pattern differs from a known tag only in case — emitted instead of `E161` |
 
