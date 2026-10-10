@@ -286,6 +286,14 @@ impl Index {
                     self.expr(c, file, diagnostics);
                 }
             }
+            Stmt::Retire(r) => {
+                if let Some(target) = &r.target {
+                    self.expr(target, file, diagnostics);
+                }
+                if let Some(path) = &r.knowledge_export {
+                    self.expr(path, file, diagnostics);
+                }
+            }
             Stmt::Spawn(s) => {
                 if let Some(alias) = &s.alias {
                     self.expr(alias, file, diagnostics);
@@ -377,7 +385,30 @@ impl Index {
                     self.expr(&arg.node.value, file, diagnostics);
                 }
             }
-            Expr::Session(_) | Expr::Find(_) => {}
+            Expr::Session(s) => {
+                self.expr(&s.name, file, diagnostics);
+                for e in [&s.agent, &s.prompt, &s.tools, &s.budget]
+                    .into_iter()
+                    .flatten()
+                {
+                    self.expr(e, file, diagnostics);
+                }
+                for hook in [&s.on_progress, &s.on_complete].into_iter().flatten() {
+                    for arg in &hook.node.args {
+                        self.expr(&arg.node.value, file, diagnostics);
+                    }
+                }
+                if let Some(isolate) = &s.isolate {
+                    self.expr(&isolate.branch, file, diagnostics);
+                }
+            }
+            Expr::Find(f) => {
+                // `find "spec_{topic}"` — the alias is a template, so any call
+                // inside its interpolations still has to resolve.
+                if let FindKind::ByAlias(alias) = &f.kind {
+                    self.expr(alias, file, diagnostics);
+                }
+            }
         }
     }
 
@@ -734,6 +765,41 @@ fn main
         let ds = diags(src);
         assert_eq!(codes(src), vec!["E160"], "{ds:?}");
         assert!(ds[0].message.contains("`main`"), "{:?}", ds[0].message);
+    }
+
+    // ── E160 — walk coverage outside plain statements ───────────
+
+    #[test]
+    fn resolution_flags_calls_inside_session_sub_expressions() {
+        let src = "fn main\n  s = session \"job\" tools deploy_tools() budget 10\n  say s\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E160"], "{ds:?}");
+        assert!(
+            ds[0].message.contains("deploy_tools"),
+            "{:?}",
+            ds[0].message
+        );
+    }
+
+    #[test]
+    fn resolution_flags_calls_inside_find_interpolations() {
+        let src = "fn main\n  existing = find \"spec_{agent_key(1)}\"\n  say existing\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E160"], "{ds:?}");
+        assert!(ds[0].message.contains("agent_key"), "{:?}", ds[0].message);
+    }
+
+    #[test]
+    fn resolution_flags_calls_inside_retire_target_and_export() {
+        let target = "fn main\n  retire \"spec_{tag_for(1)}\"\n";
+        let ds = diags(target);
+        assert_eq!(codes(target), vec!["E160"], "{ds:?}");
+        assert!(ds[0].message.contains("tag_for"), "{:?}", ds[0].message);
+
+        let export = "task t\n  gives Text\n  do\n    retire \"worker\"\n      with knowledge export: \"{path_for(1)}\"\n    give \"done\"\n";
+        let ds = diags(export);
+        assert_eq!(codes(export), vec!["E160"], "{ds:?}");
+        assert!(ds[0].message.contains("path_for"), "{:?}", ds[0].message);
     }
 
     // ── E161/E162 — impossible and case-mismatched patterns ─────
