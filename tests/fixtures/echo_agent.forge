@@ -1,0 +1,5 @@
+# Fixture for `forge send` JSON tests (#475): one agent, one handler that
+# returns a deterministic value without an LLM call.
+agent echo
+  on ping
+    give "pong"
