@@ -315,6 +315,9 @@ impl Command {
 const MAIN_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 fn main() -> anyhow::Result<()> {
+    // First thing: every envelope's `duration_ms` is wall-clock time of the
+    // command, not the time since `emit` first asked (#479).
+    forge::cli_output::start_clock();
     let handle = std::thread::Builder::new()
         .name("forge".to_string())
         .stack_size(MAIN_STACK_BYTES)

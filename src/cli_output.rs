@@ -6,10 +6,21 @@
 //! exits with the status's [`ExitCode`]. Human mode keeps its existing text and
 //! only adopts the exit codes.
 
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use serde::Serialize;
 use serde_json::Value;
+
+/// Process start, backing every envelope's `duration_ms`. [`start_clock`] sets
+/// it from `main`; without that call `emit` would initialize it lazily on its
+/// first use and every envelope would report ~0 ms (#479).
+static START: OnceLock<Instant> = OnceLock::new();
+
+/// Start the wall clock behind `duration_ms`. Call first thing in `main`.
+pub fn start_clock() {
+    let _ = START.get_or_init(Instant::now);
+}
 
 /// Semantic exit codes. These are part of the CLI contract; agents branch on
 /// them instead of parsing text.
@@ -399,9 +410,9 @@ pub fn classify_error(e: &anyhow::Error) -> ErrorInfo {
     ErrorInfo::new(kind, message)
 }
 
+/// Milliseconds since [`start_clock`]. Falls back to the first call's instant
+/// for callers that never start the clock (library use, tests).
 fn elapsed_ms() -> u64 {
-    use std::sync::OnceLock;
-    static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 

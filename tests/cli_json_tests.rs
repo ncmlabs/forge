@@ -150,6 +150,25 @@ fn run_human_mode_still_prints_say_output() {
 }
 
 #[test]
+fn run_json_duration_ms_is_wall_clock_time() {
+    // #479: the clock used to start inside `emit`, so every envelope reported
+    // ~0 ms. A run whose `command` sleeps 200 ms must report at least that.
+    let output = forge_env(
+        &["run", "--json", "tests/fixtures/slow_command.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    let duration = doc["duration_ms"]
+        .as_u64()
+        .expect("duration_ms is a number");
+    assert!(
+        duration >= 200,
+        "duration_ms must be the command's wall-clock time, got {duration} ms: {doc}"
+    );
+}
+
+#[test]
 fn run_json_reports_parse_and_blocked_runs() {
     let missing = forge(&["run", "--json", "examples/errors/nope.forge"]);
     assert_exit(&missing, 1);

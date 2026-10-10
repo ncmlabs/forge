@@ -1,0 +1,11 @@
+# Fixture for `forge run --json` (#479): the command sleeps 200 ms, so the
+# envelope's `duration_ms` must report the wall-clock time of the run.
+task run_slow
+  gives Text
+  do
+    result = command "sleep 0.2"
+    when result.sure -> give result.stdout
+    else -> give "FAILED"
+
+fn main
+  say run_slow()
