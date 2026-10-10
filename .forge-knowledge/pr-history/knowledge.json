@@ -1,0 +1,14 @@
+[
+  {
+    "id": "2f025cfc-a9c7-465f-a8dd-f7e885c1f9fc",
+    "content": "PR-REVIEW-DECISION project:test-org-test-repo pr:skill.github.get_pr_for_branch: skill execution failed: deterministic_skill: missing argument '\"number\":1,\"url\":\"https://github.com/test-org/test-repo/pull/1\",\"state\":\"OPEN\"' decision:human_approved\nbranch: clone-dev/430-result\ndiff_characterization: Skipped for trusted green human-approval path.\nverdict_was: needs_human\nhuman_action: approved by alice",
+    "source": "Direct",
+    "confidence": 1.0,
+    "category": "pr-decisions-test-org-test-repo",
+    "project_id": null,
+    "created_at": "2026-10-10T14:07:36.654239115Z",
+    "last_accessed": "2026-10-10T14:07:36.654242091Z",
+    "access_count": 0,
+    "success_associations": 0
+  }
+]

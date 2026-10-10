@@ -150,6 +150,25 @@ fn run_human_mode_still_prints_say_output() {
 }
 
 #[test]
+fn run_json_duration_ms_is_wall_clock_time() {
+    // #479: the clock used to start inside `emit`, so every envelope reported
+    // ~0 ms. A run whose `command` sleeps 200 ms must report at least that.
+    let output = forge_env(
+        &["run", "--json", "tests/fixtures/slow_command.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    let duration = doc["duration_ms"]
+        .as_u64()
+        .expect("duration_ms is a number");
+    assert!(
+        duration >= 200,
+        "duration_ms must be the command's wall-clock time, got {duration} ms: {doc}"
+    );
+}
+
+#[test]
 fn run_json_reports_parse_and_blocked_runs() {
     let missing = forge(&["run", "--json", "examples/errors/nope.forge"]);
     assert_exit(&missing, 1);
@@ -239,6 +258,118 @@ fn run_json_pool_worker_spend_lands_in_cost() {
         "two billed pool workers must show up in cost: {doc}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── end-of-run summary (#479) ───────────────────────────────────
+
+#[test]
+fn run_json_summary_counts_calls_tokens_and_matches_cost() {
+    let dir = temp_dir("summary-cost");
+    let config = priced_mock_config(&dir);
+    // pool_say runs two billed LLM workers, so the summary must show calls,
+    // tokens and the same USD as the envelope's `cost`.
+    let output = forge_env(
+        &["run", "--json", "tests/fixtures/pool_say.forge"],
+        &[("FORGE_CONFIG", &config)],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    let summary = &doc["data"]["summary"];
+    let calls = summary["llm_calls"].as_u64().expect("llm_calls number");
+    assert!(calls >= 1, "LLM calls must be counted: {doc}");
+    assert!(summary["tokens_in"].as_u64().unwrap() > 0, "{doc}");
+    assert!(summary["tokens_out"].as_u64().unwrap() > 0, "{doc}");
+    assert_eq!(
+        summary["cost_usd"].as_f64().unwrap(),
+        doc["cost"].as_f64().unwrap(),
+        "data.summary.cost_usd must match the envelope cost: {doc}"
+    );
+    let p50 = summary["confidence"]["p50"].as_f64().expect("p50");
+    let min = summary["confidence"]["min"].as_f64().expect("min");
+    assert!(min <= p50, "the spread must be a spread: {doc}");
+    assert!(summary["duration_ms"].as_u64().unwrap() > 0, "{doc}");
+    // JSON mode carries the summary in the envelope, never on stderr.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("LLM call"),
+        "JSON mode must not print the human summary line: {stderr:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn run_json_summary_of_a_zero_llm_program_is_zero() {
+    // examples/basics/hello.forge makes no LLM call at all.
+    let output = forge_env(
+        &["run", "--json", "examples/basics/hello.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    let summary = &doc["data"]["summary"];
+    assert_eq!(summary["llm_calls"], 0);
+    assert_eq!(summary["tokens_in"], 0);
+    assert_eq!(summary["tokens_out"], 0);
+    assert_eq!(summary["cost_usd"], 0.0);
+    assert_eq!(summary["warden_events"], 0);
+    assert!(
+        summary["confidence"].is_null(),
+        "no calls → no confidence spread: {doc}"
+    );
+}
+
+#[test]
+fn trace_json_carries_the_summary_too() {
+    let output = forge_env(
+        &["trace", "--json", "examples/basics/hello.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["command"], "trace");
+    assert_eq!(doc["data"]["summary"]["llm_calls"], 0);
+}
+
+#[test]
+fn run_human_mode_prints_one_summary_line_on_stderr() {
+    // The summary goes to stderr so it never mixes with the program's output;
+    // `say` stays the only thing on stdout.
+    let output = forge_env(
+        &["run", "examples/basics/hello.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 0);
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "Hello, World!\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "exactly one summary line and no trace events: {stderr:?}"
+    );
+    assert!(
+        lines[0].starts_with("0 LLM calls · 0 tok · $0.000 · "),
+        "zero-LLM programs show zero calls and cost: {stderr:?}"
+    );
+    assert!(
+        lines[0].ends_with('s'),
+        "the line ends in a duration: {stderr:?}"
+    );
+}
+
+#[test]
+fn run_quiet_log_level_suppresses_the_human_summary() {
+    let output = forge_env(
+        &["run", "examples/basics/hello.forge"],
+        &[("FORGE_MOCK", "1"), ("FORGE_LOG_LEVEL", "quiet")],
+    );
+    assert_exit(&output, 0);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("LLM call"),
+        "FORGE_LOG_LEVEL=quiet must silence the summary: {stderr:?}"
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "Hello, World!\n");
 }
 
 // ── test (record / replay, #478) ────────────────────────────────

@@ -2,17 +2,75 @@
 // Emits JSON trace events to stderr for accountability (Principle VIII).
 // See issue #9.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::broadcast;
 
 type TraceLog = Vec<(String, serde_json::Value)>;
 
+/// In-memory counters behind the end-of-run summary (#479). They are folded
+/// from the trace events themselves in [`Tracer::emit`] — there is no second
+/// collection path — and every `Tracer` clone shares them, so spawned children
+/// and pool workers contribute to the run they belong to.
+#[derive(Debug, Default)]
+pub struct RunStats {
+    llm_calls: AtomicU64,
+    confidences: Mutex<Vec<f64>>,
+    warden_events: AtomicU64,
+}
+
+impl RunStats {
+    /// Fold one trace event into the counters: `llm_response` is one LLM call
+    /// (its `confidence` feeds the spread), and the warden's own events are
+    /// `ward_action` / `supervision_tree`.
+    fn record(&self, event: &str, data: &serde_json::Value) {
+        match event {
+            "llm_response" => {
+                self.llm_calls.fetch_add(1, Ordering::Relaxed);
+                // Embeddings report no model confidence — their `1.0` is a
+                // placeholder, so they count as calls but must not flatter the
+                // spread (Principle I: the spread is honest).
+                let embedding = matches!(
+                    data.get("operation").and_then(|o| o.as_str()),
+                    Some("embed" | "search")
+                );
+                if !embedding {
+                    if let Some(confidence) = data.get("confidence").and_then(|c| c.as_f64()) {
+                        self.confidences.lock().unwrap().push(confidence);
+                    }
+                }
+            }
+            "ward_action" | "supervision_tree" => {
+                self.warden_events.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn llm_calls(&self) -> u64 {
+        self.llm_calls.load(Ordering::Relaxed)
+    }
+
+    pub fn warden_events(&self) -> u64 {
+        self.warden_events.load(Ordering::Relaxed)
+    }
+
+    /// Confidence of every LLM call seen so far, in call order.
+    pub fn confidences(&self) -> Vec<f64> {
+        self.confidences.lock().unwrap().clone()
+    }
+}
+
 #[derive(Clone)]
 pub struct Tracer {
     start: Instant,
     captured: Option<Arc<Mutex<TraceLog>>>,
     live_tx: Option<broadcast::Sender<String>>,
+    /// Run-summary counters, shared with every clone (#479).
+    stats: Arc<RunStats>,
+    /// Write events to stderr. `false` only for [`Tracer::counting`].
+    stderr: bool,
 }
 
 impl Default for Tracer {
@@ -41,6 +99,8 @@ impl Tracer {
             start: Instant::now(),
             captured: None,
             live_tx: None,
+            stats: Arc::new(RunStats::default()),
+            stderr: true,
         }
     }
 
@@ -50,6 +110,8 @@ impl Tracer {
             start: Instant::now(),
             captured: Some(Arc::new(Mutex::new(Vec::new()))),
             live_tx: None,
+            stats: Arc::new(RunStats::default()),
+            stderr: true,
         }
     }
 
@@ -59,7 +121,27 @@ impl Tracer {
             start: Instant::now(),
             captured: None,
             live_tx: Some(tx),
+            stats: Arc::new(RunStats::default()),
+            stderr: true,
         }
+    }
+
+    /// Create a tracer that only feeds the run-summary counters: no stderr
+    /// output, no capture, no live stream. `forge run` / `trace` / `test` always
+    /// need the counters; only trace mode wants the events printed (#479).
+    pub fn counting() -> Self {
+        Self {
+            start: Instant::now(),
+            captured: None,
+            live_tx: None,
+            stats: Arc::new(RunStats::default()),
+            stderr: false,
+        }
+    }
+
+    /// The run-summary counters this tracer feeds, shared with its clones.
+    pub fn stats(&self) -> Arc<RunStats> {
+        self.stats.clone()
     }
 
     /// Return captured event type names in order.
@@ -85,6 +167,7 @@ impl Tracer {
     }
 
     fn emit(&self, event: &str, data: serde_json::Value) {
+        self.stats.record(event, &data);
         let mut obj = serde_json::json!({
             "ts_ms": self.ts_ms(),
             "event": event,
@@ -100,7 +183,9 @@ impl Tracer {
         if let Some(ref tx) = self.live_tx {
             let _ = tx.send(obj.to_string());
         }
-        eprintln!("{}", obj);
+        if self.stderr {
+            eprintln!("{}", obj);
+        }
     }
 
     pub fn llm_request(&self, operation: &str, prompt: &str) {
@@ -788,5 +873,68 @@ impl Tracer {
                 "reason": reason,
             }),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(confidence: f32) -> LLMResponseInfo<'static> {
+        LLMResponseInfo {
+            operation: "reason",
+            provider: "mock",
+            model: "mock-model",
+            tokens_in: 10,
+            tokens_out: 4,
+            cost_usd: 0.0001,
+            confidence,
+            agent_name: None,
+            phase: None,
+        }
+    }
+
+    #[test]
+    fn run_stats_fold_trace_events() {
+        let tracer = Tracer::counting();
+        let stats = tracer.stats();
+        tracer.llm_request("reason", "why");
+        tracer.llm_response(&response(0.8));
+        tracer.llm_response(&response(0.4));
+        tracer.ward_action("guard", "worker", "timeout", "restart", "agent", 1);
+        tracer.supervision_tree("guard", &["worker"], &[]);
+        // Neither an LLM call nor a warden event: ignored.
+        tracer.say("hello");
+
+        assert_eq!(stats.llm_calls(), 2);
+        assert_eq!(stats.warden_events(), 2);
+        let confidences = stats.confidences();
+        assert_eq!(confidences.len(), 2);
+        assert!((confidences[0] - 0.8).abs() < 1e-6, "{confidences:?}");
+        assert!((confidences[1] - 0.4).abs() < 1e-6, "{confidences:?}");
+    }
+
+    #[test]
+    fn embedding_calls_count_but_do_not_join_the_confidence_spread() {
+        let tracer = Tracer::counting();
+        let stats = tracer.stats();
+        tracer.llm_response(&LLMResponseInfo {
+            operation: "embed",
+            confidence: 1.0,
+            ..response(1.0)
+        });
+        assert_eq!(stats.llm_calls(), 1);
+        assert!(stats.confidences().is_empty(), "1.0 is a placeholder");
+    }
+
+    #[test]
+    fn tracer_clones_share_run_stats() {
+        // This is what makes spawned children and pool workers contribute to
+        // the run they belong to: their tracers are clones of the parent's.
+        let tracer = Tracer::counting();
+        let child = tracer.clone();
+        child.llm_response(&response(0.5));
+        assert_eq!(tracer.stats().llm_calls(), 1);
+        assert_eq!(tracer.stats().confidences().len(), 1);
     }
 }

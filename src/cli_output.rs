@@ -6,10 +6,21 @@
 //! exits with the status's [`ExitCode`]. Human mode keeps its existing text and
 //! only adopts the exit codes.
 
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use serde::Serialize;
 use serde_json::Value;
+
+/// Process start, backing every envelope's `duration_ms`. [`start_clock`] sets
+/// it from `main`; without that call `emit` would initialize it lazily on its
+/// first use and every envelope would report ~0 ms (#479).
+static START: OnceLock<Instant> = OnceLock::new();
+
+/// Start the wall clock behind `duration_ms`. Call first thing in `main`.
+pub fn start_clock() {
+    let _ = START.get_or_init(Instant::now);
+}
 
 /// Semantic exit codes. These are part of the CLI contract; agents branch on
 /// them instead of parsing text.
@@ -160,6 +171,128 @@ impl Envelope {
     pub fn exit_code(&self) -> ExitCode {
         self.status.exit_code()
     }
+}
+
+/// End-of-run economics and trust signals (#479), built from the run's cost
+/// tracker and the trace-event counters: `data.summary` in JSON mode, one
+/// stderr line in human mode.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunSummary {
+    pub llm_calls: u64,
+    pub tokens_in: u32,
+    pub tokens_out: u32,
+    pub cost_usd: f64,
+    /// `null` when the run made no LLM call — there is no spread to show.
+    pub confidence: Option<ConfidenceSummary>,
+    pub warden_events: u64,
+    pub duration_ms: u64,
+}
+
+/// Spread of a run's LLM confidences (Principle I: the spread is shown, not
+/// hidden behind a single number).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ConfidenceSummary {
+    pub p50: f64,
+    pub min: f64,
+}
+
+impl ConfidenceSummary {
+    /// Median (p50) and minimum of `confidences`, which must not be empty.
+    fn of(confidences: &[f64]) -> Self {
+        let mut sorted = confidences.to_vec();
+        sorted.sort_by(f64::total_cmp);
+        let mid = sorted.len() / 2;
+        let p50 = if sorted.len().is_multiple_of(2) {
+            (sorted[mid - 1] + sorted[mid]) / 2.0
+        } else {
+            sorted[mid]
+        };
+        Self {
+            p50,
+            min: sorted[0],
+        }
+    }
+}
+
+impl RunSummary {
+    /// Collect the run's counters. `stats` is the tracer's counter sink, so
+    /// spawned children and pool workers are already folded in.
+    pub fn collect(
+        cost: &crate::llm::cost_tracker::CostSummary,
+        stats: &crate::tracer::RunStats,
+    ) -> Self {
+        let confidences = stats.confidences();
+        Self {
+            llm_calls: stats.llm_calls(),
+            tokens_in: cost.total_tokens_in,
+            tokens_out: cost.total_tokens_out,
+            cost_usd: cost.total_cost_usd as f64,
+            confidence: (!confidences.is_empty()).then(|| ConfidenceSummary::of(&confidences)),
+            warden_events: stats.warden_events(),
+            duration_ms: elapsed_ms(),
+        }
+    }
+
+    /// The human one-liner, e.g.
+    /// `12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1 warden event · 3.4s`.
+    /// Confidence is omitted when the run made no LLM call, warden events when
+    /// there were none.
+    pub fn human_line(&self) -> String {
+        let mut parts = vec![
+            format!(
+                "{} LLM {}",
+                self.llm_calls,
+                if self.llm_calls == 1 { "call" } else { "calls" }
+            ),
+            format!("{} tok", tokens(self.tokens_in + self.tokens_out)),
+            format!("${:.3}", self.cost_usd),
+        ];
+        if let Some(confidence) = self.confidence {
+            parts.push(format!(
+                "confidence p50 {:.2} / min {:.2}",
+                confidence.p50, confidence.min
+            ));
+        }
+        if self.warden_events > 0 {
+            parts.push(format!(
+                "{} warden {}",
+                self.warden_events,
+                if self.warden_events == 1 {
+                    "event"
+                } else {
+                    "events"
+                }
+            ));
+        }
+        parts.push(format!("{:.1}s", self.duration_ms as f64 / 1000.0));
+        parts.join(" · ")
+    }
+
+    /// Print the human one-liner to stderr — never stdout, which carries the
+    /// program's own output. JSON mode reports the same data in
+    /// `data.summary`, and `FORGE_LOG_LEVEL=quiet` silences the line.
+    pub fn report(&self, out: &OutputMode) {
+        if out.json || log_level_quiet() {
+            return;
+        }
+        eprintln!("{}", self.human_line());
+    }
+}
+
+/// Token counts stay exact below 1000 and use one decimal in `k` above it.
+fn tokens(total: u32) -> String {
+    if total >= 1000 {
+        format!("{:.1}k", total as f64 / 1000.0)
+    } else {
+        total.to_string()
+    }
+}
+
+/// `FORGE_LOG_LEVEL=quiet` suppresses the human run summary.
+fn log_level_quiet() -> bool {
+    std::env::var("FORGE_LOG_LEVEL")
+        .map(|v| v.eq_ignore_ascii_case("quiet"))
+        .unwrap_or(false)
 }
 
 /// How this process was asked to talk to the caller.
@@ -399,9 +532,9 @@ pub fn classify_error(e: &anyhow::Error) -> ErrorInfo {
     ErrorInfo::new(kind, message)
 }
 
+/// Milliseconds since [`start_clock`]. Falls back to the first call's instant
+/// for callers that never start the clock (library use, tests).
 fn elapsed_ms() -> u64 {
-    use std::sync::OnceLock;
-    static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
@@ -549,5 +682,76 @@ mod tests {
         assert_eq!(classify_error(&config).kind, "config");
         let runtime = anyhow::anyhow!("runtime error: division by zero");
         assert_eq!(classify_error(&runtime).kind, "runtime");
+    }
+
+    fn summary(
+        llm_calls: u64,
+        warden_events: u64,
+        confidence: Option<ConfidenceSummary>,
+    ) -> RunSummary {
+        RunSummary {
+            llm_calls,
+            tokens_in: 20_000,
+            tokens_out: 11_200,
+            cost_usd: 0.041,
+            confidence,
+            warden_events,
+            duration_ms: 3400,
+        }
+    }
+
+    #[test]
+    fn run_summary_human_line_reports_economics_and_spread() {
+        let line = summary(
+            12,
+            1,
+            Some(ConfidenceSummary {
+                p50: 0.86,
+                min: 0.42,
+            }),
+        )
+        .human_line();
+        assert_eq!(
+            line,
+            "12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1 warden event · 3.4s"
+        );
+    }
+
+    #[test]
+    fn run_summary_human_line_for_a_zero_llm_run() {
+        // No calls: no confidence spread, no warden events, cost still shown.
+        let mut zero = summary(0, 0, None);
+        zero.tokens_in = 0;
+        zero.tokens_out = 0;
+        zero.cost_usd = 0.0;
+        zero.duration_ms = 100;
+        assert_eq!(zero.human_line(), "0 LLM calls · 0 tok · $0.000 · 0.1s");
+    }
+
+    #[test]
+    fn confidence_summary_is_median_and_min() {
+        let odd = ConfidenceSummary::of(&[0.9, 0.4, 0.8]);
+        assert_eq!(odd.p50, 0.8);
+        assert_eq!(odd.min, 0.4);
+        let even = ConfidenceSummary::of(&[0.9, 0.5, 0.4, 0.8]);
+        assert!((even.p50 - 0.65).abs() < 1e-9, "{even:?}");
+    }
+
+    #[test]
+    fn run_summary_collect_folds_cost_and_counters() {
+        let cost = crate::llm::cost_tracker::CostSummary {
+            total_tokens_in: 100,
+            total_tokens_out: 50,
+            total_cost_usd: 0.0012,
+            budget_usd: None,
+        };
+        let stats = crate::tracer::RunStats::default();
+        let summary = RunSummary::collect(&cost, &stats);
+        assert_eq!(summary.llm_calls, 0);
+        assert_eq!(summary.tokens_in, 100);
+        assert_eq!(summary.tokens_out, 50);
+        assert!((summary.cost_usd - 0.0012).abs() < 1e-9);
+        assert!(summary.confidence.is_none(), "no calls, no spread");
+        assert_eq!(summary.warden_events, 0);
     }
 }

@@ -328,3 +328,8 @@ check = "ok"
 name = "CLI json: spawned child that says (#475)"
 paths = ["tests/fixtures/spawn_child_say.forge"]
 check = "ok"
+
+[[cases]]
+name = "CLI json: command that sleeps, for the envelope duration (#479)"
+paths = ["tests/fixtures/slow_command.forge"]
+check = "ok"

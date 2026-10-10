@@ -330,6 +330,9 @@ impl Command {
 const MAIN_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 fn main() -> anyhow::Result<()> {
+    // First thing: every envelope's `duration_ms` is wall-clock time of the
+    // command, not the time since `emit` first asked (#479).
+    forge::cli_output::start_clock();
     let handle = std::thread::Builder::new()
         .name("forge".to_string())
         .stack_size(MAIN_STACK_BYTES)
@@ -1381,20 +1384,36 @@ fn blocked_run_envelope(
     .with_next_steps(steps)
 }
 
+/// The run's end-of-run summary (#479): tokens and cost from the run's cost
+/// tracker, LLM calls, confidence spread and warden events from the tracer's
+/// event counters (spawned children and pool workers included).
+fn run_summary(
+    cost_tracker: &forge::llm::cost_tracker::CostTracker,
+    tracer: Option<&forge::tracer::Tracer>,
+) -> forge::cli_output::RunSummary {
+    let stats = tracer.map(|t| t.stats()).unwrap_or_default();
+    forge::cli_output::RunSummary::collect(&cost_tracker.summary(), &stats)
+}
+
 /// Terminal envelope for a completed `run`/`trace`.
 fn run_envelope(
     command: &str,
     file: &str,
     output: Vec<String>,
     result: serde_json::Value,
-    cost: f64,
+    summary: &forge::cli_output::RunSummary,
 ) -> forge::cli_output::Envelope {
     forge::cli_output::Envelope::success(
         command,
-        serde_json::json!({"file": file, "output": output, "result": result}),
+        serde_json::json!({
+            "file": file,
+            "output": output,
+            "result": result,
+            "summary": summary,
+        }),
         format!("{command} completed ({} output line(s))", output.len()),
     )
-    .with_cost(cost)
+    .with_cost(summary.cost_usd)
 }
 
 /// Terminal envelope for a `run`/`trace` that failed at runtime.
@@ -1403,7 +1422,7 @@ fn run_error_envelope(
     file: &str,
     output: Vec<String>,
     message: String,
-    cost: f64,
+    summary: &forge::cli_output::RunSummary,
 ) -> forge::cli_output::Envelope {
     forge::cli_output::Envelope::error(
         command,
@@ -1414,8 +1433,9 @@ fn run_error_envelope(
         "file": file,
         "output": output,
         "result": serde_json::Value::Null,
+        "summary": summary,
     }))
-    .with_cost(cost)
+    .with_cost(summary.cost_usd)
     .with_next_steps(vec![format!("forge trace {file}")])
 }
 
@@ -1671,14 +1691,16 @@ async fn run_program(
             .map(|v| v == "1")
             .unwrap_or(false)
     {
-        Some(forge::tracer::Tracer::new())
+        forge::tracer::Tracer::new()
     } else {
-        None
+        // Every run needs the trace-event counters behind the end-of-run
+        // summary (#479); only trace mode prints the events.
+        forge::tracer::Tracer::counting()
     };
 
     // Build skill executor to get capability signatures for compile-time validation
     let (skill_exec, skill_sigs) =
-        build_skill_executor(&config_clone, &providers, tracer.as_ref(), None, None);
+        build_skill_executor(&config_clone, &providers, Some(&tracer), None, None);
 
     // Validate before execution (with skill-aware capability registry)
     let mut diagnostics = Vec::new();
@@ -1721,14 +1743,14 @@ async fn run_program(
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let session_mgr =
-        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
+        forge::runtime::session_manager::new_shared_default_session_manager(Some(tracer.clone()));
     let _ = session_mgr.resume_all().await;
     // The run's LLM cost lands in the envelope's `cost` (#475). Budget
     // enforcement is unchanged: nothing on this path aborts on budget, the
     // tracker only accumulates.
     let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
     let mut executor =
-        forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
+        forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), Some(tracer))
             .with_config(config_clone)
             .with_command_manager(cmd_mgr)
             .with_session_manager(session_mgr)
@@ -1749,13 +1771,10 @@ async fn run_program(
             if !out.json {
                 eprintln!("runtime error: {}", e);
             }
-            let env = run_error_envelope(
-                command,
-                &fname,
-                executor.outputs(),
-                e.to_string(),
-                cost_tracker.summary().total_cost_usd as f64,
-            );
+            let summary = run_summary(&cost_tracker, executor.tracer());
+            summary.report(out);
+            let env =
+                run_error_envelope(command, &fname, executor.outputs(), e.to_string(), &summary);
             out.done(&env);
         }
     }
@@ -1778,13 +1797,9 @@ async fn run_program(
     }
 
     let output = executor.outputs();
-    let env = run_envelope(
-        command,
-        &fname,
-        output,
-        cached_result,
-        cost_tracker.summary().total_cost_usd as f64,
-    );
+    let summary = run_summary(&cost_tracker, executor.tracer());
+    summary.report(out);
+    let env = run_envelope(command, &fname, output, cached_result, &summary);
     out.done(&env);
 }
 
@@ -1812,16 +1827,18 @@ async fn run_manifest(
             .map(|v| v == "1")
             .unwrap_or(false)
     {
-        Some(forge::tracer::Tracer::new())
+        forge::tracer::Tracer::new()
     } else {
-        None
+        // Every run needs the trace-event counters behind the end-of-run
+        // summary (#479); only trace mode prints the events.
+        forge::tracer::Tracer::counting()
     };
 
     // Build skill executor with project-level declarations
     let (skill_exec, skill_sigs) = build_skill_executor(
         &config_clone,
         &providers,
-        tracer.as_ref(),
+        Some(&tracer),
         Some(&manifest),
         Some(base_dir),
     );
@@ -1915,13 +1932,13 @@ async fn run_manifest(
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let session_mgr =
-        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
+        forge::runtime::session_manager::new_shared_default_session_manager(Some(tracer.clone()));
     let _ = session_mgr.resume_all().await;
     let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
         Arc::clone(&providers),
-        tracer,
+        Some(tracer),
     )
     .with_config(config_clone)
     .with_command_manager(cmd_mgr)
@@ -1943,24 +1960,17 @@ async fn run_manifest(
             if !out.json {
                 eprintln!("runtime error: {}", e);
             }
-            let env = run_error_envelope(
-                command,
-                &fname,
-                executor.outputs(),
-                e.to_string(),
-                cost_tracker.summary().total_cost_usd as f64,
-            );
+            let summary = run_summary(&cost_tracker, executor.tracer());
+            summary.report(out);
+            let env =
+                run_error_envelope(command, &fname, executor.outputs(), e.to_string(), &summary);
             out.done(&env);
         }
     }
 
-    let env = run_envelope(
-        command,
-        &fname,
-        executor.outputs(),
-        cached_result,
-        cost_tracker.summary().total_cost_usd as f64,
-    );
+    let summary = run_summary(&cost_tracker, executor.tracer());
+    summary.report(out);
+    let env = run_envelope(command, &fname, executor.outputs(), cached_result, &summary);
     out.done(&env);
 }
 
