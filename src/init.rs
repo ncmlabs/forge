@@ -312,7 +312,12 @@ mod tests {
     #[test]
     fn invalid_project_names_are_refused_with_nothing_written() {
         let dir = tempfile::tempdir().expect("tempdir");
-        for name in ["bad\"name", "bad\\name", "bad name", "bäd", ".hidden"] {
+        // `bad\name` is a path on Windows (`name` inside `bad`), not a name, so
+        // the rule sees the valid base name `name` there; it is unix-only.
+        let names = ["bad\"name", "bad\\name", "bad name", "bäd", ".hidden"]
+            .into_iter()
+            .filter(|name| !name.contains(std::path::MAIN_SEPARATOR));
+        for name in names {
             let target = dir.path().join(name);
             let err = scaffold(&target, "pipeline", false, false)
                 .expect_err("invalid name must be refused")
