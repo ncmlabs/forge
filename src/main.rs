@@ -1433,32 +1433,34 @@ fn build_skill_executor(
     Option<Arc<forge::runtime::skill_executor::SkillExecutor>>,
     HashMap<String, forge::types::CapabilitySignature>,
 ) {
-    let skills_cfg = match config.skills.as_ref() {
-        Some(cfg) => cfg,
-        None => {
-            // No [skills] in config — try project manifest alone
-            if let (Some(m), Some(bd)) = (manifest, base_dir) {
-                if m.skills.is_some() {
-                    // Manifest declares skills but no config [skills] section;
-                    // use defaults for runtime params.
-                    let default_cfg = forge::config::SkillsConfig {
-                        skill_dirs: None,
-                        timeout_secs: None,
-                        max_turns: None,
-                    };
-                    return build_skill_executor_inner(
-                        &default_cfg,
-                        providers,
-                        tracer,
-                        Some(m),
-                        Some(bd),
-                    );
-                }
-            }
-            return (None, HashMap::new());
+    match skills_config_for(config, manifest, base_dir) {
+        Some(skills_cfg) => {
+            build_skill_executor_inner(&skills_cfg, providers, tracer, manifest, base_dir)
         }
-    };
-    build_skill_executor_inner(skills_cfg, providers, tracer, manifest, base_dir)
+        None => (None, HashMap::new()),
+    }
+}
+
+/// Skills configuration in effect for a scope: config `[skills]` when present,
+/// otherwise defaults when the manifest declares skills, otherwise none.
+fn skills_config_for(
+    config: &forge::config::ForgeConfig,
+    manifest: Option<&forge::manifest::ProjectManifest>,
+    base_dir: Option<&Path>,
+) -> Option<forge::config::SkillsConfig> {
+    if let Some(cfg) = config.skills.as_ref() {
+        return Some(cfg.clone());
+    }
+    // No [skills] in config — try the project manifest alone. Manifest declares
+    // skills but no config [skills] section; use defaults for runtime params.
+    match (manifest, base_dir) {
+        (Some(m), Some(_)) if m.skills.is_some() => Some(forge::config::SkillsConfig {
+            skill_dirs: None,
+            timeout_secs: None,
+            max_turns: None,
+        }),
+        _ => None,
+    }
 }
 
 fn build_skill_executor_inner(
@@ -1471,6 +1473,27 @@ fn build_skill_executor_inner(
     Option<Arc<forge::runtime::skill_executor::SkillExecutor>>,
     HashMap<String, forge::types::CapabilitySignature>,
 ) {
+    let registry = load_skill_registry(skills_cfg, manifest, base_dir);
+    let signatures = registry.capability_signatures();
+    let shared = Arc::new(Mutex::new(registry));
+    let mut executor =
+        forge::runtime::skill_executor::SkillExecutor::new(Arc::clone(providers), shared);
+    executor.max_turns = skills_cfg.max_turns_or_default();
+    executor.default_timeout = std::time::Duration::from_secs(skills_cfg.timeout_or_default());
+    if let Some(t) = tracer {
+        executor = executor.with_tracer(Arc::new(t.clone()));
+    }
+    (Some(Arc::new(executor)), signatures)
+}
+
+/// Skill registry a scope resolves to: a manifest's declared skills when
+/// present, else the config `skill_dirs` scan. Builds no executor, spawns
+/// nothing — suitable for static checking (#495).
+fn load_skill_registry(
+    skills_cfg: &forge::config::SkillsConfig,
+    manifest: Option<&forge::manifest::ProjectManifest>,
+    base_dir: Option<&Path>,
+) -> forge::runtime::skill_registry::SkillRegistry {
     let mut registry = forge::runtime::skill_registry::SkillRegistry::new();
 
     // Project-level skill resolution (authoritative when present)
@@ -1524,16 +1547,7 @@ fn build_skill_executor_inner(
         }
     }
 
-    let signatures = registry.capability_signatures();
-    let shared = Arc::new(Mutex::new(registry));
-    let mut executor =
-        forge::runtime::skill_executor::SkillExecutor::new(Arc::clone(providers), shared);
-    executor.max_turns = skills_cfg.max_turns_or_default();
-    executor.default_timeout = std::time::Duration::from_secs(skills_cfg.timeout_or_default());
-    if let Some(t) = tracer {
-        executor = executor.with_tracer(Arc::new(t.clone()));
-    }
-    (Some(Arc::new(executor)), signatures)
+    registry
 }
 
 /// `forge test --expect <file>`: replay in a child process so the program's
