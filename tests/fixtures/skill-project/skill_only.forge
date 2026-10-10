@@ -1,0 +1,7 @@
+use
+  skill.greeter.hello
+
+agent greeter
+  on start(who: Text)
+    greeting = hello(who)
+    give greeting

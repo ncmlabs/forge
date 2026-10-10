@@ -1,0 +1,7 @@
+use
+  skill.ghost.boo
+
+agent ghost
+  on start(who: Text)
+    boo(who)
+    give who
