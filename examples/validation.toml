@@ -317,3 +317,8 @@ check = "ok"
 name = "CLI json: agent handler that says (#475)"
 paths = ["tests/fixtures/say_agent.forge"]
 check = "ok"
+
+[[cases]]
+name = "CLI json: spawned child that says (#475)"
+paths = ["tests/fixtures/spawn_child_say.forge"]
+check = "ok"

@@ -209,6 +209,22 @@ fn run_json_pool_worker_say_lands_in_data_output() {
 }
 
 #[test]
+fn run_json_spawned_child_say_lands_in_data_output() {
+    // tests/fixtures/spawn_child_say.forge prints only from a spawned agent's
+    // `on start`; the child shares the parent's buffer, so the line is in
+    // `data.output` and stdout stays one JSON document.
+    let output = forge_env(
+        &["run", "--json", "tests/fixtures/spawn_child_say.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["status"], "success");
+    assert_eq!(doc["data"]["output"], serde_json::json!(["CHILD-SAYS"]));
+    assert_eq!(doc["cost"], 0.0);
+}
+
+#[test]
 fn run_json_pool_worker_spend_lands_in_cost() {
     let dir = temp_dir("pool-cost");
     let config = priced_mock_config(&dir);
