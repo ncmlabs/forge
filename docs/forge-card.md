@@ -244,7 +244,7 @@ agent foreman
     existing = find "spec_{topic}"
     retire "spec_{topic}"
 ```
-**`skill.*`** — resolves only through a project manifest, so validate it with `forge run --manifest forge.project.toml`, not a bare `forge check` (the block below is not extracted by CI):
+**`skill.*`** — resolves only through a project manifest, so validate it with `forge check --manifest forge.project.toml`, not a bare `forge check` (the block below is not extracted by CI):
 ```toml
 [skills]
 repo_check = {}

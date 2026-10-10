@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `forge check --manifest <forge.project.toml>` (#495): the project's declared
+  skills are registered before resolving, so `skill.<name>.<capability>` calls
+  type-check instead of failing with `unknown capability`. The signatures come
+  from the same code path `run` uses (manifest `[skills]`, else the config
+  `skill_dirs` fallback, also honoured through `FORGE_CONFIG`); no provider is
+  contacted and no executor is built. With no files the manifest's sources are
+  checked as one composition, the way `forge run --manifest` builds them, and
+  explicit files are checked instead. Undeclared skills still fail with `E010`.
 - JSON output envelope and semantic exit codes (#475): every in-scope command
   (`parse`, `check`, `explain`, `run`, `trace`, `test`, `cost`, `build`,
   `export`, `import`, `inspect`, `send`, `wake`, `store`) accepts a global `--json` /

@@ -1257,7 +1257,19 @@ Type-check a FORGE program without execution.
 
 ```bash
 forge check program.forge
+forge check main.forge platform.forge --merge   # cross-file references resolve
+forge check --manifest forge.project.toml       # the project's declared skills resolve
 ```
+
+`--manifest <forge.project.toml>` registers the project's declared skills
+(`[skills]` → `skills/<name>/SKILL.md`) before resolving, so
+`skill.<name>.<capability>` calls type-check instead of failing with
+`unknown capability`. With no files the manifest's sources are checked as one
+composition, the way `forge run --manifest` builds them; with files, those files
+are checked instead (`--merge` composes them). Without `--manifest`, `skill_dirs`
+from `forge.config.toml` (or `FORGE_CONFIG`) apply, exactly as for `run`. A check
+runs no provider: no config at all means no config-declared skills, while a
+config that exists and cannot be loaded is still an error.
 
 #### `forge run <file>`
 Execute a FORGE program using the configured provider.
@@ -2767,7 +2779,7 @@ Built-in capability families:
 
 `search "query"` is restricted to `#! boundary: server`.
 
-Project skills are declared in `forge.project.toml`. Validate them through the project/manifest path, not as isolated single-file examples, because the checker needs the manifest-provided skill registry.
+Project skills are declared in `forge.project.toml`. Validate them through the project/manifest path (`forge check --manifest forge.project.toml`), not as isolated single-file examples, because the checker needs the manifest-provided skill registry.
 
 ```toml
 [project]
@@ -2942,7 +2954,7 @@ Examples are not all validated the same way:
 | Positive single-file examples | `cargo run -- check <file>` |
 | Expected-error examples | Keep the expected diagnostic in the example name, comment, or test fixture |
 | Live LLM/session examples | Check syntax locally; run only when real provider credentials and CLI adapters are available |
-| Manifest skill examples | Use `cargo run -- run --manifest <forge.project.toml>` or the checker path that loads the manifest registry |
+| Manifest skill examples | `cargo run -- check --manifest <forge.project.toml>` (the checker path that loads the manifest skill registry); `run --manifest` to execute |
 | Multi-file examples | Validate through `forge.project.toml` or a merged-source command, not by checking dependent files in isolation |
 
 When an example intentionally exercises a checker limitation, document the limitation beside the example or in the issue verification notes rather than treating a nonzero checker result as a passing smoke test.
