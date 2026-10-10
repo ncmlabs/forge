@@ -56,6 +56,10 @@ struct Index {
     types: HashSet<String>,
     /// Pure/task names whose every `give` is a Text literal → those literals.
     literal_gives: HashMap<String, Vec<String>>,
+    /// The file is one source of a multi-file project (it imports a package or
+    /// carries a boundary directive), so an unresolved name may be declared in
+    /// a sibling source the checker cannot see.
+    composed: bool,
 }
 
 impl Index {
@@ -64,6 +68,11 @@ impl Index {
             callable: BUILTIN_CALLS.iter().map(|s| s.to_string()).collect(),
             types: BUILTIN_TYPES.iter().map(|s| s.to_string()).collect(),
             literal_gives: HashMap::new(),
+            composed: program.boundary.is_some()
+                || program
+                    .items
+                    .iter()
+                    .any(|i| matches!(i.node, TopLevel::Import(_))),
         };
         for item in &program.items {
             match &item.node {
@@ -509,12 +518,21 @@ fn literal_text(expr: &Spanned<Expr>) -> Option<String> {
 
 // ── Diagnostics ─────────────────────────────────────────────────
 
+/// How to check a call target that may live in a sibling source of the same
+/// project: `forge check` only sees the files it is handed, not the manifest.
+const MERGE_HINT: &str = "if it is declared in another file of this project, check the files together: `forge check --merge <files>`";
+
 fn undefined_call(name: &Spanned<String>, index: &Index, file: &str) -> Diagnostic {
     let target = &name.node;
-    let help = match closest_name(target, index.callable.iter()) {
+    let closest = closest_name(target, index.callable.iter());
+    let mut help = match &closest {
         Some(closest) => format!("did you mean `{closest}`?"),
         None => format!("declare a task or pure named `{target}`"),
     };
+    if index.composed || closest.is_none() {
+        help.push(' ');
+        help.push_str(MERGE_HINT);
+    }
     Diagnostic::error(
         "E160",
         file,
@@ -637,10 +655,34 @@ mod tests {
             "{ds:?}"
         );
         assert!(ds[0].message.contains("judge"), "{:?}", ds[0].message);
-        assert_eq!(
-            ds[0].help.as_deref(),
-            Some("declare a task or pure named `judge`")
+        let expected = format!("declare a task or pure named `judge` {MERGE_HINT}");
+        assert_eq!(ds[0].help.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn resolution_help_points_at_merge_for_multi_file_projects() {
+        // `workflows/dev-cycle/agents.forge` calls `repo_config_for`, declared
+        // in a sibling manifest source: `forge check <file>` alone cannot see
+        // it, so the help must say how to check the files together.
+        let src = "task t\n  gives Text\n  do\n    give repo_config_for(\"x\")\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E160"], "{ds:?}");
+        let help = ds[0].help.as_deref().expect("help");
+        assert!(help.contains("--merge"), "{help}");
+        assert!(
+            help.starts_with("declare a task or pure named `repo_config_for`"),
+            "{help}"
         );
+    }
+
+    #[test]
+    fn resolution_help_points_at_merge_when_the_file_has_a_boundary_directive() {
+        let src = "#! boundary: server\n\ntask greet\n  gives Text\n  do\n    give \"hi\"\n\nfn main\n  say greeet()\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E160"], "{ds:?}");
+        let help = ds[0].help.as_deref().expect("help");
+        assert!(help.contains("did you mean `greet`?"), "{help}");
+        assert!(help.contains("--merge"), "{help}");
     }
 
     #[test]

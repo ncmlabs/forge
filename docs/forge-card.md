@@ -286,7 +286,7 @@ task load_host
 - ``illegal transition from `<a>` to `<b>` `` — add that edge to the `states` block, or fix the state name.
 - ``unguarded transition to `<s>` in handler `<h>` `` — add `requires lifecycle == <from>` as the handler's first line.
 - ``unknown capability `<name>` `` — the `use` list names something that is not built in and not in the project manifest; fix the name.
-- ``call to undeclared function `<f>` `` — `f` is not a declared `task`/`pure`/`flow`/`pool` (`asset` and `winning_lines` are the only builtin calls, and uppercase names are type constructors); declare it or fix the name.
+- ``call to undeclared function `<f>` `` — `f` is not a declared `task`/`pure`/`flow`/`pool` (`asset` and `winning_lines` are the only builtin calls, `main` is not callable, and uppercase names are type constructors); declare it, fix the name, or — if `f` lives in another file of the project — check the files together with `forge check --merge <files>`.
 - ``pattern `<P>` never matches ...`` — the arm is dead code: `P` is not a declared or builtin type and not in the scrutinee's known values (`classify` labels, literal `give`s), or it differs only in case from a label — tags compare exact text, so `Positive` never matches `"positive"`.
 - `file.read() is not allowed in shared boundary` — add `#! boundary: server` as line 1 (`search`, `data.*`, and `endpoint` are server-only too).
 

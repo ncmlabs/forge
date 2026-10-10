@@ -1481,7 +1481,9 @@ task accept_tests
     CodeInfo {
         code: "E160",
         title: "undeclared call target",
-        explain: r#"A plain call names a task, pure, flow or pool that does not exist, so the call can only fail at runtime.
+        explain: r#"A plain call names a task, pure, flow or pool that does not exist, so the call can only fail at runtime. `fn main` is the entry point, not a call target.
+
+`forge check` only sees the files it is handed, not the project manifest: if the missing name is declared in a sibling source, check the files together with `forge check --merge <files>`.
 
 Wrong:
 fn main
