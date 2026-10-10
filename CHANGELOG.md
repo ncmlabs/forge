@@ -126,6 +126,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process completed successfully, 0.3 when it failed, was cancelled or timed
   out, and 0.5 while it is still running. A `when h.sure` guard on a failed,
   cancelled or timed-out background result no longer takes the success branch.
+- Invalid `[llm.routing]` values (#509): a value that is neither a provider
+  name nor a list of provider names — `plan = 7`, `plan = { a = 1 }`,
+  `plan = [1, 2]` — now reports `[llm.routing] phase 'plan' must be a provider
+  name or a list of provider names (got integer)` instead of serde's
+  `data did not match any variant of untagged enum RouteSpec`, which leaked an
+  internal type name and never named the phase. Validation also walks phases in
+  sorted order and reports every bad phase in one error, so the message no
+  longer depends on `HashMap` iteration order.
 
 ## [0.2.0] - 2026-08-31
 

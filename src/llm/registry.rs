@@ -128,36 +128,51 @@ impl ProviderRegistry {
     /// an empty chain, or a name that no `[providers.*]` entry defines. Both
     /// are startup errors, so config-only typos fail loudly instead of
     /// silently falling back to the default provider.
+    ///
+    /// #509 — phases are visited in sorted order and every bad phase is
+    /// reported, one line each, so the message is the same on every run
+    /// instead of whichever entry `HashMap` happened to yield first.
     fn validate_routing(&self) -> Result<(), ProviderError> {
-        for (phase, chain) in &self.routing {
+        let mut known: Vec<&str> = self.providers.keys().map(String::as_str).collect();
+        known.sort_unstable();
+
+        let mut phases: Vec<(&str, &Vec<String>)> = self
+            .routing
+            .iter()
+            .map(|(phase, chain)| (phase.as_str(), chain))
+            .collect();
+        phases.sort_unstable_by_key(|(phase, _)| *phase);
+
+        let mut problems = Vec::new();
+        for (phase, chain) in phases {
             if chain.is_empty() {
-                return Err(ProviderError::Unavailable {
-                    provider: phase.clone(),
-                    reason: format!(
-                        "[llm.routing] phase '{}' has an empty provider chain; \
-                         list at least one provider or remove the entry",
-                        phase
-                    ),
-                });
+                problems.push(format!(
+                    "[llm.routing] phase '{}' has an empty provider chain; \
+                     list at least one provider or remove the entry",
+                    phase
+                ));
             }
             for name in chain {
                 if !self.providers.contains_key(name) {
-                    let mut known: Vec<&str> = self.providers.keys().map(String::as_str).collect();
-                    known.sort_unstable();
-                    return Err(ProviderError::Unavailable {
-                        provider: name.clone(),
-                        reason: format!(
-                            "[llm.routing] phase '{}' names unknown provider '{}'; known: {}; \
-                             add it under [providers] or correct the name",
-                            phase,
-                            name,
-                            known.join(", ")
-                        ),
-                    });
+                    problems.push(format!(
+                        "[llm.routing] phase '{}' names unknown provider '{}'; known: {}; \
+                         add it under [providers] or correct the name",
+                        phase,
+                        name,
+                        known.join(", ")
+                    ));
                 }
             }
         }
-        Ok(())
+
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(ProviderError::Unavailable {
+                provider: "[llm.routing]".to_string(),
+                reason: problems.join("\n"),
+            })
+        }
     }
 
     /// Set the chain for a single phase. Convenience for tests and granular
@@ -792,6 +807,39 @@ type = "mock"
             err.contains("phase 'plan' has an empty provider chain"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn config_reports_every_invalid_phase_in_sorted_order() {
+        // #509 — HashMap order must not decide which typo the user sees.
+        let toml = r#"
+[llm]
+default = "mock"
+
+[llm.routing]
+plan = ["mock", "ghost-b"]
+implement = []
+design = ["ghost-a"]
+
+[providers.mock]
+type = "mock"
+"#;
+        let config: crate::config::ForgeConfig = toml::from_str(toml).expect("config parse");
+        let err = match ProviderRegistry::from_config(config) {
+            Ok(_) => panic!("invalid phases must fail at startup"),
+            Err(e) => e.to_string(),
+        };
+        let lines: Vec<&str> = err
+            .lines()
+            .filter(|line| line.contains("[llm.routing]"))
+            .collect();
+        assert_eq!(lines.len(), 3, "{err}");
+        assert!(lines[0].contains("phase 'design'"), "{err}");
+        assert!(lines[0].contains("unknown provider 'ghost-a'"), "{err}");
+        assert!(lines[1].contains("phase 'implement'"), "{err}");
+        assert!(lines[1].contains("has an empty provider chain"), "{err}");
+        assert!(lines[2].contains("phase 'plan'"), "{err}");
+        assert!(lines[2].contains("unknown provider 'ghost-b'"), "{err}");
     }
 
     #[tokio::test]
