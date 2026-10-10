@@ -1,0 +1,3 @@
+difficulty = "easy"
+features = ["pure", "task", "when"]
+oracle_calls = 1

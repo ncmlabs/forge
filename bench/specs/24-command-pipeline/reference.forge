@@ -1,0 +1,23 @@
+task preflight
+  gives Text
+  do
+    probe = command ["sh", "-c", "exit 3"]
+    if probe.success
+      give "preflight ok"
+    else
+      give "preflight failed"
+
+task finish
+  gives Text
+  do
+    stamp = command ["sh", "-c", "printf done"]
+    if stamp.success
+      label = reason "Label a finished run that printed {stamp.stdout}"
+      when label.sure -> give "finish: {label}"
+      else -> give "finish: unlabeled"
+    else
+      give "finish failed"
+
+fn main
+  say preflight()
+  say finish()

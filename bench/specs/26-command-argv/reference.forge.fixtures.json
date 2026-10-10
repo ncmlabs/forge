@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "aafe245341e754f2562cacba4400154fce2dffb04aa3775654d9626a9a65f03e",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Analyze a repository with count failed.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

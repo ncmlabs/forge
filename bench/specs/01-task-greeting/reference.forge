@@ -1,0 +1,11 @@
+task greet
+  needs name: Text
+  gives Text
+  do
+    result = reason "Write one short sentence greeting {name}."
+    when result.sure -> give result
+    else -> give "no greeting"
+
+fn main
+  line = greet("Ada")
+  say "greeting: {line}"

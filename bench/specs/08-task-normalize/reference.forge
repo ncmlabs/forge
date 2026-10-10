@@ -1,0 +1,13 @@
+task normalize
+  needs topic: Text
+  gives Text
+  do
+    result = reason "Give one short tag for {topic}."
+    when result.sure -> give result.lower().trim()
+    else -> give "unknown"
+
+fn main
+  tag = normalize("Databases")
+  matched = tag.contains("mock")
+  say "tag={tag}"
+  say "matched={matched}"

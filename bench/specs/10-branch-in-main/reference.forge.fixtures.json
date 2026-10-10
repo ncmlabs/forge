@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "30a33633d6fdacfa9a4d9493ad53f394e35a0016dd8e448ec75ab42c254718f3",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Give a verdict for a score of 7.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

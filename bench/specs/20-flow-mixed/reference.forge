@@ -1,0 +1,18 @@
+flow digest
+  needs message: Text
+  gives Text
+
+  stage kind
+    label = classify message into ["Alert", "Info", "Noise"]
+
+  stage gist
+    text = reason "Summarize the message: {message}"
+
+  stage compose
+    needs kind.label, gist.text
+    note = reason "Write a digest for a {kind.label} message: {gist.text}"
+    when note.sure -> give "digest({kind.label}): {note}"
+    else -> give "digest unavailable"
+
+fn main
+  say digest("disk is 92% full")

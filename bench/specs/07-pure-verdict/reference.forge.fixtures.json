@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "fe6ac1ec607f7b0fe8a72dd6bb9a0c3e10cfec9cb06bc4d3f32f43a5ec212547",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write one line about a priority review.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

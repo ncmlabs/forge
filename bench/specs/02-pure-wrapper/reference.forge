@@ -1,0 +1,17 @@
+pure bracket
+  needs text: Text
+  gives Text
+  do
+    give "[{text}]"
+
+task title_for
+  needs topic: Text
+  gives Text
+  do
+    result = reason "Give one short title for {topic}."
+    when result.sure -> give bracket(result)
+    else -> give bracket("untitled")
+
+fn main
+  label = title_for("the sea")
+  say label
