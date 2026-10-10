@@ -1,0 +1,14 @@
+task answer_for
+  needs question: Text, audience: Text
+  gives Text
+  do
+    result = reason "Answer the question '{question}' for a {audience} audience in one sentence."
+    when result.sure -> give result
+    else -> give "no answer available"
+
+fn main
+  question = "What is fog?"
+  audience = "beginner"
+  answer = answer_for(question, audience)
+  say "question: {question}"
+  say "answer: {answer}"

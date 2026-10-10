@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "15c538e4a02145d7e668958ba81056a97f5947281bbcc895f3573ac00c13ca16",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Summarize the thread main.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

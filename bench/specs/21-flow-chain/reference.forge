@@ -1,0 +1,19 @@
+flow pipeline
+  needs seed: Text
+  gives Text
+
+  stage first
+    draft = reason "Draft one line from the seed {seed}."
+
+  stage second
+    needs first.draft
+    refined = reason "Improve this line: {first.draft}"
+
+  stage third
+    needs second.refined
+    final = reason "Shorten this line: {second.refined}"
+    when final.sure -> give "final: {final}"
+    else -> give "final unavailable"
+
+fn main
+  say pipeline("tides")

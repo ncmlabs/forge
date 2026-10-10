@@ -1,0 +1,4 @@
+# `forge test --expect <file>` compares stdout byte for byte (after trailing
+# whitespace), and that stdout is LF on every platform. Without this, a Windows
+# checkout rewrites expected.txt to CRLF and every replay fails the comparison.
+bench/specs/**/expected.txt text eol=lf

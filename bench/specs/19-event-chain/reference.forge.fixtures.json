@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "04c102cbb83fb815b789b802c4f48bad867b53fa4afbb091a4e7df82476efdc9",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write an audit line about tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

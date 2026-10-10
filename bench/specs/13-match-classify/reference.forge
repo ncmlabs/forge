@@ -1,0 +1,12 @@
+task route
+  needs message: Text
+  gives Text
+  do
+    result = classify message into ["Buy", "Support", "Other"]
+    match result
+      Buy -> give "sales"
+      Support -> give "helpdesk"
+      _ -> give "triage"
+
+fn main
+  say route("I need help with my order")

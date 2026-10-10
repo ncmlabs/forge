@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "142bb608cdb03e3a44912991b81f0c64b16be98e8174055247af2e614094b0d2",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Classify the following into exactly one of these categories: Alert, Info, Noise\n\nInput: disk is 92% full\n\nRespond with j",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "2d475765befb64913ab02435b388925c263bbd23f8eec06c004887e4fc5ec481",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Summarize the message: disk is 92% full",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "f88cb89bd092493af2ef0a52303fbb21d4f1a3e9f2837375ab762926c631cbf0",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write a digest for a mock response message: mock response",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

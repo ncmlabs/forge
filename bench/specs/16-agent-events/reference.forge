@@ -1,0 +1,28 @@
+event Mention
+  thread: Text
+
+event Replied
+  thread: Text
+
+agent listener
+  subscribe Mention where thread == "main"
+  on Mention(thread: Text)
+    say "echo {thread}"
+    emit Replied(thread: thread)
+
+agent archivist
+  subscribe Replied
+  on Replied(thread: Text)
+    say "replied {thread}"
+
+task summarize
+  needs thread: Text
+  gives Text
+  do
+    result = reason "Summarize the thread {thread}."
+    when result.sure -> give result
+    else -> give "no summary"
+
+fn main
+  say "listener ready"
+  say summarize("main")

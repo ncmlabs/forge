@@ -1,0 +1,21 @@
+task assess
+  gives Text
+  do
+    run = command ["sh", "-c", "printf 'compile error' >&2; exit 1"]
+    if run.success
+      verdict = reason "Summarize the passing build: {run.stdout}"
+      when verdict.sure -> give "gate open: {verdict}"
+      else -> give "gate open: no verdict"
+    else
+      give "gate blocked: command failed"
+
+task banner
+  gives Text
+  do
+    line = reason "Write a one-line banner for a build report."
+    when line.sure -> give line
+    else -> give "build report"
+
+fn main
+  say banner()
+  say assess()

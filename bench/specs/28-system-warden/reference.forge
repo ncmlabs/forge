@@ -1,0 +1,45 @@
+contract ReviewDesk
+  can submit(topic: Text) -> Text
+
+event Submitted
+  topic: Text
+
+event Reviewed
+  topic: Text
+
+agent intake
+  subscribe Submitted
+  on Submitted(topic: Text)
+    say "intake {topic}"
+    emit Reviewed(topic: topic)
+
+agent reviewer
+  subscribe Reviewed
+  on Reviewed(topic: Text)
+    say "reviewed {topic}"
+
+warden supervisor
+  manages [intake, reviewer]
+  on stuck: nudge, self
+  on crash: restart, all
+  on hallucination: replace, downstream
+  on contradiction: escalate, self
+  on budget: downgrade, self
+  on timeout: restart, self
+
+system desk
+  use
+    front: intake
+    back: reviewer
+  front >> back
+
+task summary_line
+  gives Text
+  do
+    line = reason "Summarize a review desk run."
+    when line.sure -> give line
+    else -> give "no summary"
+
+fn main
+  say "desk ready"
+  say summary_line()

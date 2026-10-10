@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "06c9d9eff2bec65d952859a5b1d4699c630b784a4aefd99f284c679f37320319",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write one short headline for a peak of 9.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

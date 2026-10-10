@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "e4a39d896ddb27fc6b275f242eb98479aa9d4ba5261454c772034be512d2ad99",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Summarize a run whose lint gate failed.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

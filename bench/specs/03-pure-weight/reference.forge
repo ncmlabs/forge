@@ -1,0 +1,26 @@
+pure weight_class
+  needs scores: Number[]
+  gives Text
+  do
+    total = 0
+    for score in scores
+      total = total + score
+    if total > 10
+      give "heavy"
+    else if total > 5
+      give "medium"
+    else
+      give "light"
+
+task note_for
+  needs label: Text
+  gives Text
+  do
+    result = reason "Write one short note about a {label} workload."
+    when result.sure -> give result
+    else -> give "no note available"
+
+fn main
+  label = weight_class([1, 2, 3])
+  note = note_for(label)
+  say "{label}: {note}"

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "0fb857ca4e116e0aaa74a8ec70a5a32cd2fec650017609a54c2f08cd60e034c6",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write a one-line banner for a build report.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

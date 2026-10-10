@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- LLM authoring benchmark corpus (#483, part 1): `bench/specs/` holds 30
+  natural-language specs (10 easy, 12 medium, 8 hard) covering tasks, pure
+  functions, flows, confidence dispatch, `match`, agents, states, `requires`,
+  events, pools, wardens, contracts, systems, `command`, knowledge and spawn —
+  including four specs where a `command` result is the deterministic gate
+  before any oracle decision (#484). Each spec ships a `spec.md` the model
+  receives, a `reference.forge` that is never shown to it, the recorded
+  `reference.forge.fixtures.json` + `expected.txt` produced by
+  `FORGE_CONFIG=bench/mock.config.toml forge run reference.forge --record`, and
+  a `meta.toml`. `tests/bench_corpus_tests.rs` enforces the shape: every
+  reference checks with zero diagnostics and replays to its expected output
+  offline, exactly 30 specs in the 10/12/8 spread. The model-running harness
+  (pass@1, pass@3-repair) is part 2.
+- Deterministic command gate (#484): new checker pass and error code `E150` —
+  a `command`/`exec` result may not reach `give`, an `emit` argument, or a
+  `reason`/`classify` prompt before the body checks `x.success` /
+  `x.exit_code`, so a failed command can no longer be overruled by an oracle
+  verdict (#431). Branching on the exit status also satisfies the `uncertain`
+  gate for command output, so `give result.stdout` under `if result.success`
+  needs no second `when result.sure`. `forge explain E150` and the reference
+  (§17/§18) document the rule and its limits; the weekly derived-surface audit
+  now aborts when its `git log` grounding command fails (found by E150).
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced
@@ -58,6 +80,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- CLI stack overflow on Windows: the executor polls a program's whole future
+  tree on the calling thread, and Windows sizes the main thread's stack at
+  1 MiB, so `forge run` / `forge test` aborted with "thread 'main' has
+  overflowed its stack" on any deeper program (flows, pools, agents). The CLI
+  now runs on a thread with a 16 MiB stack; `ulimit -s 1024` reproduces and
+  verifies the fix on Linux. Found by the benchmark corpus, which is the first
+  test to run `forge test` as a child process on Windows.
 - Diagnostic rendering (#474): reports name the real source file instead of
   `<unknown>` (the ariadne source id was a bare span), and colour is emitted
   only when stderr is an interactive terminal, so piped or redirected output

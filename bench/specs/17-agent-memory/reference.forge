@@ -1,0 +1,35 @@
+states Session
+  idle -> active
+  active -> done
+  done -> idle
+
+agent recorder
+  lifecycle: Session
+  memory
+    topic: Text
+    count: Number
+  on note(topic: Text)
+    requires lifecycle == idle on fail: give "session busy"
+    memory.topic = topic
+    memory.count = 0
+    transition to active
+    say "recording {topic}"
+  on tally
+    requires lifecycle == active on fail: give "no session"
+    memory.count = memory.count + 1
+    say "count {memory.count}"
+  on close
+    requires lifecycle == active on fail: give "no session"
+    transition to done
+    say "closed {memory.topic}"
+
+task headline_for
+  needs topic: Text
+  gives Text
+  do
+    result = reason "Write a headline for {topic}."
+    when result.sure -> give result
+    else -> give "no headline"
+
+fn main
+  say headline_for("tides")

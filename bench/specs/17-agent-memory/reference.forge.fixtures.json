@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "2b3681f5d7f1431c59040d412f0ee652a8cf4eac0c18e5495299b4fd05b57f95",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write a headline for tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

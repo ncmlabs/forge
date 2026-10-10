@@ -2354,6 +2354,38 @@ FORGE enforces **taint tracking** on LLM oracle outputs to guarantee that uncert
 
 The uncertain checker rejects any code path where a tainted value reaches `give` without passing through `when` or `match`. The compile error message contains: `unhandled uncertain`.
 
+### Deterministic Gate (E150)
+
+`command` / `exec` results carry a second, stricter taint: they are **unchecked** until the body dispatches them. An unchecked result may not reach `give` (including its `with key: value` metadata), an `emit` argument, a `memory` assignment, or the prompt of a `reason` / `classify` -- that is error **E150** (``command result `x` used before checking `x.success` ``). The rule exists because a failed command must never be reinterpreted as success by an oracle verdict (#431).
+
+What clears the gate depends on what the binding actually is at runtime:
+
+| Dispatch | `command` record | `exec` (`Text`) | `command ... background true` handle |
+|----------|------------------|-----------------|--------------------------------------|
+| `if x.success`, `if x.exit_code != 0`, or the same in an `else if` | clears -- the deterministic verdict; counts for both branches and for every statement after the `if` | **not a gate**: `exec` returns `Text`, so these fields do not exist (#507) | **not a gate**: a handle has no such fields; inspect it with `command.status` |
+| `match x.exit_code` | clears | not a gate (#507) | not a gate |
+| `when x.sure` / `.unsure` / `.unreliable` | clears -- `command` derives confidence from the exit status (0.9 on exit 0, 0.3 otherwise), so `.sure` (threshold 0.8) is exactly `success` | clears -- the only gate for `exec` | clears |
+
+```forge
+task accept_tests
+  gives Text
+  do
+    tests = command ["cargo", "test"] timeout 10m
+    if tests.success
+      give tests.stdout
+    else
+      give "tests failed: {tests.stderr}"
+```
+
+`if x.success` also clears the `uncertain` taint above, so command output under a deterministic gate needs no extra `when x.sure`. Reading `.success` / `.exit_code` on an `exec` binding or a background handle is not a gate in either checker; only confidence dispatch clears those. `say` of an unchecked result is allowed -- it is not a decision.
+
+Limitations of the static rule:
+
+- The taint is not propagated through plain variables or constructors, so `report = TestReport(failures: tests.stdout)` followed by `classify report.failures` is not flagged.
+- Only `reason` / `classify` prompts and arguments are gated; `search` / `recall` / `session` prompts are not.
+- `transition` statements take no value, so they are never flagged.
+- `command ... background true` handles are exempt from E150 (they are inspected through `command.status`); their `when h.sure` dispatch is not yet equivalent to a success check on the runtime confidence (tracked in #507).
+
 ### Correct Pattern: Taint Cleared via `when`
 
 The `when` construct dispatches on confidence levels, forcing the programmer to explicitly handle the uncertain nature of the oracle result:
@@ -2490,7 +2522,31 @@ task watch_once
     else -> give "no output"
 ```
 
-Background `status()` and `output()` confidence follows the exit status, like foreground `command`: 0.9 on success, 0.3 on failure, and `output()` reports 0.5 while the process is still running.
+Background `status()` and `output()` confidence follow the process outcome, like foreground `command`, at both record and field level: 0.9 when the process completed successfully, 0.3 when it failed, was cancelled or timed out, and 0.5 while it is still running.
+
+### Deterministic Gate (E150)
+
+A command result is **unchecked** until the body dispatches it. Using `result.stdout` / `result.stderr` in `give` (including its `with key: value` metadata), in an `emit` argument, in a `memory` assignment, or in a `reason` / `classify` prompt before the body branched on `result.success` (or `result.exit_code`) is error **E150**: ``command result `result` used before checking `result.success` ``. The rule makes the #431 failure mode impossible -- an oracle verdict cannot reinterpret a failed command as success.
+
+```forge
+task run_tests
+  gives Text
+  do
+    result = command ["cargo", "test"] timeout 10m
+    if result.success
+      give result.stdout
+    else
+      give "tests failed: {result.stderr}"
+```
+
+`if result.success` counts for both branches and for every statement after the `if`, and it also satisfies the `uncertain` gate on the same variable, so `give result.stdout` needs no extra `when result.sure`.
+
+The field gate is only valid on a foreground `command` record, because only that value has `.success` / `.exit_code`:
+
+- `exec` returns `Text`, so `if x.exit_code != 0` on an `exec` binding is a runtime type error and is **not** a gate -- `when x.sure -> ...` is the supported dispatch for `exec`, and the checker reports the binding as unchecked (#507).
+- A `command ... background true` handle has no such fields either; inspect it with `command.status(handle)` (also #507).
+
+See §17 for the full dispatch table and the limitations of the static rule.
 
 ---
 
@@ -2872,6 +2928,7 @@ Every diagnostic emitted by `forge check`, `forge run`, `forge build`, `forge se
 | `E110`–`E129` | schedule checker |
 | `E130`–`E139` | correlate checker |
 | `E140`–`E149` | webhook checker |
+| `E150`–`E159` | command gate checker |
 
 Warnings reuse the same range with a `W` prefix (for example `W070` is the "requires clause uses an LLM operation" warning).
 

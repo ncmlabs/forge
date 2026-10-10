@@ -1,0 +1,15 @@
+task verdict_for
+  needs score: Number
+  gives Text
+  do
+    result = reason "Give a verdict for a score of {score}."
+    when result.sure -> give result
+    else -> give "unavailable"
+
+fn main
+  score = 7
+  if score > 10
+      say "high"
+    else
+      say "low"
+  say verdict_for(score)

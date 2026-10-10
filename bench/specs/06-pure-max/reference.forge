@@ -1,0 +1,21 @@
+pure largest
+  needs values: Number[]
+  gives Number
+  do
+    best = 0
+    for value in values
+      if value > best
+        best = value
+    give best
+
+task headline
+  needs peak: Number
+  gives Text
+  do
+    result = reason "Write one short headline for a peak of {peak}."
+    when result.sure -> give result
+    else -> give "no headline"
+
+fn main
+  peak = largest([4, 9, 2])
+  say "peak={peak} headline={headline(peak)}"

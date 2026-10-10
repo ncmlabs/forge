@@ -1,0 +1,3 @@
+difficulty = "medium"
+features = ["flow", "task", "when"]
+oracle_calls = 3
