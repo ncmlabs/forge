@@ -1,0 +1,3 @@
+difficulty = "medium"
+features = ["agent", "requires", "task", "when"]
+oracle_calls = 1

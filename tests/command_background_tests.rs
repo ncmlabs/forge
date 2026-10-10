@@ -113,9 +113,16 @@ async fn background_cancel() {
         result.err()
     );
     let outputs = executor.outputs();
+    // #507: a cancelled process has no success, so status() is low confidence
+    // (0.3) — 'cancelled' must be reached through the else branch, not `sure`.
     assert!(
         outputs.iter().any(|o| o.contains("cancelled")),
         "status should show 'cancelled', got: {:?}",
+        outputs
+    );
+    assert!(
+        !outputs.iter().any(|o| o.contains("unexpected_sure")),
+        "cancelled status must not be sure, got: {:?}",
         outputs
     );
 }
@@ -170,8 +177,8 @@ task run
     handle = command "sleep 60" background true timeout 1s
     wait = command "sleep 2"
     status = command.status(handle)
-    when status.sure -> give status.status
-    else -> give "unknown"
+    when status.sure -> give "unexpected_sure"
+    else -> give status.status
 
 fn main
   say run()
@@ -185,9 +192,16 @@ fn main
         result.err()
     );
     let outputs = executor.outputs();
+    // #507: a timed-out process has no success, so status() is low confidence
+    // (0.3) — 'timed_out' must be reached through the else branch, not `sure`.
     assert!(
         outputs.iter().any(|o| o.contains("timed_out")),
         "status should show 'timed_out', got: {:?}",
+        outputs
+    );
+    assert!(
+        !outputs.iter().any(|o| o.contains("unexpected_sure")),
+        "timed-out status must not be sure, got: {:?}",
         outputs
     );
 }

@@ -1,0 +1,23 @@
+task summarize
+  needs topic: Text
+  gives Text
+  do
+    result = reason "Summarize {topic} in one sentence."
+    when result.sure -> give result
+    when result.unsure -> give "unclear summary"
+    else -> give "no summary"
+
+pure size_label
+  needs size: Number
+  gives Text
+  do
+    if size > 20
+      give "long summary"
+    else
+      give "short summary"
+
+fn main
+  summary = summarize("tides")
+  size = summary.len()
+  label = size_label(size)
+  say "{label} ({size} chars)"

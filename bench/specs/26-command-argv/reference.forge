@@ -1,0 +1,22 @@
+task count_files
+  gives Text
+  do
+    run = command ["sh", "-c", "printf 'no such directory' >&2; exit 4"] in "." timeout 30s
+    if run.success
+      when run.sure -> give "count={run.stdout}"
+      else -> give "count=unknown"
+    else
+      give "count failed"
+
+task analyze
+  needs count: Text
+  gives Text
+  do
+    report = reason "Analyze a repository with {count}."
+    when report.sure -> give report
+    else -> give "no analysis"
+
+fn main
+  count = count_files()
+  say count
+  say analyze(count)

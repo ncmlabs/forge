@@ -1,0 +1,25 @@
+states Phase
+  idle -> working
+  working -> idle
+
+agent worker
+  lifecycle: Phase
+  memory
+    topic: Text
+  on assign(topic: Text)
+    requires lifecycle == idle on fail: give "busy"
+    memory.topic = topic
+    transition to working
+    say "working on {topic}"
+
+task plan_for
+  needs topic: Text
+  gives Text
+  do
+    result = reason "Plan the work for {topic}."
+    when result.sure -> give result
+    else -> give "no plan"
+
+fn main
+  say "worker ready"
+  say plan_for("tides")

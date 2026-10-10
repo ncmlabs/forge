@@ -196,18 +196,16 @@ system lobby
     front: lobby_agent
   game >> front
 ```
-**`command`** — `["argv", "array"]` beats a shell string when interpolating values; always branch on `result.success` before using the output — a failed command must never be reinterpreted (the `when` is the uncertainty gate the checker requires for the captured text)
+**`command`** — `["argv", "array"]` beats a shell string when interpolating values; always branch on `result.success` before using the output — a failed command must never be reinterpreted (E150)
 ```forge
 task run_tests
   gives Text
   do
     result = command ["cargo", "test"] in "." timeout 10m
     if result.success
-      when result.sure -> give result.stdout
-      else -> give "no output captured"
+      give result.stdout
     else
-      when result.sure -> give result.stderr
-      else -> give "command failed"
+      give result.stderr
 ```
 **`session`** — external agent sessions; handle the result like any oracle:
 ```forge
@@ -283,6 +281,7 @@ task load_host
 - `expected statement` — bad indentation (3 spaces, a tab) or `when` without `->`; use exact 2-space levels and one-line `when x.sure -> ...`.
 - `expected eoi, top level` — a blank line inside `do`, a handler, or `fn main`; delete the blank line.
 - ``unhandled uncertain: ...`` — an oracle result reached `give` raw or inline; bind it, then dispatch with `when x.sure` / `.unsure` / `else`.
+- ``command result `x` used before checking `x.success` `` — an unchecked `command`/`exec` result reached `give`, `emit`, or a `reason`/`classify` prompt; branch on `x.success` (or `x.exit_code`) first.
 - ``pure function `<f>` cannot use `<op>` `` — an oracle or effect inside `pure`; move that line into a `task`.
 - ``pure function `<f>` cannot call task `<t>` `` — `pure` may only call `pure`; pass the value in as an argument.
 - ``illegal transition from `<a>` to `<b>` `` — add that edge to the `states` block, or fix the state name.

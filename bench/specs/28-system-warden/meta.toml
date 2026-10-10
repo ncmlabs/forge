@@ -1,0 +1,3 @@
+difficulty = "hard"
+features = ["contract", "system", "warden", "agent", "event", "task", "when"]
+oracle_calls = 1

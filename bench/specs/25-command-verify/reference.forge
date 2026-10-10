@@ -1,0 +1,31 @@
+task verify_tests
+  gives Text
+  do
+    run = command ["sh", "-c", "printf '3 passed'"]
+    if run.success
+      when run.sure -> give "tests: {run.stdout}"
+      else -> give "tests: no output"
+    else
+      give "tests failed"
+
+task verify_lint
+  gives Text
+  do
+    run = command ["sh", "-c", "printf 'lint error' >&2; exit 2"]
+    if run.success
+      when run.sure -> give "lint: {run.stdout}"
+      else -> give "lint: no output"
+    else
+      give "lint gate: failed"
+
+task summarize
+  gives Text
+  do
+    summary = reason "Summarize a run whose lint gate failed."
+    when summary.sure -> give summary
+    else -> give "no summary"
+
+fn main
+  say verify_tests()
+  say verify_lint()
+  say summarize()

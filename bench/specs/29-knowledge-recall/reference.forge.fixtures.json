@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "10c23a96f33d175fc49ac6a36e2c093136b7a5174d51439731602e7ed8f1836c",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Answer the question what is fog.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

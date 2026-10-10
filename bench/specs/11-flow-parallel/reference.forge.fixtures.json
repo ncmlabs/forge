@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "c83d28e0d8d1aa1f338cacd638e2a29bb7c4789ebf436eed143818455779bfdd",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Collect notes from papers about tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "869f37a8b9ab664054e38b9b303ca53d8333d47fbda019e5a1641123bd2eda5b",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Collect notes from the web about tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "da727133f7d8f18e0e1e5de1bb7f868b3ba58aa6dd477e3631fbed15e4def9ef",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Combine mock response and mock response.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}
