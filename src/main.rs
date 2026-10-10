@@ -1623,14 +1623,16 @@ async fn run_program(
             .map(|v| v == "1")
             .unwrap_or(false)
     {
-        Some(forge::tracer::Tracer::new())
+        forge::tracer::Tracer::new()
     } else {
-        None
+        // Every run needs the trace-event counters behind the end-of-run
+        // summary (#479); only trace mode prints the events.
+        forge::tracer::Tracer::counting()
     };
 
     // Build skill executor to get capability signatures for compile-time validation
     let (skill_exec, skill_sigs) =
-        build_skill_executor(&config_clone, &providers, tracer.as_ref(), None, None);
+        build_skill_executor(&config_clone, &providers, Some(&tracer), None, None);
 
     // Validate before execution (with skill-aware capability registry)
     let mut diagnostics = Vec::new();
@@ -1673,14 +1675,14 @@ async fn run_program(
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let session_mgr =
-        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
+        forge::runtime::session_manager::new_shared_default_session_manager(Some(tracer.clone()));
     let _ = session_mgr.resume_all().await;
     // The run's LLM cost lands in the envelope's `cost` (#475). Budget
     // enforcement is unchanged: nothing on this path aborts on budget, the
     // tracker only accumulates.
     let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
     let mut executor =
-        forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
+        forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), Some(tracer))
             .with_config(config_clone)
             .with_command_manager(cmd_mgr)
             .with_session_manager(session_mgr)
@@ -1764,16 +1766,18 @@ async fn run_manifest(
             .map(|v| v == "1")
             .unwrap_or(false)
     {
-        Some(forge::tracer::Tracer::new())
+        forge::tracer::Tracer::new()
     } else {
-        None
+        // Every run needs the trace-event counters behind the end-of-run
+        // summary (#479); only trace mode prints the events.
+        forge::tracer::Tracer::counting()
     };
 
     // Build skill executor with project-level declarations
     let (skill_exec, skill_sigs) = build_skill_executor(
         &config_clone,
         &providers,
-        tracer.as_ref(),
+        Some(&tracer),
         Some(&manifest),
         Some(base_dir),
     );
@@ -1867,13 +1871,13 @@ async fn run_manifest(
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let session_mgr =
-        forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
+        forge::runtime::session_manager::new_shared_default_session_manager(Some(tracer.clone()));
     let _ = session_mgr.resume_all().await;
     let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
         Arc::clone(&providers),
-        tracer,
+        Some(tracer),
     )
     .with_config(config_clone)
     .with_command_manager(cmd_mgr)

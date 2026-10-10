@@ -4598,4 +4598,79 @@ fn main
         assert!(result.is_ok(), "roundtrip failed: {:?}", result.err());
         assert_eq!(outputs, vec!["hello world foo"]);
     }
+
+    // ── #479: run-summary counters ───────────────────────────────────────────
+
+    /// Run `source` with a counting tracer and return the run counters.
+    async fn counting_run(source: &str) -> Arc<crate::tracer::RunStats> {
+        let program = parser::parse(source).expect("parse failed");
+        let mut registry = ProviderRegistry::new("mock");
+        registry.register(
+            "mock",
+            Arc::new(MockProvider::new("mock").with_default("mock response")),
+        );
+        let tracer = Tracer::counting();
+        let stats = tracer.stats();
+        let executor = TaskExecutor::new(program, Arc::new(registry), Some(tracer));
+        executor.run().await.expect("program should run");
+        stats
+    }
+
+    /// Pool workers build their own executors from the parent's tracer, so
+    /// their LLM calls must land in the run counters (#479).
+    #[tokio::test]
+    async fn pool_worker_llm_calls_land_in_run_stats() {
+        let stats = counting_run(
+            r#"
+use
+  llm.reason
+
+task Worker
+  needs input: Text
+  gives Text
+  do
+    answer = reason "Echo: {input}"
+    give "done"
+
+pool workers
+  workers: Worker * 2
+  strategy: all
+
+fn main
+  result = workers.send("go", "x")
+  say "pool done"
+"#,
+        )
+        .await;
+        assert_eq!(stats.llm_calls(), 2, "both pool workers must be counted");
+    }
+
+    /// A spawned child builds its own executor from the parent's tracer, so its
+    /// LLM calls must land in the run counters (#479).
+    #[tokio::test]
+    async fn spawned_child_llm_calls_land_in_run_stats() {
+        let stats = counting_run(
+            r#"
+use
+  llm.reason
+
+agent talker
+  on start
+    answer = reason "Echo"
+    say "child {answer}"
+
+  if stuck for 3 turns
+    escalate to human
+
+fn main
+  spawn talker as "t"
+"#,
+        )
+        .await;
+        assert_eq!(
+            stats.llm_calls(),
+            1,
+            "the spawned child's LLM call must be counted"
+        );
+    }
 }
