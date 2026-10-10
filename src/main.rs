@@ -1340,20 +1340,36 @@ fn blocked_run_envelope(
     .with_next_steps(steps)
 }
 
+/// The run's end-of-run summary (#479): tokens and cost from the run's cost
+/// tracker, LLM calls, confidence spread and warden events from the tracer's
+/// event counters (spawned children and pool workers included).
+fn run_summary(
+    cost_tracker: &forge::llm::cost_tracker::CostTracker,
+    tracer: Option<&forge::tracer::Tracer>,
+) -> forge::cli_output::RunSummary {
+    let stats = tracer.map(|t| t.stats()).unwrap_or_default();
+    forge::cli_output::RunSummary::collect(&cost_tracker.summary(), &stats)
+}
+
 /// Terminal envelope for a completed `run`/`trace`.
 fn run_envelope(
     command: &str,
     file: &str,
     output: Vec<String>,
     result: serde_json::Value,
-    cost: f64,
+    summary: &forge::cli_output::RunSummary,
 ) -> forge::cli_output::Envelope {
     forge::cli_output::Envelope::success(
         command,
-        serde_json::json!({"file": file, "output": output, "result": result}),
+        serde_json::json!({
+            "file": file,
+            "output": output,
+            "result": result,
+            "summary": summary,
+        }),
         format!("{command} completed ({} output line(s))", output.len()),
     )
-    .with_cost(cost)
+    .with_cost(summary.cost_usd)
 }
 
 /// Terminal envelope for a `run`/`trace` that failed at runtime.
@@ -1362,7 +1378,7 @@ fn run_error_envelope(
     file: &str,
     output: Vec<String>,
     message: String,
-    cost: f64,
+    summary: &forge::cli_output::RunSummary,
 ) -> forge::cli_output::Envelope {
     forge::cli_output::Envelope::error(
         command,
@@ -1373,8 +1389,9 @@ fn run_error_envelope(
         "file": file,
         "output": output,
         "result": serde_json::Value::Null,
+        "summary": summary,
     }))
-    .with_cost(cost)
+    .with_cost(summary.cost_usd)
     .with_next_steps(vec![format!("forge trace {file}")])
 }
 
@@ -1703,13 +1720,10 @@ async fn run_program(
             if !out.json {
                 eprintln!("runtime error: {}", e);
             }
-            let env = run_error_envelope(
-                command,
-                &fname,
-                executor.outputs(),
-                e.to_string(),
-                cost_tracker.summary().total_cost_usd as f64,
-            );
+            let summary = run_summary(&cost_tracker, executor.tracer());
+            summary.report(out);
+            let env =
+                run_error_envelope(command, &fname, executor.outputs(), e.to_string(), &summary);
             out.done(&env);
         }
     }
@@ -1732,13 +1746,9 @@ async fn run_program(
     }
 
     let output = executor.outputs();
-    let env = run_envelope(
-        command,
-        &fname,
-        output,
-        cached_result,
-        cost_tracker.summary().total_cost_usd as f64,
-    );
+    let summary = run_summary(&cost_tracker, executor.tracer());
+    summary.report(out);
+    let env = run_envelope(command, &fname, output, cached_result, &summary);
     out.done(&env);
 }
 
@@ -1899,24 +1909,17 @@ async fn run_manifest(
             if !out.json {
                 eprintln!("runtime error: {}", e);
             }
-            let env = run_error_envelope(
-                command,
-                &fname,
-                executor.outputs(),
-                e.to_string(),
-                cost_tracker.summary().total_cost_usd as f64,
-            );
+            let summary = run_summary(&cost_tracker, executor.tracer());
+            summary.report(out);
+            let env =
+                run_error_envelope(command, &fname, executor.outputs(), e.to_string(), &summary);
             out.done(&env);
         }
     }
 
-    let env = run_envelope(
-        command,
-        &fname,
-        executor.outputs(),
-        cached_result,
-        cost_tracker.summary().total_cost_usd as f64,
-    );
+    let summary = run_summary(&cost_tracker, executor.tracer());
+    summary.report(out);
+    let env = run_envelope(command, &fname, executor.outputs(), cached_result, &summary);
     out.done(&env);
 }
 

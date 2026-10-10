@@ -28,8 +28,17 @@ impl RunStats {
         match event {
             "llm_response" => {
                 self.llm_calls.fetch_add(1, Ordering::Relaxed);
-                if let Some(confidence) = data.get("confidence").and_then(|c| c.as_f64()) {
-                    self.confidences.lock().unwrap().push(confidence);
+                // Embeddings report no model confidence — their `1.0` is a
+                // placeholder, so they count as calls but must not flatter the
+                // spread (Principle I: the spread is honest).
+                let embedding = matches!(
+                    data.get("operation").and_then(|o| o.as_str()),
+                    Some("embed" | "search")
+                );
+                if !embedding {
+                    if let Some(confidence) = data.get("confidence").and_then(|c| c.as_f64()) {
+                        self.confidences.lock().unwrap().push(confidence);
+                    }
                 }
             }
             "ward_action" | "supervision_tree" => {
@@ -903,6 +912,19 @@ mod tests {
         assert_eq!(confidences.len(), 2);
         assert!((confidences[0] - 0.8).abs() < 1e-6, "{confidences:?}");
         assert!((confidences[1] - 0.4).abs() < 1e-6, "{confidences:?}");
+    }
+
+    #[test]
+    fn embedding_calls_count_but_do_not_join_the_confidence_spread() {
+        let tracer = Tracer::counting();
+        let stats = tracer.stats();
+        tracer.llm_response(&LLMResponseInfo {
+            operation: "embed",
+            confidence: 1.0,
+            ..response(1.0)
+        });
+        assert_eq!(stats.llm_calls(), 1);
+        assert!(stats.confidences().is_empty(), "1.0 is a placeholder");
     }
 
     #[test]
