@@ -2384,7 +2384,7 @@ Limitations of the static rule:
 - The taint is not propagated through plain variables or constructors, so `report = TestReport(failures: tests.stdout)` followed by `classify report.failures` is not flagged.
 - Only `reason` / `classify` prompts and arguments are gated; `search` / `recall` / `session` prompts are not.
 - `transition` statements take no value, so they are never flagged.
-- `command ... background true` handles are exempt from E150 (they are inspected through `command.status`); their `when h.sure` dispatch is not yet equivalent to a success check on the runtime confidence (tracked in #507).
+- `command ... background true` handles are exempt from E150 (they are inspected through `command.status`); `when h.sure` on that status is now equivalent to a success check, because background confidence follows the process outcome (#507).
 
 ### Correct Pattern: Taint Cleared via `when`
 

@@ -38,6 +38,17 @@ impl ProcessStatus {
             ProcessStatus::TimedOut => "timed_out",
         }
     }
+
+    /// Confidence rule for a background process (Principle I — Honesty):
+    /// success → 0.9, failure/cancelled/timed-out → 0.3, still running → 0.5.
+    /// The 0.9 / 0.3 mapping matches foreground `command`.
+    fn confidence(&self) -> f32 {
+        match self {
+            ProcessStatus::Completed { success: true, .. } => 0.9,
+            ProcessStatus::Running => 0.5,
+            _ => 0.3,
+        }
+    }
 }
 
 /// Shared interior state between the manager and background reader tasks.
@@ -218,12 +229,9 @@ impl CommandManager {
             .ok_or_else(|| format!("unknown command handle: {}", handle))?;
         let s = state.lock().unwrap();
 
-        // Principle I (Honesty) — a failed process is not a confident result:
-        // mirror the foreground rule (0.9 on exit 0, 0.3 otherwise).
-        let confidence = match &s.status {
-            ProcessStatus::Completed { success: false, .. } => 0.3,
-            _ => 0.9,
-        };
+        // Principle I (Honesty) — the record and every field carry the same
+        // confidence as the process state.
+        let confidence = s.status.confidence();
 
         let mut fields = HashMap::new();
         fields.insert(
@@ -245,11 +253,11 @@ impl CommandManager {
             _ => {
                 fields.insert(
                     "exit_code".to_string(),
-                    ConfidentValue::deterministic(Value::Unit),
+                    ConfidentValue::from_exec(Value::Unit, confidence),
                 );
                 fields.insert(
                     "success".to_string(),
-                    ConfidentValue::deterministic(Value::Unit),
+                    ConfidentValue::from_exec(Value::Unit, confidence),
                 );
             }
         }
@@ -266,13 +274,9 @@ impl CommandManager {
         let s = state.lock().unwrap();
 
         let complete = s.status != ProcessStatus::Running;
-        // Principle I (Honesty) — confidence follows the exit status, as in
-        // foreground `command`: 0.9 success / 0.3 failure / 0.5 while running.
-        let confidence = match &s.status {
-            ProcessStatus::Completed { success: true, .. } => 0.9,
-            ProcessStatus::Running => 0.5,
-            _ => 0.3,
-        };
+        // Principle I (Honesty) — same mapping as status(), at record and
+        // field level.
+        let confidence = s.status.confidence();
 
         let mut fields = HashMap::new();
         fields.insert(
@@ -285,7 +289,7 @@ impl CommandManager {
         );
         fields.insert(
             "complete".to_string(),
-            ConfidentValue::from_exec(Value::Bool(complete), 0.9),
+            ConfidentValue::from_exec(Value::Bool(complete), confidence),
         );
 
         Ok(ConfidentValue::from_exec(Value::Record(fields), confidence))
@@ -344,6 +348,33 @@ mod tests {
         }
     }
 
+    /// The record and every one of its fields carry the same confidence.
+    fn assert_confidence(cv: &ConfidentValue, expected: f32, label: &str) {
+        assert_eq!(cv.confidence, expected, "{} record", label);
+        let fields = record_fields(cv);
+        assert!(!fields.is_empty(), "{} record has no fields", label);
+        for (name, field) in fields {
+            assert_eq!(field.confidence, expected, "{} field {}", label, name);
+        }
+    }
+
+    /// A manager holding one process in `state`, without spawning anything.
+    fn manager_in(state: ProcessStatus) -> CommandManager {
+        let mut mgr = CommandManager::new();
+        mgr.processes.insert(
+            "h".to_string(),
+            Arc::new(Mutex::new(ProcessState {
+                id: "h".to_string(),
+                status: state,
+                stdout_buf: Vec::new(),
+                stderr_buf: Vec::new(),
+                cmd_display: "test".to_string(),
+                started_at: Instant::now(),
+            })),
+        );
+        mgr
+    }
+
     /// Spawn a real process through the manager and wait until it exits.
     #[cfg(not(target_os = "windows"))]
     async fn spawn_and_wait(cmd: &str) -> (CommandManager, HandleId) {
@@ -367,26 +398,66 @@ mod tests {
         panic!("background process did not finish: {}", cmd);
     }
 
+    /// Every lifecycle state, in both views (issue #507 review).
+    #[test]
+    fn every_state_carries_its_confidence_in_both_views() {
+        let states = [
+            (
+                ProcessStatus::Completed {
+                    exit_code: 0,
+                    success: true,
+                },
+                0.9,
+            ),
+            (
+                ProcessStatus::Completed {
+                    exit_code: 3,
+                    success: false,
+                },
+                0.3,
+            ),
+            (ProcessStatus::Cancelled, 0.3),
+            (ProcessStatus::TimedOut, 0.3),
+            (ProcessStatus::Running, 0.5),
+        ];
+
+        for (state, expected) in states {
+            let mgr = manager_in(state.clone());
+            assert_confidence(
+                &mgr.status("h").unwrap(),
+                expected,
+                &format!("status {:?}", state),
+            );
+            assert_confidence(
+                &mgr.output("h").unwrap(),
+                expected,
+                &format!("output {:?}", state),
+            );
+        }
+    }
+
     #[tokio::test]
     #[cfg(not(target_os = "windows"))]
     async fn failed_process_reports_low_confidence() {
         let (mgr, handle) = spawn_and_wait("exit 3").await;
 
         let status = mgr.status(&handle).unwrap();
-        assert_eq!(status.confidence, 0.3, "failed status record");
-        let fields = record_fields(&status);
-        for name in ["status", "exit_code", "success"] {
-            assert_eq!(fields[name].confidence, 0.3, "failed status field {}", name);
-        }
-        assert!(matches!(fields["success"].value, Value::Bool(false)));
-        assert!(matches!(fields["exit_code"].value, Value::Number(n) if n == 3.0));
+        assert_confidence(&status, 0.3, "failed status");
+        assert!(matches!(
+            record_fields(&status)["success"].value,
+            Value::Bool(false)
+        ));
+        assert!(matches!(
+            record_fields(&status)["exit_code"].value,
+            Value::Number(n) if n == 3.0
+        ));
 
         let output = mgr.output(&handle).unwrap();
-        assert_eq!(output.confidence, 0.3, "failed output record");
-        let fields = record_fields(&output);
-        for name in ["stdout", "stderr"] {
-            assert_eq!(fields[name].confidence, 0.3, "failed output field {}", name);
-        }
+        assert_confidence(&output, 0.3, "failed output");
+        assert!(matches!(
+            record_fields(&output)["complete"].value,
+            Value::Bool(true)
+        ));
     }
 
     #[tokio::test]
@@ -395,53 +466,17 @@ mod tests {
         let (mgr, handle) = spawn_and_wait("exit 0").await;
 
         let status = mgr.status(&handle).unwrap();
-        assert_eq!(status.confidence, 0.9, "successful status record");
-        let fields = record_fields(&status);
-        for name in ["status", "exit_code", "success"] {
-            assert_eq!(
-                fields[name].confidence, 0.9,
-                "successful status field {}",
-                name
-            );
-        }
-        assert!(matches!(fields["success"].value, Value::Bool(true)));
+        assert_confidence(&status, 0.9, "successful status");
+        assert!(matches!(
+            record_fields(&status)["success"].value,
+            Value::Bool(true)
+        ));
 
         let output = mgr.output(&handle).unwrap();
-        assert_eq!(output.confidence, 0.9, "successful output record");
-        let fields = record_fields(&output);
-        for name in ["stdout", "stderr"] {
-            assert_eq!(
-                fields[name].confidence, 0.9,
-                "successful output field {}",
-                name
-            );
-        }
-    }
-
-    #[test]
-    fn running_process_keeps_existing_confidence() {
-        let mut mgr = CommandManager::new();
-        mgr.processes.insert(
-            "h".to_string(),
-            Arc::new(Mutex::new(ProcessState {
-                id: "h".to_string(),
-                status: ProcessStatus::Running,
-                stdout_buf: Vec::new(),
-                stderr_buf: Vec::new(),
-                cmd_display: "sleep 60".to_string(),
-                started_at: Instant::now(),
-            })),
-        );
-
-        let status = mgr.status("h").unwrap();
-        assert_eq!(status.confidence, 0.9, "running status record");
-        assert_eq!(record_fields(&status)["status"].confidence, 0.9);
-
-        let output = mgr.output("h").unwrap();
-        assert_eq!(output.confidence, 0.5, "running output record");
+        assert_confidence(&output, 0.9, "successful output");
         assert!(matches!(
             record_fields(&output)["complete"].value,
-            Value::Bool(false)
+            Value::Bool(true)
         ));
     }
 }
