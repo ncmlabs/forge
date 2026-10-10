@@ -1,0 +1,21 @@
+# Mock is the default provider: deterministic, no API key, no tokens, $0.
+[llm]
+default = "mock"
+
+[providers.mock]
+type = "mock"
+model = "mock-model"
+
+# ── Real providers ───────────────────────────────────────────────────────────
+# Uncomment one, then set `default` above to its name.
+#
+# [providers.claude-haiku]
+# type = "anthropic"
+# model = "claude-haiku-4-5-20251001"
+# api_key = "${ANTHROPIC_API_KEY}"
+#
+# [providers.local]
+# type = "openai-compat"
+# model = "llama3.2"
+# base_url = "http://localhost:11434/v1"
+# api_key = "not-required"

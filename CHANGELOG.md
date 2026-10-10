@@ -40,6 +40,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs no second `when result.sure`. `forge explain E150` and the reference
   (§17/§18) document the rule and its limits; the weekly derived-surface audit
   now aborts when its `git log` grounding command fails (found by E150).
+- `forge init <dir>` (#481): scaffold a runnable project from a template —
+  `pipeline` (default), `agent`, or `webhook-bot`. Each writes
+  `forge.project.toml`, a mock-default `forge.config.toml` with a commented
+  real-provider block (`${ENV}` references only), `main.forge`, a recorded
+  `main.forge.fixtures.json`, `expected.txt`, `.gitignore`, and an `AGENTS.md`
+  pointing at the card and the CLI loop. All three templates pass
+  `forge check` with zero diagnostics and `forge test --expect` on a fresh
+  scaffold, at $0 (mock provider). `--dry-run` lists the files and writes
+  nothing; a non-empty directory is refused with exit 1 unless `--force`.
+  Templates live in `templates/init/<template>/` and are embedded with
+  `include_str!`; `{{name}}` is replaced by the directory's base name, which
+  must be a valid project name — `[A-Za-z0-9_-]` plus a non-leading `.` —
+  otherwise the run exits 1 before writing anything. `--force` also refuses to
+  write through a symlinked template path. `forge init --json` reports the same
+  file list in the #475 envelope.
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced
@@ -94,6 +109,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- `forge test --expect` line endings (#481): the output comparison ignored
+  trailing whitespace but not the line ending, so an LF `expected.txt`
+  committed to a repo never matched CRLF stdout on Windows (and a
+  Windows-recorded expectation never matched on Linux). Both sides are now
+  compared with `\r\n` normalised to `\n`.
 - Pool workers, spawned agents and `forge send` now obey the JSON envelope the
   same way `fn main` does (#475): a pool worker's or handler's `say` lands in
   `data.output` instead of stdout (which broke the one-document contract), their
