@@ -1,0 +1,26 @@
+use
+  llm.reason
+
+# `flow` — stages without a `needs` clause run in the same wave, in parallel.
+# `synthesize` waits for both of them. Every oracle result is dispatched with
+# `when`: an uncertain value can never reach `give` raw.
+flow brief
+  needs topic: Text
+  gives Text
+
+  stage gather_notes
+    notes = reason "Summarize what is known about {topic} in two sentences"
+
+  stage gather_refs
+    refs = reason "Name three references about {topic}"
+
+  stage synthesize
+    needs gather_notes.notes, gather_refs.refs
+    merged = reason "Combine into one short brief: {gather_notes.notes} {gather_refs.refs}"
+    when merged.sure -> give merged
+    else -> give "synthesis failed"
+
+fn main
+  say "pipeline: two parallel stages, then synthesize"
+  report = brief("FORGE project scaffolding")
+  say report
