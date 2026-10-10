@@ -60,6 +60,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | [#486](https://github.com/ncmlabs/forge/issues/486) | lean: close WASM/browser targets; keep server/shared boundary checker | Done ✅ |
 | [#487](https://github.com/ncmlabs/forge/issues/487) | lean: extract clone-dev into ncmlabs/forge-clone-dev | Open |
 | [#488](https://github.com/ncmlabs/forge/issues/488) | examples: create public ncmlabs/forge-examples and move showcases | Done ✅ |
+| [#503](https://github.com/ncmlabs/forge/issues/503) | llm: `[llm.routing]` accepts provider chains per phase (primary + fallbacks) | Done ✅ |
 
 ### CLI contract — the interface an agent actually uses
 
@@ -88,7 +89,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | Issue | Title | Status |
 | ----- | ----- | ------ |
 | [#483](https://github.com/ncmlabs/forge/issues/483) | bench: LLM authoring benchmark — pass@1 / pass@3-repair across models (supersedes #168) | Open |
-| [#484](https://github.com/ncmlabs/forge/issues/484) | checker: deterministic gate beats oracle — failed command cannot be overruled by reason | Open |
+| [#484](https://github.com/ncmlabs/forge/issues/484) | checker: deterministic gate beats oracle — failed command cannot be overruled by reason | Done ✅ |
 
 ## Suggested order
 

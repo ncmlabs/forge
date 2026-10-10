@@ -1,0 +1,12 @@
+{
+  "name": "command_gate_unchecked",
+  "category": "checker",
+  "subcategory": "command_gate",
+  "description": "A test command's output feeds an acceptance classify before the exit status is checked; a failed command must not be overruled by an oracle (#431)",
+  "input": "use\n  llm.classify\n\ntask accept_tests\n  gives Text\n  do\n    tests = command [\"cargo\", \"test\"] timeout 10m\n    verdict = classify \"Did the test suite pass? Output: {tests.stdout}\" into [\"pass\", \"fail\"]\n    when verdict.sure -> give verdict\n    else -> give \"unknown\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_code": "E150",
+    "error_contains": ["used before checking"]
+  }
+}

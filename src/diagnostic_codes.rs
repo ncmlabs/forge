@@ -19,6 +19,7 @@
 //! | E110–E129   | schedule checker      |
 //! | E130–E139   | correlate checker     |
 //! | E140–E149   | webhook checker       |
+//! | E150–E159   | command gate checker  |
 //! | E160–E169   | resolution checker    |
 //!
 //! Warnings use the same range prefixed with `W` instead of `E`.
@@ -1452,6 +1453,32 @@ agent a
     emit: ApprovalResponse"#,
     },
     CodeInfo {
+        code: "E150",
+        title: "command result used before checking success",
+        explain: r#"A `command`/`exec` result reached a decision (`give`, `emit`, or the prompt of a `reason`/`classify`) before the body checked whether the command succeeded. A failed command must never be reinterpreted as success by an oracle verdict (#431).
+
+Wrong:
+task accept_tests
+  gives Text
+  do
+    tests = command ["cargo", "test"] timeout 10m
+    verdict = classify "Did the tests pass? {tests.stdout}" into ["pass", "fail"]
+    when verdict.sure -> give verdict
+    else -> give "unknown"
+
+Right:
+task accept_tests
+  gives Text
+  do
+    tests = command ["cargo", "test"] timeout 10m
+    if tests.success
+      verdict = classify "Did the tests pass? {tests.stdout}" into ["pass", "fail"]
+      when verdict.sure -> give verdict
+      else -> give "unknown"
+    else
+      give "tests failed: {tests.stderr}""#,
+    },
+    CodeInfo {
         code: "E160",
         title: "undeclared call target",
         explain: r#"A plain call names a task, pure, flow or pool that does not exist, so the call can only fail at runtime.
@@ -1592,6 +1619,7 @@ mod tests {
             include_str!("diagnostic.rs"),
             include_str!("checker/allows_checker.rs"),
             include_str!("checker/boundary_checker.rs"),
+            include_str!("checker/command_gate_checker.rs"),
             include_str!("checker/correlate_checker.rs"),
             include_str!("checker/pure_checker.rs"),
             include_str!("checker/requires_checker.rs"),

@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tic-tac-toe example, a missing `repo_config_for` in the standalone dev-cycle
   build, and event handlers called as functions in forge-sensei — all fixed
   here.
+- Deterministic command gate (#484): new checker pass and error code `E150` —
+  a `command`/`exec` result may not reach `give`, an `emit` argument, or a
+  `reason`/`classify` prompt before the body checks `x.success` /
+  `x.exit_code`, so a failed command can no longer be overruled by an oracle
+  verdict (#431). Branching on the exit status also satisfies the `uncertain`
+  gate for command output, so `give result.stdout` under `if result.success`
+  needs no second `when result.sure`. `forge explain E150` and the reference
+  (§17/§18) document the rule and its limits; the weekly derived-surface audit
+  now aborts when its `git log` grounding command fails (found by E150).
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced
@@ -49,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FORGE_PROVIDER` (replacing the retired `claude -p`/Anthropic invocation).
   The weekly cron is restored and skips neutrally when no provider endpoint
   is configured.
+- `[llm.routing]` accepts provider chains per phase (#503): a routing value is
+  either one provider name (`plan = "deepseek"`, unchanged) or an ordered chain
+  (`plan = ["deepseek", "glm"]`) tried primary-first, falling through to the
+  next entry when a provider fails. An empty chain, or a name that no
+  `[providers.*]` entry defines, is a startup error naming the phase, the
+  unknown provider, the known providers and the next step — never a silent
+  fallback to the default or mock provider.
 - Clone-dev v1 retrospective (#373): `docs/clone-dev-v1-retrospective.md` —
   proof-run metrics (3.48-min merge, first-try CI, novice→expert mastery,
   $0.23 cost), the defect harvest and lessons for v2; roadmap Layer 3 moved
