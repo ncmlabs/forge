@@ -152,11 +152,44 @@ pub struct EmbeddingsConfig {
 /// One `[llm.routing]` entry (#503): either a single provider name — the
 /// pre-#503 form, `plan = "deepseek"` — or an ordered chain,
 /// `plan = ["deepseek", "glm"]`, tried primary-first.
+///
+/// Converted from a `toml::Value` by hand (#509): the previous `untagged`
+/// derive rejected anything else with "data did not match any variant of
+/// untagged enum RouteSpec" — an internal type name with no next step.
 #[derive(Debug, Deserialize, Clone)]
-#[serde(untagged)]
+#[serde(try_from = "toml::Value")]
 pub enum RouteSpec {
     One(String),
     Chain(Vec<String>),
+}
+
+impl TryFrom<toml::Value> for RouteSpec {
+    type Error = String;
+
+    fn try_from(value: toml::Value) -> Result<Self, Self::Error> {
+        match value {
+            toml::Value::String(name) => Ok(RouteSpec::One(name)),
+            toml::Value::Array(items) => {
+                let mut names = Vec::with_capacity(items.len());
+                for item in items {
+                    match item {
+                        toml::Value::String(name) => names.push(name),
+                        other => {
+                            let found = format!("array of {}", other.type_str());
+                            return Err(route_value_error(&found));
+                        }
+                    }
+                }
+                Ok(RouteSpec::Chain(names))
+            }
+            other => Err(route_value_error(other.type_str())),
+        }
+    }
+}
+
+/// #509 — the single phrasing for every rejected `[llm.routing]` value.
+fn route_value_error(found: &str) -> String {
+    format!("must be a provider name or a list of provider names (got {found})")
 }
 
 impl RouteSpec {
@@ -174,8 +207,47 @@ impl RouteSpec {
 #[derive(Debug, Deserialize, Clone)]
 pub struct LLMConfig {
     pub default: String,
+    #[serde(default, deserialize_with = "deserialize_routing")]
     pub routing: Option<HashMap<String, RouteSpec>>,
     pub budget: Option<BudgetConfig>,
+}
+
+/// #509 — deserialize `[llm.routing]` entry by entry so a value of the wrong
+/// shape names its phase. toml's own error renders only the offending line,
+/// never the enclosing `[llm.routing]` table, so the key path has to come from
+/// here.
+fn deserialize_routing<'de, D>(
+    deserializer: D,
+) -> Result<Option<HashMap<String, RouteSpec>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct RoutingVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for RoutingVisitor {
+        type Value = HashMap<String, RouteSpec>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a table of phase = provider name or [provider names]")
+        }
+
+        fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+        where
+            M: serde::de::MapAccess<'de>,
+        {
+            let mut routing = HashMap::new();
+            while let Some(phase) = map.next_key::<String>()? {
+                let value = map.next_value::<toml::Value>()?;
+                let spec = RouteSpec::try_from(value).map_err(|e| {
+                    serde::de::Error::custom(format!("[llm.routing] phase '{phase}' {e}"))
+                })?;
+                routing.insert(phase, spec);
+            }
+            Ok(routing)
+        }
+    }
+
+    deserializer.deserialize_map(RoutingVisitor).map(Some)
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -784,6 +856,47 @@ type = "mock"
             routing["implement"].providers(),
             vec!["deepseek".to_string()]
         );
+    }
+
+    // ── #509 — invalid [llm.routing] values name the phase and the fix ──
+
+    /// Load a config whose `[llm.routing]` body is `body` and return the error.
+    fn routing_error(body: &str) -> String {
+        let toml_str = format!(
+            "[llm]\ndefault = \"mock\"\n\n[llm.routing]\n{body}\n\n[providers.mock]\ntype = \"mock\"\n"
+        );
+        ForgeConfig::from_toml_str(&toml_str)
+            .expect_err("invalid [llm.routing] value must fail config load")
+            .to_string()
+    }
+
+    fn assert_routing_error(body: &str, got: &str) {
+        let err = routing_error(body);
+        // The key path and the phase, not just toml's rendering of the value.
+        assert!(err.contains("llm.routing"), "{body}: {err}");
+        assert!(err.contains("phase 'plan'"), "{body}: {err}");
+        assert!(
+            err.contains("must be a provider name or a list of provider names"),
+            "{body}: {err}"
+        );
+        assert!(err.contains(got), "{body}: {err}");
+        // The #508 form leaked serde's internal type name instead.
+        assert!(!err.contains("untagged enum"), "{body}: {err}");
+    }
+
+    #[test]
+    fn routing_rejects_integer_value() {
+        assert_routing_error("plan = 7", "(got integer)");
+    }
+
+    #[test]
+    fn routing_rejects_table_value() {
+        assert_routing_error("plan = { a = 1 }", "(got table)");
+    }
+
+    #[test]
+    fn routing_rejects_non_string_chain_entries() {
+        assert_routing_error("plan = [1, 2]", "(got array of integer)");
     }
 
     #[test]
