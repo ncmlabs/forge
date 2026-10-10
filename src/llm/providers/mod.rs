@@ -93,7 +93,15 @@ pub fn build_provider(name: &str, config: &ProviderConfig) -> Result<BoxedProvid
             )?))
         }
 
-        "mock" => Ok(Arc::new(mock::MockProvider::new(name))),
+        "mock" => {
+            // A mock provider bills nothing by default, but a config that prices
+            // it makes the cost-tracking paths testable offline (#475).
+            let mut provider = mock::MockProvider::new(name);
+            if let Some(caps) = &config.capabilities {
+                provider = provider.with_cost(caps.cost_per_1k_input, caps.cost_per_1k_output);
+            }
+            Ok(Arc::new(provider))
+        }
 
         other => Err(format!("unknown provider type '{}' for '{}'", other, name)),
     }

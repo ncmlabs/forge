@@ -1,0 +1,4 @@
+# Diagnostics-only fixture for `forge check` exit-code tests (#475): `done` has
+# no outgoing transitions, so the states checker emits W041 and nothing else.
+states Phase
+  idle -> done

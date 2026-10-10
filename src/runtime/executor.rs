@@ -144,6 +144,12 @@ pub struct TaskExecutor {
     pool_map: HashMap<String, PoolDecl>,
     endpoint_map: HashMap<String, EndpointDecl>,
     output: Arc<Mutex<Vec<String>>>,
+    /// Echo `say` lines to stdout (default true). `forge run --json` turns this
+    /// off so the JSON envelope is the only thing on stdout (#475).
+    stdout_echo: bool,
+    /// Accumulates LLM cost for a single `forge run` (#475). Shared with
+    /// spawned children so the envelope's `cost` covers the whole run.
+    cost_tracker: Option<crate::llm::cost_tracker::CostTracker>,
     agent_context: Option<Arc<Mutex<AgentContext>>>,
     timer_engine: Option<Arc<Mutex<TimerEngine>>>,
     storage: Option<crate::runtime::storage::SharedStorage>,
@@ -192,6 +198,8 @@ impl Clone for TaskExecutor {
             pool_map: self.pool_map.clone(),
             endpoint_map: self.endpoint_map.clone(),
             output: self.output.clone(),
+            stdout_echo: self.stdout_echo,
+            cost_tracker: self.cost_tracker.clone(),
             agent_context: self.agent_context.clone(),
             timer_engine: self.timer_engine.clone(),
             storage: self.storage.clone(),
@@ -258,6 +266,8 @@ impl TaskExecutor {
             pool_map,
             endpoint_map,
             output: Arc::new(Mutex::new(Vec::new())),
+            stdout_echo: true,
+            cost_tracker: None,
             agent_context: None,
             timer_engine: None,
             storage: None,
@@ -420,6 +430,34 @@ impl TaskExecutor {
     /// check see the whole tree's output.
     pub fn with_shared_output(mut self, output: Arc<Mutex<Vec<String>>>) -> Self {
         self.output = output;
+        self
+    }
+
+    /// Echo `say` output to stdout (default `true`). `forge run --json` sets
+    /// `false` so the program's `say` lines stay out of stdout and appear only
+    /// in the envelope's `data.output` (#475). Spawned children inherit it.
+    pub fn with_stdout_echo(mut self, echo: bool) -> Self {
+        self.stdout_echo = echo;
+        self
+    }
+
+    /// Accumulate LLM cost for the run (#475). The tracker is shared with
+    /// spawned children and pool workers so the envelope reports the whole run.
+    pub fn with_cost_tracker(mut self, tracker: crate::llm::cost_tracker::CostTracker) -> Self {
+        self.cost_tracker = Some(tracker);
+        self
+    }
+
+    /// Inherit a parent run's cost tracker, if it has one (#475). `None` leaves
+    /// the executor untracked rather than clearing an existing tracker, so a
+    /// child built before the tracker was attached keeps working.
+    pub fn with_cost_tracker_opt(
+        mut self,
+        tracker: Option<crate::llm::cost_tracker::CostTracker>,
+    ) -> Self {
+        if let Some(tracker) = tracker {
+            self.cost_tracker = Some(tracker);
+        }
         self
     }
 
@@ -1047,6 +1085,15 @@ impl TaskExecutor {
 
     /// Run the program starting from `fn main`, or from a `system` declaration
     /// if no `fn main` is present.
+    /// Accumulate an LLM call's cost into the run tracker (#475), when one is
+    /// attached. Budget enforcement is unchanged: the run path does not abort
+    /// on `BudgetError`, the tracker only feeds the JSON envelope's `cost`.
+    fn track_cost(&self, cost_usd: f32) {
+        if let Some(ref tracker) = self.cost_tracker {
+            let _ = tracker.record_cost(cost_usd);
+        }
+    }
+
     pub async fn run(&self) -> Result<ConfidentValue, RuntimeError> {
         // Try fn main first
         let main_decl = self.program.items.iter().find_map(|item| match &item.node {
@@ -1165,7 +1212,9 @@ impl TaskExecutor {
                     if let Some(ref tracer) = self.tracer {
                         tracer.say(&text);
                     }
-                    println!("{}", text);
+                    if self.stdout_echo {
+                        println!("{}", text);
+                    }
                     self.output.lock().unwrap().push(text);
                 }
 
@@ -1757,7 +1806,10 @@ impl TaskExecutor {
                         // Note: a detached child may print after `forge run`
                         // checks the buffer — the #437 warning only reflects
                         // output observed at fn-main completion.
-                        let child_process = child_process.with_shared_output(self.output.clone());
+                        let child_process = child_process
+                            .with_shared_output(self.output.clone())
+                            .with_stdout_echo(self.stdout_echo)
+                            .with_cost_tracker_opt(self.cost_tracker.clone());
                         tokio::spawn(async move {
                             let mut child_process = child_process;
                             let _ = child_process.run().await;
@@ -1768,8 +1820,10 @@ impl TaskExecutor {
                         // Share our output buffer so the parent's `outputs()`
                         // includes child `say` lines (#437 — `forge run`
                         // must be able to see the whole program's output).
-                        let mut child_process =
-                            child_process.with_shared_output(self.output.clone());
+                        let mut child_process = child_process
+                            .with_shared_output(self.output.clone())
+                            .with_stdout_echo(self.stdout_echo)
+                            .with_cost_tracker_opt(self.cost_tracker.clone());
                         child_process.run().await?;
                     }
 
@@ -2498,6 +2552,7 @@ impl TaskExecutor {
                                         })?;
 
                                     // Emit trace event for cost tracking
+                                    self.track_cost(resp.cost_usd);
                                     if let Some(ref tracer) = self.tracer {
                                         tracer.llm_response(&LLMResponseInfo {
                                             operation: "embed",
@@ -2583,6 +2638,7 @@ impl TaskExecutor {
                                         .collect();
 
                                     // Emit trace event for cost tracking
+                                    self.track_cost(resp.cost_usd);
                                     if let Some(ref tracer) = self.tracer {
                                         tracer.llm_response(&LLMResponseInfo {
                                             operation: "search",
@@ -2673,7 +2729,10 @@ impl TaskExecutor {
                                     &self.program,
                                     self.providers.clone(),
                                     self.tracer.clone(),
-                                )?;
+                                )?
+                                .with_shared_output(self.output.clone())
+                                .with_stdout_echo(self.stdout_echo)
+                                .with_cost_tracker_opt(self.cost_tracker.clone());
                                 return pool.send(&event, payload).await;
                             }
                         }
@@ -2923,7 +2982,10 @@ impl TaskExecutor {
                             &self.program,
                             self.providers.clone(),
                             self.tracer.clone(),
-                        )?;
+                        )?
+                        .with_shared_output(self.output.clone())
+                        .with_stdout_echo(self.stdout_echo)
+                        .with_cost_tracker_opt(self.cost_tracker.clone());
                         let event = arg_vals
                             .first()
                             .map(|v| format!("{}", v.value))
@@ -3380,6 +3442,7 @@ impl TaskExecutor {
                         .await
                         .map_err(|e| RuntimeError::LLMError(e.to_string()))?;
                     let confidence = response.estimate_confidence();
+                    self.track_cost(response.cost_usd);
 
                     if let Some(ref tracer) = self.tracer {
                         tracer.llm_response(&LLMResponseInfo {
@@ -3432,6 +3495,7 @@ impl TaskExecutor {
                         .await
                         .map_err(|e| RuntimeError::LLMError(e.to_string()))?;
                     let confidence = response.estimate_confidence();
+                    self.track_cost(response.cost_usd);
 
                     if let Some(ref tracer) = self.tracer {
                         tracer.llm_response(&LLMResponseInfo {

@@ -1,0 +1,16 @@
+# Fixture for `forge send --json` (#475): `ping` says and gives without an LLM
+# call, `ask` spends one. Both must keep the handler's `say` out of stdout in
+# JSON mode.
+use
+  llm.reason
+
+agent sayer
+  on ping
+    say "handler says ping"
+    give "pong"
+
+  on ask
+    answer = reason "ping?"
+    when answer.sure -> give answer
+    when answer.unsure -> give "unsure"
+    else -> give "failed"

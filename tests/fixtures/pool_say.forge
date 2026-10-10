@@ -1,0 +1,23 @@
+# Fixture for `forge run --json` (#475): a pool of LLM workers that both `say`
+# and spend. Their lines must land in `data.output` (never on stdout) and their
+# spend in `cost`.
+use
+  llm.reason
+
+task Worker
+  needs input: Text
+  gives Text
+  do
+    answer = reason "Echo: {input}"
+    when answer.sure -> say "worker says {answer}"
+    when answer.unsure -> say "worker unsure"
+    else -> say "worker failed"
+    give "done"
+
+pool workers
+  workers: Worker * 2
+  strategy: all
+
+fn main
+  result = workers.send("go", "x")
+  say "pool done"

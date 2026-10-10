@@ -1,0 +1,11 @@
+# Fixture for `forge run --json` (#475): the only output comes from a spawned
+# agent's `on start`, which must land in `data.output` and never on stdout.
+agent talker
+  on start
+    say "CHILD-SAYS"
+
+  if stuck for 3 turns
+    escalate to human
+
+fn main
+  spawn talker as "t"

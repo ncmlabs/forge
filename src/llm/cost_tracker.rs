@@ -27,8 +27,13 @@ impl CostTracker {
             .fetch_add(resp.tokens_in, Ordering::Relaxed);
         self.total_tokens_out
             .fetch_add(resp.tokens_out, Ordering::Relaxed);
+        self.record_cost(resp.cost_usd)
+    }
 
-        let microdollars = (resp.cost_usd * 1_000_000.0) as u64;
+    /// Accumulate a cost with no `CompletionResponse` behind it (embeddings,
+    /// which report `tokens_used` + `cost_usd` only).
+    pub fn record_cost(&self, cost_usd: f32) -> Result<(), BudgetError> {
+        let microdollars = (cost_usd * 1_000_000.0) as u64;
         let new_total = self
             .total_cost_usd
             .fetch_add(microdollars, Ordering::Relaxed)

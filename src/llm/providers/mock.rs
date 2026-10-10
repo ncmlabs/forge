@@ -58,6 +58,21 @@ impl MockProvider {
         self
     }
 
+    /// Price this mock like a paid provider: `complete` then reports the
+    /// configured per-1K-token cost instead of `0.0`, so cost-tracking paths
+    /// (run, spawn, pool, send) are testable end to end without a real
+    /// provider. `[providers.*.capabilities]` in the config reaches this
+    /// through `build_provider` (#475). `None` keeps the current price.
+    pub fn with_cost(mut self, per_1k_input: Option<f32>, per_1k_output: Option<f32>) -> Self {
+        if let Some(cost) = per_1k_input {
+            self.caps.cost_per_1k_input_tokens = cost;
+        }
+        if let Some(cost) = per_1k_output {
+            self.caps.cost_per_1k_output_tokens = cost;
+        }
+        self
+    }
+
     /// Simulate tool call responses from the LLM.
     pub fn with_tool_call_response(mut self, tool_calls: Vec<ToolCallRequest>) -> Self {
         self.tool_call_response = Some(tool_calls);
@@ -105,15 +120,20 @@ impl LLMProvider for MockProvider {
             self.tool_call_response.clone().unwrap_or_default()
         };
 
+        let tokens_in = (req.prompt.len() / 4) as u32;
+        let tokens_out = (content.len() / 4) as u32;
+        let cost_usd = (tokens_in as f32 / 1000.0) * self.caps.cost_per_1k_input_tokens
+            + (tokens_out as f32 / 1000.0) * self.caps.cost_per_1k_output_tokens;
+
         Ok(CompletionResponse {
-            tokens_in: (req.prompt.len() / 4) as u32,
-            tokens_out: (content.len() / 4) as u32,
+            tokens_in,
+            tokens_out,
             content,
             tool_calls,
             latency_ms: 1,
             model_used: "mock-model".to_string(),
             provider_name: self.name.clone(),
-            cost_usd: 0.0,
+            cost_usd,
         })
     }
 

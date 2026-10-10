@@ -30,6 +30,13 @@ pub struct PoolExecutor {
     providers: Arc<ProviderRegistry>,
     tracer: Option<Tracer>,
     program: Program,
+    /// Wiring every worker inherits from the executor that owns the pool (#475):
+    /// where its `say` lines land, whether they echo to stdout, and which
+    /// tracker accumulates its LLM spend. Defaults match a standalone executor
+    /// (fresh buffer, echo on, untracked); `forge run --json` overrides them.
+    output: Arc<std::sync::Mutex<Vec<String>>>,
+    stdout_echo: bool,
+    cost_tracker: Option<crate::llm::cost_tracker::CostTracker>,
 }
 
 impl PoolExecutor {
@@ -70,7 +77,37 @@ impl PoolExecutor {
             providers,
             tracer,
             program: program.clone(),
+            output: Arc::new(std::sync::Mutex::new(Vec::new())),
+            stdout_echo: true,
+            cost_tracker: None,
         })
+    }
+
+    /// Share the owning run's `say` buffer, so a worker's `say` line shows up in
+    /// `TaskExecutor::outputs()` — and therefore in `forge run --json`'s
+    /// `data.output` (#475).
+    pub fn with_shared_output(mut self, output: Arc<std::sync::Mutex<Vec<String>>>) -> Self {
+        self.output = output;
+        self
+    }
+
+    /// Echo worker `say` lines to stdout (default `true`). `forge run --json`
+    /// passes `false` so only the envelope reaches stdout (#475).
+    pub fn with_stdout_echo(mut self, echo: bool) -> Self {
+        self.stdout_echo = echo;
+        self
+    }
+
+    /// Accumulate worker LLM spend into the run's tracker (#475). `None` leaves
+    /// the workers untracked, matching the spawn sites' wiring.
+    pub fn with_cost_tracker_opt(
+        mut self,
+        tracker: Option<crate::llm::cost_tracker::CostTracker>,
+    ) -> Self {
+        if let Some(tracker) = tracker {
+            self.cost_tracker = Some(tracker);
+        }
+        self
     }
 
     /// Dispatch work to the pool and resolve via the declared strategy.
@@ -165,7 +202,10 @@ impl PoolExecutor {
                         self.tracer.clone(),
                     )
                     .with_command_manager(cmd_mgr)
-                    .with_session_manager(session_mgr);
+                    .with_session_manager(session_mgr)
+                    .with_shared_output(self.output.clone())
+                    .with_stdout_echo(self.stdout_echo)
+                    .with_cost_tracker_opt(self.cost_tracker.clone());
                     let decl = task_decl.clone();
                     let args = args.to_vec();
                     join_set.spawn(async move { executor.call_task(&decl, args).await });
@@ -175,12 +215,18 @@ impl PoolExecutor {
                     let providers = self.providers.clone();
                     let tracer = self.tracer.clone();
                     let program = self.program.clone();
+                    let output = self.output.clone();
+                    let stdout_echo = self.stdout_echo;
+                    let cost_tracker = self.cost_tracker.clone();
                     let event = event.to_string();
                     let args = args.to_vec();
                     join_set.spawn(async move {
                         let process = AgentProcess::new(
                             decl, None, providers, tracer, program, None, None, None,
-                        );
+                        )
+                        .with_shared_output(output)
+                        .with_stdout_echo(stdout_echo)
+                        .with_cost_tracker_opt(cost_tracker);
                         let mut params = HashMap::new();
                         for (i, arg) in args.into_iter().enumerate() {
                             params.insert(format!("arg_{}", i), arg);
@@ -393,7 +439,10 @@ impl PoolExecutor {
             self.tracer.clone(),
         )
         .with_command_manager(cmd_mgr)
-        .with_session_manager(session_mgr);
+        .with_session_manager(session_mgr)
+        .with_shared_output(self.output.clone())
+        .with_stdout_echo(self.stdout_echo)
+        .with_cost_tracker_opt(self.cost_tracker.clone());
 
         // Look up the fallback as a task
         let task = self
