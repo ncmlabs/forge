@@ -1234,6 +1234,13 @@ A non-empty `<dir>` is refused with exit code 1 unless `--force` is given;
 `--dry-run` still applies that refusal. In every file, `{{name}}` is replaced by
 the directory's base name — that is the only substitution.
 
+Refusals write nothing, and `--dry-run` applies them too, because a preview must
+predict the run it previews:
+
+- a non-empty `<dir>` without `--force` — `<dir> is not empty; use --force to write into it`;
+- a base name outside `[A-Za-z0-9_-]` plus `.` (never leading) —
+  `project name '<n>' is not valid; use letters, digits, '-', '_' (rename the directory)`.
+
 #### `forge parse <file>`
 Parse a FORGE program and print its abstract syntax tree (AST).
 

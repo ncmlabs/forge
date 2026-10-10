@@ -123,7 +123,9 @@ pub fn render(contents: &str, name: &str) -> String {
 /// Write `template` into `dir` and return the relative paths written — or, for
 /// `dry_run`, the paths that would be written, with nothing touched.
 ///
-/// A non-empty `dir` is refused unless `force`; with `force`, only the template
+/// A non-empty `dir` is refused unless `force`, and the directory's base name
+/// must be a valid project name; both refusals apply to `dry_run` too, because
+/// a preview must predict the run it previews. With `force`, only the template
 /// files are overwritten, never anything else.
 pub fn scaffold(
     dir: &Path,
@@ -150,12 +152,14 @@ pub fn scaffold(
         }
     }
 
+    let name = project_name(dir)?;
+    validate_name(&name)?;
+
     let paths: Vec<&'static str> = files.iter().map(|(path, _)| *path).collect();
     if dry_run {
         return Ok(paths);
     }
 
-    let name = project_name(dir)?;
     std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     for (path, contents) in files {
         let target = dir.join(path);
@@ -163,6 +167,20 @@ pub fn scaffold(
             .with_context(|| format!("cannot write {}", target.display()))?;
     }
     Ok(paths)
+}
+
+/// The name lands in `forge.project.toml`, `AGENTS.md` and `main.forge` bodies,
+/// so the accepted set is deliberately narrow: `[A-Za-z0-9_-]`, plus `.` that
+/// is not leading. Anything else is refused before a single file is written —
+/// the directory is renamed, not the generated file patched.
+fn validate_name(name: &str) -> Result<()> {
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.');
+    if name.is_empty() || name.starts_with('.') || !name.chars().all(allowed) {
+        bail!(
+            "project name '{name}' is not valid; use letters, digits, '-', '_' (rename the directory)"
+        );
+    }
+    Ok(())
 }
 
 /// `{{name}}` — the target directory's base name. A target that does not exist
@@ -256,14 +274,48 @@ mod tests {
     #[test]
     fn force_writes_into_a_non_empty_directory_and_keeps_other_files() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join("keep.txt"), "mine").expect("write");
+        let project = dir.path().join("demo");
+        std::fs::create_dir(&project).expect("create dir");
+        std::fs::write(project.join("keep.txt"), "mine").expect("write");
 
-        scaffold(dir.path(), "agent", true, false).expect("forced scaffold");
-        assert!(dir.path().join("main.forge").is_file());
+        scaffold(&project, "agent", true, false).expect("forced scaffold");
+        assert!(project.join("main.forge").is_file());
         assert!(
-            dir.path().join("keep.txt").is_file(),
+            project.join("keep.txt").is_file(),
             "force overwrites template files, it never cleans the directory"
         );
+    }
+
+    #[test]
+    fn invalid_project_names_are_refused_with_nothing_written() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for name in ["bad\"name", "bad\\name", "bad name", "bäd", ".hidden"] {
+            let target = dir.path().join(name);
+            let err = scaffold(&target, "pipeline", false, false)
+                .expect_err("invalid name must be refused")
+                .to_string();
+            assert!(
+                err.contains(&format!("project name '{name}' is not valid")),
+                "{name}: {err}"
+            );
+            assert!(
+                err.contains("use letters, digits, '-', '_' (rename the directory)"),
+                "{name}: {err}"
+            );
+            assert!(!target.exists(), "{name}: a refusal writes nothing");
+        }
+    }
+
+    #[test]
+    fn names_with_dashes_underscores_and_dots_are_accepted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for name in ["my-app_2", "my.app", "App2"] {
+            let target = dir.path().join(name);
+            scaffold(&target, "pipeline", false, false).expect("scaffold");
+            let project =
+                std::fs::read_to_string(target.join("forge.project.toml")).expect("read project");
+            assert!(project.contains(&format!("name = \"{name}\"")), "{project}");
+        }
     }
 
     #[test]

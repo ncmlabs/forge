@@ -135,6 +135,48 @@ fn expected_txt_matches_across_line_endings() {
 }
 
 #[test]
+fn init_refuses_an_invalid_project_name() {
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    for name in ["bad\"name", "bad\\name", "bad name", "bäd", ".hidden"] {
+        let output = forge(dir.path())
+            .args(["init", name])
+            .output()
+            .expect("init run");
+        assert_eq!(output.status.code(), Some(1), "{name} must exit 1");
+        let stderr = stderr_of(&output);
+        assert!(
+            stderr.contains(&format!("project name '{name}' is not valid")),
+            "{name}: {stderr}"
+        );
+        assert!(
+            stderr.contains("use letters, digits, '-', '_' (rename the directory)"),
+            "{name}: {stderr}"
+        );
+        assert!(
+            !dir.path().join(name).exists(),
+            "{name}: a refusal writes nothing"
+        );
+    }
+}
+
+#[test]
+fn init_accepts_dashes_underscores_and_dots_in_the_name() {
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    for name in ["my-app_2", "my.app"] {
+        let output = forge(dir.path())
+            .args(["init", name])
+            .output()
+            .expect("init run");
+        assert!(output.status.success(), "{name}: {}", stderr_of(&output));
+        let project = std::fs::read_to_string(dir.path().join(name).join("forge.project.toml"))
+            .expect("read project");
+        assert!(project.contains(&format!("name = \"{name}\"")), "{project}");
+    }
+}
+
+#[test]
 fn init_refuses_a_non_empty_directory_without_force() {
     let dir = tempfile::tempdir().expect("tempdir");
     let project = dir.path().join("demo");
