@@ -232,6 +232,20 @@ enum Command {
         #[command(subcommand)]
         action: StoreAction,
     },
+    /// Scaffold a new project from a template (issue #481)
+    Init {
+        /// Directory to scaffold into
+        dir: PathBuf,
+        /// Template to scaffold
+        #[arg(long, default_value = "pipeline")]
+        template: String,
+        /// Write into a non-empty directory
+        #[arg(long)]
+        force: bool,
+        /// Print the files that would be written, and write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -302,6 +316,7 @@ impl Command {
             Command::Fleet { .. } => "fleet",
             Command::Wake { .. } => "wake",
             Command::Store { .. } => "store",
+            Command::Init { .. } => "init",
         }
     }
 }
@@ -1029,6 +1044,35 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
         Command::Store { action } => {
             run_store_command(action, out)?;
         }
+        Command::Init {
+            dir,
+            template,
+            force,
+            dry_run,
+        } => {
+            let files = forge::init::scaffold(&dir, &template, force, dry_run)?;
+            let verb = if dry_run {
+                "would write into"
+            } else {
+                "created"
+            };
+            if !out.json {
+                println!("{verb} {}:", dir.display());
+                for path in &files {
+                    println!("  {path}");
+                }
+            }
+            out.done(&forge::cli_output::Envelope::success(
+                "init",
+                serde_json::json!({
+                    "dir": dir.display().to_string(),
+                    "template": template,
+                    "dry_run": dry_run,
+                    "files": files,
+                }),
+                format!("{verb} {}", dir.display()),
+            ));
+        }
     }
 
     Ok(())
@@ -1514,7 +1558,7 @@ fn build_skill_executor_inner(
 
 /// `forge test --expect <file>`: replay in a child process so the program's
 /// own stdout can be captured, then require it to match `<file>`.
-/// Trailing whitespace is ignored on both sides.
+/// Trailing whitespace and line endings are ignored on both sides.
 ///
 /// The child always runs in human mode: its stdout *is* the program output, so
 /// `FORGE_OUTPUT` is cleared for the child and JSON mode reports the comparison
@@ -1551,7 +1595,7 @@ fn check_expected_output(
     }
     let expected = std::fs::read_to_string(expect)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", expect.display()))?;
-    let matched = actual.trim_end() == expected.trim_end();
+    let matched = output_matches(&actual, &expected);
     if !matched && !out.json {
         eprintln!(
             "output mismatch: {} does not match {}",
@@ -1589,6 +1633,13 @@ fn check_expected_output(
         .with_data(data)
     };
     out.done(&env);
+}
+
+/// `--expect` equality: trailing whitespace is ignored, and so is the line
+/// ending — Windows stdout is CRLF while a committed `expected.txt` is LF, and
+/// either side may have been written on either platform.
+fn output_matches(actual: &str, expected: &str) -> bool {
+    actual.replace("\r\n", "\n").trim_end() == expected.replace("\r\n", "\n").trim_end()
 }
 
 /// Line-by-line diff, capped so a large mismatch stays readable.

@@ -1,0 +1,30 @@
+use
+  llm.reason
+
+states Phase
+  idle -> active
+  active -> idle
+
+agent greeter
+  lifecycle: Phase
+  memory
+    topic: Text
+    greeted: Number
+  on start
+    requires lifecycle == idle on fail: give "already greeted"
+    memory.greeted = memory.greeted + 1
+    reply = reason "Write a one-line greeting about {memory.topic}"
+    when reply.sure -> say reply
+    when reply.unsure -> say "an uncertain greeting about {memory.topic}"
+    else -> say "hello"
+    transition to active
+  if stuck for 3 turns
+    escalate to human
+
+# fn main spawns the agent and hands it its first message through `memory`.
+# A spawned agent's `on start` fires immediately; fn main waits for it to
+# retire. Spawn options sit at i3 (6 spaces) inside fn main's i1 body.
+fn main
+  say "agent: spawning greeter with an initial message"
+  spawn greeter as "greeter"
+      with memory topic: "forge init"
