@@ -65,6 +65,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- Pool workers, spawned agents and `forge send` now obey the JSON envelope the
+  same way `fn main` does (#475): a pool worker's or handler's `say` lands in
+  `data.output` instead of stdout (which broke the one-document contract), their
+  LLM spend is in `cost` instead of missing or `null`, and `forge send` reports
+  a measured cost (`0.0` for a deterministic handler) rather than an unknown one.
+- Usage errors exit `1` in both modes instead of clap's `2` (#475), so exit `2`
+  means "warnings only" and nothing else. In JSON mode a bad command line
+  (`--json` in argv or `FORGE_OUTPUT=json`) prints one
+  `{"status":"error","error":{"type":"usage", ...}}` envelope on stdout with a
+  `run forge <cmd> --help` suggestion; `--help`/`--version` still exit `0`.
+- `forge check --json` reports `line`/`col` as `null` for a diagnostic whose
+  file was not among the parsed sources, instead of a fabricated `1:1` (#475).
 - Diagnostic rendering (#474): reports name the real source file instead of
   `<unknown>` (the ariadne source id was a bare span), and colour is emitted
   only when stderr is an interactive terminal, so piped or redirected output
