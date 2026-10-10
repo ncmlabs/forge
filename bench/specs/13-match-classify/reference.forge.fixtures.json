@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "081ff95ffa122a0b4367033adb4eebb63ef0926c2b03b97c856d3864c6eff5e1",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Classify the following into exactly one of these categories: Buy, Support, Other\n\nInput: I need help with my order\n\nResp",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

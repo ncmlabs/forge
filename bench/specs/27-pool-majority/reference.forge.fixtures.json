@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "df1fb723c5aabcba2d0c3316036cd60d8eb6ea589542c32543e181e70e0dc5e5",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Is this claim true? the sky is blue",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "df1fb723c5aabcba2d0c3316036cd60d8eb6ea589542c32543e181e70e0dc5e5",
+      "index": 1,
+      "provider": "mock",
+      "prompt_preview": "Is this claim true? the sky is blue",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "df1fb723c5aabcba2d0c3316036cd60d8eb6ea589542c32543e181e70e0dc5e5",
+      "index": 2,
+      "provider": "mock",
+      "prompt_preview": "Is this claim true? the sky is blue",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

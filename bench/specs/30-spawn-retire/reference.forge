@@ -1,0 +1,29 @@
+agent specialist
+  on start
+    say "specialist up"
+  if stuck for 3 turns
+    escalate to human
+
+agent foreman
+  memory
+    child: Text
+  on dispatch(topic: Text)
+    spawned = spawn specialist as "spec_{topic}"
+    memory.child = spawned
+    say "spawned {spawned}"
+  on cleanup(topic: Text)
+    existing = find "spec_{topic}"
+    retire "spec_{topic}"
+    say "retired"
+
+task plan_for
+  needs topic: Text
+  gives Text
+  do
+    plan = reason "Plan the work for {topic}."
+    when plan.sure -> give plan
+    else -> give "no plan"
+
+fn main
+  say "foreman ready"
+  say plan_for("tides")

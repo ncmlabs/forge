@@ -1,0 +1,21 @@
+flow review
+  needs topic: Text
+  gives Text
+
+  stage facts
+    notes = reason "List two short facts about {topic}."
+
+  stage risks
+    notes = reason "List one short risk about {topic}."
+
+  stage uses
+    notes = reason "List one short use of {topic}."
+
+  stage assemble
+    needs facts.notes, risks.notes, uses.notes
+    summary = reason "Summarize {facts.notes} {risks.notes} {uses.notes}"
+    when summary.sure -> give "review: {summary}"
+    else -> give "review unavailable"
+
+fn main
+  say review("tides")

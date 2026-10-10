@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "320f1e681c782fb28d8de77ce853fa0767528b3787ac92eb95b39982c9a9a978",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write a note about tides.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

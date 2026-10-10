@@ -306,21 +306,19 @@ impl Command {
     }
 }
 
-/// Stack for the thread that drives the runtime. The executor polls a program's
-/// whole future tree on the calling thread, and Windows sizes the main thread's
-/// stack at 1 MiB, so a deep program (flow, pool, agent) overflows it (observed
-/// as 0xC00000FD from a `forge run` child process, #475; `ulimit -s 1024`
-/// reproduces it on Linux). CI sets `RUST_MIN_STACK=8388608` for the same
-/// reason, but that only covers threads cargo and tokio spawn, not `main`.
-/// Matching the 8 MiB default Linux and macOS already give `main` keeps
-/// `forge run` platform-independent.
+/// The executor polls a program's whole future tree on the calling thread, and
+/// Windows sizes the main thread's stack at 1 MiB — deep flows, pools and
+/// agents overflow it and abort (`ulimit -s 1024` reproduces this on Linux).
+/// Run the CLI on a thread whose stack we choose instead.
+// ponytail: 8 MiB, and it matches CI's RUST_MIN_STACK. The upgrade path is to
+// flatten the executor's future nesting so no stack bump is needed at all.
 const MAIN_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 fn main() -> anyhow::Result<()> {
     let handle = std::thread::Builder::new()
         .name("forge".to_string())
         .stack_size(MAIN_STACK_BYTES)
-        .spawn(cli_main)
+        .spawn(run)
         .map_err(|e| anyhow::anyhow!("cannot start the forge runtime: {e}"))?;
     match handle.join() {
         Ok(result) => result,
@@ -330,7 +328,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[tokio::main]
-async fn cli_main() -> anyhow::Result<()> {
+async fn run() -> anyhow::Result<()> {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => usage_exit(e),
@@ -338,7 +336,7 @@ async fn cli_main() -> anyhow::Result<()> {
     let out = forge::cli_output::OutputMode::from_flags(cli.json, cli.fields);
     let command = cli.command;
     let name = command.name();
-    if let Err(e) = run(command, &out).await {
+    if let Err(e) = dispatch(command, &out).await {
         out.fail(name, &e);
     }
     Ok(())
@@ -394,7 +392,8 @@ fn argv_subcommand() -> Option<String> {
     std::env::args().skip(1).find(|arg| names.contains(arg))
 }
 
-async fn run(command: Command, out: &forge::cli_output::OutputMode) -> anyhow::Result<()> {
+/// Dispatch a parsed command to its implementation.
+async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyhow::Result<()> {
     match command {
         Command::Parse { file } => {
             let source = read_source(&file)?;

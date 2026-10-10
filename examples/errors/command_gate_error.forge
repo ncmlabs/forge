@@ -1,0 +1,13 @@
+# command gate expected error: the output of a test command feeds an oracle
+# acceptance verdict before the exit status is checked (issue #431 / #484).
+# A failed `cargo test` must never be classified into a passing acceptance.
+use
+  llm.classify
+
+task accept_tests
+  gives Text
+  do
+    tests = command ["cargo", "test"] timeout 10m
+    verdict = classify "Did the test suite pass? Output: {tests.stdout}" into ["pass", "fail"]
+    when verdict.sure -> give verdict
+    else -> give "unknown"

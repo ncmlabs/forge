@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "747254f15bb7d25bb90808b1eaa5acd9442ca83686b1bb55fcaf998015bd4c14",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Give one short tag for Databases.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

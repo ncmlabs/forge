@@ -1,0 +1,36 @@
+event Intake
+  topic: Text
+
+event Routed
+  topic: Text
+
+event Completed
+  topic: Text
+
+agent router
+  subscribe Intake
+  on Intake(topic: Text)
+    say "routing {topic}"
+    emit Routed(topic: topic)
+
+agent finisher
+  subscribe Routed
+  on Routed(topic: Text)
+    say "finishing {topic}"
+    emit Completed(topic: topic)
+
+agent logger
+  subscribe Completed
+  on Completed(topic: Text)
+    say "done {topic}"
+
+task audit_line
+  needs topic: Text
+  gives Text
+  do
+    result = reason "Write an audit line about {topic}."
+    when result.sure -> give result
+    else -> give "no audit"
+
+fn main
+  say audit_line("tides")

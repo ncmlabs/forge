@@ -1,0 +1,21 @@
+agent gatekeeper
+  memory
+    approvals: Number
+  on approve
+    memory.approvals = memory.approvals + 1
+    say "approvals {memory.approvals}"
+  on publish(topic: Text)
+    requires memory.approvals > 0 on fail: give "nothing approved"
+    say "publishing {topic}"
+
+task draft_for
+  needs topic: Text
+  gives Text
+  do
+    result = reason "Draft one line about {topic}."
+    when result.sure -> give result
+    else -> give "no draft"
+
+fn main
+  say "gate ready"
+  say draft_for("tides")

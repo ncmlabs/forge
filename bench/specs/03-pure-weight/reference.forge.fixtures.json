@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "ed313d562cd3679b963423afe988c2339938d30c0af14bb36b8c573b50ebcfb6",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write one short note about a medium workload.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

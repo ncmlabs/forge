@@ -1,0 +1,3 @@
+difficulty = "medium"
+features = ["task", "match"]
+oracle_calls = 1

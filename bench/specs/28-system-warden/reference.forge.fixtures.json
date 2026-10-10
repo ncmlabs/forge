@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "6425151b99f469f3b5b512d220aa2f6a080b8cbfadf36800432c9ba18a637dc3",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Summarize a review desk run.",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}
