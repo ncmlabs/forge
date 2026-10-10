@@ -3033,7 +3033,7 @@ A command line clap cannot parse exits `1` in both modes — never clap's defaul
 | `parse` | `{file, ast}` (the debug AST tree) |
 | `check` | `{files, diagnostics:[{code, severity, file, line, col, end_line, end_col, message, label, help}]}` — `line`/`col` are `null` when the diagnostic names a file that was not parsed (no span to translate), never a fake `1:1` |
 | `explain` | `{code, title, explain}` or `{codes:[{code, title}]}` with `--list` |
-| `run`, `trace`, `test` | `{file, output:[say lines], result}` — `say` never writes to stdout in JSON mode, wherever it runs: `fn main`, a spawned agent, or a pool worker (their lines join the same `output`). `cost` covers the whole run, spawned children and pool workers included. `test` replays recorded fixtures (#478) and adds `{fixtures, expect, matched}` with `--expect` |
+| `run`, `trace`, `test` | `{file, output:[say lines], result, summary}` — `say` never writes to stdout in JSON mode, wherever it runs: `fn main`, a spawned agent, or a pool worker (their lines join the same `output`). `cost` covers the whole run, spawned children and pool workers included. `summary` is the end-of-run summary below. `test` replays recorded fixtures (#478) and adds `{fixtures, expect, matched}` with `--expect` |
 | `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], total_tokens_in, total_tokens_out, estimated_cost_usd}` |
 | `build` | `{path, output_name, binary_path, program_kind, release, dry_run, built}` |
 | `export` | `{agent, layers, output, entries}` |
@@ -3042,6 +3042,39 @@ A command line clap cannot parse exits `1` in both modes — never clap's defaul
 | `send` | `{file, agent, event, result, output}` — the handler's `say` lines are in `output`, never on stdout, and `cost` is the dispatch's measured LLM spend (`0.0` when the handler made no LLM call) |
 | `wake` | `{action, ...}` per subcommand (`rotate` includes the one-time `secret`) |
 | `store recover` | `{action, root, dry_run, healthy, broken, stores:[...]}` |
+
+### Run summary
+
+Every executed `run`, `trace` and `test` ends with its economics and trust signals (#479). Human mode prints one line to **stderr**, after the program's own output, so stdout stays the program's:
+
+```text
+12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1 warden event · 3.4s
+```
+
+A program that made no LLM call prints `0 LLM calls · 0 tok · $0.000 · 0.1s` — the confidence part is omitted (no call to measure), the warden part when the warden emitted nothing. Token counts stay exact below 1000 and use one decimal in `k` above it; the duration is wall-clock time and rounded to one decimal. `FORGE_LOG_LEVEL=quiet` silences the line.
+
+JSON mode prints no summary line: the same data is `data.summary`.
+
+```json
+{
+  "llm_calls": 12,
+  "tokens_in": 20000,
+  "tokens_out": 11200,
+  "cost_usd": 0.041,
+  "confidence": { "p50": 0.86, "min": 0.42 },
+  "warden_events": 1,
+  "duration_ms": 3400
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `llm_calls` | LLM calls the run made, spawned children and pool workers included |
+| `tokens_in`, `tokens_out` | tokens those calls were billed for; `0` on paths with no LLM call |
+| `cost_usd` | same USD as the envelope's `cost` |
+| `confidence` | `{p50, min}` over the run's LLM confidences (Principle I — the spread is shown, not hidden), `null` when the run made no LLM call |
+| `warden_events` | `ward_action` / `supervision_tree` events the warden emitted |
+| `duration_ms` | wall-clock time of the command |
 
 ### `--fields`
 

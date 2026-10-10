@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- End-of-run summary (#479): `forge run`, `forge trace` and `forge test` end
+  with the run's economics and trust signals — one line on stderr in human mode
+  (`12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1
+  warden event · 3.4s`, so program stdout stays clean) and `data.summary`
+  (`{llm_calls, tokens_in, tokens_out, cost_usd, confidence:{p50, min}|null,
+  warden_events, duration_ms}`) in JSON mode. Counters come from the trace
+  events the runtime already emits, spawned children and pool workers included;
+  a zero-LLM run reports `0 LLM calls · 0 tok · $0.000` with no confidence
+  spread, and `FORGE_LOG_LEVEL=quiet` silences the human line. Documented in
+  `docs/forge-reference.md` §27.
 - JSON output envelope and semantic exit codes (#475): every in-scope command
   (`parse`, `check`, `explain`, `run`, `trace`, `test`, `cost`, `build`,
   `export`, `import`, `inspect`, `send`, `wake`, `store`) accepts a global `--json` /
@@ -94,6 +104,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- The JSON envelope's `duration_ms` was ~0 for every command (#479): the clock
+  started lazily inside `emit`, so it measured the time from `emit` to itself.
+  It now starts as the first statement of `main` and reports the command's
+  wall-clock time (a run whose `command` sleeps 200 ms reports ≥ 200 ms).
 - Pool workers, spawned agents and `forge send` now obey the JSON envelope the
   same way `fn main` does (#475): a pool worker's or handler's `say` lands in
   `data.output` instead of stdout (which broke the one-document contract), their

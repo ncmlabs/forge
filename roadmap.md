@@ -71,7 +71,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | [#476](https://github.com/ncmlabs/forge/issues/476) | cli: forge schema and forge help --json introspection | Open |
 | [#477](https://github.com/ncmlabs/forge/issues/477) | cli: forge run --dry-run static execution plan (LLM sites, cost, effects) | Open |
 | [#478](https://github.com/ncmlabs/forge/issues/478) | test: forge run --record and forge test replay through MockProvider | Open |
-| [#479](https://github.com/ncmlabs/forge/issues/479) | runtime: end-of-run summary (calls, tokens, cost, confidence, warden events) | Open |
+| [#479](https://github.com/ncmlabs/forge/issues/479) | runtime: end-of-run summary (calls, tokens, cost, confidence, warden events) | Done ✅ |
 | [#489](https://github.com/ncmlabs/forge/issues/489) | ci: clippy -D warnings fails on stable 1.99 (double_must_use via async-trait 0.1.89) | Done ✅ |
 | [#507](https://github.com/ncmlabs/forge/issues/507) | runtime: background command status()/output() confidence follows exit status | Done ✅ |
 
