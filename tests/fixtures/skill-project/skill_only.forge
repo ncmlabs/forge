@@ -1,0 +1,8 @@
+use
+  skill.greeter.hello
+
+agent greeter
+  on start(who: Text)
+    greeting = skill.greeter.hello(who)
+    when greeting.sure -> say greeting
+    else -> say "greeting uncertain"

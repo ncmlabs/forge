@@ -1,0 +1,12 @@
+use
+  skill.greeter.hello
+
+agent greeter
+  lifecycle: GreetingPhase
+
+  on start(who: Text)
+    requires lifecycle == idle on fail: silent
+    greeting = skill.greeter.hello(who)
+    when greeting.sure -> say greeting
+    else -> say "greeting uncertain"
+    transition to greeting

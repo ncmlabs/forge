@@ -339,3 +339,26 @@ check = "ok"
 name = "CLI json: spawned child that says (#475)"
 paths = ["tests/fixtures/spawn_child_say.forge"]
 check = "ok"
+
+[[cases]]
+name = "check --manifest: declared skill + shared states (#495)"
+paths = [
+  "tests/fixtures/skill-project/main.forge",
+  "tests/fixtures/skill-project/states.forge",
+]
+check = "ok"
+merge = true
+manifest = "tests/fixtures/skill-project/forge.project.toml"
+
+[[cases]]
+name = "check --manifest: skill-only source (#495)"
+paths = ["tests/fixtures/skill-project/skill_only.forge"]
+check = "ok"
+manifest = "tests/fixtures/skill-project/forge.project.toml"
+
+[[cases]]
+name = "check --manifest: undeclared skill still errors (#495)"
+paths = ["tests/fixtures/skill-project/undeclared.forge"]
+check = "error"
+expect = ["unknown capability 'skill.ghost.boo'"]
+manifest = "tests/fixtures/skill-project/forge.project.toml"
