@@ -108,6 +108,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clippy `double_must_use` errors on stable 1.99 from `async-trait` expansion;
   bumped `async-trait` in `Cargo.lock` (#489).
 - RUSTSEC-2026-0285: bumped `rustls` to 0.23.45 in `Cargo.lock` (#472).
+- Background `command.status()` / `command.output()` (#507): confidence now
+  follows the process outcome at both record and field level — 0.9 when the
+  process completed successfully, 0.3 when it failed, was cancelled or timed
+  out, and 0.5 while it is still running. A `when h.sure` guard on a failed,
+  cancelled or timed-out background result no longer takes the success branch.
 
 ## [0.2.0] - 2026-08-31
 

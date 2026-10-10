@@ -6,8 +6,8 @@ task run_cancel
     command.cancel(handle)
     wait = command "sleep 0.2"
     status = command.status(handle)
-    when status.sure -> give status.status
-    else -> give "unknown"
+    when status.sure -> give "unexpected_sure"
+    else -> give status.status
 
 fn main
   say run_cancel()
