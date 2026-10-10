@@ -129,6 +129,19 @@ task categorize_for_recall
     when result.unsure -> give result
     else -> give "GENERAL"
 
+# #496: `batch_assess` called `assess_detailed`, which is an event handler and
+# therefore not callable. The assessment body lives here so the handler and the
+# batch loop share one implementation.
+task run_assessment
+  needs test_input: Text, expected: Text
+  gives AssessmentResult or Text
+  do
+    categories = categorize_for_recall("{test_input} expects {expected}")
+    prior = recall "{categories} {test_input}"
+    when prior.sure -> give predict_outcome(test_input, prior)
+    when prior.unsure -> give predict_outcome(test_input, prior)
+    else -> give AssessmentResult(passed: false, prediction: "NO_KNOWLEDGE", expected: expected, gap_topic: categories)
+
 # ── Flows ─────────────────────────────────────────────────────
 
 flow answer_query
@@ -257,11 +270,7 @@ exportable agent forge_sensei
   on assess_detailed(test_input: Text, expected: Text)
     requires lifecycle == apprentice or lifecycle == journeyman or lifecycle == expert on fail: give AssessmentResult(passed: false, prediction: "", expected: expected, gap_topic: "Must reach apprentice level first")
     memory.interaction_count = memory.interaction_count + 1
-    categories = categorize_for_recall("{test_input} expects {expected}")
-    prior = recall "{categories} {test_input}"
-    when prior.sure -> give predict_outcome(test_input, prior)
-    when prior.unsure -> give predict_outcome(test_input, prior)
-    else -> give AssessmentResult(passed: false, prediction: "NO_KNOWLEDGE", expected: expected, gap_topic: categories)
+    give run_assessment(test_input, expected)
 
   # ── Batch Assess: iterate tests with state transitions ─────
 
@@ -272,7 +281,7 @@ exportable agent forge_sensei
     gaps = ""
     for test in tests
       total = total + 1
-      result = assess_detailed(test, expectations[total - 1])
+      result = run_assessment(test, expectations[total - 1])
       if result.passed
         passed = passed + 1
       match result

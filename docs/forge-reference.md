@@ -2489,18 +2489,50 @@ task classify_text
   needs text: Text
   gives Text
   do
-    result = classify text into ["positive", "negative", "neutral"]
+    result = classify text into ["Positive", "Negative", "Neutral"]
     match result
       Positive -> give "positive"
       Negative -> give "negative"
       _ -> give "neutral"
 ```
 
-The `match` construct forces structural dispatch, which clears the taint on each branch.
+The `match` construct forces structural dispatch, which clears the taint on each branch. The labels are capitalised because tag patterns compare exact text (see "Resolution Checks" below).
 
 ### Design Rationale
 
 Without this enforcement, an LLM hallucination could propagate silently through a program and be returned as authoritative output. By requiring explicit confidence dispatch, FORGE guarantees that every oracle result is acknowledged as uncertain before it can influence program output. This is a compile-time guarantee, not a runtime check.
+
+### Resolution Checks (E160–E162)
+
+Dispatching on a name that cannot exist is the same silent-failure class: the code reads as if it works and never does. The resolution checker (`src/checker/resolution_checker.rs`) rejects the two shapes below.
+
+| Code | Rule |
+|------|------|
+| `E160` | A plain call target that resolves to nothing: not a declared `task`/`pure`/`flow`/`pool`, not a runtime builtin (`asset`, `winning_lines`) and not an uppercase type-constructor name. `fn main` is the program entry point, not a call target — `main()` is an `E160` |
+| `E161` | A constructor pattern that can never match the scrutinee, **when the scrutinee's value set is statically known** |
+| `E162` | The same, but the pattern differs from a known tag only in case — emitted instead of `E161` |
+
+The scrutinee's value set is known in exactly three cases: it is bound from `classify ... into [labels]` (the value set is the labels), it is bound from a call to a `pure`/`task` whose every `give` is a Text literal, or it is bound from a call to a declared type name (the value set is that record's `_type`). Anything else — a parameter, an oracle result, a field — is not flagged, so legitimate tag matching keeps working.
+
+Patterns naming a declared or built-in type are never flagged, and neither are `_` or bindings. `E160` suggests the closest declared name within edit distance 2.
+
+`forge check` only sees the files it is handed, so a call that looks undeclared may live in a sibling source of the same project (a `forge.project.toml` `sources` entry). When the file imports a package or carries a boundary directive — or when no close name is found at all — the `E160` help adds: *if it is declared in another file of this project, check the files together: `forge check --merge <files>`*.
+
+```forge
+task route
+  needs message: Text
+  gives Text
+  do
+    result = classify message into ["Buy", "Support"]
+    match result
+      Buy -> give "sales"
+      Support -> give "helpdesk"
+      _ -> give "triage"
+```
+
+Renaming `Buy` to `BUY` here is an `E162` (``pattern `BUY` never matches `"Buy"` — tag patterns compare exact text``), and adding an undeclared `Refund -> ...` arm is an `E161`. A lowercase pattern (`buy`) is a *binding*, not a tag — it matches everything — which is why the case-mismatch help points at the `classify` label rather than at a lowercase pattern that would parse as a binding.
+
+**Limitation:** `classify` returns the model's text. The checker treats the declared label list as the value set, so a program whose model answers off-list is still a runtime honesty problem, not a compile-time one.
 
 ---
 
@@ -2969,6 +3001,7 @@ Every diagnostic emitted by `forge check`, `forge run`, `forge build`, `forge se
 | `E130`–`E139` | correlate checker |
 | `E140`–`E149` | webhook checker |
 | `E150`–`E159` | command gate checker |
+| `E160`–`E169` | resolution checker (undeclared calls, impossible match patterns) |
 
 Warnings reuse the same range with a `W` prefix (for example `W070` is the "requires clause uses an LLM operation" warning).
 

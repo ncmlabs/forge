@@ -1,0 +1,12 @@
+{
+  "name": "resolution_undefined_call",
+  "category": "checker",
+  "subcategory": "resolution",
+  "description": "A call to an undeclared task/pure/flow/pool is an error (#496)",
+  "input": "fn main\n  say judge(\"x\")\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_code": "E160",
+    "error_contains": ["undeclared function", "judge"]
+  }
+}
