@@ -284,6 +284,26 @@ fn init_dry_run_lists_the_files_and_writes_nothing() {
 }
 
 #[test]
+fn init_json_emits_one_envelope_listing_the_files() {
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    let output = forge(dir.path())
+        .args(["init", "demo", "--json"])
+        .output()
+        .expect("init run");
+    assert!(output.status.success(), "{}", stderr_of(&output));
+
+    let env: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is one JSON envelope");
+    assert_eq!(env["command"], "init");
+    assert_eq!(env["status"], "success");
+    assert_eq!(env["data"]["template"], "pipeline");
+    let files = env["data"]["files"].as_array().expect("files array");
+    assert_eq!(files.len(), SCAFFOLDED_FILES.len(), "{env}");
+    assert!(dir.path().join("demo/main.forge").is_file());
+}
+
+#[test]
 fn init_rejects_an_unknown_template() {
     let dir = tempfile::tempdir().expect("tempdir");
 

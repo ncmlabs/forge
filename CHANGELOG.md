@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- JSON output envelope and semantic exit codes (#475): every in-scope command
+  (`parse`, `check`, `explain`, `run`, `trace`, `test`, `cost`, `build`,
+  `export`, `import`, `inspect`, `send`, `wake`, `store`) accepts a global `--json` /
+  `FORGE_OUTPUT=json` and prints one envelope
+  (`{status, command, data, context, next_steps, warnings, cost, error,
+  duration_ms}`) on stdout. `--fields a,b` trims `data` to the listed keys,
+  `run --json` reports the program's `say` output in `data.output` instead of
+  stdout, and `cost` carries the run's LLM spend. `serve`, `agent`,
+  `agent-inspect` and `fleet` report `{"type":"unsupported"}` and exit `1`.
+  Documented in `docs/forge-reference.md` §27.
 - LLM authoring benchmark corpus (#483, part 1): `bench/specs/` holds 30
   natural-language specs (10 easy, 12 medium, 8 hard) covering tasks, pure
   functions, flows, confidence dispatch, `match`, agents, states, `requires`,
@@ -43,7 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `include_str!`; `{{name}}` is replaced by the directory's base name, which
   must be a valid project name — `[A-Za-z0-9_-]` plus a non-leading `.` —
   otherwise the run exits 1 before writing anything. `--force` also refuses to
-  write through a symlinked template path.
+  write through a symlinked template path. `forge init --json` reports the same
+  file list in the #475 envelope.
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced
@@ -84,6 +95,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to v1 complete. Closes epic #292.
 
 ### Changed
+- `forge check` now exits `2` (not `1`) when a file has warnings but no errors,
+  and other commands use the same semantic table: `0` success, `1` error,
+  `2` warnings-only, `3` partial, `10` needs-input, `11` async-pending (#475).
+  Human-readable output is unchanged.
 - `forge-principles.md` is now published (previously gitignored); `llms.txt` links it (#497).
 - Roadmap reset to v0.3 — Agent-Native FORGE (#473). The previous roadmap is
   archived at `docs/archive/roadmap-v3.md`. The generator/toolkit, WASM and
@@ -99,13 +114,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   committed to a repo never matched CRLF stdout on Windows (and a
   Windows-recorded expectation never matched on Linux). Both sides are now
   compared with `\r\n` normalised to `\n`.
+- Pool workers, spawned agents and `forge send` now obey the JSON envelope the
+  same way `fn main` does (#475): a pool worker's or handler's `say` lands in
+  `data.output` instead of stdout (which broke the one-document contract), their
+  LLM spend is in `cost` instead of missing or `null`, and `forge send` reports
+  a measured cost (`0.0` for a deterministic handler) rather than an unknown one.
+- Usage errors exit `1` in both modes instead of clap's `2` (#475), so exit `2`
+  means "warnings only" and nothing else. In JSON mode a bad command line
+  (`--json` in argv or `FORGE_OUTPUT=json`) prints one
+  `{"status":"error","error":{"type":"usage", ...}}` envelope on stdout with a
+  `run forge <cmd> --help` suggestion; `--help`/`--version` still exit `0`.
+- `forge check --json` reports `line`/`col` as `null` for a diagnostic whose
+  file was not among the parsed sources, instead of a fabricated `1:1` (#475).
 - CLI stack overflow on Windows: the executor polls a program's whole future
   tree on the calling thread, and Windows sizes the main thread's stack at
   1 MiB, so `forge run` / `forge test` aborted with "thread 'main' has
   overflowed its stack" on any deeper program (flows, pools, agents). The CLI
-  now runs on a thread with an 8 MiB stack; `ulimit -s 1024` reproduces and
-  verifies the fix on Linux. Found by the benchmark corpus, which is the first
-  test to run `forge test` as a child process on Windows.
+  now runs on a thread with an 8 MiB stack (`MAIN_STACK_BYTES`, matching CI's
+  `RUST_MIN_STACK`); `ulimit -s 1024` reproduces and verifies the fix on Linux.
+  Found by the benchmark corpus, which is the first test to run `forge test` as
+  a child process on Windows.
 - Diagnostic rendering (#474): reports name the real source file instead of
   `<unknown>` (the ariadne source id was a bare span), and colour is emitted
   only when stderr is an interactive terminal, so piped or redirected output

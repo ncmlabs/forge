@@ -1,0 +1,16 @@
+# Fixture for `forge test` JSON tests (#475/#478): one oracle call, dispatched
+# through `when`, so the mock provider response can be recorded and replayed.
+use
+  llm.reason
+
+task greet
+  needs topic: Text
+  gives Text
+  do
+    r = reason "greet {topic}"
+    when r.sure -> give r
+    when r.unsure -> give "unsure"
+    else -> give "unknown"
+
+fn main
+  say greet("world")

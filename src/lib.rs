@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod build;
 pub mod checker;
+pub mod cli_output;
 pub mod compose;
 pub mod config;
 pub mod cost_estimator;

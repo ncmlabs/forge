@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -36,6 +36,7 @@ ENVIRONMENT VARIABLES:
   FORGE_PROVIDER       Override default LLM provider
   FORGE_MOCK=1         Use mock provider (no API key needed)
   FORGE_BUDGET         Set max cost in USD (e.g., 0.50)
+  FORGE_OUTPUT=json    Emit one JSON envelope per command (same as --json)
   FORGE_TRACE=1        Enable JSON tracing to stderr
   FORGE_LOG_LEVEL      Log level: quiet, info (default), debug
   ANTHROPIC_API_KEY    API key for Anthropic provider
@@ -45,6 +46,12 @@ ENVIRONMENT VARIABLES:
   MISTRAL_API_KEY      API key for Mistral provider"
 )]
 struct Cli {
+    /// Emit one JSON envelope on stdout instead of human text (#475)
+    #[arg(long, global = true)]
+    json: bool,
+    /// Comma-separated top-level `data` keys to keep in JSON mode, e.g. `--fields diagnostics`
+    #[arg(long, global = true, value_delimiter = ',')]
+    fields: Vec<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -287,6 +294,33 @@ enum WakeAction {
     },
 }
 
+impl Command {
+    /// Subcommand name as used on the command line and in the JSON envelope.
+    fn name(&self) -> &'static str {
+        match self {
+            Command::Parse { .. } => "parse",
+            Command::Check { .. } => "check",
+            Command::Explain { .. } => "explain",
+            Command::Run { .. } => "run",
+            Command::Test { .. } => "test",
+            Command::Trace { .. } => "trace",
+            Command::Agent { .. } => "agent",
+            Command::AgentInspect { .. } => "agent-inspect",
+            Command::Cost { .. } => "cost",
+            Command::Serve { .. } => "serve",
+            Command::Export { .. } => "export",
+            Command::Import { .. } => "import",
+            Command::Inspect { .. } => "inspect",
+            Command::Send { .. } => "send",
+            Command::Build { .. } => "build",
+            Command::Fleet { .. } => "fleet",
+            Command::Wake { .. } => "wake",
+            Command::Store { .. } => "store",
+            Command::Init { .. } => "init",
+        }
+    }
+}
+
 /// The executor polls a program's whole future tree on the calling thread, and
 /// Windows sizes the main thread's stack at 1 MiB — deep flows, pools and
 /// agents overflow it and abort (`ulimit -s 1024` reproduces this on Linux).
@@ -310,16 +344,108 @@ fn main() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn run() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => usage_exit(e),
+    };
+    let out = forge::cli_output::OutputMode::from_flags(cli.json, cli.fields);
+    let command = cli.command;
+    let name = command.name();
+    if let Err(e) = dispatch(command, &out).await {
+        out.fail(name, &e);
+    }
+    Ok(())
+}
 
-    match cli.command {
+/// A command line clap could not parse. `--help` and `--version` print as usual
+/// and exit `0`; every other usage error exits `1`, not clap's default `2`,
+/// which this CLI reserves for "warnings only". In JSON mode the error is one
+/// envelope on stdout instead of clap's stderr text (#475).
+fn usage_exit(e: clap::Error) -> ! {
+    if !e.use_stderr() {
+        let _ = e.print();
+        forge::cli_output::exit(forge::cli_output::ExitCode::Success);
+    }
+    if usage_json_mode() {
+        let command = argv_subcommand().unwrap_or_default();
+        let suggestion = if command.is_empty() {
+            "run forge --help".to_string()
+        } else {
+            format!("run forge {command} --help")
+        };
+        // `Error::render`'s `Display` is colour-unaware, so no ANSI escape
+        // reaches the JSON string.
+        let env = forge::cli_output::Envelope::error(
+            command,
+            forge::cli_output::ErrorInfo::new("usage", e.render().to_string())
+                .with_suggestion(suggestion),
+            "the command line could not be parsed",
+        );
+        forge::cli_output::emit(&env, None);
+    }
+    let _ = e.print();
+    forge::cli_output::exit(forge::cli_output::ExitCode::Error);
+}
+
+/// JSON mode for a command line that did not parse, so the parsed `--json` flag
+/// is unavailable: `--json` in argv, or `FORGE_OUTPUT=json`.
+fn usage_json_mode() -> bool {
+    forge::cli_output::OutputMode::from_flags(
+        std::env::args().any(|arg| arg == "--json"),
+        Vec::new(),
+    )
+    .json
+}
+
+/// The subcommand named in argv, for the usage-error envelope's `command` field.
+/// Asked of clap's own command definition so the names cannot drift.
+fn argv_subcommand() -> Option<String> {
+    let names: Vec<String> = <Cli as CommandFactory>::command()
+        .get_subcommands()
+        .map(|command| command.get_name().to_string())
+        .collect();
+    std::env::args().skip(1).find(|arg| names.contains(arg))
+}
+
+/// Dispatch a parsed command to its implementation.
+async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyhow::Result<()> {
+    match command {
         Command::Parse { file } => {
             let source = read_source(&file)?;
             match forge::parser::parse(&source) {
-                Ok(program) => println!("{:#?}", program),
+                Ok(program) => {
+                    let data = serde_json::json!({
+                        "file": file.display().to_string(),
+                        // The AST derives Debug, not Serialize; the debug tree is
+                        // the same text human mode prints.
+                        "ast": format!("{program:#?}"),
+                    });
+                    if !out.json {
+                        println!("{program:#?}");
+                    }
+                    out.done(&forge::cli_output::Envelope::success(
+                        "parse",
+                        data,
+                        format!("parsed {}", file.display()),
+                    ));
+                }
                 Err(e) => {
-                    e.to_diagnostic(&file.display().to_string()).render(&source);
-                    std::process::exit(1);
+                    let diag = e.to_diagnostic(&file.display().to_string());
+                    if !out.json {
+                        diag.render(&source);
+                    }
+                    let env = forge::cli_output::Envelope::error(
+                        "parse",
+                        forge::cli_output::ErrorInfo::new("parse", diag.message.clone())
+                            .with_code(diag.code)
+                            .with_suggestion(format!("forge explain {}", diag.code)),
+                        format!("parse failed: {}", diag.message),
+                    )
+                    .with_data(serde_json::json!({
+                        "file": file.display().to_string(),
+                        "diagnostics": [forge::cli_output::diagnostic_json(&diag, Some(&source))],
+                    }));
+                    out.done(&env);
                 }
             }
         }
@@ -329,7 +455,7 @@ async fn run() -> anyhow::Result<()> {
 
             for file in &files {
                 let source = read_source(file)?;
-                let program = parse_or_exit(&source, file);
+                let program = parse_or_exit(&source, file, "check", out);
                 let fname = file.display().to_string();
 
                 // Per-file: resolver (always runs per-file)
@@ -369,10 +495,21 @@ async fn run() -> anyhow::Result<()> {
                         parsed_programs.push((composed.program, merged_fname, merged_source));
                     }
                     Err(errs) => {
-                        for e in &errs {
-                            eprintln!("Merge error: {e}");
+                        let messages: Vec<String> = errs.iter().map(|e| e.to_string()).collect();
+                        if !out.json {
+                            for e in &errs {
+                                eprintln!("Merge error: {e}");
+                            }
                         }
-                        std::process::exit(1);
+                        let env = forge::cli_output::Envelope::error(
+                            "check",
+                            forge::cli_output::ErrorInfo::new("check", messages.join("; "))
+                                .with_suggestion(
+                                    "fix the merge conflicts between the listed files".to_string(),
+                                ),
+                            "merge failed before checking",
+                        );
+                        out.done(&env);
                     }
                 }
             } else {
@@ -390,36 +527,144 @@ async fn run() -> anyhow::Result<()> {
                 .collect();
             all_diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
 
-            if all_diagnostics.is_empty() {
-                println!("OK");
+            let has_errors = all_diagnostics
+                .iter()
+                .any(|d| d.kind == forge::diagnostic::DiagnosticKind::Error);
+            let next_steps = forge::cli_output::explain_next_steps(&all_diagnostics);
+            let data = serde_json::json!({
+                "files": files.iter().map(|f| f.display().to_string()).collect::<Vec<_>>(),
+                "diagnostics": all_diagnostics
+                    .iter()
+                    .map(|d| {
+                        // No parsed source for this file means no position to
+                        // report; `diagnostic_json` then emits null line/col.
+                        let source = parsed_programs
+                            .iter()
+                            .find(|(_, f, _)| f == &d.file)
+                            .map(|(_, _, s)| s.as_str());
+                        forge::cli_output::diagnostic_json(d, source)
+                    })
+                    .collect::<Vec<_>>(),
+            });
+
+            let env = if has_errors {
+                let first_code = all_diagnostics
+                    .iter()
+                    .find(|d| d.kind == forge::diagnostic::DiagnosticKind::Error)
+                    .map(|d| d.code.to_string());
+                let mut info = forge::cli_output::ErrorInfo::new(
+                    "check",
+                    format!(
+                        "{} error(s) in {} file(s)",
+                        all_diagnostics
+                            .iter()
+                            .filter(|d| d.kind == forge::diagnostic::DiagnosticKind::Error)
+                            .count(),
+                        files.len()
+                    ),
+                );
+                if let Some(code) = first_code {
+                    info = info.with_code(code);
+                }
+                forge::cli_output::Envelope::error("check", info, "check found errors")
+                    .with_data(data)
+                    .with_next_steps(next_steps)
+            } else if all_diagnostics.is_empty() {
+                forge::cli_output::Envelope::success(
+                    "check",
+                    data,
+                    format!("{} file(s) checked, no diagnostics", files.len()),
+                )
             } else {
-                // Render diagnostics for each file with its source
-                for diag in &all_diagnostics {
-                    if let Some((_, _, source)) =
-                        parsed_programs.iter().find(|(_, f, _)| f == &diag.file)
-                    {
-                        diag.render(source);
+                forge::cli_output::Envelope::new(
+                    "check",
+                    forge::cli_output::Status::Warning,
+                    data,
+                    format!(
+                        "{} file(s) checked, {} warning(s)",
+                        files.len(),
+                        all_diagnostics.len()
+                    ),
+                )
+                .with_warnings(
+                    all_diagnostics
+                        .iter()
+                        .map(|d| format!("{}: {}", d.code, d.message))
+                        .collect(),
+                )
+            };
+
+            if !out.json {
+                if all_diagnostics.is_empty() {
+                    println!("OK");
+                } else {
+                    // Render diagnostics for each file with its source
+                    for diag in &all_diagnostics {
+                        if let Some((_, _, source)) =
+                            parsed_programs.iter().find(|(_, f, _)| f == &diag.file)
+                        {
+                            diag.render(source);
+                        }
                     }
                 }
-                std::process::exit(1);
             }
+            out.done(&env);
         }
         Command::Explain { code, list } => {
             if list {
-                for info in forge::diagnostic_codes::CODES {
-                    println!("{} — {}", info.code, info.title);
+                let data = serde_json::json!({
+                    "codes": forge::diagnostic_codes::CODES
+                        .iter()
+                        .map(|i| serde_json::json!({"code": i.code, "title": i.title}))
+                        .collect::<Vec<_>>(),
+                });
+                if !out.json {
+                    for info in forge::diagnostic_codes::CODES {
+                        println!("{} — {}", info.code, info.title);
+                    }
                 }
+                out.done(&forge::cli_output::Envelope::success(
+                    "explain",
+                    data,
+                    format!(
+                        "listed {} diagnostic code(s)",
+                        forge::diagnostic_codes::CODES.len()
+                    ),
+                ));
             } else {
                 let code = code.unwrap_or_default();
                 match forge::diagnostic_codes::lookup(&code) {
                     Some(info) => {
-                        println!("{} — {}", info.code, info.title);
-                        println!();
-                        println!("{}", info.explain);
+                        if !out.json {
+                            println!("{} — {}", info.code, info.title);
+                            println!();
+                            println!("{}", info.explain);
+                        }
+                        let data = serde_json::json!({
+                            "code": info.code,
+                            "title": info.title,
+                            "explain": info.explain,
+                        });
+                        out.done(&forge::cli_output::Envelope::success(
+                            "explain",
+                            data,
+                            format!("{} — {}", info.code, info.title),
+                        ));
                     }
                     None => {
-                        eprintln!("unknown code {}; run `forge explain --list`", code);
-                        std::process::exit(1);
+                        if !out.json {
+                            eprintln!("unknown code {}; run `forge explain --list`", code);
+                        }
+                        let env = forge::cli_output::Envelope::error(
+                            "explain",
+                            forge::cli_output::ErrorInfo::new(
+                                "runtime",
+                                format!("unknown code {code}"),
+                            )
+                            .with_suggestion("run `forge explain --list`"),
+                            format!("unknown code {code}"),
+                        );
+                        out.done(&env);
                     }
                 }
             }
@@ -442,11 +687,11 @@ async fn run() -> anyhow::Result<()> {
                     PathBuf::from(record)
                 };
                 forge::llm::fixtures::set_mode(forge::llm::fixtures::FixtureMode::Record(path));
-                run_program(&file, false).await?;
+                run_program(&file, "run", false, out).await?;
             } else if let Some(manifest_path) = manifest {
-                run_manifest(&manifest_path, false).await?;
+                run_manifest(&manifest_path, false, out).await?;
             } else if let Some(file) = file {
-                run_program(&file, false).await?;
+                run_program(&file, "run", false, out).await?;
             } else {
                 anyhow::bail!("either a .forge file or --manifest is required");
             }
@@ -458,35 +703,88 @@ async fn run() -> anyhow::Result<()> {
         } => {
             let path = fixtures.unwrap_or_else(|| forge::llm::fixtures::default_path(&file));
             if !path.exists() {
-                eprintln!(
-                    "no fixtures at {}; record them with: forge run {} --record",
-                    path.display(),
-                    file.display()
-                );
-                std::process::exit(1);
+                if !out.json {
+                    eprintln!(
+                        "no fixtures at {}; record them with: forge run {} --record",
+                        path.display(),
+                        file.display()
+                    );
+                }
+                let env = forge::cli_output::Envelope::error(
+                    "test",
+                    forge::cli_output::ErrorInfo::new(
+                        "io",
+                        format!("no fixtures at {}", path.display()),
+                    )
+                    .with_suggestion(format!("forge run {} --record", file.display())),
+                    "test could not replay: fixtures missing",
+                )
+                .with_data(serde_json::json!({
+                    "file": file.display().to_string(),
+                    "fixtures": path.display().to_string(),
+                }));
+                out.done(&env);
             }
             if let Some(expect) = expect {
-                check_expected_output(&file, &path, &expect)?;
+                check_expected_output(&file, &path, &expect, out)?;
             } else {
                 forge::llm::fixtures::set_mode(forge::llm::fixtures::FixtureMode::Replay(path));
-                run_program(&file, false).await?;
+                run_program(&file, "test", false, out).await?;
             }
         }
         Command::Trace { file } => {
-            run_program(&file, true).await?;
+            run_program(&file, "trace", true, out).await?;
         }
         Command::Agent { file } => {
+            if out.json {
+                out.unsupported("agent");
+            }
             run_agent(&file).await?;
         }
         Command::AgentInspect { file, agent } => {
+            if out.json {
+                out.unsupported("agent-inspect");
+            }
             run_agent_inspect(&file, agent.as_deref())?;
         }
         Command::Cost { file } => {
             let source = read_source(&file)?;
-            let program = parse_or_exit(&source, &file);
+            let program = parse_or_exit(&source, &file, "cost", out);
             let config = forge::config::ForgeConfig::load_or_default();
             let estimate = forge::cost_estimator::estimate(&program, &config);
-            print!("{}", estimate);
+            if !out.json {
+                print!("{}", estimate);
+            }
+            let data = serde_json::json!({
+                "file": file.display().to_string(),
+                "operations": estimate
+                    .operations
+                    .iter()
+                    .map(|op| {
+                        serde_json::json!({
+                            "kind": op.kind,
+                            "location": op.location,
+                            "estimated_tokens_in": op.estimated_tokens_in,
+                            "estimated_tokens_out": op.estimated_tokens_out,
+                            "estimated_cost_usd": op.estimated_cost_usd,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+                "total_tokens_in": estimate.total_tokens_in,
+                "total_tokens_out": estimate.total_tokens_out,
+                "estimated_cost_usd": estimate.total_cost_usd,
+            });
+            let env = forge::cli_output::Envelope::success(
+                "cost",
+                data,
+                format!(
+                    "estimated {} LLM operation(s) in {}",
+                    estimate.operations.len(),
+                    file.display()
+                ),
+            )
+            .with_cost(estimate.total_cost_usd as f64);
+            out.done(&env);
         }
         Command::Serve {
             file,
@@ -496,6 +794,9 @@ async fn run() -> anyhow::Result<()> {
             sources,
             manifest,
         } => {
+            if out.json {
+                out.unsupported("serve");
+            }
             serve_program(&file, &sources, host, port, watch, manifest.as_deref()).await?;
         }
         Command::Export {
@@ -505,7 +806,7 @@ async fn run() -> anyhow::Result<()> {
             output,
         } => {
             let source = read_source(&file)?;
-            let program = parse_or_exit(&source, &file);
+            let program = parse_or_exit(&source, &file, "export", out);
 
             // Find the agent declaration
             let agent_decl = if let Some(ref name) = agent {
@@ -604,18 +905,43 @@ async fn run() -> anyhow::Result<()> {
             };
 
             let agent_name = agent_decl.name.node.clone();
+            let knowledge_len = knowledge.len();
             let pkg = build_package(&agent_name, &agent_name, None, schema, knowledge);
             let json = serde_json::to_string_pretty(&pkg)?;
 
             match output {
                 Some(path) => {
                     std::fs::write(&path, &json)?;
-                    println!("exported to {}", path.display());
+                    if !out.json {
+                        println!("exported to {}", path.display());
+                    }
+                    out.done(&forge::cli_output::Envelope::success(
+                        "export",
+                        serde_json::json!({
+                            "agent": agent_name,
+                            "layers": layer_set,
+                            "output": path.display().to_string(),
+                            "entries": knowledge_len,
+                        }),
+                        format!("exported {agent_name} to {}", path.display()),
+                    ));
                 }
                 None => {
                     let default_path = format!("{}.forgepkg.json", agent_name);
                     std::fs::write(&default_path, &json)?;
-                    println!("exported to {}", default_path);
+                    if !out.json {
+                        println!("exported to {}", default_path);
+                    }
+                    out.done(&forge::cli_output::Envelope::success(
+                        "export",
+                        serde_json::json!({
+                            "agent": agent_name,
+                            "layers": layer_set,
+                            "output": default_path,
+                            "entries": knowledge_len,
+                        }),
+                        format!("exported {agent_name} to {default_path}"),
+                    ));
                 }
             }
         }
@@ -635,17 +961,40 @@ async fn run() -> anyhow::Result<()> {
             let mut store = KnowledgeStore::new(&into, None, None);
             let count = store.merge_imported(entries);
 
-            println!("imported {} entries into {}", count, into);
+            if !out.json {
+                println!("imported {} entries into {}", count, into);
+            }
+            out.done(&forge::cli_output::Envelope::success(
+                "import",
+                serde_json::json!({
+                    "package": package.display().to_string(),
+                    "into": into,
+                    "imported": count,
+                    "confidence_cap": confidence_cap,
+                }),
+                format!("imported {} entries into {}", count, into),
+            ));
         }
         Command::Inspect { package } => {
             let json = std::fs::read_to_string(&package)
                 .map_err(|e| anyhow::anyhow!("could not read {}: {}", package.display(), e))?;
             let pkg =
                 load_package(&json).map_err(|e| anyhow::anyhow!("invalid package: {:?}", e))?;
-            print!("{}", inspect_package(&pkg));
+            let rendered = inspect_package(&pkg);
+            if !out.json {
+                print!("{}", rendered);
+            }
+            out.done(&forge::cli_output::Envelope::success(
+                "inspect",
+                serde_json::json!({
+                    "package": package.display().to_string(),
+                    "inspection": rendered,
+                }),
+                format!("inspected {}", package.display()),
+            ));
         }
         Command::Send { file, event, args } => {
-            send_to_agent(&file, &event, args).await?;
+            send_to_agent(&file, &event, args, out).await?;
         }
         Command::Build {
             path,
@@ -668,10 +1017,14 @@ async fn run() -> anyhow::Result<()> {
                     embed_config,
                     dry_run,
                 },
+                out,
             )
             .await?;
         }
         Command::Fleet { spec, output } => {
+            if out.json {
+                out.unsupported("fleet");
+            }
             let result = forge::fleet::generate(&spec)?;
             match output {
                 Some(dir) => {
@@ -683,10 +1036,10 @@ async fn run() -> anyhow::Result<()> {
             }
         }
         Command::Wake { action } => {
-            run_wake_command(action)?;
+            run_wake_command(action, out)?;
         }
         Command::Store { action } => {
-            run_store_command(action)?;
+            run_store_command(action, out)?;
         }
         Command::Init {
             dir,
@@ -695,14 +1048,27 @@ async fn run() -> anyhow::Result<()> {
             dry_run,
         } => {
             let files = forge::init::scaffold(&dir, &template, force, dry_run)?;
-            if dry_run {
-                println!("would write into {}:", dir.display());
+            let verb = if dry_run {
+                "would write into"
             } else {
-                println!("created {}:", dir.display());
+                "created"
+            };
+            if !out.json {
+                println!("{verb} {}:", dir.display());
+                for path in &files {
+                    println!("  {path}");
+                }
             }
-            for path in files {
-                println!("  {path}");
-            }
+            out.done(&forge::cli_output::Envelope::success(
+                "init",
+                serde_json::json!({
+                    "dir": dir.display().to_string(),
+                    "template": template,
+                    "dry_run": dry_run,
+                    "files": files,
+                }),
+                format!("{verb} {}", dir.display()),
+            ));
         }
     }
 
@@ -715,7 +1081,10 @@ async fn run() -> anyhow::Result<()> {
 /// #448: `forge store recover` — health-check every .redb file under the
 /// storage root; rotate broken ones to `<name>.bak-<timestamp>` so the next
 /// run starts clean instead of wedging or dying on an opaque version abort.
-fn run_store_command(action: StoreAction) -> anyhow::Result<()> {
+fn run_store_command(
+    action: StoreAction,
+    out: &forge::cli_output::OutputMode,
+) -> anyhow::Result<()> {
     match action {
         StoreAction::Recover { root, dry_run } => {
             let root = match root {
@@ -738,6 +1107,7 @@ fn run_store_command(action: StoreAction) -> anyhow::Result<()> {
 
             let mut broken = 0usize;
             let mut healthy = 0usize;
+            let mut rotated: Vec<serde_json::Value> = Vec::new();
             let mut entries: Vec<_> = std::fs::read_dir(&root)?
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
@@ -746,40 +1116,72 @@ fn run_store_command(action: StoreAction) -> anyhow::Result<()> {
             entries.sort();
 
             for path in entries {
-                print!("checking {} … ", path.display());
+                if !out.json {
+                    print!("checking {} … ", path.display());
+                }
                 match forge::runtime::storage::ForgeStorage::open(&path) {
                     Ok(_) => {
-                        println!("ok");
+                        if !out.json {
+                            println!("ok");
+                        }
                         healthy += 1;
                     }
                     Err(e) => {
                         broken += 1;
-                        println!("BROKEN: {e}");
+                        if !out.json {
+                            println!("BROKEN: {e}");
+                        }
                         let ts = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)?
                             .as_secs();
                         let backup = path.with_extension(format!("redb.bak-{ts}"));
                         if dry_run {
-                            println!("  dry-run: would rotate to {}", backup.display());
+                            if !out.json {
+                                println!("  dry-run: would rotate to {}", backup.display());
+                            }
                         } else {
                             std::fs::rename(&path, &backup)?;
-                            println!("  rotated to {}", backup.display());
+                            if !out.json {
+                                println!("  rotated to {}", backup.display());
+                            }
                         }
+                        rotated.push(serde_json::json!({
+                            "path": path.display().to_string(),
+                            "backup": backup.display().to_string(),
+                            "error": e.to_string(),
+                            "rotated": !dry_run,
+                        }));
                     }
                 }
             }
 
-            if dry_run {
-                println!("dry-run complete: {healthy} healthy, {broken} broken (nothing moved)");
-            } else {
-                println!("done: {healthy} healthy, {broken} rotated");
+            if !out.json {
+                if dry_run {
+                    println!(
+                        "dry-run complete: {healthy} healthy, {broken} broken (nothing moved)"
+                    );
+                } else {
+                    println!("done: {healthy} healthy, {broken} rotated");
+                }
             }
-            Ok(())
+            let env = forge::cli_output::Envelope::success(
+                "store",
+                serde_json::json!({
+                    "action": "recover",
+                    "root": root.display().to_string(),
+                    "dry_run": dry_run,
+                    "healthy": healthy,
+                    "broken": broken,
+                    "stores": rotated,
+                }),
+                format!("{healthy} healthy, {broken} broken store(s)"),
+            );
+            out.done(&env);
         }
     }
 }
 
-fn run_wake_command(action: WakeAction) -> anyhow::Result<()> {
+fn run_wake_command(action: WakeAction, out: &forge::cli_output::OutputMode) -> anyhow::Result<()> {
     use std::io::Read;
     let config = forge::config::ForgeConfig::load_or_default();
     let storage = open_forge_storage(&config)?;
@@ -806,12 +1208,23 @@ fn run_wake_command(action: WakeAction) -> anyhow::Result<()> {
                 anyhow::bail!("refusing to register an empty secret");
             }
             storage.upsert_wake_secret(&agent, &trigger, secret)?;
-            eprintln!(
-                "registered wake secret for {}:{} ({} chars)",
-                agent,
-                trigger,
-                secret.len()
-            );
+            let chars = secret.len();
+            if !out.json {
+                eprintln!(
+                    "registered wake secret for {}:{} ({} chars)",
+                    agent, trigger, chars
+                );
+            }
+            out.done(&forge::cli_output::Envelope::success(
+                "wake",
+                serde_json::json!({
+                    "action": "register",
+                    "agent": agent,
+                    "trigger": trigger,
+                    "chars": chars,
+                }),
+                format!("registered wake secret for {agent}:{trigger}"),
+            ));
         }
         WakeAction::Rotate { agent, trigger } => {
             let mut bytes = [0u8; 32];
@@ -820,32 +1233,70 @@ fn run_wake_command(action: WakeAction) -> anyhow::Result<()> {
             storage.upsert_wake_secret(&agent, &trigger, &hex)?;
             // Print once. Stderr gets the warning; stdout gets only the
             // secret so scripts can capture it cleanly.
-            eprintln!(
-                "rotated wake secret for {}:{}. Store this now — it will not be shown again:",
-                agent, trigger
-            );
-            println!("{hex}");
+            if !out.json {
+                eprintln!(
+                    "rotated wake secret for {}:{}. Store this now — it will not be shown again:",
+                    agent, trigger
+                );
+                println!("{hex}");
+            }
+            out.done(&forge::cli_output::Envelope::success(
+                "wake",
+                serde_json::json!({
+                    "action": "rotate",
+                    "agent": agent,
+                    "trigger": trigger,
+                    // Shown exactly once, as in human mode.
+                    "secret": hex,
+                }),
+                format!("rotated wake secret for {agent}:{trigger}; it will not be shown again"),
+            ));
         }
         WakeAction::List => {
             let pairs = storage.list_wake_triggers()?;
-            if pairs.is_empty() {
-                eprintln!("(no wake secrets registered)");
-            } else {
-                for (agent, trigger) in pairs {
-                    println!("{agent}:{trigger}");
+            if !out.json {
+                if pairs.is_empty() {
+                    eprintln!("(no wake secrets registered)");
+                } else {
+                    for (agent, trigger) in &pairs {
+                        println!("{agent}:{trigger}");
+                    }
                 }
             }
+            let data = serde_json::json!({
+                "action": "list",
+                "triggers": pairs
+                    .iter()
+                    .map(|(a, t)| serde_json::json!({"agent": a, "trigger": t}))
+                    .collect::<Vec<_>>(),
+            });
+            out.done(&forge::cli_output::Envelope::success(
+                "wake",
+                data,
+                format!("{} registered wake secret(s)", pairs.len()),
+            ));
         }
         WakeAction::Delete { agent, trigger } => {
             let removed = storage.delete_wake_secret(&agent, &trigger)?;
-            if removed {
-                eprintln!("deleted wake secret for {}:{}", agent, trigger);
-            } else {
-                eprintln!("no wake secret for {}:{} (nothing removed)", agent, trigger);
+            if !out.json {
+                if removed {
+                    eprintln!("deleted wake secret for {}:{}", agent, trigger);
+                } else {
+                    eprintln!("no wake secret for {}:{} (nothing removed)", agent, trigger);
+                }
             }
+            out.done(&forge::cli_output::Envelope::success(
+                "wake",
+                serde_json::json!({
+                    "action": "delete",
+                    "agent": agent,
+                    "trigger": trigger,
+                    "removed": removed,
+                }),
+                format!("delete {agent}:{trigger}: removed={removed}"),
+            ));
         }
     }
-    Ok(())
 }
 
 /// Open the FORGE persistent storage database (issue #48/#57).
@@ -869,14 +1320,103 @@ fn read_source(file: &Path) -> anyhow::Result<String> {
         .map_err(|e| anyhow::anyhow!("could not read {}: {}", file.display(), e))
 }
 
-fn parse_or_exit(source: &str, file: &Path) -> forge::ast::Program {
+/// Parse a source file, or terminate. Human mode renders the diagnostic to
+/// stderr as before; JSON mode emits a `parse` error envelope (#475).
+fn parse_or_exit(
+    source: &str,
+    file: &Path,
+    command: &str,
+    out: &forge::cli_output::OutputMode,
+) -> forge::ast::Program {
     match forge::parser::parse(source) {
         Ok(program) => program,
         Err(e) => {
-            e.to_diagnostic(&file.display().to_string()).render(source);
-            std::process::exit(1);
+            let diag = e.to_diagnostic(&file.display().to_string());
+            if !out.json {
+                diag.render(source);
+            }
+            let env = forge::cli_output::Envelope::error(
+                command,
+                forge::cli_output::ErrorInfo::new("parse", diag.message.clone())
+                    .with_code(diag.code)
+                    .with_suggestion(format!("forge explain {}", diag.code)),
+                format!("{command} failed: {}", diag.message),
+            )
+            .with_data(serde_json::json!({
+                "file": file.display().to_string(),
+                "diagnostics": [forge::cli_output::diagnostic_json(&diag, Some(source))],
+            }));
+            out.done(&env)
         }
     }
+}
+
+/// Envelope for a `run`/`trace` that was blocked by static diagnostics.
+fn blocked_run_envelope(
+    command: &str,
+    check_hint: &str,
+    diagnostics: &[forge::diagnostic::Diagnostic],
+    data: serde_json::Value,
+) -> forge::cli_output::Envelope {
+    let errors = diagnostics
+        .iter()
+        .filter(|d| d.kind == forge::diagnostic::DiagnosticKind::Error)
+        .count();
+    let warnings = diagnostics.len() - errors;
+    let mut steps = forge::cli_output::explain_next_steps(diagnostics);
+    steps.insert(0, check_hint.to_string());
+    forge::cli_output::Envelope::error(
+        command,
+        forge::cli_output::ErrorInfo::new(
+            "check",
+            format!(
+                "{} diagnostic(s) blocked execution ({errors} error(s), {warnings} warning(s))",
+                diagnostics.len()
+            ),
+        )
+        .with_suggestion(check_hint),
+        format!("{command} did not start: static checks failed"),
+    )
+    .with_data(data)
+    .with_next_steps(steps)
+}
+
+/// Terminal envelope for a completed `run`/`trace`.
+fn run_envelope(
+    command: &str,
+    file: &str,
+    output: Vec<String>,
+    result: serde_json::Value,
+    cost: f64,
+) -> forge::cli_output::Envelope {
+    forge::cli_output::Envelope::success(
+        command,
+        serde_json::json!({"file": file, "output": output, "result": result}),
+        format!("{command} completed ({} output line(s))", output.len()),
+    )
+    .with_cost(cost)
+}
+
+/// Terminal envelope for a `run`/`trace` that failed at runtime.
+fn run_error_envelope(
+    command: &str,
+    file: &str,
+    output: Vec<String>,
+    message: String,
+    cost: f64,
+) -> forge::cli_output::Envelope {
+    forge::cli_output::Envelope::error(
+        command,
+        forge::cli_output::ErrorInfo::new("runtime", message),
+        format!("{command} failed at runtime"),
+    )
+    .with_data(serde_json::json!({
+        "file": file,
+        "output": output,
+        "result": serde_json::Value::Null,
+    }))
+    .with_cost(cost)
+    .with_next_steps(vec![format!("forge trace {file}")])
 }
 
 /// Build a [`SkillExecutor`] and return skill capability signatures for compile-time validation.
@@ -999,35 +1539,80 @@ fn build_skill_executor_inner(
 /// `forge test --expect <file>`: replay in a child process so the program's
 /// own stdout can be captured, then require it to match `<file>`.
 /// Trailing whitespace and line endings are ignored on both sides.
-fn check_expected_output(file: &Path, fixtures: &Path, expect: &Path) -> anyhow::Result<()> {
+///
+/// The child always runs in human mode: its stdout *is* the program output, so
+/// `FORGE_OUTPUT` is cleared for the child and JSON mode reports the comparison
+/// in the parent's envelope (#475).
+fn check_expected_output(
+    file: &Path,
+    fixtures: &Path,
+    expect: &Path,
+    out: &forge::cli_output::OutputMode,
+) -> anyhow::Result<()> {
     let output = std::process::Command::new(std::env::current_exe()?)
         .arg("test")
         .arg(file)
         .arg("--fixtures")
         .arg(fixtures)
+        .env_remove("FORGE_OUTPUT")
         .output()
         .map_err(|e| anyhow::anyhow!("failed to run forge test: {e}"))?;
     if !output.status.success() {
-        anyhow::bail!(
-            "forge test failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if out.json {
+            let env = forge::cli_output::Envelope::error(
+                "test",
+                forge::cli_output::ErrorInfo::new("runtime", message.clone()),
+                "replay failed before comparison",
+            );
+            out.done(&env);
+        }
+        anyhow::bail!("forge test failed: {message}");
     }
-    print!("{}", String::from_utf8_lossy(&output.stdout));
-
-    let actual = String::from_utf8_lossy(&output.stdout);
+    let actual = String::from_utf8_lossy(&output.stdout).to_string();
+    if !out.json {
+        print!("{actual}");
+    }
     let expected = std::fs::read_to_string(expect)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", expect.display()))?;
-    if !output_matches(&actual, &expected) {
+    let matched = output_matches(&actual, &expected);
+    if !matched && !out.json {
         eprintln!(
             "output mismatch: {} does not match {}",
             file.display(),
             expect.display()
         );
         print_output_diff(expected.trim_end(), actual.trim_end());
-        std::process::exit(1);
     }
-    Ok(())
+    let data = serde_json::json!({
+        "file": file.display().to_string(),
+        "fixtures": fixtures.display().to_string(),
+        "expect": expect.display().to_string(),
+        "matched": matched,
+        "output": actual.lines().map(|l| l.to_string()).collect::<Vec<_>>(),
+    });
+    let env = if matched {
+        forge::cli_output::Envelope::success(
+            "test",
+            data,
+            format!("replay matches {}", expect.display()),
+        )
+    } else {
+        forge::cli_output::Envelope::error(
+            "test",
+            forge::cli_output::ErrorInfo::new(
+                "runtime",
+                format!(
+                    "output mismatch: {} does not match {}",
+                    file.display(),
+                    expect.display()
+                ),
+            ),
+            "replay output did not match the expected file",
+        )
+        .with_data(data)
+    };
+    out.done(&env);
 }
 
 /// `--expect` equality: trailing whitespace is ignored, and so is the line
@@ -1063,9 +1648,14 @@ fn print_output_diff(expected: &str, actual: &str) {
     }
 }
 
-async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
+async fn run_program(
+    file: &Path,
+    command: &str,
+    trace: bool,
+    out: &forge::cli_output::OutputMode,
+) -> anyhow::Result<()> {
     let source = read_source(file)?;
-    let program = parse_or_exit(&source, file);
+    let program = parse_or_exit(&source, file, command, out);
     let fname = file.display().to_string();
 
     // Load config and skills early — needed for compile-time skill validation
@@ -1111,28 +1701,62 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
     diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
 
     if !diagnostics.is_empty() {
-        forge::diagnostic::render_diagnostics(&source, &diagnostics);
-        std::process::exit(1);
+        let data = serde_json::json!({
+            "file": fname,
+            "blocked": true,
+            "output": [],
+            "result": serde_json::Value::Null,
+            "diagnostics": diagnostics
+                .iter()
+                .map(|d| forge::cli_output::diagnostic_json(d, Some(&source)))
+                .collect::<Vec<_>>(),
+        });
+        let hint = format!("forge check --json {}", file.display());
+        let blocked = blocked_run_envelope(command, &hint, &diagnostics, data);
+        if !out.json {
+            forge::diagnostic::render_diagnostics(&source, &diagnostics);
+        }
+        out.done(&blocked);
     }
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let session_mgr =
         forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
     let _ = session_mgr.resume_all().await;
+    // The run's LLM cost lands in the envelope's `cost` (#475). Budget
+    // enforcement is unchanged: nothing on this path aborts on budget, the
+    // tracker only accumulates.
+    let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
     let mut executor =
         forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), tracer)
             .with_config(config_clone)
             .with_command_manager(cmd_mgr)
-            .with_session_manager(session_mgr);
+            .with_session_manager(session_mgr)
+            .with_stdout_echo(!out.json)
+            .with_cost_tracker(cost_tracker.clone());
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }
 
+    let mut cached_result = serde_json::Value::Null;
     match executor.run().await {
-        Ok(_) => {}
+        Ok(value) => {
+            if !matches!(value.value, Value::Unit) {
+                cached_result = forge::cli_output::value_json(&value.value);
+            }
+        }
         Err(e) => {
-            eprintln!("runtime error: {}", e);
-            std::process::exit(1);
+            if !out.json {
+                eprintln!("runtime error: {}", e);
+            }
+            let env = run_error_envelope(
+                command,
+                &fname,
+                executor.outputs(),
+                e.to_string(),
+                cost_tracker.summary().total_cost_usd as f64,
+            );
+            out.done(&env);
         }
     }
 
@@ -1153,10 +1777,24 @@ async fn run_program(file: &Path, trace: bool) -> anyhow::Result<()> {
         );
     }
 
-    Ok(())
+    let output = executor.outputs();
+    let env = run_envelope(
+        command,
+        &fname,
+        output,
+        cached_result,
+        cost_tracker.summary().total_cost_usd as f64,
+    );
+    out.done(&env);
 }
 
-async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
+async fn run_manifest(
+    manifest_path: &Path,
+    trace: bool,
+    out: &forge::cli_output::OutputMode,
+) -> anyhow::Result<()> {
+    let command = if trace { "trace" } else { "run" };
+    let fname = manifest_path.display().to_string();
     let manifest = forge::manifest::ProjectManifest::load(manifest_path)?;
     let base_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let source_paths = manifest.resolve_sources(base_dir)?;
@@ -1195,7 +1833,7 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     for path in &source_paths {
         let source = read_source(&path.to_path_buf())?;
         let fname = path.display().to_string();
-        let program = parse_or_exit(&source, path);
+        let program = parse_or_exit(&source, path, command, out);
 
         // Per-file validation (with skill-aware capability registry)
         let ctx = if skill_sigs.is_empty() {
@@ -1232,12 +1870,36 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
 
     if !diagnostics.is_empty() {
-        for diag in &diagnostics {
-            if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
-                diag.render(&sf.source);
+        let data = serde_json::json!({
+            "file": fname,
+            "blocked": true,
+            "output": [],
+            "result": serde_json::Value::Null,
+            "diagnostics": diagnostics
+                .iter()
+                .map(|d| {
+                    let source = source_files
+                        .iter()
+                        .find(|sf| sf.path == d.file)
+                        .map(|sf| sf.source.as_str());
+                    forge::cli_output::diagnostic_json(d, source)
+                })
+                .collect::<Vec<_>>(),
+        });
+        let blocked = blocked_run_envelope(
+            command,
+            "forge check --json <entry file>",
+            &diagnostics,
+            data,
+        );
+        if !out.json {
+            for diag in &diagnostics {
+                if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
+                    diag.render(&sf.source);
+                }
             }
         }
-        std::process::exit(1);
+        out.done(&blocked);
     }
 
     // Merge and execute
@@ -1255,6 +1917,7 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     let session_mgr =
         forge::runtime::session_manager::new_shared_default_session_manager(tracer.clone());
     let _ = session_mgr.resume_all().await;
+    let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
         Arc::clone(&providers),
@@ -1262,20 +1925,43 @@ async fn run_manifest(manifest_path: &Path, trace: bool) -> anyhow::Result<()> {
     )
     .with_config(config_clone)
     .with_command_manager(cmd_mgr)
-    .with_session_manager(session_mgr);
+    .with_session_manager(session_mgr)
+    .with_stdout_echo(!out.json)
+    .with_cost_tracker(cost_tracker.clone());
     if let Some(se) = skill_exec {
         executor = executor.with_skill_executor(se);
     }
 
+    let mut cached_result = serde_json::Value::Null;
     match executor.run().await {
-        Ok(_) => {}
+        Ok(value) => {
+            if !matches!(value.value, Value::Unit) {
+                cached_result = forge::cli_output::value_json(&value.value);
+            }
+        }
         Err(e) => {
-            eprintln!("runtime error: {}", e);
-            std::process::exit(1);
+            if !out.json {
+                eprintln!("runtime error: {}", e);
+            }
+            let env = run_error_envelope(
+                command,
+                &fname,
+                executor.outputs(),
+                e.to_string(),
+                cost_tracker.summary().total_cost_usd as f64,
+            );
+            out.done(&env);
         }
     }
 
-    Ok(())
+    let env = run_envelope(
+        command,
+        &fname,
+        executor.outputs(),
+        cached_result,
+        cost_tracker.summary().total_cost_usd as f64,
+    );
+    out.done(&env);
 }
 
 struct BuildProgramOptions<'a> {
@@ -1288,7 +1974,11 @@ struct BuildProgramOptions<'a> {
     dry_run: bool,
 }
 
-async fn build_program(path: &Path, options: BuildProgramOptions<'_>) -> anyhow::Result<()> {
+async fn build_program(
+    path: &Path,
+    options: BuildProgramOptions<'_>,
+    out: &forge::cli_output::OutputMode,
+) -> anyhow::Result<()> {
     // Resolve manifest: explicit path, directory with forge.project.toml, or single file
     let (mut manifest, base_dir) = if let Some(mp) = options.manifest_path {
         let manifest = forge::manifest::ProjectManifest::load(mp)?;
@@ -1368,8 +2058,10 @@ async fn build_program(path: &Path, options: BuildProgramOptions<'_>) -> anyhow:
         }
     }
 
-    let output_display = manifest.output_name();
-    eprintln!("building {} ...", output_display);
+    let output_display = manifest.output_name().to_string();
+    if !out.json {
+        eprintln!("building {} ...", output_display);
+    }
 
     let pipeline = forge::build::BuildPipeline::new(manifest, base_dir)
         .dry_run(options.dry_run)
@@ -1380,15 +2072,34 @@ async fn build_program(path: &Path, options: BuildProgramOptions<'_>) -> anyhow:
     let result = pipeline.build()?;
 
     if options.dry_run {
-        eprintln!(
-            "dry run complete — validation passed ({:?})",
-            result.program_kind
-        );
-    } else {
+        if !out.json {
+            eprintln!(
+                "dry run complete — validation passed ({:?})",
+                result.program_kind
+            );
+        }
+    } else if !out.json {
         eprintln!("done: {}", result.binary_path.display());
     }
 
-    Ok(())
+    let env = forge::cli_output::Envelope::success(
+        "build",
+        serde_json::json!({
+            "path": path.display().to_string(),
+            "output_name": output_display,
+            "binary_path": result.binary_path.display().to_string(),
+            "program_kind": format!("{:?}", result.program_kind),
+            "release": options.release,
+            "dry_run": options.dry_run,
+            "built": !options.dry_run,
+        }),
+        if options.dry_run {
+            format!("build dry run validated {output_display}")
+        } else {
+            format!("built {}", result.binary_path.display())
+        },
+    );
+    out.done(&env);
 }
 
 /// Try to build executor from entry file + optional additional sources.
@@ -2312,7 +3023,12 @@ async fn serve_with_watch(
 
 async fn run_agent(file: &Path) -> anyhow::Result<()> {
     let source = read_source(file)?;
-    let program = parse_or_exit(&source, file);
+    let program = parse_or_exit(
+        &source,
+        file,
+        "agent",
+        &forge::cli_output::OutputMode::human(),
+    );
 
     // Find the agent declaration and optional states
     let agent_decl = program
@@ -2476,7 +3192,12 @@ fn run_agent_inspect(file: &Path, agent: Option<&str>) -> anyhow::Result<()> {
     use forge::ast::{Precision, ScheduleMode, WhenExpr};
 
     let source = read_source(file)?;
-    let program = parse_or_exit(&source, file);
+    let program = parse_or_exit(
+        &source,
+        file,
+        "agent-inspect",
+        &forge::cli_output::OutputMode::human(),
+    );
 
     let agent_decls: Vec<&forge::ast::AgentDecl> = program
         .items
@@ -2621,9 +3342,14 @@ fn run_agent_inspect(file: &Path, agent: Option<&str>) -> anyhow::Result<()> {
 }
 
 /// Send a single event to an agent non-interactively, print the result, and exit.
-async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::Result<()> {
+async fn send_to_agent(
+    file: &Path,
+    event: &str,
+    args: Vec<String>,
+    out: &forge::cli_output::OutputMode,
+) -> anyhow::Result<()> {
     let source = read_source(file)?;
-    let program = parse_or_exit(&source, file);
+    let program = parse_or_exit(&source, file, "send", out);
 
     let agent_decl = program
         .items
@@ -2652,6 +3378,10 @@ async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::R
         tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
     );
 
+    // A `send` handler can call `reason`; accumulating its spend here is what
+    // lets the envelope report a measured `cost` instead of `null` (#475).
+    let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
+
     let agent = AgentProcess::new(
         agent_decl.clone(),
         states_decl.as_ref(),
@@ -2661,7 +3391,11 @@ async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::R
         storage,
         Some(instance_registry),
         None,
-    );
+    )
+    // `forge send --json` must not let a handler `say` reach stdout; the lines
+    // go into the envelope's `data.output` instead (#475).
+    .with_stdout_echo(!out.json)
+    .with_cost_tracker_opt(Some(cost_tracker.clone()));
 
     // Build params from positional args matching handler param names
     let handler = agent_decl
@@ -2694,13 +3428,50 @@ async fn send_to_agent(file: &Path, event: &str, args: Vec<String>) -> anyhow::R
     }
 
     match agent.dispatch(event, params).await {
-        Ok(Some(val)) => println!("{}", val.value),
-        Ok(None) => {}
+        Ok(result) => {
+            if !out.json {
+                if let Some(v) = &result {
+                    println!("{}", v.value);
+                }
+            }
+            let value = result
+                .as_ref()
+                .map(|v| forge::cli_output::value_json(&v.value));
+            let env = forge::cli_output::Envelope::success(
+                "send",
+                serde_json::json!({
+                    "file": file.display().to_string(),
+                    "agent": agent_decl.name.node,
+                    "event": event,
+                    "result": value,
+                    "output": agent.outputs(),
+                }),
+                format!("dispatched {event} to {}", agent_decl.name.node),
+            )
+            .with_cost(cost_tracker.summary().total_cost_usd as f64);
+            out.done(&env);
+        }
         Err(e) => {
-            eprintln!("error: {}", e);
-            std::process::exit(1);
+            if !out.json {
+                eprintln!("error: {}", e);
+            }
+            let env = forge::cli_output::Envelope::error(
+                "send",
+                forge::cli_output::ErrorInfo::new("runtime", e.to_string()),
+                format!("{event} failed for {}", agent_decl.name.node),
+            )
+            .with_data(serde_json::json!({
+                "file": file.display().to_string(),
+                "agent": agent_decl.name.node,
+                "event": event,
+                "result": serde_json::Value::Null,
+                "output": agent.outputs(),
+            }))
+            // A failed dispatch may still have spent LLM tokens before it
+            // failed; the tracker holds whatever it spent.
+            .with_cost(cost_tracker.summary().total_cost_usd as f64)
+            .with_next_steps(vec![format!("forge agent-inspect {}", file.display())]);
+            out.done(&env);
         }
     }
-
-    Ok(())
 }
