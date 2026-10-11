@@ -513,6 +513,47 @@ fn run_dry_run_spawns_no_process() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("nothing was executed"));
 }
 
+/// Warnings only (W080: a spawned agent with no failure policy), so the plan is
+/// still printed — at `forge check`'s warnings-only exit code 2.
+const WARNINGS_PROGRAM: &str = r#"agent specialist
+  on start
+    say "specialist up"
+
+agent foreman
+  on dispatch(topic: Text)
+    child = spawn specialist as "spec_{topic}"
+    say "spawned {child}"
+
+task plan
+  gives Text
+  do
+    draft = reason "plan the work"
+    when draft.sure -> give draft
+    else -> give "uncertain"
+
+fn main
+  say plan()
+"#;
+
+#[test]
+fn run_dry_run_json_prints_the_plan_at_warnings_only() {
+    let dir = temp_dir("dry-run-warning");
+    let program = dir.join("warn.forge");
+    std::fs::write(&program, WARNINGS_PROGRAM).expect("write warnings program");
+
+    let output = forge(&["run", "--dry-run", "--json", program.to_str().unwrap()]);
+    assert_exit(&output, 2);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["status"], "warning");
+    assert_eq!(doc["data"]["dry_run"], true);
+    assert_eq!(doc["data"]["operations"][0]["kind"], "reason");
+    assert_eq!(doc["data"]["effects"][0]["kind"], "spawn");
+    assert!(
+        doc["warnings"][0].as_str().unwrap().starts_with("W080"),
+        "the W080 warning must be listed in the envelope: {doc}"
+    );
+}
+
 #[test]
 fn cost_json_keeps_every_field_and_adds_effects() {
     let output = forge(&["cost", "--json", "examples/errors/uncertain_error.forge"]);

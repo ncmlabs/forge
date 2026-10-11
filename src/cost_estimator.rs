@@ -218,11 +218,74 @@ impl CostWalker {
                     self.walk_expr(&arg.node.value, context, multiplier);
                 }
             }
-            Stmt::Spawn(_) => {
+            Stmt::Spawn(spawn) => {
                 // spawn has zero token cost (no LLM call) but starts an agent
                 self.add_effect("spawn", context);
+                if let Some(alias) = &spawn.alias {
+                    self.walk_expr(alias, context, multiplier);
+                }
+                for option in &spawn.options {
+                    match &option.node {
+                        SpawnOption::ConfidenceCap(expr) => {
+                            self.walk_expr(expr, context, multiplier)
+                        }
+                        SpawnOption::MemoryInit(_, expr) => {
+                            self.walk_expr(expr, context, multiplier)
+                        }
+                        SpawnOption::Isolate(config) => {
+                            self.walk_expr(&config.branch, context, multiplier)
+                        }
+                        // `where category == "X"` is a literal, not an expression.
+                        SpawnOption::KnowledgeFilter(_) => {}
+                    }
+                }
             }
-            _ => {}
+            Stmt::MemoryUpdate(_, index, value) => {
+                if let Some(index) = index {
+                    self.walk_expr(index, context, multiplier);
+                }
+                self.walk_expr(value, context, multiplier);
+            }
+            Stmt::StartTimer {
+                context: timer_context,
+                ..
+            }
+            | Stmt::CancelTimer {
+                context: timer_context,
+                ..
+            } => {
+                if let Some(expr) = timer_context {
+                    self.walk_expr(expr, context, multiplier);
+                }
+            }
+            Stmt::Learn(source, category) => {
+                match &source.node {
+                    LearnSource::Direct(expr) | LearnSource::FromDocument(expr) => {
+                        self.walk_expr(expr, context, multiplier)
+                    }
+                    LearnSource::FromInteraction(args) => {
+                        for arg in args {
+                            self.walk_expr(&arg.node.value, context, multiplier);
+                        }
+                    }
+                }
+                if let Some(category) = category {
+                    self.walk_expr(category, context, multiplier);
+                }
+            }
+            Stmt::Retire(retire) => {
+                if let Some(target) = &retire.target {
+                    self.walk_expr(target, context, multiplier);
+                }
+                if let Some(export) = &retire.knowledge_export {
+                    self.walk_expr(export, context, multiplier);
+                }
+            }
+            // These carry a bare name (state, timer, escalation target), never an
+            // expression — so there is nothing to walk. Listed explicitly, with
+            // no catch-all arm, so a new `Stmt` variant is a compile error here
+            // instead of a silent hole in the plan (#477).
+            Stmt::Escalate(_) | Stmt::TransitionTo(_) | Stmt::ResetTimer(_) => {}
         }
     }
 
@@ -495,6 +558,92 @@ mod tests {
         assert_eq!(
             effect_sites("fn main\n  spawn Worker as \"w\"\n"),
             vec![("spawn", "fn main".to_string())]
+        );
+    }
+
+    /// The runtime evaluates the alias and every spawn option, so an `exec`
+    /// hidden in one of them is a real effect site (issue #477 review).
+    #[test]
+    fn spawn_walks_its_alias_and_options() {
+        assert_eq!(
+            effect_sites(
+                r#"agent W
+  on start
+    say "up"
+
+fn main
+  spawn W as "w-{exec "touch alias"}"
+      with confidence_cap: exec "touch cap"
+      with memory note: exec "touch mem"
+      isolate worktree "b-{exec "touch iso"}"
+"#
+            ),
+            vec![
+                ("spawn", "fn main".to_string()),
+                ("exec", "fn main".to_string()),
+                ("exec", "fn main".to_string()),
+                ("exec", "fn main".to_string()),
+                ("exec", "fn main".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn memory_update_walks_its_value() {
+        assert_eq!(
+            effect_sites(
+                "agent A\n  memory\n    log: Text\n  on tick\n    memory.log = exec \"touch mem\"\n"
+            ),
+            vec![("exec", "agent A.on tick".to_string())]
+        );
+    }
+
+    #[test]
+    fn start_timer_walks_its_context() {
+        assert_eq!(
+            effect_sites("agent A\n  timer t: 5m\n  on tick\n    start t for exec \"touch t1\"\n"),
+            vec![("exec", "agent A.on tick".to_string())]
+        );
+    }
+
+    #[test]
+    fn cancel_timer_walks_its_context() {
+        assert_eq!(
+            effect_sites("agent A\n  timer t: 5m\n  on tick\n    cancel t for exec \"touch t2\"\n"),
+            vec![("exec", "agent A.on tick".to_string())]
+        );
+    }
+
+    #[test]
+    fn retire_walks_its_target_and_export() {
+        assert_eq!(
+            effect_sites(
+                r#"agent A
+  on tick
+    retire "t-{exec "touch r"}"
+      with knowledge export: "e-{exec "touch r2"}"
+"#
+            ),
+            vec![
+                ("exec", "agent A.on tick".to_string()),
+                ("exec", "agent A.on tick".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn learn_walks_its_source_and_category() {
+        assert_eq!(
+            effect_sites(
+                r#"agent A
+  on tick
+    learn "f-{exec "touch l"}" category: "c-{exec "touch l2"}"
+"#
+            ),
+            vec![
+                ("exec", "agent A.on tick".to_string()),
+                ("exec", "agent A.on tick".to_string()),
+            ]
         );
     }
 

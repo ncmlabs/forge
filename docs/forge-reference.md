@@ -1288,7 +1288,9 @@ Exit codes follow `forge check`: `0` when the plan is clean, `1` when errors
 blocked it (the diagnostics are printed, and `--json` reports the `check` error
 envelope), `2` for warnings only. `--dry-run` conflicts with `--record`
 (recording needs a provider), and `--manifest` is refused for now — a dry run
-plans one `.forge` file. `forge cost <file>` is the same static plan.
+plans one `.forge` file. `forge cost <file>` reports the same estimate — the
+same LLM operations and totals — but runs no checker and never blocks; only its
+JSON `data` carries `effects`.
 
 #### `forge trace <file>`
 Execute a FORGE program and emit a detailed JSON trace to stderr for debugging.
@@ -3131,7 +3133,7 @@ A command line clap cannot parse exits `1` in both modes — never clap's defaul
 | `check` | `{files, diagnostics:[{code, severity, file, line, col, end_line, end_col, message, label, help}]}` — `line`/`col` are `null` when the diagnostic names a file that was not parsed (no span to translate), never a fake `1:1` |
 | `explain` | `{code, title, explain}` or `{codes:[{code, title}]}` with `--list` |
 | `run`, `trace`, `test` | `{file, output:[say lines], result}` — `say` never writes to stdout in JSON mode, wherever it runs: `fn main`, a spawned agent, or a pool worker (their lines join the same `output`). `cost` covers the whole run, spawned children and pool workers included. `test` replays recorded fixtures (#478) and adds `{fixtures, expect, matched}` with `--expect` |
-| `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], effects:[{kind, location}], total_tokens_in, total_tokens_out, estimated_cost_usd}` — the same static plan as `run --dry-run` (#477), minus the `dry_run` flag; its human output stays the cost table |
+| `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], effects:[{kind, location}], total_tokens_in, total_tokens_out, estimated_cost_usd}` — the same estimate as `run --dry-run` (#477), but `cost` runs no checker and never blocks, so there is no `blocked`/`diagnostics`/`warnings` case; its human output stays the cost table |
 | `run --dry-run` | `{dry_run: true, file, operations:[…], effects:[{kind, location}], total_tokens_in, total_tokens_out, estimated_cost_usd}` — nothing is executed, so there is no `output`/`result`; `cost` is the estimated plan cost |
 | `build` | `{path, output_name, binary_path, program_kind, release, dry_run, built}` |
 | `export` | `{agent, layers, output, entries}` |
