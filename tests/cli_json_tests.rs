@@ -276,7 +276,12 @@ fn run_json_summary_counts_calls_tokens_and_matches_cost() {
     let doc = parse_stdout(&output);
     let summary = &doc["data"]["summary"];
     let calls = summary["llm_calls"].as_u64().expect("llm_calls number");
-    assert!(calls >= 1, "LLM calls must be counted: {doc}");
+    // Exactly the two workers: `>= 1` would pass if one worker's call were
+    // dropped (#479 review).
+    assert_eq!(
+        calls, 2,
+        "both pool workers' LLM calls must be counted: {doc}"
+    );
     assert!(summary["tokens_in"].as_u64().unwrap() > 0, "{doc}");
     assert!(summary["tokens_out"].as_u64().unwrap() > 0, "{doc}");
     assert_eq!(
