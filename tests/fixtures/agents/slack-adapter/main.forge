@@ -5,9 +5,10 @@
 # ================================================================
 # Part of the clone-developer track (#292), issue #298 (T3.1).
 # Refactored by #356 (T8.1): agent/events/templates extracted into
-# agents.forge so workflows/clone-dev/ can source them without
-# forking. This file now only wraps them with a warden, a system,
-# and a health endpoint so the adapter can still run standalone.
+# agents.forge so the dev-cycle workflow (ncmlabs/forge-clone-dev)
+# can source them without forking. This file now only wraps them
+# with a warden, a system, and a health endpoint so the adapter can
+# still run standalone.
 #
 # Run:
 #   SLACK_BOT_TOKEN=xoxb-... cargo run -- serve \
