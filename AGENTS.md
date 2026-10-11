@@ -5,8 +5,9 @@ This file defines repository-local agent instructions for FORGE. These instructi
 ## Canonical Sources
 
 - Re-read `docs/training-development-workflow.md` at the start of every session.
-- Read `workflows/dev-cycle.forge` at the start of every session and map work to the `IssueLifecycle` state machine:
+- Map work to the `IssueLifecycle` state machine:
   - `open -> planning -> in_progress -> testing -> review_ready -> merged`
+- The dev-cycle workflow (`IssueLifecycle` as executable FORGE) lives in ncmlabs/forge-clone-dev (`workflows/dev-cycle.forge`); it is not part of this repository.
 - Treat these files as the primary grounding sources for implementation details and design intent:
   - `docs/forge-reference.md`
   - `forge-principles.md`
@@ -18,7 +19,7 @@ This file defines repository-local agent instructions for FORGE. These instructi
 Before making substantive changes:
 
 1. Read `docs/training-development-workflow.md`.
-2. Read `workflows/dev-cycle.forge`.
+2. Note that the dev-cycle workflow lives in ncmlabs/forge-clone-dev (`workflows/dev-cycle.forge`), not in this repository.
 3. Read the relevant GitHub issue with `gh issue view <N>`.
 4. Read the issue acceptance criteria carefully; they are the exit gate.
 5. Cross-check the issue against `docs/forge-reference.md` because the spec may be newer than the issue.

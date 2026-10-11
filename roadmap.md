@@ -58,9 +58,10 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | [#473](https://github.com/ncmlabs/forge/issues/473) | docs: reset roadmap to v0.3 — Agent-Native FORGE | Done ✅ |
 | [#485](https://github.com/ncmlabs/forge/issues/485) | lean: remove web app stack from core (templates, static/Tailwind, hot-reload, markdown) | Open |
 | [#486](https://github.com/ncmlabs/forge/issues/486) | lean: close WASM/browser targets; keep server/shared boundary checker | Done ✅ |
-| [#487](https://github.com/ncmlabs/forge/issues/487) | lean: extract clone-dev into ncmlabs/forge-clone-dev | Open |
+| [#487](https://github.com/ncmlabs/forge/issues/487) | lean: extract clone-dev into ncmlabs/forge-clone-dev | Done ✅ |
 | [#488](https://github.com/ncmlabs/forge/issues/488) | examples: create public ncmlabs/forge-examples and move showcases | Done ✅ |
 | [#503](https://github.com/ncmlabs/forge/issues/503) | llm: `[llm.routing]` accepts provider chains per phase (primary + fallbacks) | Done ✅ |
+| [#505](https://github.com/ncmlabs/forge/issues/505) | lean: remove clone-dev code from core (`config.load_clone_dev`, `clone_dev_config.rs`, `FORGE_CLONEDEV_CONFIG`) | Done ✅ |
 
 ### CLI contract — the interface an agent actually uses
 
@@ -110,7 +111,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | Issues | What | Why |
 | ------ | ---- | --- |
 | #168–#175 | Generator/toolkit agents | Superseded by #483 — agents author FORGE directly instead of generating it through a frozen toolkit |
-| #183, #185 | Dev orchestration | Moving to `forge-clone-dev` (#487) — app work, not language surface |
+| #183, #185 | Dev orchestration | Moved to `forge-clone-dev` (#487) — app work, not language surface |
 | #186, #187 | Cost/Doc agents | Superseded by #477, #479, #480 — cost and docs reporting belong in the CLI contract and the one-page card |
 | #53–#56, #67 | WASM/browser targets | Cut (#486) — browsers are a delivery surface, not a FORGE target |
 | #242, #280, #301, #305 | App work or research | Parked — out of scope for v0.3 |

@@ -2915,7 +2915,7 @@ The compiler requires callers to bind the result and discriminate with `when x.s
 
 - The schema index (`src/runtime/type_registry.rs`) is built once at `TaskExecutor::new` from all `TopLevel::TypeDef` items in the program.
 - Coercion lives in `src/runtime/structured_parse.rs`; both formats normalize through a shared `Generic` intermediate so format-specific parsing is confined to the entry point.
-- `clone-dev`'s `[repos."<owner>/<name>"]` dynamic-key shape is **not** expressible through `toml.parse`: the schema is drawn from a `type` declaration with named fields, so tables keyed by arbitrary user strings have no FORGE-side representation. `config.load_clone_dev` remains as a Rust-side escape hatch for that case.
+- Tables keyed by arbitrary user strings (e.g. `[repos."<owner>/<name>"]`) are **not** expressible through `toml.parse`: the schema is drawn from a `type` declaration with named fields. Such a schema needs a loader outside FORGE; the clone-dev one that did this from core (`config.load_clone_dev`) moved to ncmlabs/forge-clone-dev in v0.3 (#505).
 
 ---
 
@@ -2933,7 +2933,7 @@ Small leaf intrinsics for runtime-only operations that don't fit the LLM/skill/d
 
 ### Why `text.replace` exists
 
-FORGE's `{var}` interpolation is parse-time only. A string loaded from TOML/JSON/file contents at runtime that *contains* `{var}` is inert text — the parser already passed. To render runtime templates (e.g. a `commit_template` like `"feat({issue_id}): implement"` loaded from `clone-dev.toml`), substitute placeholders explicitly:
+FORGE's `{var}` interpolation is parse-time only. A string loaded from TOML/JSON/file contents at runtime that *contains* `{var}` is inert text — the parser already passed. To render runtime templates (e.g. a `commit_template` like `"feat({issue_id}): implement"` loaded from a config TOML), substitute placeholders explicitly:
 
 ```forge
 msg = template
@@ -2945,7 +2945,7 @@ The `\{` / `\}` escapes (Section 5) are mandatory on the `find` argument so the 
 
 ### Why `text.short_id` exists
 
-Used by `workflows/dev-cycle/agents.forge` to suffix per-task workdirs as `{workdir_root}/{repo_slug}/{issue_id}-{short_id}`, so two concurrent invocations sharing a `repo_slug`/`issue_id` (rerun, retry, parallel) cannot collide on disk. 8 hex chars give ~16M distinct values per `(repo, issue)` pair — more than adequate for a single-host swarm; the value is never load-bearing for security.
+Used by the dev-cycle workflow in ncmlabs/forge-clone-dev (`workflows/dev-cycle/agents.forge`) to suffix per-task workdirs as `{workdir_root}/{repo_slug}/{issue_id}-{short_id}`, so two concurrent invocations sharing a `repo_slug`/`issue_id` (rerun, retry, parallel) cannot collide on disk. 8 hex chars give ~16M distinct values per `(repo, issue)` pair — more than adequate for a single-host swarm; the value is never load-bearing for security.
 
 ### Boundary Rules
 

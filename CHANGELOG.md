@@ -119,6 +119,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dev-system tracks are deprecated (see roadmap).
 
 ### Removed
+- Clone-dev left core (#505, part (c) of #487); it now lives in
+  ncmlabs/forge-clone-dev. Deleted: `src/runtime/clone_dev_config.rs` and the
+  `config.load_clone_dev(path)` built-in, the `$FORGE_CLONEDEV_CONFIG` startup
+  overlay in `ProviderRegistry::from_config`, `workflows/clone-dev/`,
+  `workflows/dev-cycle/`, `workflows/dev-cycle.forge` and the clone-dev test
+  suites and fixtures. `[llm.routing]` chains from `forge.config.toml` (#503)
+  are unchanged and are now the only routing source. A program that still calls
+  `config.load_clone_dev` fails `forge check` with `E010` (unknown capability),
+  whose help line points at ncmlabs/forge-clone-dev (a `clone_dev` skill).
 - Showcase examples moved to ncmlabs/forge-examples (#488); test fixtures
   relocated to `tests/fixtures/`.
 
