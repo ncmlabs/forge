@@ -373,6 +373,16 @@ pub fn explain_next_steps(diagnostics: &[crate::diagnostic::Diagnostic]) -> Vec<
     steps
 }
 
+/// Config problems: `ConfigError::ParseError` (`config parse error: …`) and
+/// `ProviderError::InvalidConfig` (`invalid [llm] configuration: …`). Checked
+/// before the generic `parse` rule — a `forge.config.toml` that does not parse
+/// is a config error, and `config parse error` would otherwise be swallowed by
+/// the "parse" heuristic (#509). Matched anywhere in the message rather than at
+/// the start because some call sites prefix it ("provider setup failed: …").
+fn is_config_problem(message: &str) -> bool {
+    message.contains("config parse error") || message.contains("invalid [llm] configuration")
+}
+
 /// Map an `anyhow::Error` onto the envelope's error taxonomy. Classification is
 /// heuristic (message + downcast) because CLI errors are constructed with
 /// `anyhow::bail!` all over `main.rs`.
@@ -383,6 +393,8 @@ pub fn classify_error(e: &anyhow::Error) -> ErrorInfo {
         || message.contains("No such file")
     {
         "io"
+    } else if is_config_problem(&message) {
+        "config"
     } else if message.contains("parse")
         || message.contains("syntax")
         || message.contains("unexpected token")
@@ -549,5 +561,21 @@ mod tests {
         assert_eq!(classify_error(&config).kind, "config");
         let runtime = anyhow::anyhow!("runtime error: division by zero");
         assert_eq!(classify_error(&runtime).kind, "runtime");
+    }
+
+    #[test]
+    fn classify_error_puts_config_before_parse() {
+        // #509 — "config parse error" contains "parse"; it is still a config
+        // problem, not a source-syntax one.
+        let config_parse = anyhow::anyhow!(
+            "config parse error: TOML parse error at line 4, column 1\n\
+             [llm.routing] phase 'plan' must be a provider name or a list of provider names (got integer)"
+        );
+        assert_eq!(classify_error(&config_parse).kind, "config");
+        let invalid_config = anyhow::anyhow!(
+            "provider setup failed: invalid [llm] configuration: [llm.routing] phase 'plan' \
+             names unknown provider 'ghost'; known: mock; add it under [providers] or correct the name"
+        );
+        assert_eq!(classify_error(&invalid_config).kind, "config");
     }
 }
