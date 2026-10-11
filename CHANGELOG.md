@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CLI introspection (#476): `forge schema <command>` prints the JSON Schema
+  (2020-12) of that command's `--json` envelope — the shared envelope with
+  `properties.data` replaced by the command's payload — `forge schema` alone
+  prints the envelope with `data` left generic, and `forge schema --all`
+  prints `{command: schema}`. The schemas are hand-written under `schemas/`
+  (`data` is built ad hoc as `serde_json::Value`, so there are no Rust types
+  to derive from) and embedded through the table in `src/cli_schema.rs`;
+  `forge help --json` prints the command index clap cannot drift from —
+  `{commands: [{name, about, args: [{name, long, required, takes_value,
+  help}], json_supported}], exit_codes, env}`, nested actions included
+  (`wake register`), with `json_supported` derived from the schema table.
+  `tests/cli_schema_tests.rs` is the drift guard: it runs every command for
+  real and validates stdout against `forge schema <command>`, so a payload
+  that gains or renames a key fails until the schema is updated. `jsonschema`
+  is a dev-dependency only. Plain `forge help` / `forge --help` are unchanged.
+  Documented in `docs/forge-reference.md` §27.
 - Resolution checker (#496): `forge check` now rejects a plain call to an
   undeclared `task`/`pure`/`flow`/`pool` (`E160`, with a closest-name hint),
   a match arm that can never match a scrutinee whose values are statically

@@ -3115,6 +3115,7 @@ A command line clap cannot parse exits `1` in both modes — never clap's defaul
 | `send` | `{file, agent, event, result, output}` — the handler's `say` lines are in `output`, never on stdout, and `cost` is the dispatch's measured LLM spend (`0.0` when the handler made no LLM call) |
 | `wake` | `{action, ...}` per subcommand (`rotate` includes the one-time `secret`) |
 | `store recover` | `{action, root, dry_run, healthy, broken, stores:[...]}` |
+| `init` | `{dir, template, dry_run, files}` |
 
 ### `--fields`
 
@@ -3127,3 +3128,43 @@ forge check --json --fields diagnostics src/main.forge
 ### Commands without JSON support
 
 `serve`, `agent` (REPL), `agent-inspect` and `fleet` are interactive or long-running. In JSON mode they emit `{"status":"error","error":{"type":"unsupported", ...}}` and exit `1` instead of starting.
+
+### Schemas and introspection
+
+`data` payloads are built ad hoc as `serde_json::Value` at each call site, so the schemas are hand-written: `schemas/envelope.schema.json` plus one `<command>.data.schema.json` per command, embedded with `include_str!` through the table in `src/cli_schema.rs`.
+
+```bash
+forge schema check          # the envelope schema with check's `data` payload
+forge schema                # the shared envelope, `data` left generic
+forge schema --all          # {command: schema} for every command with a schema
+```
+
+`forge schema <command>` prints one JSON Schema (2020-12) document — the envelope with `properties.data` replaced by that command's payload — so a caller can validate a whole envelope, not just the payload. `forge schema --all` prints the same documents keyed by command. `data` accepts either the command's payload or `{}`: a command that fails before building one (`error.type` `io`, `config` or `runtime`) emits empty data. The diagnostic object shared by `parse`, `check`, `run`, `trace` and `test` lives once in the envelope's `$defs.diagnostic`.
+
+These two introspection surfaces print their document directly and are not wrapped in an envelope; an unknown command is still a usage error (exit `1`, the error envelope in JSON mode). Commands without a schema are the four above — `json_supported` in the index says so.
+
+```bash
+forge help --json
+```
+
+```json
+{
+  "commands": [
+    {
+      "name": "check",
+      "about": "Type-check capabilities, composition types, and purity constraints",
+      "args": [
+        {"name": "files", "long": null, "required": true, "takes_value": true, "help": "Paths to .forge source files"},
+        {"name": "json", "long": "json", "required": false, "takes_value": false, "help": "Emit one JSON envelope on stdout instead of human text (#475)"}
+      ],
+      "json_supported": true
+    }
+  ],
+  "exit_codes": {"0": "success: command completed", "1": "error: command failed, a run was blocked by diagnostics, or the command line was invalid", "2": "warning: static checks found warnings but no errors — this code means \"warnings only\" and nothing else"},
+  "env": [{"name": "FORGE_OUTPUT", "description": "json = emit one JSON envelope per command (same as --json)"}]
+}
+```
+
+`commands` comes from clap's own definition, so it cannot drift from the CLI: every subcommand, nested actions as `wake register` / `store recover`, and their flags. `--json` and `--fields` are listed on every command because clap accepts them at any depth. `json_supported` is `true` exactly for the commands with a schema, plus `schema` and `help` themselves; `exit_codes` is the table above; `env` mirrors the `ENVIRONMENT VARIABLES` block of `forge --help`.
+
+The schemas are checked against reality by `tests/cli_schema_tests.rs`: it runs every command for real — mock provider, fixtures, temp dirs — and validates stdout against `forge schema <command>`, one test per command, plus a deliberately wrong document that must fail. `jsonschema` is a dev-dependency; the released binary does not link it. Adding a field to a payload therefore fails the suite until the schema under `schemas/` is updated, and adding a command fails until it has both a schema and a drift test.
