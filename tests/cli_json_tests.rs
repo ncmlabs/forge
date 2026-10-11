@@ -348,6 +348,231 @@ fn cost_json_estimates_without_llm_calls() {
     assert!(doc["data"]["estimated_cost_usd"].as_f64().unwrap() > 0.0);
 }
 
+// ── run --dry-run (#477) ────────────────────────────────────────
+
+/// One `reason` operation and one `command` effect, checking clean.
+const DRY_RUN_PROGRAM: &str = r#"task plan
+  gives Text
+  do
+    draft = reason "plan the work"
+    when draft.sure -> give draft
+    else -> give "uncertain"
+
+task run_it
+  gives Text
+  do
+    result = command "echo hi"
+    if result.success
+      give result.stdout
+    else
+      give "command failed"
+
+fn main
+  say plan()
+  say run_it()
+"#;
+
+/// The same shape, but the command writes `marker` — so a dry run that
+/// executed it can be detected.
+fn touch_program(marker: &std::path::Path) -> String {
+    format!(
+        r#"task run_it
+  gives Text
+  do
+    result = command "touch {}"
+    if result.success
+      give result.stdout
+    else
+      give "command failed"
+
+fn main
+  say run_it()
+"#,
+        marker.display()
+    )
+}
+
+/// A config whose only provider points at a closed port: a dry run that built
+/// a provider (or called one) would fail instead of exiting 0.
+fn unreachable_provider_config(dir: &std::path::Path) -> String {
+    let path = dir.join("forge.config.toml");
+    std::fs::write(
+        &path,
+        "[llm]\n\
+         default = \"unreachable\"\n\n\
+         [providers.unreachable]\n\
+         type = \"openai-compat\"\n\
+         model = \"test-model\"\n\
+         api_key = \"test-key\"\n\
+         base_url = \"http://127.0.0.1:9\"\n",
+    )
+    .expect("write unreachable provider config");
+    path.to_string_lossy().to_string()
+}
+
+#[test]
+fn run_dry_run_json_lists_operations_and_effects() {
+    let dir = temp_dir("dry-run-json");
+    let program = dir.join("plan.forge");
+    std::fs::write(&program, DRY_RUN_PROGRAM).expect("write dry-run program");
+
+    let output = forge(&["run", "--dry-run", "--json", program.to_str().unwrap()]);
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["command"], "run");
+    assert_eq!(doc["data"]["dry_run"], true);
+    let operations = doc["data"]["operations"].as_array().unwrap();
+    assert_eq!(operations.len(), 1, "one LLM operation expected: {doc}");
+    assert_eq!(operations[0]["kind"], "reason");
+    let effects = doc["data"]["effects"].as_array().unwrap();
+    assert_eq!(effects.len(), 1, "one effect expected: {doc}");
+    assert_eq!(effects[0]["kind"], "command");
+    assert_eq!(effects[0]["location"], "task run_it");
+    assert!(doc["cost"].as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn run_dry_run_never_builds_a_provider() {
+    let dir = temp_dir("dry-run-provider");
+    let program = dir.join("plan.forge");
+    std::fs::write(&program, DRY_RUN_PROGRAM).expect("write dry-run program");
+    let config = unreachable_provider_config(&dir);
+
+    let output = forge_env(
+        &["run", "--dry-run", program.to_str().unwrap()],
+        &[("FORGE_CONFIG", &config)],
+    );
+    assert_exit(&output, 0);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Effects:"),
+        "the plan must be printed: {stdout}"
+    );
+    assert!(
+        stdout.contains("nothing was executed"),
+        "the plan must say nothing ran: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("falling back"),
+        "the unreachable provider config must load, not fall back to mock: {stderr}"
+    );
+}
+
+#[test]
+fn run_dry_run_never_constructs_a_provider() {
+    let dir = temp_dir("dry-run-construction");
+    let program = dir.join("plan.forge");
+    std::fs::write(&program, DRY_RUN_PROGRAM).expect("write dry-run program");
+    // A provider type the factory rejects: if the dry-run path ever built the
+    // registry — the closest thing to the issue's "provider that panics" — this
+    // command would fail instead of printing the plan.
+    let config = dir.join("forge.config.toml");
+    std::fs::write(
+        &config,
+        "[llm]\n\
+         default = \"unbuildable\"\n\n\
+         [providers.unbuildable]\n\
+         type = \"no-such-provider-type\"\n",
+    )
+    .expect("write unbuildable provider config");
+
+    let output = forge_env(
+        &["run", "--dry-run", program.to_str().unwrap()],
+        &[("FORGE_CONFIG", config.to_str().unwrap())],
+    );
+    assert_exit(&output, 0);
+    assert!(String::from_utf8_lossy(&output.stdout).contains("nothing was executed"));
+}
+
+#[test]
+fn run_dry_run_spawns_no_process() {
+    let dir = temp_dir("dry-run-touch");
+    let marker = dir.join("ran");
+    let program = dir.join("touch.forge");
+    std::fs::write(&program, touch_program(&marker)).expect("write touch program");
+
+    let output = forge(&["run", "--dry-run", program.to_str().unwrap()]);
+    assert_exit(&output, 0);
+    assert!(
+        !marker.exists(),
+        "a dry run must not execute the command: {}",
+        marker.display()
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("nothing was executed"));
+}
+
+#[test]
+fn cost_json_keeps_every_field_and_adds_effects() {
+    let output = forge(&["cost", "--json", "examples/errors/uncertain_error.forge"]);
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["command"], "cost");
+    let data = doc["data"].as_object().expect("cost data is an object");
+    for key in [
+        "file",
+        "operations",
+        "effects",
+        "total_tokens_in",
+        "total_tokens_out",
+        "estimated_cost_usd",
+    ] {
+        assert!(data.contains_key(key), "cost --json lost `{key}`: {doc}");
+    }
+    let operation = doc["data"]["operations"][0]
+        .as_object()
+        .expect("cost operation is an object");
+    for key in [
+        "kind",
+        "location",
+        "estimated_tokens_in",
+        "estimated_tokens_out",
+        "estimated_cost_usd",
+    ] {
+        assert!(
+            operation.contains_key(key),
+            "cost operation lost `{key}`: {doc}"
+        );
+    }
+    assert!(
+        data.get("dry_run").is_none(),
+        "`cost` is not a dry run: {doc}"
+    );
+}
+
+#[test]
+fn run_dry_run_blocks_on_errors_and_refuses_manifest() {
+    let blocked = forge(&[
+        "run",
+        "--dry-run",
+        "--json",
+        "examples/errors/uncertain_error.forge",
+    ]);
+    assert_exit(&blocked, 1);
+    let doc = parse_stdout(&blocked);
+    assert_eq!(doc["status"], "error");
+    assert_eq!(doc["error"]["type"], "check");
+    assert_eq!(doc["data"]["dry_run"], true);
+
+    let manifest = forge(&["run", "--dry-run", "--manifest", "forge.project.toml"]);
+    assert_exit(&manifest, 1);
+    assert!(
+        String::from_utf8_lossy(&manifest.stderr)
+            .contains("--manifest is not supported with --dry-run"),
+        "stderr: {}",
+        String::from_utf8_lossy(&manifest.stderr)
+    );
+
+    // --record needs a provider, so the command line itself is invalid.
+    let record = forge(&[
+        "run",
+        "--dry-run",
+        "examples/basics/hello.forge",
+        "--record",
+    ]);
+    assert_exit(&record, 1);
+}
+
 #[test]
 fn build_json_dry_run_validates() {
     let output = forge(&[

@@ -91,6 +91,9 @@ enum Command {
         /// Record every provider response as JSON fixtures for `forge test`
         #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
         record: Option<String>,
+        /// Print the static execution plan (operations, cost, effects) and run nothing
+        #[arg(long, conflicts_with = "record")]
+        dry_run: bool,
     },
     /// Replay a .forge program from recorded fixtures (no provider calls)
     Test {
@@ -673,7 +676,20 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
             file,
             manifest,
             record,
+            dry_run,
         } => {
+            if dry_run {
+                if manifest.is_some() {
+                    anyhow::bail!(
+                        "--manifest is not supported with --dry-run: a dry run plans one .forge \
+                         file, use `forge cost <file>` for single-file plans"
+                    );
+                }
+                let Some(file) = file else {
+                    anyhow::bail!("--dry-run requires a .forge file");
+                };
+                return dry_run_program(&file, out);
+            }
             if let Some(record) = record {
                 let Some(file) = file else {
                     anyhow::bail!(
@@ -755,25 +771,7 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
             if !out.json {
                 print!("{}", estimate);
             }
-            let data = serde_json::json!({
-                "file": file.display().to_string(),
-                "operations": estimate
-                    .operations
-                    .iter()
-                    .map(|op| {
-                        serde_json::json!({
-                            "kind": op.kind,
-                            "location": op.location,
-                            "estimated_tokens_in": op.estimated_tokens_in,
-                            "estimated_tokens_out": op.estimated_tokens_out,
-                            "estimated_cost_usd": op.estimated_cost_usd,
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-                "total_tokens_in": estimate.total_tokens_in,
-                "total_tokens_out": estimate.total_tokens_out,
-                "estimated_cost_usd": estimate.total_cost_usd,
-            });
+            let data = plan_json(&file, &estimate);
             let env = forge::cli_output::Envelope::success(
                 "cost",
                 data,
@@ -1379,6 +1377,121 @@ fn blocked_run_envelope(
     )
     .with_data(data)
     .with_next_steps(steps)
+}
+
+/// The static plan `forge cost --json` and `forge run --dry-run --json` both
+/// report: LLM operations, effect sites, and the token/cost totals (#477).
+fn plan_json(file: &Path, estimate: &forge::cost_estimator::CostEstimate) -> serde_json::Value {
+    serde_json::json!({
+        "file": file.display().to_string(),
+        "operations": estimate
+            .operations
+            .iter()
+            .map(|op| {
+                serde_json::json!({
+                    "kind": op.kind,
+                    "location": op.location,
+                    "estimated_tokens_in": op.estimated_tokens_in,
+                    "estimated_tokens_out": op.estimated_tokens_out,
+                    "estimated_cost_usd": op.estimated_cost_usd,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "effects": estimate
+            .effects
+            .iter()
+            .map(|e| serde_json::json!({"kind": e.kind, "location": e.location}))
+            .collect::<Vec<_>>(),
+        "total_tokens_in": estimate.total_tokens_in,
+        "total_tokens_out": estimate.total_tokens_out,
+        "estimated_cost_usd": estimate.total_cost_usd,
+    })
+}
+
+/// `forge run --dry-run`: parse, check, print the static plan, execute nothing.
+/// No provider is built, no executor starts, and no process is spawned (#477).
+fn dry_run_program(file: &Path, out: &forge::cli_output::OutputMode) -> anyhow::Result<()> {
+    let source = read_source(file)?;
+    let program = parse_or_exit(&source, file, "run", out);
+    let fname = file.display().to_string();
+
+    // The same static pass `forge check` runs. Skill signatures are not
+    // resolved here: that path builds the provider registry.
+    let mut diagnostics = Vec::new();
+    let ctx = forge::resolver::CheckContext::new(&fname);
+    if let Err(errors) = ctx.check(&program) {
+        let registry = forge::resolver::CapabilityRegistry::builtin();
+        diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+    }
+    diagnostics.extend(forge::checker::check_all(&program, &fname));
+    diagnostics.extend(forge::checker::boundary_checker::check(&[(
+        &program,
+        fname.as_str(),
+    )]));
+
+    let errors = diagnostics
+        .iter()
+        .filter(|d| d.kind == forge::diagnostic::DiagnosticKind::Error)
+        .count();
+    if errors > 0 {
+        if !out.json {
+            forge::diagnostic::render_diagnostics(&source, &diagnostics);
+        }
+        let hint = format!("forge check --json {}", file.display());
+        let data = serde_json::json!({
+            "dry_run": true,
+            "file": fname,
+            "blocked": true,
+            "diagnostics": diagnostics
+                .iter()
+                .map(|d| forge::cli_output::diagnostic_json(d, Some(&source)))
+                .collect::<Vec<_>>(),
+        });
+        out.done(&blocked_run_envelope("run", &hint, &diagnostics, data));
+    }
+
+    if !diagnostics.is_empty() && !out.json {
+        forge::diagnostic::render_diagnostics(&source, &diagnostics);
+    }
+
+    let estimate =
+        forge::cost_estimator::estimate(&program, &forge::config::ForgeConfig::load_or_default());
+    let mut data = plan_json(file, &estimate);
+    data["dry_run"] = serde_json::Value::Bool(true);
+
+    if !out.json {
+        print!("{estimate}");
+        if estimate.effects.is_empty() {
+            println!("Effects: none");
+        } else {
+            println!("Effects:");
+            for effect in &estimate.effects {
+                println!("{}  {}", effect.kind, effect.location);
+            }
+        }
+        println!("nothing was executed");
+    }
+
+    let context = format!(
+        "dry run of {}: {} LLM operation(s), {} effect(s); nothing was executed",
+        file.display(),
+        estimate.operations.len(),
+        estimate.effects.len()
+    );
+    // Warnings do not block the plan, but they keep `forge check`'s exit code 2.
+    let env = if diagnostics.is_empty() {
+        forge::cli_output::Envelope::success("run", data, context)
+    } else {
+        forge::cli_output::Envelope::new("run", forge::cli_output::Status::Warning, data, context)
+            .with_warnings(
+                diagnostics
+                    .iter()
+                    .map(|d| format!("{}: {}", d.code, d.message))
+                    .collect(),
+            )
+    }
+    .with_cost(estimate.total_cost_usd as f64);
+    out.done(&env)
 }
 
 /// Terminal envelope for a completed `run`/`trace`.
