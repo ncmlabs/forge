@@ -3124,7 +3124,7 @@ Every executed `run`, `trace` and `test` ends with its economics and trust signa
 12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1 warden event · 3.4s
 ```
 
-A program that made no LLM call prints `0 LLM calls · 0 tok · $0.000 · 0.1s` — the confidence part is omitted (no call to measure), the warden part when the warden emitted nothing. Token counts stay exact below 1000 and use one decimal in `k` above it; the duration is wall-clock time and rounded to one decimal. `FORGE_LOG_LEVEL=quiet` silences the line.
+A program that made no LLM call prints `0 LLM calls · 0 tok · $0.000 · 0.1s` — the confidence part is omitted (no call to measure), the warden part when the warden emitted nothing. Token counts stay exact below 1000 and use one decimal in `k` above it; the duration is wall-clock time and rounded to one decimal. `FORGE_LOG_LEVEL=quiet` silences the line. Calls made by detached spawns that are still running when the program ends are not included: the counters are read once the run is over.
 
 JSON mode prints no summary line: the same data is `data.summary`.
 
