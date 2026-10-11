@@ -59,6 +59,42 @@
     }
   },
   "$defs": {
+    "diagnostic": {
+      "title": "Diagnostic",
+      "description": "One entry of `data.diagnostics` (shared by `parse`, `check`, `run`, `trace` and `test`). `line`/`col`/`end_line`/`end_col` are `null` when the diagnostic names a file that was not parsed — a missing position is never reported as a fake 1:1.",
+      "type": "object",
+      "required": [
+        "code",
+        "severity",
+        "file",
+        "line",
+        "col",
+        "end_line",
+        "end_col",
+        "message",
+        "label",
+        "help"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "Stable diagnostic code (`E020`, `W041`); see `forge explain --list`.",
+          "type": "string"
+        },
+        "severity": { "enum": ["error", "warning"] },
+        "file": { "type": "string" },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "col": { "type": ["integer", "null"], "minimum": 1 },
+        "end_line": { "type": ["integer", "null"], "minimum": 1 },
+        "end_col": { "type": ["integer", "null"], "minimum": 1 },
+        "message": { "type": "string" },
+        "label": {
+          "description": "The span's label, rendered under the source line in human mode.",
+          "type": "string"
+        },
+        "help": { "type": ["string", "null"] }
+      }
+    },
     "error": {
       "title": "ErrorInfo",
       "type": "object",

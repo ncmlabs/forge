@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge cost data",
+  "description": "Payload of `forge cost --json`: the static estimate. No provider is called, so the envelope's `cost` repeats `estimated_cost_usd` and nothing was actually spent.",
+  "type": "object",
+  "required": [
+    "file",
+    "operations",
+    "total_tokens_in",
+    "total_tokens_out",
+    "estimated_cost_usd"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "file": {
+      "description": "Source path as given on the command line.",
+      "type": "string"
+    },
+    "operations": {
+      "description": "One entry per LLM operation the static analysis found.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "location",
+          "estimated_tokens_in",
+          "estimated_tokens_out",
+          "estimated_cost_usd"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "description": "Oracle primitive, e.g. `reason`, `classify`, `search`.",
+            "type": "string"
+          },
+          "location": {
+            "description": "Human-readable site, e.g. `task analyze`.",
+            "type": "string"
+          },
+          "estimated_tokens_in": { "type": "integer", "minimum": 0 },
+          "estimated_tokens_out": { "type": "integer", "minimum": 0 },
+          "estimated_cost_usd": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "total_tokens_in": { "type": "integer", "minimum": 0 },
+    "total_tokens_out": { "type": "integer", "minimum": 0 },
+    "estimated_cost_usd": { "type": "number", "minimum": 0 }
+  }
+}
