@@ -133,7 +133,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `data did not match any variant of untagged enum RouteSpec`, which leaked an
   internal type name and never named the phase. Validation also walks phases in
   sorted order and reports every bad phase in one error, so the message no
-  longer depends on `HashMap` iteration order.
+  longer depends on `HashMap` iteration order. Phases that parse but cannot
+  serve (empty chain, unknown provider) now render as
+  `invalid [llm] configuration: …` via `ProviderError::InvalidConfig` instead
+  of claiming a provider is unavailable, and the CLI types both cases as
+  `error.type: "config"` in the `--json` envelope.
 
 ## [0.2.0] - 2026-08-31
 

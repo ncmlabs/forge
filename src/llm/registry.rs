@@ -168,8 +168,10 @@ impl ProviderRegistry {
         if problems.is_empty() {
             Ok(())
         } else {
-            Err(ProviderError::Unavailable {
-                provider: "[llm.routing]".to_string(),
+            // #509 — a config typo is not a provider that is down: nothing was
+            // called, and "provider '[llm.routing]' is unavailable" sent the
+            // reader looking for an outage instead of at their own table.
+            Err(ProviderError::InvalidConfig {
                 reason: problems.join("\n"),
             })
         }
@@ -829,6 +831,9 @@ type = "mock"
             Ok(_) => panic!("invalid phases must fail at startup"),
             Err(e) => e.to_string(),
         };
+        // A config typo is not an outage (#509).
+        assert!(err.starts_with("invalid [llm] configuration:"), "{err}");
+        assert!(!err.contains("unavailable"), "{err}");
         let lines: Vec<&str> = err
             .lines()
             .filter(|line| line.contains("[llm.routing]"))
