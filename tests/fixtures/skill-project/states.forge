@@ -1,0 +1,11 @@
+states AuditPhase
+  idle -> auditing
+  auditing -> idle
+
+agent auditor
+  lifecycle: AuditPhase
+
+  on start(topic: Text)
+    requires lifecycle == idle on fail: silent
+    say "[auditor] {topic}"
+    transition to auditing

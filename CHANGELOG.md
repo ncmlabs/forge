@@ -24,6 +24,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that gains or renames a key fails until the schema is updated. `jsonschema`
   is a dev-dependency only. Plain `forge help` / `forge --help` are unchanged.
   Documented in `docs/forge-reference.md` §27.
+- `forge check --manifest <forge.project.toml>` (#495): the project's declared
+  skills are registered before resolving, so `skill.<name>.<capability>` calls
+  type-check instead of failing with `unknown capability`. The signatures come
+  from the same code path `run` uses (manifest `[skills]`, else the config
+  `skill_dirs` fallback, also honoured through `FORGE_CONFIG`); no provider is
+  contacted and no executor is built. With no files, the manifest's sources are
+  checked exactly as `forge run --manifest` blocks on them — every source per
+  file, plus the cross-file boundary check — so a project `check` accepts is a
+  project `run` does not reject; explicit files are checked instead. Undeclared
+  skills still fail with `E010`, and the `E160` help now names
+  `forge check --manifest forge.project.toml` alongside
+  `forge check --merge <files>`.
+- End-of-run summary (#479): `forge run`, `forge trace` and `forge test` end
+  with the run's economics and trust signals — one line on stderr in human mode
+  (`12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1
+  warden event · 3.4s`, so program stdout stays clean) and `data.summary`
+  (`{llm_calls, tokens_in, tokens_out, cost_usd, confidence:{p50, min}|null,
+  warden_events, duration_ms}`) in JSON mode. Counters come from the trace
+  events the runtime already emits, spawned children and pool workers included;
+  a zero-LLM run reports `0 LLM calls · 0 tok · $0.000` with no confidence
+  spread, and `FORGE_LOG_LEVEL=quiet` silences the human line. Documented in
+  `docs/forge-reference.md` §27.
 - Resolution checker (#496): `forge check` now rejects a plain call to an
   undeclared `task`/`pure`/`flow`/`pool` (`E160`, with a closest-name hint),
   a match arm that can never match a scrutinee whose values are statically
@@ -139,6 +161,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- The JSON envelope's `duration_ms` was ~0 for every command (#479): the clock
+  started lazily inside `emit`, so it measured the time from `emit` to itself.
+  It now starts as the first statement of `main` and reports the command's
+  wall-clock time (a run whose `command` sleeps 200 ms reports ≥ 200 ms).
 - `forge test --expect` line endings (#481): the output comparison ignored
   trailing whitespace but not the line ending, so an LF `expected.txt`
   committed to a repo never matched CRLF stdout on Windows (and a

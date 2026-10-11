@@ -1257,7 +1257,21 @@ Type-check a FORGE program without execution.
 
 ```bash
 forge check program.forge
+forge check main.forge platform.forge --merge   # cross-file references resolve
+forge check --manifest forge.project.toml       # the project's declared skills resolve
 ```
+
+`--manifest <forge.project.toml>` registers the project's declared skills
+(`[skills]` → `skills/<name>/SKILL.md`) before resolving, so
+`skill.<name>.<capability>` calls type-check instead of failing with
+`unknown capability`. With no files, every source the manifest declares is
+checked exactly as `forge run --manifest` blocks on it — per source file, plus
+the cross-file boundary check — so a project `check` accepts is one `run` does
+not reject; with files, those files are checked instead (`--merge` composes
+them). Without `--manifest`, `skill_dirs` from `forge.config.toml` (or
+`FORGE_CONFIG`) apply, exactly as for `run`. A check runs no provider: no config
+at all means no config-declared skills, while a config that exists and cannot be
+loaded is still an error.
 
 #### `forge run <file>`
 Execute a FORGE program using the configured provider.
@@ -2516,7 +2530,7 @@ The scrutinee's value set is known in exactly three cases: it is bound from `cla
 
 Patterns naming a declared or built-in type are never flagged, and neither are `_` or bindings. `E160` suggests the closest declared name within edit distance 2.
 
-`forge check` only sees the files it is handed, so a call that looks undeclared may live in a sibling source of the same project (a `forge.project.toml` `sources` entry). When the file imports a package or carries a boundary directive — or when no close name is found at all — the `E160` help adds: *if it is declared in another file of this project, check the files together: `forge check --merge <files>`*.
+`forge check` only sees the files it is handed, so a call that looks undeclared may live in a sibling source of the same project (a `forge.project.toml` `sources` entry). When the file imports a package or carries a boundary directive — or when no close name is found at all — the `E160` help adds: *if it is declared in another file of this project, check the files together: `forge check --merge <files>` or `forge check --manifest forge.project.toml`*.
 
 ```forge
 task route
@@ -2799,7 +2813,7 @@ Built-in capability families:
 
 `search "query"` is restricted to `#! boundary: server`.
 
-Project skills are declared in `forge.project.toml`. Validate them through the project/manifest path, not as isolated single-file examples, because the checker needs the manifest-provided skill registry.
+Project skills are declared in `forge.project.toml`. Validate them through the project/manifest path (`forge check --manifest forge.project.toml`), not as isolated single-file examples, because the checker needs the manifest-provided skill registry.
 
 ```toml
 [project]
@@ -2974,7 +2988,7 @@ Examples are not all validated the same way:
 | Positive single-file examples | `cargo run -- check <file>` |
 | Expected-error examples | Keep the expected diagnostic in the example name, comment, or test fixture |
 | Live LLM/session examples | Check syntax locally; run only when real provider credentials and CLI adapters are available |
-| Manifest skill examples | Use `cargo run -- run --manifest <forge.project.toml>` or the checker path that loads the manifest registry |
+| Manifest skill examples | `cargo run -- check --manifest <forge.project.toml>` (the checker path that loads the manifest skill registry); `run --manifest` to execute |
 | Multi-file examples | Validate through `forge.project.toml` or a merged-source command, not by checking dependent files in isolation |
 
 When an example intentionally exercises a checker limitation, document the limitation beside the example or in the issue verification notes rather than treating a nonzero checker result as a passing smoke test.
@@ -3106,7 +3120,7 @@ A command line clap cannot parse exits `1` in both modes — never clap's defaul
 | `parse` | `{file, ast}` (the debug AST tree) |
 | `check` | `{files, diagnostics:[{code, severity, file, line, col, end_line, end_col, message, label, help}]}` — `line`/`col` are `null` when the diagnostic names a file that was not parsed (no span to translate), never a fake `1:1` |
 | `explain` | `{code, title, explain}` or `{codes:[{code, title}]}` with `--list` |
-| `run`, `trace`, `test` | `{file, output:[say lines], result}` — `say` never writes to stdout in JSON mode, wherever it runs: `fn main`, a spawned agent, or a pool worker (their lines join the same `output`). `cost` covers the whole run, spawned children and pool workers included. `test` replays recorded fixtures (#478) and adds `{fixtures, expect, matched}` with `--expect` |
+| `run`, `trace`, `test` | `{file, output:[say lines], result, summary}` — `say` never writes to stdout in JSON mode, wherever it runs: `fn main`, a spawned agent, or a pool worker (their lines join the same `output`). `cost` covers the whole run, spawned children and pool workers included. `summary` is the end-of-run summary below. `test` replays recorded fixtures (#478) and adds `{fixtures, expect, matched}` with `--expect` |
 | `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], total_tokens_in, total_tokens_out, estimated_cost_usd}` |
 | `build` | `{path, output_name, binary_path, program_kind, release, dry_run, built}` |
 | `export` | `{agent, layers, output, entries}` |
@@ -3116,6 +3130,39 @@ A command line clap cannot parse exits `1` in both modes — never clap's defaul
 | `wake` | `{action, ...}` per subcommand (`rotate` includes the one-time `secret`) |
 | `store recover` | `{action, root, dry_run, healthy, broken, stores:[...]}` |
 | `init` | `{dir, template, dry_run, files}` |
+
+### Run summary
+
+Every executed `run`, `trace` and `test` ends with its economics and trust signals (#479). Human mode prints one line to **stderr**, after the program's own output, so stdout stays the program's:
+
+```text
+12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1 warden event · 3.4s
+```
+
+A program that made no LLM call prints `0 LLM calls · 0 tok · $0.000 · 0.1s` — the confidence part is omitted (no call to measure), the warden part when the warden emitted nothing. Token counts stay exact below 1000 and use one decimal in `k` above it; the duration is wall-clock time and rounded to one decimal. `FORGE_LOG_LEVEL=quiet` silences the line. Calls made by detached spawns that are still running when the program ends are not included: the counters are read once the run is over.
+
+JSON mode prints no summary line: the same data is `data.summary`.
+
+```json
+{
+  "llm_calls": 12,
+  "tokens_in": 20000,
+  "tokens_out": 11200,
+  "cost_usd": 0.041,
+  "confidence": { "p50": 0.86, "min": 0.42 },
+  "warden_events": 1,
+  "duration_ms": 3400
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `llm_calls` | LLM calls the run made, spawned children, pool workers and skill calls included |
+| `tokens_in`, `tokens_out` | tokens those calls were billed for; `0` on paths with no LLM call |
+| `cost_usd` | same USD as the envelope's `cost` |
+| `confidence` | `{p50, min}` over the run's LLM confidences (Principle I — the spread is shown, not hidden), `null` when the run made no LLM call |
+| `warden_events` | actual warden interventions (`ward_action`: nudge, restart, replace, escalate); the warden's `supervision_tree` start-of-run snapshot is not an intervention and is not counted |
+| `duration_ms` | wall-clock time of the command |
 
 ### `--fields`
 

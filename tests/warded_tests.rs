@@ -630,3 +630,69 @@ async fn all_failure_types_resolve_correctly() {
         assert_eq!(action.scope, expected_scope, "wrong scope for {:?}", ft);
     }
 }
+
+// ── #479: warden events in the run summary ──────────────────────────────────
+
+/// A clean warded run emits the warden's supervision-tree snapshot but never
+/// intervenes, so the run summary must report zero warden events (#479 review:
+/// counting the snapshot made every warded run report `1 warden event`).
+#[tokio::test]
+async fn clean_warded_run_reports_zero_warden_events() {
+    let program = make_program(vec![TopLevel::Agent(Box::new(simple_agent("worker")))]);
+    let tracer = forge::tracer::Tracer::counting();
+    let stats = tracer.stats();
+    let mut runtime = WardedRuntime::new(
+        test_warden("boss", vec!["worker"], vec![crash_restart_policy()], None),
+        &program,
+        mock_registry(),
+        Some(tracer),
+    );
+
+    runtime.spawn_all().await.unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), runtime.run()).await;
+    assert!(result.is_ok(), "runtime timed out");
+    assert!(result.unwrap().is_ok(), "runtime returned error");
+
+    assert_eq!(
+        stats.warden_events(),
+        0,
+        "a warden that never intervened must not report a warden event"
+    );
+}
+
+/// One crash restarted by the warden is at least one warden event.
+#[tokio::test]
+async fn crashing_agent_reports_a_warden_event() {
+    let program = make_program(vec![TopLevel::Agent(Box::new(crashing_agent("crasher")))]);
+    let tracer = forge::tracer::Tracer::counting();
+    let stats = tracer.stats();
+    let warden_decl = test_warden(
+        "boss",
+        vec!["crasher"],
+        vec![WardPolicy {
+            failure_type: sp(FailureType::Crash),
+            response: sp(WardResponse::Restart),
+            scope: sp(WardScope::This),
+            after_clauses: vec![sp(AfterClause {
+                count: 1,
+                response: sp(WardResponse::Escalate),
+            })],
+        }],
+        None,
+    );
+    let mut runtime = WardedRuntime::new(warden_decl, &program, mock_registry(), Some(tracer));
+
+    runtime.spawn_all().await.unwrap();
+    let bus = runtime.event_bus().clone();
+    let handle = tokio::spawn(async move { runtime.run().await });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    publish_trigger(&bus).await;
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
+    assert!(result.is_ok(), "warden timed out");
+    assert!(
+        stats.warden_events() >= 1,
+        "the restart must be counted as a warden event"
+    );
+}
