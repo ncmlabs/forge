@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `forge run --dry-run <file>` (#477): parse, check, and print the static
+  execution plan — the cost table of every LLM operation, then an `Effects:`
+  list with one `kind  location` line per side-effect site (`command`, `exec`,
+  `http`, `file.write`, `session`, `spawn`) in walk order — then the line
+  `nothing was executed`. No provider is built, no executor starts, no process
+  runs, and no agent is spawned. `--json` reports the #475 envelope with
+  `command: "run"` and `data = {dry_run, file, operations, effects,
+  total_tokens_in, total_tokens_out, estimated_cost_usd}`; exit codes follow
+  `forge check` (`0` clean plan, `1` errors blocked the plan, `2` warnings
+  only). `forge cost` is the same static plan with `command: "cost"` (human
+  output unchanged, JSON `data` gains `effects`). `--dry-run` conflicts with
+  `--record` and refuses `--manifest` for now. Effect sites come from the
+  existing `src/cost_estimator.rs` walker; token totals are unchanged.
 - Resolution checker (#496): `forge check` now rejects a plain call to an
   undeclared `task`/`pure`/`flow`/`pool` (`E160`, with a closest-name hint),
   a match arm that can never match a scrutinee whose values are statically
