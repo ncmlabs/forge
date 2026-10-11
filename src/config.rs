@@ -213,9 +213,9 @@ pub struct LLMConfig {
 }
 
 /// #509 — deserialize `[llm.routing]` entry by entry so a value of the wrong
-/// shape names its phase. toml's own error renders only the offending line,
-/// never the enclosing `[llm.routing]` table, so the key path has to come from
-/// here.
+/// shape names its phase. toml's span lands on the `[llm.routing]` table
+/// header, not on the offending `plan = 7` line, so the phase name is
+/// prepended here instead of being read off the parser's snippet.
 fn deserialize_routing<'de, D>(
     deserializer: D,
 ) -> Result<Option<HashMap<String, RouteSpec>>, D::Error>
