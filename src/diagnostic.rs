@@ -1,4 +1,4 @@
-use ariadne::{Color, Config, Label, Report, ReportKind, Source};
+use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +94,13 @@ impl Diagnostic {
         let mut builder = Report::build(kind, (self.file.as_str(), clamped.clone()))
             .with_code(self.code)
             .with_message(&self.message)
-            .with_config(Config::default().with_color(color))
+            .with_config(
+                Config::default()
+                    .with_color(color)
+                    // Every FORGE span is a byte range (pest offsets), so ariadne
+                    // must count bytes, not chars (#513).
+                    .with_index_type(IndexType::Byte),
+            )
             .with_label(
                 Label::new((self.file.as_str(), clamped))
                     .with_message(&self.label)
