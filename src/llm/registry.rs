@@ -57,31 +57,6 @@ impl ProviderRegistry {
         // the default or the mock provider later on (#453 contract).
         registry.validate_routing()?;
 
-        // T8.6 (#361) — clone-dev startup overlay. When the runtime is
-        // launched with `$FORGE_CLONEDEV_CONFIG=<path>`, the resolved
-        // CloneDevConfig's [llm.routing] (primary + fallback) overrides
-        // anything from forge.config.toml's own `[llm.routing]`. A missing
-        // file or parse error is a warning rather than a hard failure —
-        // the registry stays usable for non-clone-dev workflows that
-        // happen to share the same forge.config.toml.
-        if let Ok(path) = std::env::var("FORGE_CLONEDEV_CONFIG") {
-            match crate::runtime::clone_dev_config::load(std::path::Path::new(&path)) {
-                Ok(cfg) => {
-                    let table = cfg.routing_table();
-                    if !table.is_empty() {
-                        registry.routing = table;
-                    }
-                }
-                Err(e) => {
-                    eprintln!(
-                        "[forge] FORGE_CLONEDEV_CONFIG='{}' present but unloadable: {}. \
-                         Runtime continues with forge.config.toml routing.",
-                        path, e
-                    );
-                }
-            }
-        }
-
         if let Some(mode) = crate::llm::fixtures::mode() {
             registry.apply_fixture_mode(mode)?;
         }
@@ -117,9 +92,8 @@ impl ProviderRegistry {
         self.fallbacks.insert(from.to_string(), to.to_string());
     }
 
-    /// Replace the phase routing table. Used by the clone-dev startup overlay
-    /// (#361) when `$FORGE_CLONEDEV_CONFIG` is set; the resolved
-    /// `CloneDevConfig` rebuilds this map keyed by phase name.
+    /// Replace the phase routing table. Built from `forge.config.toml`'s
+    /// `[llm.routing]` (#503), keyed by phase name.
     pub fn set_routing(&mut self, table: HashMap<String, Vec<String>>) {
         self.routing = table;
     }
@@ -654,69 +628,6 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn from_config_applies_clone_dev_overlay_when_env_set() {
-        // The startup overlay path: when $FORGE_CLONEDEV_CONFIG points at a
-        // valid clone-dev.toml with [llm.routing], its phase chains land on
-        // the registry without any explicit caller plumbing.
-        use std::io::Write;
-
-        let dir = std::env::temp_dir().join(format!("forge-361-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        let path = dir.join("clone-dev.toml");
-        {
-            let mut f = std::fs::File::create(&path).expect("create");
-            writeln!(
-                f,
-                "[llm.routing]\nplan = \"sonnet\"\nimplement = \"gpt-4o\"\n\n[llm.routing.fallback]\nplan = [\"sonnet\", \"gpt-4o\"]\n"
-            )
-            .expect("write");
-        }
-
-        // Build a minimal ForgeConfig with two named providers so the
-        // overlay's chain references resolve.
-        let toml = r#"
-[llm]
-default = "sonnet"
-
-[providers.sonnet]
-type = "mock"
-
-[providers."gpt-4o"]
-type = "mock"
-"#;
-        let config: crate::config::ForgeConfig = toml::from_str(toml).expect("config parse");
-
-        // Set the env var across the build, then unset to avoid leaking
-        // into other tests that share this process.
-        let _guard = env_guard();
-        std::env::set_var("FORGE_CLONEDEV_CONFIG", &path);
-        let registry = ProviderRegistry::from_config(config).expect("registry build");
-        std::env::remove_var("FORGE_CLONEDEV_CONFIG");
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let chain = registry
-            .routing
-            .get("plan")
-            .cloned()
-            .expect("plan chain present");
-        assert_eq!(chain, vec!["sonnet".to_string(), "gpt-4o".into()]);
-        let imp = registry
-            .routing
-            .get("implement")
-            .cloned()
-            .expect("implement chain present");
-        assert_eq!(imp, vec!["gpt-4o".to_string()]);
-    }
-
-    /// #503 — `from_config` reads the process-global `FORGE_CLONEDEV_CONFIG`,
-    /// so tests that toggle it must not overlap tests that build a registry
-    /// from a config-declared routing table.
-    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
     // ── #503 — [llm.routing] provider chains from config ───────────────
 
     #[tokio::test]
@@ -737,11 +648,8 @@ type = "mock"
 type = "mock"
 "#;
         let config: crate::config::ForgeConfig = toml::from_str(toml).expect("config parse");
-        // Only the build reads the process-global env; the chain is baked in.
-        let mut registry = {
-            let _guard = env_guard();
-            ProviderRegistry::from_config(config).expect("registry build")
-        };
+        // The chain is baked into the registry at build time.
+        let mut registry = ProviderRegistry::from_config(config).expect("registry build");
 
         // Swap the config-built mocks: primary always fails, secondary answers.
         registry.register("primary", Arc::new(FailingProvider::new("primary")));

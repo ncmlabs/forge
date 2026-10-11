@@ -2195,25 +2195,6 @@ impl TaskExecutor {
                         }
                     }
 
-                    // config.load_clone_dev(path) — read the clone-dev TOML, merge
-                    // [defaults] with [repos.*], resolve *_env indirections, and
-                    // return a CloneDevConfig record. Issue #357 (T8.2). Cached
-                    // process-wide by canonical path; see clone_dev_config.rs.
-                    if let Expr::Ident(ref ns) = obj_expr.node {
-                        if ns == "config" && method.node == "load_clone_dev" {
-                            let mut arg_vals = Vec::new();
-                            for arg in args {
-                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
-                            }
-                            let path_s = arg_vals
-                                .first()
-                                .map(|v| format!("{}", v.value))
-                                .unwrap_or_default();
-                            let path = std::path::Path::new(&path_s);
-                            return crate::runtime::clone_dev_config::load_as_forge_value(path);
-                        }
-                    }
-
                     // file.read / toml.parse / json.parse — structured-data
                     // intrinsics (#380). Dispatch goes through a Box::pin'd
                     // helper so the arg-eval loop's future is heap-allocated
