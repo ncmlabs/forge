@@ -125,11 +125,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Diagnostic text output pointed at the wrong line/column after non-ASCII
   characters (#513): `src/diagnostic.rs` built ariadne with the default
-  `IndexType::Char`, but every FORGE span is a byte range (pest offsets, and
-  `cli_output::line_col` counts bytes), so a `─`, `é` or emoji earlier in the
-  file shifted every rendered caret, or dropped the snippet entirely. A span
-  that is not on a character boundary (which `forge build` can produce for a
-  merged multi-file program) is now clamped instead of panicking ariadne.
+  `IndexType::Char`, but every FORGE span is a byte range (pest offsets), so a
+  `─`, `é` or emoji earlier in the file shifted every rendered caret, or dropped
+  the snippet entirely. Text output's line and column are now correct after
+  multi-byte text, and the column counts characters (`cli_output::line_col` keeps
+  counting bytes for JSON). A span that is not on a character boundary (which
+  `forge build` can produce for a merged multi-file program) is now clamped
+  instead of panicking ariadne.
 - `forge test --expect` line endings (#481): the output comparison ignored
   trailing whitespace but not the line ending, so an LF `expected.txt`
   committed to a repo never matched CRLF stdout on Windows (and a

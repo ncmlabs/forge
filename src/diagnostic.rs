@@ -184,16 +184,38 @@ mod tests {
     }
 
     #[test]
+    fn render_to_counts_char_columns_for_multibyte_text() {
+        // ariadne prints character columns even with `IndexType::Byte`; JSON
+        // (`cli_output::line_col`) prints byte columns. Text output must stay
+        // char-columned and point at `nope` below, i.e. line 1, column 3.
+        let source = "─ nope\n";
+        let start = source.find("nope").expect("source contains `nope`");
+        let diag = Diagnostic::error(
+            "E030",
+            "src/example.forge",
+            "unknown function `nope`",
+            start..start + "nope".len(),
+            "here",
+        );
+        let mut out = Vec::new();
+        diag.render_to(source, false, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(":1:3"), "output: {text}");
+    }
+
+    #[test]
     fn render_to_clamps_spans_inside_a_multibyte_char() {
         // `forge build` names merged-program diagnostics after the first source
         // file, so a diagnostic can carry a span that belongs to another file and
-        // lands inside a multi-byte character. Rendering it must not panic (#513).
+        // has both ends inside a multi-byte character. Rendering it must not
+        // panic and must fall back to the character's own line (#513).
         let source = "# ── Endpoints ──\nendpoint status() -> Html\n";
-        let diag = Diagnostic::warning("W040", "src/example.forge", "opaque guard", 0..6, "here");
+        let diag = Diagnostic::warning("W040", "src/example.forge", "opaque guard", 3..6, "here");
         let mut out = Vec::new();
         diag.render_to(source, false, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("W040"), "output: {text}");
+        assert!(text.contains("src/example.forge:1:"), "output: {text}");
         assert!(!text.contains('\x1b'), "output has ANSI: {text:?}");
     }
 }
