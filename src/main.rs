@@ -81,6 +81,14 @@ enum Command {
         #[arg(long)]
         list: bool,
     },
+    /// Print the JSON Schema of a command's `--json` output (#476)
+    Schema {
+        /// Command whose envelope schema to print (e.g. check, run, wake)
+        command: Option<String>,
+        /// Print `{command: schema}` for every command with a JSON contract
+        #[arg(long, conflicts_with = "command")]
+        all: bool,
+    },
     /// Execute a .forge program
     Run {
         /// Path to the .forge source file
@@ -301,6 +309,7 @@ impl Command {
             Command::Parse { .. } => "parse",
             Command::Check { .. } => "check",
             Command::Explain { .. } => "explain",
+            Command::Schema { .. } => "schema",
             Command::Run { .. } => "run",
             Command::Test { .. } => "test",
             Command::Trace { .. } => "trace",
@@ -405,6 +414,28 @@ fn argv_subcommand() -> Option<String> {
         .map(|command| command.get_name().to_string())
         .collect();
     std::env::args().skip(1).find(|arg| names.contains(arg))
+}
+
+/// A usage error raised by an introspection command whose argument names a
+/// command that has no JSON contract (`forge schema <command>`): exit 1, one
+/// envelope in JSON mode and stderr text otherwise (#476).
+fn introspection_usage_error(
+    out: &forge::cli_output::OutputMode,
+    command: &str,
+    message: String,
+    suggestion: String,
+) -> ! {
+    if out.json {
+        let env = forge::cli_output::Envelope::error(
+            command,
+            forge::cli_output::ErrorInfo::new("usage", message.clone()).with_suggestion(suggestion),
+            format!("{command}: {message}"),
+        );
+        out.done(&env);
+    }
+    eprintln!("Error: {message}");
+    eprintln!("suggestion: {suggestion}");
+    forge::cli_output::exit(forge::cli_output::ExitCode::Error)
 }
 
 /// Dispatch a parsed command to its implementation.
@@ -668,6 +699,26 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                     }
                 }
             }
+        }
+        Command::Schema { command, all } => {
+            let schema = match (command, all) {
+                (_, true) => forge::cli_schema::all(),
+                (Some(name), false) => match forge::cli_schema::envelope_for(&name) {
+                    Some(schema) => schema,
+                    None => introspection_usage_error(
+                        out,
+                        "schema",
+                        format!("unknown command '{name}'"),
+                        format!(
+                            "run `forge schema --all`; commands with a schema: {}",
+                            forge::cli_schema::commands().join(", ")
+                        ),
+                    ),
+                },
+                (None, false) => forge::cli_schema::envelope_only(),
+            };
+            println!("{}", serde_json::to_string_pretty(&schema)?);
+            forge::cli_output::exit(forge::cli_output::ExitCode::Success);
         }
         Command::Run {
             file,

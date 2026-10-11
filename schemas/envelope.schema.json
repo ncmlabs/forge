@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/envelope.schema.json",
+  "title": "FORGE CLI envelope",
+  "description": "The one JSON document every in-scope FORGE command prints in `--json` mode (#475). `forge schema <command>` prints this document with `properties.data` replaced by that command's payload schema.",
+  "type": "object",
+  "required": [
+    "status",
+    "command",
+    "data",
+    "context",
+    "next_steps",
+    "warnings",
+    "cost",
+    "error",
+    "duration_ms"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "description": "Terminal status of the command; `pending` is for paths that stop and wait (approval gate, needs input).",
+      "enum": ["success", "error", "warning", "pending"]
+    },
+    "command": {
+      "description": "Subcommand that produced the document (`check`, `run`, `wake`, ...), or the subcommand named in argv for a usage error, or `\"\"` when none was given.",
+      "type": "string"
+    },
+    "data": {
+      "description": "Command payload, filterable with `--fields`. One `<command>.data.schema.json` describes each command's shape; see `forge schema <command>`.",
+      "type": "object"
+    },
+    "context": {
+      "description": "One human sentence describing what happened.",
+      "type": "string"
+    },
+    "next_steps": {
+      "description": "Concrete commands to run next (`forge explain <code>` for check errors).",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "warnings": {
+      "description": "Non-fatal findings, also present in `data.diagnostics` for `check`.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "cost": {
+      "description": "USD spent by this command. `0.0` on paths with no LLM calls, `null` when spend cannot be measured.",
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "error": {
+      "description": "`null` on success and on warnings-only runs, else the error taxonomy.",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/error" }]
+    },
+    "duration_ms": {
+      "description": "Wall-clock time of the command.",
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "error": {
+      "title": "ErrorInfo",
+      "type": "object",
+      "required": ["type", "code", "message", "suggestion"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Error taxonomy. `io`, `parse`, `config` and `runtime` are classified from the failure; `usage` is an invalid command line, `check` is static diagnostics blocking execution, `unsupported` is a command without a JSON contract.",
+          "enum": ["io", "parse", "config", "runtime", "usage", "check", "unsupported"]
+        },
+        "code": {
+          "description": "Diagnostic code (`E020`) when the failure carries one.",
+          "type": ["string", "null"]
+        },
+        "message": { "type": "string" },
+        "suggestion": {
+          "description": "Concrete next action, e.g. `run forge check --help`.",
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}
