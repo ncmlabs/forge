@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge import data",
+  "description": "Payload of `forge import --json`: knowledge entries from a package merged into a local store. The package's integrity is verified before anything is written.",
+  "type": "object",
+  "required": ["package", "into", "imported", "confidence_cap"],
+  "additionalProperties": false,
+  "properties": {
+    "package": {
+      "description": "Package path as given on the command line.",
+      "type": "string"
+    },
+    "into": {
+      "description": "Target knowledge store path (`--into`).",
+      "type": "string"
+    },
+    "imported": {
+      "description": "Entries actually merged (deduplicated against the store).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "confidence_cap": {
+      "description": "`--confidence-cap`: imported entries never claim more confidence than this.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  }
+}

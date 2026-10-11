@@ -33,6 +33,15 @@ pub const SCHEMAS: &[(&str, &str)] = &[
     ("cost", include_str!("../schemas/cost.data.schema.json")),
     ("build", include_str!("../schemas/build.data.schema.json")),
     ("send", include_str!("../schemas/send.data.schema.json")),
+    ("wake", include_str!("../schemas/wake.data.schema.json")),
+    ("store", include_str!("../schemas/store.data.schema.json")),
+    ("export", include_str!("../schemas/export.data.schema.json")),
+    ("import", include_str!("../schemas/import.data.schema.json")),
+    (
+        "inspect",
+        include_str!("../schemas/inspect.data.schema.json"),
+    ),
+    ("init", include_str!("../schemas/init.data.schema.json")),
 ];
 
 /// The shared envelope as a value.
