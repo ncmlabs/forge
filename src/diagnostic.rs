@@ -146,4 +146,23 @@ mod tests {
         assert!(text.contains("E030"), "output: {text}");
         assert!(!text.contains('\x1b'), "output has ANSI: {text:?}");
     }
+
+    #[test]
+    fn render_to_reports_byte_positions_after_multibyte_text() {
+        // Spans are byte ranges (pest offsets), so a line containing multi-byte
+        // characters must not shift the rendered line:column (#513).
+        let source = "# ── héllo ──\npure f\n  gives Int\n  do\n    give nope(1)\n";
+        let start = source.find("nope").expect("source contains `nope`");
+        let diag = Diagnostic::error(
+            "E030",
+            "src/example.forge",
+            "unknown function `nope`",
+            start..start + "nope".len(),
+            "here",
+        );
+        let mut out = Vec::new();
+        diag.render_to(source, false, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(":5:10"), "output: {text}");
+    }
 }
