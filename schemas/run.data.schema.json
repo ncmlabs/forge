@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge run data",
+  "description": "Payload of `forge run --json`: the program's `say` output and its return value, or the diagnostics that blocked it. `say` never writes to stdout in JSON mode, wherever it runs — `fn main`, a spawned agent or a pool worker — so `output` is the whole program output and `cost` covers the run.",
+  "type": "object",
+  "anyOf": [
+    {
+      "title": "completed",
+      "required": ["file", "output", "result"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "description": "Program file, or the manifest path when `--manifest` was used.",
+          "type": "string"
+        },
+        "output": {
+          "description": "Every `say` line, in order.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "result": {
+          "description": "The program's return value, or `null` when it returned nothing (`Unit`)."
+        }
+      }
+    },
+    {
+      "title": "blocked",
+      "description": "Static checks failed, so the program never started; `error.type` is `check` and `next_steps` suggests `forge check --json <file>`.",
+      "required": ["file", "blocked", "output", "result", "diagnostics"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "blocked": { "const": true },
+        "output": {
+          "description": "Always empty: nothing ran.",
+          "type": "array",
+          "maxItems": 0,
+          "items": { "type": "string" }
+        },
+        "result": { "type": "null" },
+        "diagnostics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/diagnostic" }
+        }
+      }
+    }
+  ]
+}
