@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- LLM authoring benchmark harness (#483, part 2): `bench/run.sh` prompts one
+  model per corpus spec — `docs/forge-card.md` as the system prompt, `spec.md`
+  plus one fixed fence instruction as the user turn — extracts the first fenced
+  `.forge` block, checks it with `forge check --json`, repairs at most twice
+  from the previous attempt's diagnostics array (the #471 loop shape), and
+  grades correctness with `forge test --expect` against the spec's recorded
+  fixture, which replays offline at zero cost. Every spec is reported: pass@1,
+  pass@3, attempts, correctness, tokens in/out per spec in
+  `bench/results/<date>-<model>.json`, plus one markdown table on stdout.
+  Endpoints and credentials come only from `BENCH_BASE_URL`, `BENCH_API_KEY`
+  (optional) and `BENCH_MODEL`; tokens are the endpoint's own `usage` numbers,
+  summed over the attempts a spec took. `bench/run.sh --self-test` proves the
+  loop offline with two fake models (`BENCH_FAKE=reference`: pass@1 = pass@3 =
+  correct = 2/2 in one attempt each; `BENCH_FAKE=broken`: a parse error first,
+  so pass@1 = 0, pass@3 = 2/2, two attempts), and `tests/bench_corpus_tests.rs`
+  runs it with `cargo test`. `.github/workflows/bench.yml` runs the corpus
+  weekly (Mondays 05:00 UTC) and on `workflow_dispatch` over a model matrix,
+  skipping entries whose endpoint secret is unset, uploading each results JSON
+  as an artifact and appending its table to the run summary; the coordinator
+  commits the results under `bench/results/`.
 - Resolution checker (#496): `forge check` now rejects a plain call to an
   undeclared `task`/`pure`/`flow`/`pool` (`E160`, with a closest-name hint),
   a match arm that can never match a scrutinee whose values are statically
