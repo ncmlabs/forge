@@ -11,6 +11,10 @@ config/forge.config.toml
 config/claude.config.toml
 config/ollama.config.toml
 
+# ...except the template fixtures: `forge init` ships a mock-default config
+# on purpose (#481), and without this negation `git add` drops it silently.
+!templates/init/*/forge.config.toml
+
 # Playwright E2E tests
 tests/e2e/node_modules/
 tests/e2e/playwright-report/

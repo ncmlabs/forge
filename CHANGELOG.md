@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Resolution checker (#496): `forge check` now rejects a plain call to an
+  undeclared `task`/`pure`/`flow`/`pool` (`E160`, with a closest-name hint),
+  a match arm that can never match a scrutinee whose values are statically
+  known (`E161` — `classify ... into [labels]`, a producing function whose
+  every `give` is a Text literal, or a declared type constructor), and a tag
+  pattern that differs from a known value only in case (`E162` — tags compare
+  exact text). Scrutinees with unknown value sets are never flagged. The pass
+  is `src/checker/resolution_checker.rs`, with `BUILTIN_CALLS`/`BUILTIN_TYPES`
+  listing what resolves; codes are registered in `src/diagnostic_codes.rs` and
+  documented in `docs/forge-reference.md` §17 and `docs/forge-card.md` §6. The
+  corpus scan found three real bugs — a missing `pick_random` in the
+  tic-tac-toe example, a missing `repo_config_for` in the standalone dev-cycle
+  build, and event handlers called as functions in forge-sensei — all fixed
+  here.
 - JSON output envelope and semantic exit codes (#475): every in-scope command
   (`parse`, `check`, `explain`, `run`, `trace`, `test`, `cost`, `build`,
   `export`, `import`, `inspect`, `send`, `wake`, `store`) accepts a global `--json` /
@@ -40,6 +54,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   needs no second `when result.sure`. `forge explain E150` and the reference
   (§17/§18) document the rule and its limits; the weekly derived-surface audit
   now aborts when its `git log` grounding command fails (found by E150).
+- `forge init <dir>` (#481): scaffold a runnable project from a template —
+  `pipeline` (default), `agent`, or `webhook-bot`. Each writes
+  `forge.project.toml`, a mock-default `forge.config.toml` with a commented
+  real-provider block (`${ENV}` references only), `main.forge`, a recorded
+  `main.forge.fixtures.json`, `expected.txt`, `.gitignore`, and an `AGENTS.md`
+  pointing at the card and the CLI loop. All three templates pass
+  `forge check` with zero diagnostics and `forge test --expect` on a fresh
+  scaffold, at $0 (mock provider). `--dry-run` lists the files and writes
+  nothing; a non-empty directory is refused with exit 1 unless `--force`.
+  Templates live in `templates/init/<template>/` and are embedded with
+  `include_str!`; `{{name}}` is replaced by the directory's base name, which
+  must be a valid project name — `[A-Za-z0-9_-]` plus a non-leading `.` —
+  otherwise the run exits 1 before writing anything. `--force` also refuses to
+  write through a symlinked template path. `forge init --json` reports the same
+  file list in the #475 envelope.
 - `docs/forge-card.md` (#480): the one-page FORGE card for agents — syntax
   traps, the determinism boundary, uncertainty dispatch, one idiom per
   primitive, the common checker errors, and where to go next. Every fenced
@@ -94,6 +123,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- `forge test --expect` line endings (#481): the output comparison ignored
+  trailing whitespace but not the line ending, so an LF `expected.txt`
+  committed to a repo never matched CRLF stdout on Windows (and a
+  Windows-recorded expectation never matched on Linux). Both sides are now
+  compared with `\r\n` normalised to `\n`.
 - Pool workers, spawned agents and `forge send` now obey the JSON envelope the
   same way `fn main` does (#475): a pool worker's or handler's `say` lands in
   `data.output` instead of stdout (which broke the one-document contract), their

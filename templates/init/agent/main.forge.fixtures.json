@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "b13d19f3b664beb11f56a79ae6f7dafcaceae3e811b7af60a31db1f002affbaf",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Write a one-line greeting about forge init",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}

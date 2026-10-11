@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "calls": [
+    {
+      "key": "a0dd2da59f361d489fb704dbb503a2d854dfd77ef04230f4da39487c66a5b864",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Name three references about FORGE project scaffolding",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "6319280c7b7d18f4732278c0bf6ddcc8169978e640a3a7fa1dd891df71943a4a",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Summarize what is known about FORGE project scaffolding in two sentences",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    },
+    {
+      "key": "e090fa2d2764af85e13c659939dab5e74093c8376a1ee972671ec191be362228",
+      "index": 0,
+      "provider": "mock",
+      "prompt_preview": "Combine into one short brief: mock response mock response",
+      "response": {
+        "content": "mock response",
+        "tool_calls": [],
+        "model_used": "mock-model",
+        "provider_name": "mock"
+      }
+    }
+  ]
+}
