@@ -289,3 +289,600 @@ fn plain_help_stays_as_it_was() {
         "{stderr}"
     );
 }
+
+// ── drift guard: real output must validate against the schema ───
+//
+// Every envelope-producing command is run for real — mock provider, fixtures
+// under `tests/fixtures/`, temp dirs for anything that writes — and its stdout
+// is validated against the document `forge schema <command>` prints. A payload
+// that gains, renames, retypes or drops a key fails here until the schema in
+// `schemas/` is updated, which is the point of hand-written schemas.
+
+use std::io::Write;
+use std::process::Stdio;
+
+fn forge_env(args: &[&str], envs: &[(&str, &str)]) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_forge"));
+    cmd.args(args);
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    cmd.output().expect("failed to execute forge binary")
+}
+
+/// `forge ...` with `stdin` written to the child — `wake register` reads the
+/// secret from it.
+fn forge_stdin(args: &[&str], envs: &[(&str, &str)], stdin: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_forge"))
+        .args(args)
+        .envs(envs.iter().copied())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn forge binary");
+    child
+        .stdin
+        .as_mut()
+        .expect("child stdin")
+        .write_all(stdin.as_bytes())
+        .expect("write child stdin");
+    child.wait_with_output().expect("wait for forge binary")
+}
+
+fn temp_dir(label: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("forge-schema-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    dir
+}
+
+/// Run one invocation and validate its envelope against `forge schema
+/// <command>`. The validator is compiled from the CLI's own output, so the test
+/// exercises what a caller gets, `$defs` references included.
+fn assert_validates(command: &str, exit: i32, args: &[&str], envs: &[(&str, &str)]) {
+    assert_validates_with(command, exit, args, envs, None)
+}
+
+/// As above, for commands that read a secret from stdin (`wake register`).
+fn assert_validates_stdin(
+    command: &str,
+    exit: i32,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    stdin: &str,
+) {
+    assert_validates_with(command, exit, args, envs, Some(stdin))
+}
+
+fn assert_validates_with(
+    command: &str,
+    exit: i32,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    stdin: Option<&str>,
+) {
+    let schema_doc = forge(&["schema", command]);
+    assert_exit(&schema_doc, 0);
+    let schema = parse_stdout(&schema_doc);
+    let validator = jsonschema::validator_for(&schema)
+        .unwrap_or_else(|e| panic!("`forge schema {command}` is not a usable schema: {e}"));
+
+    let output = match stdin {
+        Some(stdin) => forge_stdin(args, envs, stdin),
+        None => forge_env(args, envs),
+    };
+    assert_eq!(
+        output.status.code(),
+        Some(exit),
+        "forge {args:?} exited {:?}, expected {exit}; stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let doc = parse_stdout(&output);
+    let errors: Vec<String> = validator
+        .iter_errors(&doc)
+        .map(|error| format!("{error} at {}", error.instance_path()))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "forge {args:?} does not match `forge schema {command}`:\n{}\n{doc:#?}",
+        errors.join("\n")
+    );
+}
+
+const MOCK: &[(&str, &str)] = &[("FORGE_MOCK", "1")];
+
+#[test]
+fn parse_output_matches_its_schema() {
+    assert_validates(
+        "parse",
+        0,
+        &["parse", "--json", "examples/basics/hello.forge"],
+        &[],
+    );
+    assert_validates(
+        "parse",
+        1,
+        &["parse", "--json", "tests/fixtures/parse_error.forge"],
+        &[],
+    );
+    assert_validates(
+        "parse",
+        1,
+        &["parse", "--json", "examples/errors/nope.forge"],
+        &[],
+    );
+}
+
+#[test]
+fn check_output_matches_its_schema() {
+    assert_validates(
+        "check",
+        0,
+        &["check", "--json", "examples/basics/hello.forge"],
+        &[],
+    );
+    assert_validates(
+        "check",
+        1,
+        &["check", "--json", "examples/errors/uncertain_error.forge"],
+        &[],
+    );
+    assert_validates(
+        "check",
+        2,
+        &["check", "--json", "tests/fixtures/warnings_only.forge"],
+        &[],
+    );
+    assert_validates(
+        "check",
+        1,
+        &["check", "--json", "examples/errors/nope.forge"],
+        &[],
+    );
+}
+
+#[test]
+fn explain_output_matches_its_schema() {
+    assert_validates("explain", 0, &["explain", "--json", "E020"], &[]);
+    assert_validates("explain", 0, &["explain", "--json", "--list"], &[]);
+    assert_validates("explain", 1, &["explain", "--json", "E999"], &[]);
+}
+
+#[test]
+fn cost_output_matches_its_schema() {
+    assert_validates(
+        "cost",
+        0,
+        &["cost", "--json", "examples/errors/uncertain_error.forge"],
+        &[],
+    );
+    assert_validates(
+        "cost",
+        0,
+        &["cost", "--json", "examples/basics/hello.forge"],
+        &[],
+    );
+    assert_validates(
+        "cost",
+        1,
+        &["cost", "--json", "examples/errors/nope.forge"],
+        &[],
+    );
+}
+
+#[test]
+fn build_output_matches_its_schema() {
+    assert_validates(
+        "build",
+        0,
+        &[
+            "build",
+            "--json",
+            "--dry-run",
+            "examples/basics/hello.forge",
+        ],
+        &[],
+    );
+    assert_validates(
+        "build",
+        1,
+        &["build", "--json", "examples/errors/nope.forge"],
+        &[],
+    );
+}
+
+#[test]
+fn run_output_matches_its_schema() {
+    assert_validates(
+        "run",
+        0,
+        &["run", "--json", "examples/basics/hello.forge"],
+        MOCK,
+    );
+    // Blocked by static checks: the `blocked` payload.
+    assert_validates(
+        "run",
+        1,
+        &["run", "--json", "examples/errors/uncertain_error.forge"],
+        MOCK,
+    );
+    // An io failure reaches the envelope before any payload exists (`{}`).
+    assert_validates(
+        "run",
+        1,
+        &["run", "--json", "examples/errors/nope.forge"],
+        MOCK,
+    );
+    // Worker `say` lines join `data.output` instead of stdout.
+    assert_validates(
+        "run",
+        0,
+        &["run", "--json", "tests/fixtures/pool_say.forge"],
+        MOCK,
+    );
+}
+
+#[test]
+fn trace_output_matches_its_schema() {
+    assert_validates(
+        "trace",
+        0,
+        &["trace", "--json", "examples/basics/hello.forge"],
+        MOCK,
+    );
+    assert_validates(
+        "trace",
+        1,
+        &["trace", "--json", "examples/errors/uncertain_error.forge"],
+        MOCK,
+    );
+}
+
+#[test]
+fn test_output_matches_its_schema() {
+    // No fixtures recorded yet: the `io` envelope names the fixture path.
+    assert_validates(
+        "test",
+        1,
+        &["test", "--json", "tests/fixtures/echo_agent.forge"],
+        MOCK,
+    );
+
+    let dir = temp_dir("test");
+    let fixtures = dir.join("llm.fixtures.json");
+    let fixtures_arg = fixtures.to_string_lossy().to_string();
+    let expected = dir.join("expected.txt");
+    let expected_arg = expected.to_string_lossy().to_string();
+
+    let recorded = forge_env(
+        &[
+            "run",
+            "--json",
+            "tests/fixtures/replay_llm.forge",
+            "--record",
+            &fixtures_arg,
+        ],
+        MOCK,
+    );
+    assert_exit(&recorded, 0);
+    std::fs::write(&expected, "mock response\n").expect("write expected output");
+
+    assert_validates(
+        "test",
+        0,
+        &[
+            "test",
+            "--json",
+            "tests/fixtures/replay_llm.forge",
+            "--fixtures",
+            &fixtures_arg,
+        ],
+        MOCK,
+    );
+    assert_validates(
+        "test",
+        0,
+        &[
+            "test",
+            "--json",
+            "tests/fixtures/replay_llm.forge",
+            "--fixtures",
+            &fixtures_arg,
+            "--expect",
+            &expected_arg,
+        ],
+        MOCK,
+    );
+
+    // A mismatch is an error envelope that still carries `matched: false`.
+    std::fs::write(&expected, "something else\n").expect("rewrite expected output");
+    assert_validates(
+        "test",
+        1,
+        &[
+            "test",
+            "--json",
+            "tests/fixtures/replay_llm.forge",
+            "--fixtures",
+            &fixtures_arg,
+            "--expect",
+            &expected_arg,
+        ],
+        MOCK,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn send_output_matches_its_schema() {
+    let dir = temp_dir("send");
+    let storage = dir.join("storage");
+    let storage_arg = storage.to_string_lossy().to_string();
+    let envs: Vec<(&str, &str)> = vec![
+        ("FORGE_MOCK", "1"),
+        ("FORGE_STORAGE_ROOT", storage_arg.as_str()),
+    ];
+    assert_validates(
+        "send",
+        0,
+        &["send", "--json", "tests/fixtures/echo_agent.forge", "ping"],
+        &envs,
+    );
+    // A say-ing handler: its lines land in `data.output`.
+    assert_validates(
+        "send",
+        0,
+        &["send", "--json", "tests/fixtures/say_agent.forge", "ping"],
+        &envs,
+    );
+    // Unknown event: the same shape, `result: null`, `error.type = runtime`.
+    assert_validates(
+        "send",
+        1,
+        &["send", "--json", "tests/fixtures/echo_agent.forge", "nope"],
+        &envs,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn wake_output_matches_its_schema() {
+    let dir = temp_dir("wake");
+    let storage = dir.join("storage");
+    std::fs::create_dir_all(&storage).expect("create storage root");
+    let storage_arg = storage.to_string_lossy().to_string();
+    let envs: Vec<(&str, &str)> = vec![("FORGE_STORAGE_ROOT", storage_arg.as_str())];
+
+    // One invocation per action: the schema has a branch for each.
+    assert_validates_stdin(
+        "wake",
+        0,
+        &[
+            "wake",
+            "register",
+            "--json",
+            "--agent",
+            "a",
+            "--trigger",
+            "t",
+        ],
+        &envs,
+        "s3cret\n",
+    );
+    assert_validates(
+        "wake",
+        0,
+        &["wake", "rotate", "--json", "--agent", "a", "--trigger", "t"],
+        &envs,
+    );
+    assert_validates("wake", 0, &["wake", "list", "--json"], &envs);
+    assert_validates(
+        "wake",
+        0,
+        &["wake", "delete", "--json", "--agent", "a", "--trigger", "t"],
+        &envs,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn store_output_matches_its_schema() {
+    let dir = temp_dir("store");
+    let storage = dir.join("storage");
+    std::fs::create_dir_all(&storage).expect("create storage root");
+    let storage_arg = storage.to_string_lossy().to_string();
+
+    assert_validates(
+        "store",
+        0,
+        &["store", "recover", "--json", "--root", &storage_arg],
+        &[],
+    );
+    assert_validates(
+        "store",
+        0,
+        &[
+            "store",
+            "recover",
+            "--json",
+            "--dry-run",
+            "--root",
+            &storage_arg,
+        ],
+        &[],
+    );
+    // A missing root fails before any payload exists.
+    assert_validates(
+        "store",
+        1,
+        &[
+            "store",
+            "recover",
+            "--json",
+            "--root",
+            "/nonexistent/storage",
+        ],
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn export_import_and_inspect_output_match_their_schemas() {
+    let dir = temp_dir("pkg");
+    let pkg = dir.join("agent.forgepkg.json");
+    let pkg_arg = pkg.to_string_lossy().to_string();
+    let into = dir.join("store");
+    let into_arg = into.to_string_lossy().to_string();
+
+    assert_validates(
+        "export",
+        0,
+        &[
+            "export",
+            "--json",
+            "tests/fixtures/echo_agent.forge",
+            "--output",
+            &pkg_arg,
+        ],
+        &[],
+    );
+    // `--layers` is split on commas, so the payload echoes a list.
+    assert_validates(
+        "export",
+        0,
+        &[
+            "export",
+            "--json",
+            "tests/fixtures/echo_agent.forge",
+            "--layers",
+            "config,knowledge,memory",
+            "--output",
+            &pkg_arg,
+        ],
+        &[],
+    );
+    assert_validates(
+        "export",
+        1,
+        &["export", "--json", "examples/errors/nope.forge"],
+        &[],
+    );
+
+    assert_validates("inspect", 0, &["inspect", "--json", &pkg_arg], &[]);
+    assert_validates("inspect", 1, &["inspect", "--json", "/nope.json"], &[]);
+    assert_validates(
+        "import",
+        0,
+        &["import", "--json", &pkg_arg, "--into", &into_arg],
+        &[],
+    );
+    assert_validates(
+        "import",
+        1,
+        &["import", "--json", "/nope.json", "--into", &into_arg],
+        &[],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_output_matches_its_schema() {
+    let dir = temp_dir("init");
+    let dry = dir.join("dry");
+    let dry_arg = dry.to_string_lossy().to_string();
+    let real = dir.join("real");
+    let real_arg = real.to_string_lossy().to_string();
+
+    // `--dry-run` writes nothing; the plain run reports the files it wrote.
+    assert_validates("init", 0, &["init", "--json", &dry_arg, "--dry-run"], &[]);
+    assert_validates("init", 0, &["init", "--json", &real_arg], &[]);
+    assert!(
+        real.join("main.forge").exists(),
+        "init must write the template into {}",
+        real.display()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── the guard's own guards ──────────────────────────────────────
+
+/// Every command exercised above, one drift test each. Checked against the
+/// schemas the binary embeds in both directions: a schema without a test fails
+/// here, and so does a test for a command that has no schema.
+const COVERED: &[&str] = &[
+    "parse", "check", "explain", "run", "trace", "test", "cost", "build", "export", "import",
+    "inspect", "send", "wake", "store", "init",
+];
+
+#[test]
+fn every_command_with_a_schema_has_a_drift_test() {
+    let mut covered = COVERED.to_vec();
+    covered.sort_unstable();
+    let mut schemas = forge::cli_schema::commands();
+    schemas.sort_unstable();
+    assert_eq!(
+        covered, schemas,
+        "COVERED and `forge schema --all` must name the same commands"
+    );
+}
+
+#[test]
+fn every_schema_is_a_valid_2020_12_schema() {
+    for (command, schema) in [
+        ("(envelope)".to_string(), forge::cli_schema::envelope_only()),
+        ("--all".to_string(), forge::cli_schema::all()),
+    ] {
+        jsonschema::meta::validate(&schema)
+            .unwrap_or_else(|e| panic!("{command} is not a valid JSON Schema: {e}"));
+    }
+    for command in forge::cli_schema::commands() {
+        let schema = forge::cli_schema::envelope_for(command).expect("schema");
+        jsonschema::meta::validate(&schema)
+            .unwrap_or_else(|e| panic!("{command} is not a valid JSON Schema: {e}"));
+    }
+}
+
+#[test]
+fn a_wrong_document_fails_validation() {
+    let output = forge(&["check", "--json", "examples/errors/uncertain_error.forge"]);
+    assert_exit(&output, 1);
+    let real = parse_stdout(&output);
+
+    let schema = parse_stdout(&forge(&["schema", "check"]));
+    let validator = jsonschema::validator_for(&schema).expect("compile schema");
+    assert!(
+        validator.is_valid(&real),
+        "the real envelope must validate first"
+    );
+
+    // A payload of the wrong type.
+    let mut wrong = real.clone();
+    wrong["data"]["files"] = serde_json::json!("examples/errors/uncertain_error.forge");
+    assert!(!validator.is_valid(&wrong), "files must be an array");
+
+    // A key the command does not emit.
+    let mut wrong = real.clone();
+    wrong["data"]["undeclared"] = serde_json::json!(1);
+    assert!(!validator.is_valid(&wrong), "data is closed");
+
+    // A diagnostic missing a documented field.
+    let mut wrong = real.clone();
+    wrong["data"]["diagnostics"][0]
+        .as_object_mut()
+        .expect("diagnostic object")
+        .remove("severity");
+    assert!(!validator.is_valid(&wrong), "severity is required");
+
+    // An envelope field that is not in the contract.
+    let mut wrong = real.clone();
+    wrong["status"] = serde_json::json!("nearly");
+    assert!(!validator.is_valid(&wrong), "status is an enum");
+
+    // A missing envelope field.
+    let mut wrong = real;
+    wrong.as_object_mut().expect("envelope").remove("context");
+    assert!(!validator.is_valid(&wrong), "context is required");
+}
