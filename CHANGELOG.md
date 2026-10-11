@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `forge check --manifest <forge.project.toml>` (#495): the project's declared
+  skills are registered before resolving, so `skill.<name>.<capability>` calls
+  type-check instead of failing with `unknown capability`. The signatures come
+  from the same code path `run` uses (manifest `[skills]`, else the config
+  `skill_dirs` fallback, also honoured through `FORGE_CONFIG`); no provider is
+  contacted and no executor is built. With no files, the manifest's sources are
+  checked exactly as `forge run --manifest` blocks on them — every source per
+  file, plus the cross-file boundary check — so a project `check` accepts is a
+  project `run` does not reject; explicit files are checked instead. Undeclared
+  skills still fail with `E010`, and the `E160` help now names
+  `forge check --manifest forge.project.toml` alongside
+  `forge check --merge <files>`.
 - End-of-run summary (#479): `forge run`, `forge trace` and `forge test` end
   with the run's economics and trust signals — one line on stderr in human mode
   (`12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1
