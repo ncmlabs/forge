@@ -94,6 +94,92 @@ pub fn commands() -> Vec<&'static str> {
     SCHEMAS.iter().map(|(name, _)| *name).collect()
 }
 
+/// Commands that print a JSON document but no envelope: `forge schema` prints a
+/// schema, `forge help --json` prints the index built from clap's definition.
+const INTROSPECTION: &[&str] = &["schema", "help"];
+
+/// Whether `command` has a machine-readable contract — a payload schema in
+/// [`SCHEMAS`], or one of the two introspection documents. `serve`, `agent`,
+/// `agent-inspect` and `fleet` are interactive or long-running and report
+/// `unsupported` in JSON mode instead (`docs/forge-reference.md` §27), so
+/// `json_supported` is exactly "has a schema or is introspection".
+pub fn json_supported(command: &str) -> bool {
+    SCHEMAS.iter().any(|(name, _)| *name == command) || INTROSPECTION.contains(&command)
+}
+
+/// The exit codes of the CLI contract, as `{"<code>": "<name>: <meaning>"}`.
+/// Semantic in both modes; agents branch on them instead of parsing text.
+pub fn exit_codes() -> Value {
+    let mut map = serde_json::Map::new();
+    for (code, name, meaning) in EXIT_CODES {
+        map.insert(
+            code.to_string(),
+            Value::String(format!("{name}: {meaning}")),
+        );
+    }
+    Value::Object(map)
+}
+
+/// Environment variables the CLI reads, mirroring the `ENVIRONMENT VARIABLES`
+/// block `forge --help` prints (a test keeps the two in step).
+pub fn env_vars() -> Value {
+    Value::Array(
+        ENV_VARS
+            .iter()
+            .map(|(name, description)| {
+                serde_json::json!({ "name": name, "description": description })
+            })
+            .collect(),
+    )
+}
+
+/// `(code, name, meaning)` — see `docs/forge-reference.md` §27.
+pub const EXIT_CODES: &[(i32, &str, &str)] = &[
+    (0, "success", "command completed"),
+    (
+        1,
+        "error",
+        "command failed, a run was blocked by diagnostics, or the command line was invalid",
+    ),
+    (
+        2,
+        "warning",
+        "static checks found warnings but no errors — this code means \"warnings only\" and nothing else",
+    ),
+    (3, "partial", "reserved for partially completed work"),
+    (10, "needs input", "reserved for approval / needs-input paths"),
+    (
+        11,
+        "async pending",
+        "reserved for async work that is still running",
+    ),
+];
+
+/// `(name, description)` — see `forge --help`.
+pub const ENV_VARS: &[(&str, &str)] = &[
+    (
+        "FORGE_CONFIG",
+        "Path to config file (default: ./forge.config.toml)",
+    ),
+    ("FORGE_PROVIDER", "Override default LLM provider"),
+    (
+        "FORGE_MOCK",
+        "1 = use the mock provider (no API key needed)",
+    ),
+    ("FORGE_BUDGET", "Set max cost in USD (e.g., 0.50)"),
+    (
+        "FORGE_OUTPUT",
+        "json = emit one JSON envelope per command (same as --json)",
+    ),
+    ("FORGE_TRACE", "1 = enable JSON tracing to stderr"),
+    ("FORGE_LOG_LEVEL", "Log level: quiet, info (default), debug"),
+    ("ANTHROPIC_API_KEY", "API key for Anthropic provider"),
+    ("OPENAI_API_KEY", "API key for OpenAI provider"),
+    ("GROQ_API_KEY", "API key for Groq provider"),
+    ("TOGETHER_API_KEY", "API key for Together provider"),
+    ("MISTRAL_API_KEY", "API key for Mistral provider"),
+];
+
 /// Parse an embedded schema. Malformed JSON is a build-time mistake, caught by
 /// the unit tests below rather than at a call site.
 fn parse(text: &str) -> Value {
