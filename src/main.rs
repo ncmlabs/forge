@@ -1447,6 +1447,7 @@ fn build_skill_executor(
     config: &forge::config::ForgeConfig,
     providers: &Arc<forge::llm::registry::ProviderRegistry>,
     tracer: Option<&forge::tracer::Tracer>,
+    cost_tracker: Option<&forge::llm::cost_tracker::CostTracker>,
     manifest: Option<&forge::manifest::ProjectManifest>,
     base_dir: Option<&Path>,
 ) -> (
@@ -1470,6 +1471,7 @@ fn build_skill_executor(
                         &default_cfg,
                         providers,
                         tracer,
+                        cost_tracker,
                         Some(m),
                         Some(bd),
                     );
@@ -1478,13 +1480,21 @@ fn build_skill_executor(
             return (None, HashMap::new());
         }
     };
-    build_skill_executor_inner(skills_cfg, providers, tracer, manifest, base_dir)
+    build_skill_executor_inner(
+        skills_cfg,
+        providers,
+        tracer,
+        cost_tracker,
+        manifest,
+        base_dir,
+    )
 }
 
 fn build_skill_executor_inner(
     skills_cfg: &forge::config::SkillsConfig,
     providers: &Arc<forge::llm::registry::ProviderRegistry>,
     tracer: Option<&forge::tracer::Tracer>,
+    cost_tracker: Option<&forge::llm::cost_tracker::CostTracker>,
     manifest: Option<&forge::manifest::ProjectManifest>,
     base_dir: Option<&Path>,
 ) -> (
@@ -1552,6 +1562,10 @@ fn build_skill_executor_inner(
     executor.default_timeout = std::time::Duration::from_secs(skills_cfg.timeout_or_default());
     if let Some(t) = tracer {
         executor = executor.with_tracer(Arc::new(t.clone()));
+    }
+    if let Some(cost_tracker) = cost_tracker {
+        // Skill LLM calls are billed like any other call (#479 review).
+        executor = executor.with_cost_tracker(cost_tracker.clone());
     }
     (Some(Arc::new(executor)), signatures)
 }
@@ -1698,9 +1712,21 @@ async fn run_program(
         forge::tracer::Tracer::counting()
     };
 
+    // The run's LLM cost lands in the envelope's `cost` and `data.summary`
+    // (#475/#479). Budget enforcement is unchanged: nothing on this path aborts
+    // on budget, the tracker only accumulates. Built before the skill executor
+    // so skill LLM calls are billed too.
+    let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
+
     // Build skill executor to get capability signatures for compile-time validation
-    let (skill_exec, skill_sigs) =
-        build_skill_executor(&config_clone, &providers, Some(&tracer), None, None);
+    let (skill_exec, skill_sigs) = build_skill_executor(
+        &config_clone,
+        &providers,
+        Some(&tracer),
+        Some(&cost_tracker),
+        None,
+        None,
+    );
 
     // Validate before execution (with skill-aware capability registry)
     let mut diagnostics = Vec::new();
@@ -1745,10 +1771,6 @@ async fn run_program(
     let session_mgr =
         forge::runtime::session_manager::new_shared_default_session_manager(Some(tracer.clone()));
     let _ = session_mgr.resume_all().await;
-    // The run's LLM cost lands in the envelope's `cost` (#475). Budget
-    // enforcement is unchanged: nothing on this path aborts on budget, the
-    // tracker only accumulates.
-    let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
     let mut executor =
         forge::runtime::executor::TaskExecutor::new(program, Arc::clone(&providers), Some(tracer))
             .with_config(config_clone)
@@ -1834,11 +1856,15 @@ async fn run_manifest(
         forge::tracer::Tracer::counting()
     };
 
+    // Built before the skill executor so skill LLM calls are billed too (#479).
+    let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
+
     // Build skill executor with project-level declarations
     let (skill_exec, skill_sigs) = build_skill_executor(
         &config_clone,
         &providers,
         Some(&tracer),
+        Some(&cost_tracker),
         Some(&manifest),
         Some(base_dir),
     );
@@ -1934,7 +1960,6 @@ async fn run_manifest(
     let session_mgr =
         forge::runtime::session_manager::new_shared_default_session_manager(Some(tracer.clone()));
     let _ = session_mgr.resume_all().await;
-    let cost_tracker = forge::llm::cost_tracker::CostTracker::new(None, 100);
     let mut executor = forge::runtime::executor::TaskExecutor::new(
         composed.program,
         Arc::clone(&providers),
@@ -2165,8 +2190,16 @@ fn try_build_executor_multi(
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
     let providers = Arc::new(registry);
 
-    let (skill_exec, skill_sigs) =
-        build_skill_executor(&config, &providers, tracer.as_ref(), manifest, base_dir);
+    // Build/serve paths carry no run cost tracker (#479): there is no run
+    // summary to bill into.
+    let (skill_exec, skill_sigs) = build_skill_executor(
+        &config,
+        &providers,
+        tracer.as_ref(),
+        None,
+        manifest,
+        base_dir,
+    );
 
     // Per-file resolver validation with skill-aware checker (#276)
     let mut diagnostics = Vec::new();
@@ -2291,8 +2324,16 @@ fn try_build_executor(
         .map_err(|e| anyhow::anyhow!("provider setup failed: {}", e))?;
     let providers = Arc::new(registry);
 
-    let (skill_exec, skill_sigs) =
-        build_skill_executor(&config, &providers, tracer.as_ref(), manifest, base_dir);
+    // Build/serve paths carry no run cost tracker (#479): there is no run
+    // summary to bill into.
+    let (skill_exec, skill_sigs) = build_skill_executor(
+        &config,
+        &providers,
+        tracer.as_ref(),
+        None,
+        manifest,
+        base_dir,
+    );
 
     // Validate with skill-aware capability registry (#276)
     let mut diagnostics = Vec::new();

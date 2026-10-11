@@ -319,6 +319,58 @@ fn run_json_summary_of_a_zero_llm_program_is_zero() {
 }
 
 #[test]
+fn run_json_summary_bills_skill_llm_calls() {
+    // A skill's LLM call must be counted AND billed (#479 review): the skill
+    // bridge used to emit `llm_response` without touching the cost tracker, so
+    // this run read `1 LLM call · 0 tok · $0.000` while the envelope's `cost`
+    // was 0.0 too.
+    let dir = temp_dir("skill-cost");
+    let config = dir.join("forge.config.toml");
+    std::fs::write(
+        &config,
+        "[llm]\n\
+         default = \"mock\"\n\n\
+         [providers.mock]\n\
+         type = \"mock\"\n\n\
+         [providers.mock.capabilities]\n\
+         cost_per_1k_input = 1.0\n\
+         cost_per_1k_output = 1.0\n\n\
+         [skills]\n\
+         skill_dirs = [\"tests/fixtures/sentinel/skills\"]\n",
+    )
+    .expect("write priced skill config");
+    let config = config.to_string_lossy().to_string();
+
+    let output = forge_env(
+        &["run", "--json", "tests/fixtures/skill_llm.forge"],
+        &[("FORGE_CONFIG", &config)],
+    );
+    assert_exit(&output, 0);
+    let doc = parse_stdout(&output);
+    let summary = &doc["data"]["summary"];
+    assert!(
+        summary["llm_calls"].as_u64().unwrap() >= 1,
+        "the skill's LLM call must be counted: {doc}"
+    );
+    assert!(
+        summary["tokens_in"].as_u64().unwrap() > 0,
+        "the skill's input tokens must be billed: {doc}"
+    );
+    assert!(
+        summary["tokens_out"].as_u64().unwrap() > 0,
+        "the skill's output tokens must be billed: {doc}"
+    );
+    let cost = summary["cost_usd"].as_f64().expect("skill cost");
+    assert!(cost > 0.0, "the skill's cost must be billed: {doc}");
+    assert_eq!(
+        cost,
+        doc["cost"].as_f64().unwrap(),
+        "data.summary.cost_usd must match the envelope cost: {doc}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn trace_json_carries_the_summary_too() {
     let output = forge_env(
         &["trace", "--json", "examples/basics/hello.forge"],
