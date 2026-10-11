@@ -388,8 +388,19 @@ fn touch_program(marker: &std::path::Path) -> String {
 fn main
   say run_it()
 "#,
-        marker.display()
+        template_escape(marker)
     )
+}
+
+/// A path as a FORGE template string: Windows separators are backslashes, and
+/// `\\`, `\"`, `\{`, `\}` are the only escapes the parser accepts in a template.
+fn template_escape(path: &std::path::Path) -> String {
+    path.display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('{', "\\{")
+        .replace('}', "\\}")
 }
 
 /// A config whose only provider points at a closed port: a dry run that built
