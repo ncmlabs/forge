@@ -371,3 +371,14 @@ paths = [
 check = "error"
 expect = ["unknown lifecycle `GreetingPhase`"]
 manifest = "tests/fixtures/manifest-cross-state/forge.project.toml"
+
+[[cases]]
+name = "CLI json: command that sleeps, for the envelope duration (#479)"
+paths = ["tests/fixtures/slow_command.forge"]
+check = "ok"
+
+[[cases]]
+name = "CLI json: skill LLM call is billed in the run summary (#479)"
+paths = ["tests/fixtures/skill_llm.forge"]
+check = "ok"
+config = "tests/fixtures/sentinel/forge.config.toml"

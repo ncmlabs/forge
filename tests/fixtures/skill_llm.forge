@@ -1,0 +1,13 @@
+# Fixture for `forge run --json` (#479 review): the skill bridge makes a real
+# LLM call, so its tokens and cost must reach the run summary, not just
+# `llm_calls`. Loaded through `[skills] skill_dirs` in the test config.
+task deep_analysis
+  gives Text
+  do
+    report = skill.git_analysis.weekly_report()
+    when report.sure -> give report
+    when report.unsure -> give "partial: {report}"
+    else -> give "deep analysis unavailable"
+
+fn main
+  say deep_analysis()
