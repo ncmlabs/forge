@@ -80,9 +80,19 @@ fake_response() {  # $1 = request JSON, $2 = spec dir, $3 = attempt number
              completion_tokens:((($content | length) / 4) | floor)}}'
 }
 
+# The model's reply: the fake offline, otherwise one POST to the endpoint.
+# `usage` from a live reply feeds the same token accounting the fake exercises.
 model_response() {  # $1 = request JSON, $2 = spec dir, $3 = attempt number
-  [[ -n "$BENCH_FAKE" ]] || die "no BENCH_FAKE: the live /v1 path lands in the next commit"
-  fake_response "$1" "$2" "$3"
+  if [[ -n "$BENCH_FAKE" ]]; then
+    fake_response "$1" "$2" "$3"
+    return 0
+  fi
+  local -a opts=(-sS -X POST "$BENCH_BASE_URL/chat/completions"
+    -H 'Content-Type: application/json' --data-binary "$1")
+  if [[ -n "$BENCH_API_KEY" ]]; then
+    opts+=(-H "Authorization: Bearer $BENCH_API_KEY")
+  fi
+  curl "${opts[@]}"
 }
 
 # The first fenced block of a reply, else the whole reply: a program sent
