@@ -1,0 +1,47 @@
+#! boundary: server
+
+use
+  llm.classify
+
+# A server-boundary program: `endpoint` and `agent webhook` are both HTTP entry
+# points. Either one publishes WebhookReceived; the agent handler classifies it.
+#   1. POST /webhook/inbound            — `endpoint inbound` (no auth, local tests)
+#   2. POST /wake/triage_bot/inbound    — `webhook inbound` (HMAC-verified wake)
+# Register the secret for (2) with: forge wake rotate --agent triage_bot --trigger inbound
+
+event WebhookReceived
+  payload: Text
+
+task triage_payload
+  needs payload: Text
+  gives Text
+  do
+    label = classify payload into ["bug", "question", "spam"]
+    when label.sure -> give label
+    when label.unsure -> give "needs-review"
+    else -> give "unclassified"
+
+agent triage_bot
+  memory
+    last_label: Text
+  webhook inbound
+    mode: wake
+    emit: WebhookReceived
+
+  on WebhookReceived(payload: Text)
+    label = triage_payload(payload)
+    memory.last_label = label
+    say "classified payload as {label}"
+
+  if stuck for 3 turns
+    escalate to human
+
+endpoint inbound(payload: Text) -> Text
+  emit WebhookReceived(payload: payload)
+  give "accepted"
+
+fn main
+  say "webhook-bot: POST /webhook/inbound or POST /wake/triage_bot/inbound"
+  sample = "the parser crashes when I nest flows"
+  label = triage_payload(sample)
+  say "classified sample as {label}"

@@ -1,0 +1,12 @@
+{
+  "name": "resolution_case_mismatched_tag",
+  "category": "checker",
+  "subcategory": "resolution",
+  "description": "A tag pattern that differs only in case from a known value is an error (#496)",
+  "input": "task t\n  needs pick: Text\n  gives Text\n  do\n    result = classify pick into [\"positive\"]\n    match result\n      Positive -> give \"up\"\n      _ -> give \"other\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_code": "E162",
+    "error_contains": ["Positive", "positive", "exact text"]
+  }
+}

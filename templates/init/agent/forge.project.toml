@@ -1,0 +1,7 @@
+[project]
+name = "{{name}}"
+version = "0.1.0"
+description = "Stateful agent scaffolded by forge init --template agent"
+
+[build]
+entry = "main.forge"

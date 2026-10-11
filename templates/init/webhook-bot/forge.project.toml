@@ -1,0 +1,7 @@
+[project]
+name = "{{name}}"
+version = "0.1.0"
+description = "Webhook triage bot scaffolded by forge init --template webhook-bot"
+
+[build]
+entry = "main.forge"
