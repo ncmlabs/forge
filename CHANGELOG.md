@@ -13,11 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type-check instead of failing with `unknown capability`. The signatures come
   from the same code path `run` uses (manifest `[skills]`, else the config
   `skill_dirs` fallback, also honoured through `FORGE_CONFIG`); no provider is
-  contacted and no executor is built. With no files the manifest's sources are
-  checked as one composition, the way `forge run --manifest` builds them, and
-  explicit files are checked instead. Undeclared skills still fail with `E010`,
-  and the `E160` help now names `forge check --manifest forge.project.toml`
-  alongside `forge check --merge <files>`.
+  contacted and no executor is built. With no files, the manifest's sources are
+  checked exactly as `forge run --manifest` blocks on them — every source per
+  file, plus the cross-file boundary check — so a project `check` accepts is a
+  project `run` does not reject; explicit files are checked instead. Undeclared
+  skills still fail with `E010`, and the `E160` help now names
+  `forge check --manifest forge.project.toml` alongside
+  `forge check --merge <files>`.
 - Resolution checker (#496): `forge check` now rejects a plain call to an
   undeclared `task`/`pure`/`flow`/`pool` (`E160`, with a closest-name hint),
   a match arm that can never match a scrutinee whose values are statically

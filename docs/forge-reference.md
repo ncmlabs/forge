@@ -1264,12 +1264,14 @@ forge check --manifest forge.project.toml       # the project's declared skills 
 `--manifest <forge.project.toml>` registers the project's declared skills
 (`[skills]` → `skills/<name>/SKILL.md`) before resolving, so
 `skill.<name>.<capability>` calls type-check instead of failing with
-`unknown capability`. With no files the manifest's sources are checked as one
-composition, the way `forge run --manifest` builds them; with files, those files
-are checked instead (`--merge` composes them). Without `--manifest`, `skill_dirs`
-from `forge.config.toml` (or `FORGE_CONFIG`) apply, exactly as for `run`. A check
-runs no provider: no config at all means no config-declared skills, while a
-config that exists and cannot be loaded is still an error.
+`unknown capability`. With no files, every source the manifest declares is
+checked exactly as `forge run --manifest` blocks on it — per source file, plus
+the cross-file boundary check — so a project `check` accepts is one `run` does
+not reject; with files, those files are checked instead (`--merge` composes
+them). Without `--manifest`, `skill_dirs` from `forge.config.toml` (or
+`FORGE_CONFIG`) apply, exactly as for `run`. A check runs no provider: no config
+at all means no config-declared skills, while a config that exists and cannot be
+loaded is still an error.
 
 #### `forge run <file>`
 Execute a FORGE program using the configured provider.

@@ -490,51 +490,37 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                 None => HashMap::new(),
             };
 
-            // Without explicit files, the manifest's sources are checked as one
-            // composition, the way `run --manifest` builds them.
+            // Without explicit files, the manifest's sources are checked exactly
+            // as `run --manifest` blocks on them: per source file, never composed (#495).
             let (files, merge) = match loaded {
-                Some((m, bd)) if files.is_empty() => (m.resolve_sources(&bd)?, true),
+                Some((m, bd)) if files.is_empty() => (m.resolve_sources(&bd)?, false),
                 _ => (files, merge),
             };
 
-            let mut all_diagnostics = Vec::new();
             let mut parsed_programs = Vec::new();
 
             for file in &files {
                 let source = read_source(file)?;
                 let program = parse_or_exit(&source, file, "check", out);
-                let fname = file.display().to_string();
-
-                // Per-file: resolver (always runs per-file)
-                let ctx = if skill_sigs.is_empty() {
-                    forge::resolver::CheckContext::new(&fname)
-                } else {
-                    forge::resolver::CheckContext::with_skills(&fname, skill_sigs.clone())
-                };
-                if let Err(errors) = ctx.check(&program) {
-                    let registry = if skill_sigs.is_empty() {
-                        forge::resolver::CapabilityRegistry::builtin()
-                    } else {
-                        forge::resolver::CapabilityRegistry::with_skills(skill_sigs.clone())
-                    };
-                    all_diagnostics
-                        .extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
-                }
-
-                parsed_programs.push((program, fname, source));
+                parsed_programs.push((program, file.display().to_string(), source));
             }
+            let source_files: Vec<_> = parsed_programs
+                .iter()
+                .map(|(p, f, s)| forge::compose::SourceFile {
+                    path: f.clone(),
+                    source: s.clone(),
+                    program: p.clone(),
+                })
+                .collect();
 
+            let mut all_diagnostics = Vec::new();
             if merge && parsed_programs.len() > 1 {
                 // Merge mode: combine all files, then run checkers on merged program.
-                // This resolves cross-file references (states, types, functions).
-                let source_files: Vec<_> = parsed_programs
-                    .iter()
-                    .map(|(p, f, s)| forge::compose::SourceFile {
-                        path: f.clone(),
-                        source: s.clone(),
-                        program: p.clone(),
-                    })
-                    .collect();
+                // This resolves cross-file references (states, types, functions);
+                // the resolver still runs per file.
+                for sf in &source_files {
+                    all_diagnostics.extend(resolve_diagnostics(&sf.program, &sf.path, &skill_sigs));
+                }
 
                 match forge::compose::merge_programs(&source_files) {
                     Ok(composed) => {
@@ -567,20 +553,14 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                         out.done(&env);
                     }
                 }
-            } else {
-                // Per-file checkers (pure, states, requires)
-                for (program, fname, _) in &parsed_programs {
-                    all_diagnostics.extend(forge::checker::check_all(program, fname));
-                }
-            }
 
-            // Cross-file: boundary checker (always per-file)
-            let boundary_refs: Vec<_> = parsed_programs
-                .iter()
-                .filter(|(_, f, _)| f != "<merged>")
-                .map(|(p, f, _)| (p, f.as_str()))
-                .collect();
-            all_diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
+                // Cross-file: boundary checker (always per-file)
+                all_diagnostics.extend(boundary_diagnostics(&source_files));
+            } else {
+                // Per source file: resolver, checkers, boundary check — the set
+                // `run --manifest` blocks on (#495).
+                all_diagnostics.extend(check_source_files(&source_files, &skill_sigs));
+            }
 
             let has_errors = all_diagnostics
                 .iter()
@@ -1605,6 +1585,61 @@ fn load_skill_registry(
     registry
 }
 
+/// Resolver diagnostics for one program, with the project's skills registered.
+fn resolve_diagnostics(
+    program: &forge::ast::Program,
+    file: &str,
+    skill_sigs: &HashMap<String, forge::types::CapabilitySignature>,
+) -> Vec<forge::diagnostic::Diagnostic> {
+    let ctx = if skill_sigs.is_empty() {
+        forge::resolver::CheckContext::new(file)
+    } else {
+        forge::resolver::CheckContext::with_skills(file, skill_sigs.clone())
+    };
+    match ctx.check(program) {
+        Ok(()) => Vec::new(),
+        Err(errors) => {
+            let registry = if skill_sigs.is_empty() {
+                forge::resolver::CapabilityRegistry::builtin()
+            } else {
+                forge::resolver::CapabilityRegistry::with_skills(skill_sigs.clone())
+            };
+            errors
+                .iter()
+                .map(|e| e.to_diagnostic(file, &registry))
+                .collect()
+        }
+    }
+}
+
+/// Cross-file boundary diagnostics for parsed sources.
+fn boundary_diagnostics(
+    source_files: &[forge::compose::SourceFile],
+) -> Vec<forge::diagnostic::Diagnostic> {
+    let boundary_refs: Vec<_> = source_files
+        .iter()
+        .map(|sf| (&sf.program, sf.path.as_str()))
+        .collect();
+    forge::checker::boundary_checker::check(&boundary_refs)
+}
+
+/// Diagnostics for a multi-file project checked per source file: the resolver
+/// (project skills registered), every checker, then the cross-file boundary
+/// check. This is exactly the set `run --manifest` blocks on before it
+/// executes, so `check --manifest` reports it too (#495).
+fn check_source_files(
+    source_files: &[forge::compose::SourceFile],
+    skill_sigs: &HashMap<String, forge::types::CapabilitySignature>,
+) -> Vec<forge::diagnostic::Diagnostic> {
+    let mut diagnostics = Vec::new();
+    for sf in source_files {
+        diagnostics.extend(resolve_diagnostics(&sf.program, &sf.path, skill_sigs));
+        diagnostics.extend(forge::checker::check_all(&sf.program, &sf.path));
+    }
+    diagnostics.extend(boundary_diagnostics(source_files));
+    diagnostics
+}
+
 /// `forge test --expect <file>`: replay in a child process so the program's
 /// own stdout can be captured, then require it to match `<file>`.
 /// Trailing whitespace and line endings are ignored on both sides.
@@ -1897,32 +1932,11 @@ async fn run_manifest(
 
     // Parse all source files
     let mut source_files = Vec::new();
-    let mut diagnostics = Vec::new();
 
     for path in &source_paths {
         let source = read_source(&path.to_path_buf())?;
         let fname = path.display().to_string();
         let program = parse_or_exit(&source, path, command, out);
-
-        // Per-file validation (with skill-aware capability registry)
-        let ctx = if skill_sigs.is_empty() {
-            forge::resolver::CheckContext::new(&fname)
-        } else {
-            forge::resolver::CheckContext::with_skills(&fname, skill_sigs.clone())
-        };
-        if let Err(errors) = ctx.check(&program) {
-            let cap_registry = if skill_sigs.is_empty() {
-                forge::resolver::CapabilityRegistry::builtin()
-            } else {
-                forge::resolver::CapabilityRegistry::with_skills(skill_sigs.clone())
-            };
-            diagnostics.extend(
-                errors
-                    .iter()
-                    .map(|e| e.to_diagnostic(&fname, &cap_registry)),
-            );
-        }
-        diagnostics.extend(forge::checker::check_all(&program, &fname));
 
         source_files.push(forge::compose::SourceFile {
             path: fname,
@@ -1931,12 +1945,9 @@ async fn run_manifest(
         });
     }
 
-    // Cross-file boundary check
-    let boundary_refs: Vec<_> = source_files
-        .iter()
-        .map(|sf| (&sf.program, sf.path.as_str()))
-        .collect();
-    diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
+    // What `run --manifest` blocks on: resolver, checkers and the cross-file
+    // boundary check, per source file (#495).
+    let diagnostics = check_source_files(&source_files, &skill_sigs);
 
     if !diagnostics.is_empty() {
         let data = serde_json::json!({

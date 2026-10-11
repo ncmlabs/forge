@@ -1,6 +1,10 @@
 use
   skill.greeter.hello
 
+states GreetingPhase
+  idle -> greeting
+  greeting -> idle
+
 agent greeter
   lifecycle: GreetingPhase
 
@@ -10,3 +14,6 @@ agent greeter
     when greeting.sure -> say greeting
     else -> say "greeting uncertain"
     transition to greeting
+
+fn main
+  say "greeter ready"

@@ -332,6 +332,9 @@ impl ForgeConfig {
     /// management) that can run without LLM resolution. Production agent
     /// entrypoints (check/run/serve/send) must use [`Self::try_load_or_default`]
     /// so broken launches hard-error instead of silently running on mock (#447).
+    /// One documented exception: `check` treats *no configuration found* as a
+    /// config with no skills, because it contacts no provider at all; a config
+    /// that exists but fails to load is still an error there (#495).
     pub fn load_or_default() -> Self {
         match Self::try_load_or_default() {
             Ok(config) => config,
