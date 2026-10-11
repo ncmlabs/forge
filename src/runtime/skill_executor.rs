@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::llm::cost_tracker::CostTracker;
 use crate::llm::registry::ProviderRegistry;
 use crate::llm::{CompletionRequest, ToolDefinition};
 use crate::runtime::confidence::{ConfidentValue, Value};
@@ -32,6 +33,10 @@ pub struct SkillExecutor {
     pub max_turns: usize,
     pub default_timeout: Duration,
     pub tracer: Option<Arc<Tracer>>,
+    /// The run's cost tracker (#479): a skill's LLM calls are billed like any
+    /// other call, so the run summary's tokens and cost include them. Without
+    /// it a skill run reads `2 LLM calls · 0 tok · $0.000`.
+    pub cost_tracker: Option<Arc<CostTracker>>,
 }
 
 impl SkillExecutor {
@@ -42,12 +47,28 @@ impl SkillExecutor {
             max_turns: 10,
             default_timeout: Duration::from_secs(30),
             tracer: None,
+            cost_tracker: None,
         }
     }
 
     pub fn with_tracer(mut self, tracer: Arc<Tracer>) -> Self {
         self.tracer = Some(tracer);
         self
+    }
+
+    /// Attach the run's cost tracker, mirroring
+    /// [`TaskExecutor::with_cost_tracker`](crate::runtime::executor::TaskExecutor::with_cost_tracker).
+    pub fn with_cost_tracker(mut self, tracker: CostTracker) -> Self {
+        self.cost_tracker = Some(Arc::new(tracker));
+        self
+    }
+
+    /// Record one skill LLM call's tokens and cost in the run's tracker (#479).
+    /// Budget enforcement stays out of this path: the tracker only accumulates.
+    fn track_usage(&self, tokens_in: u32, tokens_out: u32, cost_usd: f32) {
+        if let Some(ref tracker) = self.cost_tracker {
+            let _ = tracker.record_usage(tokens_in, tokens_out, cost_usd);
+        }
     }
 
     /// Execute a skill by name with the given arguments.
@@ -238,6 +259,7 @@ impl SkillExecutor {
             .map_err(|e| SkillError::ProviderError(e.to_string()))?;
 
         let confidence = response.estimate_confidence().min(*default_confidence);
+        self.track_usage(response.tokens_in, response.tokens_out, response.cost_usd);
 
         if let Some(ref tracer) = self.tracer {
             tracer.llm_response(&LLMResponseInfo {
@@ -281,6 +303,8 @@ impl SkillExecutor {
                 .resolve_and_complete(request, None)
                 .await
                 .map_err(|e| SkillError::ProviderError(e.to_string()))?;
+
+            self.track_usage(response.tokens_in, response.tokens_out, response.cost_usd);
 
             if let Some(ref tracer) = self.tracer {
                 let confidence = response.estimate_confidence().min(*default_confidence);
@@ -811,6 +835,60 @@ fn json_value_to_text(value: &serde_json::Value) -> String {
 mod tests {
     use super::*;
     use crate::runtime::confidence::Value;
+
+    /// A skill's LLM call must be billed, not just counted: the tracer event
+    /// makes it an `llm_call`, and the cost tracker makes its tokens and cost
+    /// show up in the run summary (#479 review).
+    #[tokio::test]
+    async fn skill_llm_call_is_recorded_in_the_run_cost_tracker() {
+        let mut registry = ProviderRegistry::new("mock");
+        registry.register(
+            "mock",
+            Arc::new(
+                crate::llm::providers::mock::MockProvider::new("mock")
+                    .with_default("skill result")
+                    .with_cost(Some(1.0), Some(1.0)),
+            ),
+        );
+        let tracker = CostTracker::new(None, 100);
+        let executor = SkillExecutor::new(
+            Arc::new(registry),
+            Arc::new(std::sync::Mutex::new(
+                crate::runtime::skill_registry::SkillRegistry::new(),
+            )),
+        )
+        .with_cost_tracker(tracker.clone());
+
+        executor
+            .simple_completion("system prompt", "user prompt", &1.0)
+            .await
+            .expect("mock completion should succeed");
+
+        let summary = tracker.summary();
+        assert!(summary.total_tokens_in > 0, "input tokens must be billed");
+        assert!(summary.total_tokens_out > 0, "output tokens must be billed");
+        assert!(summary.total_cost_usd > 0.0, "cost must be billed");
+    }
+
+    /// Without a tracker the call still succeeds — billing is opt-in.
+    #[tokio::test]
+    async fn skill_llm_call_without_a_tracker_is_unchanged() {
+        let mut registry = ProviderRegistry::new("mock");
+        registry.register(
+            "mock",
+            Arc::new(crate::llm::providers::mock::MockProvider::new("mock")),
+        );
+        let executor = SkillExecutor::new(
+            Arc::new(registry),
+            Arc::new(std::sync::Mutex::new(
+                crate::runtime::skill_registry::SkillRegistry::new(),
+            )),
+        );
+        executor
+            .simple_completion("system prompt", "user prompt", &1.0)
+            .await
+            .expect("mock completion should succeed");
+    }
 
     // #354: template expansion must preserve CSV labels as a single argv
     // element — commas cannot split the token, because `gh issue create
