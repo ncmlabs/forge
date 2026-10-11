@@ -10,9 +10,21 @@ pub struct OpEstimate {
     pub estimated_cost_usd: f32,
 }
 
+/// A side effect the program performs when it runs: a `command`, `exec`, HTTP
+/// call, `file.write`, `session` or agent `spawn` (#477). `location` is the
+/// declaration the site sits in, the same context string operations use.
+#[derive(Debug, Clone)]
+pub struct EffectSite {
+    pub kind: &'static str,
+    pub location: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct CostEstimate {
     pub operations: Vec<OpEstimate>,
+    /// Effect sites in walk order. An effect costs no tokens, so it never
+    /// appears in `operations`.
+    pub effects: Vec<EffectSite>,
     pub total_tokens_in: u32,
     pub total_tokens_out: u32,
     pub total_cost_usd: f32,
@@ -55,6 +67,7 @@ impl std::fmt::Display for CostEstimate {
 
 struct CostWalker {
     operations: Vec<OpEstimate>,
+    effects: Vec<EffectSite>,
     cost_per_1k_in: f32,
     cost_per_1k_out: f32,
 }
@@ -74,9 +87,19 @@ impl CostWalker {
 
         Self {
             operations: Vec::new(),
+            effects: Vec::new(),
             cost_per_1k_in: cost_in,
             cost_per_1k_out: cost_out,
         }
+    }
+
+    /// Record one effect site. Sites are facts, not estimates: a loop body
+    /// holds one site, not one per estimated iteration.
+    fn add_effect(&mut self, kind: &'static str, location: &str) {
+        self.effects.push(EffectSite {
+            kind,
+            location: location.to_string(),
+        });
     }
 
     fn add_op(&mut self, kind: &'static str, location: String, tokens_in: u32, tokens_out: u32) {
@@ -195,6 +218,10 @@ impl CostWalker {
                     self.walk_expr(&arg.node.value, context, multiplier);
                 }
             }
+            Stmt::Spawn(_) => {
+                // spawn has zero token cost (no LLM call) but starts an agent
+                self.add_effect("spawn", context);
+            }
             _ => {}
         }
     }
@@ -218,11 +245,18 @@ impl CostWalker {
             }
             Expr::Exec(_) => {
                 // exec has zero token cost (direct CLI, no LLM)
+                self.add_effect("exec", context);
             }
-            Expr::Command(_) | Expr::CommandMethod(_, _) | Expr::SessionMethod(_, _) => {
-                // command/session method has zero token cost (direct CLI, no LLM)
+            Expr::Command(_) | Expr::CommandMethod(_, _) => {
+                // command has zero token cost (direct CLI, no LLM)
+                self.add_effect("command", context);
+            }
+            Expr::SessionMethod(_, _) => {
+                // a session handle method drives an already-running session
+                self.add_effect("session", context);
             }
             Expr::Session(session) => {
+                self.add_effect("session", context);
                 self.walk_expr(&session.name, context, multiplier);
                 if let Some(ref agent) = session.agent {
                     self.walk_expr(agent, context, multiplier);
@@ -294,7 +328,16 @@ impl CostWalker {
                 self.walk_expr(a, context, multiplier);
                 self.walk_expr(b, context, multiplier);
             }
-            Expr::MethodCall(inner, _, args) => {
+            Expr::MethodCall(inner, method, args) => {
+                // `file.write` and `web.fetch`/`web.post` are effects; every
+                // other namespace method is not (yet) one.
+                if let Expr::Ident(ns) = &inner.node {
+                    match (ns.as_str(), method.node.as_str()) {
+                        ("file", "write") => self.add_effect("file.write", context),
+                        ("web", "fetch") | ("web", "post") => self.add_effect("http", context),
+                        _ => {}
+                    }
+                }
                 self.walk_expr(inner, context, multiplier);
                 for arg in args {
                     self.walk_expr(&arg.node.value, context, multiplier);
@@ -358,6 +401,7 @@ pub fn estimate(program: &Program, config: &ForgeConfig) -> CostEstimate {
 
     CostEstimate {
         operations: walker.operations,
+        effects: walker.effects,
         total_tokens_in: total_in,
         total_tokens_out: total_out,
         total_cost_usd: total_cost,
@@ -396,6 +440,77 @@ mod tests {
             estimate.operations.iter().all(|op| op.kind != "session"),
             "session without explicit budget should not create a synthetic cost: {:?}",
             estimate.operations
+        );
+    }
+
+    /// Effect sites for `source`, with the guarantee that an effect alone adds
+    /// no operation and no tokens (issue #477: effects are not LLM ops).
+    fn effect_sites(source: &str) -> Vec<(&'static str, String)> {
+        let program = parse(source).unwrap();
+        let estimate =
+            crate::cost_estimator::estimate(&program, &ForgeConfig::default_mock_config());
+        assert!(
+            estimate.operations.is_empty(),
+            "effects must not add operations: {:?}",
+            estimate.operations
+        );
+        assert_eq!(
+            (estimate.total_tokens_in, estimate.total_tokens_out),
+            (0, 0),
+            "effects must not change token totals"
+        );
+        estimate
+            .effects
+            .iter()
+            .map(|e| (e.kind, e.location.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn exec_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  out = exec \"ls\"\n"),
+            vec![("exec", "fn main".to_string())]
+        );
+    }
+
+    #[test]
+    fn command_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("task t\n  gives Text\n  do\n    result = command \"echo hi\"\n    give result.stdout\n"),
+            vec![("command", "task t".to_string())]
+        );
+    }
+
+    #[test]
+    fn session_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  result = session \"review\" prompt \"check\"\n"),
+            vec![("session", "fn main".to_string())]
+        );
+    }
+
+    #[test]
+    fn spawn_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  spawn Worker as \"w\"\n"),
+            vec![("spawn", "fn main".to_string())]
+        );
+    }
+
+    #[test]
+    fn file_write_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  file.write(\"x\", \"y\")\n"),
+            vec![("file.write", "fn main".to_string())]
+        );
+    }
+
+    #[test]
+    fn web_fetch_is_an_http_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  body = web.fetch(\"http://example.com\")\n"),
+            vec![("http", "fn main".to_string())]
         );
     }
 }
