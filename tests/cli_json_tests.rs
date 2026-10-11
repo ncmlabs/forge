@@ -429,6 +429,61 @@ fn run_quiet_log_level_suppresses_the_human_summary() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "Hello, World!\n");
 }
 
+// ── config errors (#509) ────────────────────────────────────────
+
+/// Write a config whose `[llm.routing]` table is exactly `routing_body` and
+/// return its path, so a routing failure survives all the way to the CLI.
+fn routing_config(label: &str, routing_body: &str) -> String {
+    let dir = temp_dir(label);
+    let path = dir.join("forge.config.toml");
+    std::fs::write(
+        &path,
+        format!(
+            "[llm]\ndefault = \"mock\"\n\n[llm.routing]\n{routing_body}\n\n[providers.mock]\ntype = \"mock\"\n"
+        ),
+    )
+    .expect("write config with an invalid [llm.routing]");
+    path.to_string_lossy().to_string()
+}
+
+/// Run a real program under a broken `[llm.routing]` and return the envelope,
+/// asserting the process-level contract: exit 1 and `error.type == "config"`.
+fn config_error_doc(label: &str, routing_body: &str) -> serde_json::Value {
+    let config = routing_config(label, routing_body);
+    let output = forge_env(
+        &["run", "--json", "tests/fixtures/replay_llm.forge"],
+        &[("FORGE_CONFIG", &config)],
+    );
+    assert_exit(&output, 1);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["status"], "error");
+    assert_eq!(doc["error"]["type"], "config", "{doc}");
+    doc
+}
+
+#[test]
+fn run_json_types_wrong_routing_value_as_config() {
+    let doc = config_error_doc("routing-type", "plan = 7");
+    let message = doc["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("llm.routing"), "{message}");
+    assert!(message.contains("phase 'plan'"), "{message}");
+    assert!(
+        message.contains("must be a provider name or a list of provider names (got integer)"),
+        "{message}"
+    );
+}
+
+#[test]
+fn run_json_types_unknown_routing_provider_as_config() {
+    let doc = config_error_doc("routing-unknown", "plan = [\"mock\", \"ghost\"]");
+    let message = doc["error"]["message"].as_str().unwrap_or_default();
+    // A config typo, not an outage: the old text was "provider … is unavailable".
+    assert!(message.contains("invalid [llm] configuration"), "{message}");
+    assert!(!message.contains("is unavailable"), "{message}");
+    assert!(message.contains("phase 'plan'"), "{message}");
+    assert!(message.contains("unknown provider 'ghost'"), "{message}");
+}
+
 // ── test (record / replay, #478) ────────────────────────────────
 
 #[test]
