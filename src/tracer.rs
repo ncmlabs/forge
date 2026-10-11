@@ -22,8 +22,8 @@ pub struct RunStats {
 
 impl RunStats {
     /// Fold one trace event into the counters: `llm_response` is one LLM call
-    /// (its `confidence` feeds the spread), and the warden's own events are
-    /// `ward_action` / `supervision_tree`.
+    /// (its `confidence` feeds the spread), and a warden event is an actual
+    /// intervention (`ward_action`).
     fn record(&self, event: &str, data: &serde_json::Value) {
         match event {
             "llm_response" => {
@@ -41,7 +41,10 @@ impl RunStats {
                     }
                 }
             }
-            "ward_action" | "supervision_tree" => {
+            // `supervision_tree` is a snapshot the warden emits at every start
+            // (`warded.rs`), not an intervention: counting it made a clean
+            // warded run report `1 warden event` (#479 review).
+            "ward_action" => {
                 self.warden_events.fetch_add(1, Ordering::Relaxed);
             }
             _ => {}
@@ -902,12 +905,18 @@ mod tests {
         tracer.llm_response(&response(0.8));
         tracer.llm_response(&response(0.4));
         tracer.ward_action("guard", "worker", "timeout", "restart", "agent", 1);
+        tracer.ward_action("guard", "worker", "timeout", "restart", "agent", 2);
+        // A supervision snapshot is not an intervention, and neither event is
+        // an LLM call.
         tracer.supervision_tree("guard", &["worker"], &[]);
-        // Neither an LLM call nor a warden event: ignored.
         tracer.say("hello");
 
         assert_eq!(stats.llm_calls(), 2);
-        assert_eq!(stats.warden_events(), 2);
+        assert_eq!(
+            stats.warden_events(),
+            2,
+            "only ward_action counts as a warden event"
+        );
         let confidences = stats.confidences();
         assert_eq!(confidences.len(), 2);
         assert!((confidences[0] - 0.8).abs() < 1e-6, "{confidences:?}");

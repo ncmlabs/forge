@@ -3142,11 +3142,11 @@ JSON mode prints no summary line: the same data is `data.summary`.
 
 | Field | Meaning |
 |-------|---------|
-| `llm_calls` | LLM calls the run made, spawned children and pool workers included |
+| `llm_calls` | LLM calls the run made, spawned children, pool workers and skill calls included |
 | `tokens_in`, `tokens_out` | tokens those calls were billed for; `0` on paths with no LLM call |
 | `cost_usd` | same USD as the envelope's `cost` |
 | `confidence` | `{p50, min}` over the run's LLM confidences (Principle I — the spread is shown, not hidden), `null` when the run made no LLM call |
-| `warden_events` | `ward_action` / `supervision_tree` events the warden emitted |
+| `warden_events` | actual warden interventions (`ward_action`: nudge, restart, replace, escalate); the warden's `supervision_tree` start-of-run snapshot is not an intervention and is not counted |
 | `duration_ms` | wall-clock time of the command |
 
 ### `--fields`
