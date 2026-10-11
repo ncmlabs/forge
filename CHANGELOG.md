@@ -94,6 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- Diagnostic text output pointed at the wrong line/column after non-ASCII
+  characters (#513): `src/diagnostic.rs` built ariadne with the default
+  `IndexType::Char`, but every FORGE span is a byte range (pest offsets, and
+  `cli_output::line_col` counts bytes), so a `─`, `é` or emoji earlier in the
+  file shifted every rendered caret, or dropped the snippet entirely.
 - Pool workers, spawned agents and `forge send` now obey the JSON envelope the
   same way `fn main` does (#475): a pool worker's or handler's `say` lands in
   `data.output` instead of stdout (which broke the one-document contract), their
