@@ -86,10 +86,12 @@ impl Diagnostic {
             DiagnosticKind::Warning => ReportKind::Warning,
         };
 
-        let span = self.span.clone();
-        // Clamp span to source length to avoid panics
-        let clamped = span.start.min(source.len())
-            ..span.end.min(source.len()).max(span.start.min(source.len()));
+        // Clamp the span to the byte length of `source` and to char boundaries, so
+        // neither an out-of-range span nor one that belongs to another file of a
+        // composed program can panic ariadne by slicing a multi-byte character.
+        let start = floor_char_boundary(source, self.span.start);
+        let end = floor_char_boundary(source, self.span.end).max(start);
+        let clamped = start..end;
 
         let mut builder = Report::build(kind, (self.file.as_str(), clamped.clone()))
             .with_code(self.code)
@@ -121,6 +123,15 @@ pub fn render_diagnostics(source: &str, diagnostics: &[Diagnostic]) {
     for diag in diagnostics {
         diag.render(source);
     }
+}
+
+/// Largest char boundary at or below `offset` (and at most `source.len()`).
+fn floor_char_boundary(source: &str, mut offset: usize) -> usize {
+    offset = offset.min(source.len());
+    while !source.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
 }
 
 #[cfg(test)]
@@ -170,5 +181,19 @@ mod tests {
         diag.render_to(source, false, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains(":5:10"), "output: {text}");
+    }
+
+    #[test]
+    fn render_to_clamps_spans_inside_a_multibyte_char() {
+        // `forge build` names merged-program diagnostics after the first source
+        // file, so a diagnostic can carry a span that belongs to another file and
+        // lands inside a multi-byte character. Rendering it must not panic (#513).
+        let source = "# ── Endpoints ──\nendpoint status() -> Html\n";
+        let diag = Diagnostic::warning("W040", "src/example.forge", "opaque guard", 0..6, "here");
+        let mut out = Vec::new();
+        diag.render_to(source, false, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("W040"), "output: {text}");
+        assert!(!text.contains('\x1b'), "output has ANSI: {text:?}");
     }
 }
