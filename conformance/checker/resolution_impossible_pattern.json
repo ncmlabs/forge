@@ -1,0 +1,12 @@
+{
+  "name": "resolution_impossible_pattern",
+  "category": "checker",
+  "subcategory": "resolution",
+  "description": "A constructor pattern outside the scrutinee's classify label set is an error (#496)",
+  "input": "task t\n  needs pick: Text\n  gives Text\n  do\n    result = classify pick into [\"Buy\"]\n    match result\n      Nonexistent(who) -> give \"never\"\n      _ -> give \"other\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_code": "E161",
+    "error_contains": ["Nonexistent", "\"Buy\""]
+  }
+}
