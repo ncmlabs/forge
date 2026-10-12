@@ -1280,6 +1280,32 @@ Execute a FORGE program using the configured provider.
 forge run program.forge
 ```
 
+##### Dry run: `forge run --dry-run <file>`
+
+`--dry-run` parses the program, runs the same static checks as `forge check`,
+prints the execution plan, and stops. Nothing is executed: no provider is built
+or called, no process is spawned, and no agent starts.
+
+```bash
+forge run --dry-run program.forge
+forge run --dry-run --json program.forge
+```
+
+The plan is the cost table (every `reason`/`classify`/`search` site and
+`session` budget with estimated tokens and cost), then an `Effects:` list with
+one `kind  location` line per side effect — `command`, `exec`, `http`
+(`web.fetch`/`web.post`), `file.write`, `session`, `spawn` — then the line
+`nothing was executed`. Effects are sites, not estimates: a site inside a `for`
+body is listed once.
+
+Exit codes follow `forge check`: `0` when the plan is clean, `1` when errors
+blocked it (the diagnostics are printed, and `--json` reports the `check` error
+envelope), `2` for warnings only. `--dry-run` conflicts with `--record`
+(recording needs a provider), and `--manifest` is refused for now — a dry run
+plans one `.forge` file. `forge cost <file>` reports the same estimate — the
+same LLM operations and totals — but runs no checker and never blocks; only its
+JSON `data` carries `effects`.
+
 #### `forge trace <file>`
 Execute a FORGE program and emit a detailed JSON trace to stderr for debugging.
 
@@ -3088,7 +3114,7 @@ forge check --json --fields diagnostics src/main.forge
 |------|------|---------|
 | `0` | success | command completed |
 | `1` | error | command failed, a run was blocked by diagnostics, or the command line was invalid |
-| `2` | warning | `check` found warnings but no errors — this code means "warnings only" and nothing else |
+| `2` | warning | `check` or `run --dry-run` found warnings but no errors — this code means "warnings only" and nothing else |
 | `3` | partial | reserved for partially completed work |
 | `10` | needs input | reserved for approval / needs-input paths |
 | `11` | async pending | reserved for async work that is still running |
@@ -3121,7 +3147,8 @@ A command line clap cannot parse exits `1` in both modes — never clap's defaul
 | `check` | `{files, diagnostics:[{code, severity, file, line, col, end_line, end_col, message, label, help}]}` — `line`/`col` are `null` when the diagnostic names a file that was not parsed (no span to translate), never a fake `1:1` |
 | `explain` | `{code, title, explain}` or `{codes:[{code, title}]}` with `--list` |
 | `run`, `trace`, `test` | `{file, output:[say lines], result, summary}` — `say` never writes to stdout in JSON mode, wherever it runs: `fn main`, a spawned agent, or a pool worker (their lines join the same `output`). `cost` covers the whole run, spawned children and pool workers included. `summary` is the end-of-run summary below. `test` replays recorded fixtures (#478) and adds `{fixtures, expect, matched}` with `--expect` |
-| `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], total_tokens_in, total_tokens_out, estimated_cost_usd}` |
+| `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], effects:[{kind, location}], total_tokens_in, total_tokens_out, estimated_cost_usd}` — the same estimate as `run --dry-run` (#477), but `cost` runs no checker and never blocks, so there is no `blocked`/`diagnostics`/`warnings` case; its human output stays the cost table |
+| `run --dry-run` | `{dry_run: true, file, operations:[…], effects:[{kind, location}], total_tokens_in, total_tokens_out, estimated_cost_usd}` — nothing is executed, so there is no `output`/`result`; `cost` is the estimated plan cost |
 | `build` | `{path, output_name, binary_path, program_kind, release, dry_run, built}` |
 | `export` | `{agent, layers, output, entries}` |
 | `import` | `{package, into, imported, confidence_cap}` |

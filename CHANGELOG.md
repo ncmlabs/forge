@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `forge run --dry-run <file>` (#477): parse, check, and print the static
+  execution plan — the cost table of every LLM operation, then an `Effects:`
+  list with one `kind  location` line per side-effect site (`command`, `exec`,
+  `http`, `file.write`, `session`, `spawn`) in walk order — then the line
+  `nothing was executed`. No provider is built, no executor starts, no process
+  runs, and no agent is spawned. `--json` reports the #475 envelope with
+  `command: "run"` and `data = {dry_run, file, operations, effects,
+  total_tokens_in, total_tokens_out, estimated_cost_usd}`; exit codes follow
+  `forge check` (`0` clean plan, `1` errors blocked the plan, `2` warnings
+  only). `forge cost` reports the same estimate with `command: "cost"`, runs no
+  checker and never blocks (human output unchanged, JSON `data` gains
+  `effects`). `--dry-run` conflicts with
+  `--record` and refuses `--manifest` for now. Effect sites come from the
+  existing `src/cost_estimator.rs` walker; token totals are unchanged.
 - `forge check --manifest <forge.project.toml>` (#495): the project's declared
   skills are registered before resolving, so `skill.<name>.<capability>` calls
   type-check instead of failing with `unknown capability`. The signatures come
