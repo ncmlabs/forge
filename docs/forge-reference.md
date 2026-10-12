@@ -1257,7 +1257,21 @@ Type-check a FORGE program without execution.
 
 ```bash
 forge check program.forge
+forge check main.forge platform.forge --merge   # cross-file references resolve
+forge check --manifest forge.project.toml       # the project's declared skills resolve
 ```
+
+`--manifest <forge.project.toml>` registers the project's declared skills
+(`[skills]` → `skills/<name>/SKILL.md`) before resolving, so
+`skill.<name>.<capability>` calls type-check instead of failing with
+`unknown capability`. With no files, every source the manifest declares is
+checked exactly as `forge run --manifest` blocks on it — per source file, plus
+the cross-file boundary check — so a project `check` accepts is one `run` does
+not reject; with files, those files are checked instead (`--merge` composes
+them). Without `--manifest`, `skill_dirs` from `forge.config.toml` (or
+`FORGE_CONFIG`) apply, exactly as for `run`. A check runs no provider: no config
+at all means no config-declared skills, while a config that exists and cannot be
+loaded is still an error.
 
 #### `forge run <file>`
 Execute a FORGE program using the configured provider.
@@ -1265,6 +1279,32 @@ Execute a FORGE program using the configured provider.
 ```bash
 forge run program.forge
 ```
+
+##### Dry run: `forge run --dry-run <file>`
+
+`--dry-run` parses the program, runs the same static checks as `forge check`,
+prints the execution plan, and stops. Nothing is executed: no provider is built
+or called, no process is spawned, and no agent starts.
+
+```bash
+forge run --dry-run program.forge
+forge run --dry-run --json program.forge
+```
+
+The plan is the cost table (every `reason`/`classify`/`search` site and
+`session` budget with estimated tokens and cost), then an `Effects:` list with
+one `kind  location` line per side effect — `command`, `exec`, `http`
+(`web.fetch`/`web.post`), `file.write`, `session`, `spawn` — then the line
+`nothing was executed`. Effects are sites, not estimates: a site inside a `for`
+body is listed once.
+
+Exit codes follow `forge check`: `0` when the plan is clean, `1` when errors
+blocked it (the diagnostics are printed, and `--json` reports the `check` error
+envelope), `2` for warnings only. `--dry-run` conflicts with `--record`
+(recording needs a provider), and `--manifest` is refused for now — a dry run
+plans one `.forge` file. `forge cost <file>` reports the same estimate — the
+same LLM operations and totals — but runs no checker and never blocks; only its
+JSON `data` carries `effects`.
 
 #### `forge trace <file>`
 Execute a FORGE program and emit a detailed JSON trace to stderr for debugging.
@@ -2516,7 +2556,7 @@ The scrutinee's value set is known in exactly three cases: it is bound from `cla
 
 Patterns naming a declared or built-in type are never flagged, and neither are `_` or bindings. `E160` suggests the closest declared name within edit distance 2.
 
-`forge check` only sees the files it is handed, so a call that looks undeclared may live in a sibling source of the same project (a `forge.project.toml` `sources` entry). When the file imports a package or carries a boundary directive — or when no close name is found at all — the `E160` help adds: *if it is declared in another file of this project, check the files together: `forge check --merge <files>`*.
+`forge check` only sees the files it is handed, so a call that looks undeclared may live in a sibling source of the same project (a `forge.project.toml` `sources` entry). When the file imports a package or carries a boundary directive — or when no close name is found at all — the `E160` help adds: *if it is declared in another file of this project, check the files together: `forge check --merge <files>` or `forge check --manifest forge.project.toml`*.
 
 ```forge
 task route
@@ -2799,7 +2839,7 @@ Built-in capability families:
 
 `search "query"` is restricted to `#! boundary: server`.
 
-Project skills are declared in `forge.project.toml`. Validate them through the project/manifest path, not as isolated single-file examples, because the checker needs the manifest-provided skill registry.
+Project skills are declared in `forge.project.toml`. Validate them through the project/manifest path (`forge check --manifest forge.project.toml`), not as isolated single-file examples, because the checker needs the manifest-provided skill registry.
 
 ```toml
 [project]
@@ -2974,7 +3014,7 @@ Examples are not all validated the same way:
 | Positive single-file examples | `cargo run -- check <file>` |
 | Expected-error examples | Keep the expected diagnostic in the example name, comment, or test fixture |
 | Live LLM/session examples | Check syntax locally; run only when real provider credentials and CLI adapters are available |
-| Manifest skill examples | Use `cargo run -- run --manifest <forge.project.toml>` or the checker path that loads the manifest registry |
+| Manifest skill examples | `cargo run -- check --manifest <forge.project.toml>` (the checker path that loads the manifest skill registry); `run --manifest` to execute |
 | Multi-file examples | Validate through `forge.project.toml` or a merged-source command, not by checking dependent files in isolation |
 
 When an example intentionally exercises a checker limitation, document the limitation beside the example or in the issue verification notes rather than treating a nonzero checker result as a passing smoke test.
@@ -3074,7 +3114,7 @@ forge check --json --fields diagnostics src/main.forge
 |------|------|---------|
 | `0` | success | command completed |
 | `1` | error | command failed, a run was blocked by diagnostics, or the command line was invalid |
-| `2` | warning | `check` found warnings but no errors — this code means "warnings only" and nothing else |
+| `2` | warning | `check` or `run --dry-run` found warnings but no errors — this code means "warnings only" and nothing else |
 | `3` | partial | reserved for partially completed work |
 | `10` | needs input | reserved for approval / needs-input paths |
 | `11` | async pending | reserved for async work that is still running |
@@ -3107,7 +3147,8 @@ A command line clap cannot parse exits `1` in both modes — never clap's defaul
 | `check` | `{files, diagnostics:[{code, severity, file, line, col, end_line, end_col, message, label, help}]}` — `line`/`col` are `null` when the diagnostic names a file that was not parsed (no span to translate), never a fake `1:1` |
 | `explain` | `{code, title, explain}` or `{codes:[{code, title}]}` with `--list` |
 | `run`, `trace`, `test` | `{file, output:[say lines], result, summary}` — `say` never writes to stdout in JSON mode, wherever it runs: `fn main`, a spawned agent, or a pool worker (their lines join the same `output`). `cost` covers the whole run, spawned children and pool workers included. `summary` is the end-of-run summary below. `test` replays recorded fixtures (#478) and adds `{fixtures, expect, matched}` with `--expect` |
-| `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], total_tokens_in, total_tokens_out, estimated_cost_usd}` |
+| `cost` | `{file, operations:[{kind, location, estimated_tokens_in, estimated_tokens_out, estimated_cost_usd}], effects:[{kind, location}], total_tokens_in, total_tokens_out, estimated_cost_usd}` — the same estimate as `run --dry-run` (#477), but `cost` runs no checker and never blocks, so there is no `blocked`/`diagnostics`/`warnings` case; its human output stays the cost table |
+| `run --dry-run` | `{dry_run: true, file, operations:[…], effects:[{kind, location}], total_tokens_in, total_tokens_out, estimated_cost_usd}` — nothing is executed, so there is no `output`/`result`; `cost` is the estimated plan cost |
 | `build` | `{path, output_name, binary_path, program_kind, release, dry_run, built}` |
 | `export` | `{agent, layers, output, entries}` |
 | `import` | `{package, into, imported, confidence_cap}` |

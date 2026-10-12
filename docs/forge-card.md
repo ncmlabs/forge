@@ -6,7 +6,7 @@
 
 FORGE is a language for oracle-augmented computation: LLM calls are primitives, uncertainty is a compile-time type, and independent work runs in parallel. Deterministic logic lives in `pure`, stochastic logic in `task`, and agents are first-class with memory, lifecycle states, events, and supervision.
 
-Authoring loop, in this order: `forge check app.forge` (parse + resolve + check — fix every error first) → `FORGE_MOCK=1 forge run app.forge` (the whole program on the mock provider: no API key, no tokens, no cost) → `forge run app.forge` (only once the mock run is clean). A program driving FORGE should prefer `forge check --json app.forge`: one JSON envelope on stdout, diagnostics with `code`/`line`/`col`, and semantic exit codes (`0` clean, `1` errors, `2` warnings only) — see `docs/forge-reference.md` §27.
+Authoring loop, in this order: `forge check app.forge` (parse + resolve + check — fix every error first) → `forge run --dry-run app.forge` (the static plan: LLM operations, cost, effect sites — nothing runs) → `FORGE_MOCK=1 forge run app.forge` (the whole program on the mock provider: no API key, no tokens, no cost) → `forge run app.forge` (only once the mock run is clean). A program driving FORGE should prefer `forge check --json app.forge`: one JSON envelope on stdout, diagnostics with `code`/`line`/`col`, and semantic exit codes (`0` clean, `1` errors, `2` warnings only) — see `docs/forge-reference.md` §27.
 New project: `forge init <dir> --template pipeline|agent|webhook-bot`.
 
 ## 2. Syntax rules that trip agents
@@ -244,7 +244,7 @@ agent foreman
     existing = find "spec_{topic}"
     retire "spec_{topic}"
 ```
-**`skill.*`** — resolves only through a project manifest, so validate it with `forge run --manifest forge.project.toml`, not a bare `forge check` (the block below is not extracted by CI):
+**`skill.*`** — resolves only through a project manifest, so validate it with `forge check --manifest forge.project.toml`, not a bare `forge check` (the block below is not extracted by CI):
 ```toml
 [skills]
 repo_check = {}
@@ -286,7 +286,7 @@ task load_host
 - ``illegal transition from `<a>` to `<b>` `` — add that edge to the `states` block, or fix the state name.
 - ``unguarded transition to `<s>` in handler `<h>` `` — add `requires lifecycle == <from>` as the handler's first line.
 - ``unknown capability `<name>` `` — the `use` list names something that is not built in and not in the project manifest; fix the name.
-- ``call to undeclared function `<f>` `` — `f` is not a declared `task`/`pure`/`flow`/`pool` (`asset` and `winning_lines` are the only builtin calls, `main` is not callable, and uppercase names are type constructors); declare it, fix the name, or — if `f` lives in another file of the project — check the files together with `forge check --merge <files>`.
+- ``call to undeclared function `<f>` `` — `f` is not a declared `task`/`pure`/`flow`/`pool` (`asset` and `winning_lines` are the only builtin calls, `main` is not callable, and uppercase names are type constructors); declare it, fix the name, or — if `f` lives in another file of the project — check the files together with `forge check --merge <files>` or `forge check --manifest forge.project.toml`.
 - ``pattern `<P>` never matches ...`` — the arm is dead code: `P` is not a declared or builtin type and not in the scrutinee's known values (`classify` labels, literal `give`s), or it differs only in case from a label — tags compare exact text, so `Positive` never matches `"positive"`.
 - `file.read() is not allowed in shared boundary` — add `#! boundary: server` as line 1 (`search`, `data.*`, and `endpoint` are server-only too).
 

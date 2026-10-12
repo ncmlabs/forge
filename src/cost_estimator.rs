@@ -10,9 +10,21 @@ pub struct OpEstimate {
     pub estimated_cost_usd: f32,
 }
 
+/// A side effect the program performs when it runs: a `command`, `exec`, HTTP
+/// call, `file.write`, `session` or agent `spawn` (#477). `location` is the
+/// declaration the site sits in, the same context string operations use.
+#[derive(Debug, Clone)]
+pub struct EffectSite {
+    pub kind: &'static str,
+    pub location: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct CostEstimate {
     pub operations: Vec<OpEstimate>,
+    /// Effect sites in walk order. An effect costs no tokens, so it never
+    /// appears in `operations`.
+    pub effects: Vec<EffectSite>,
     pub total_tokens_in: u32,
     pub total_tokens_out: u32,
     pub total_cost_usd: f32,
@@ -55,6 +67,7 @@ impl std::fmt::Display for CostEstimate {
 
 struct CostWalker {
     operations: Vec<OpEstimate>,
+    effects: Vec<EffectSite>,
     cost_per_1k_in: f32,
     cost_per_1k_out: f32,
 }
@@ -74,9 +87,19 @@ impl CostWalker {
 
         Self {
             operations: Vec::new(),
+            effects: Vec::new(),
             cost_per_1k_in: cost_in,
             cost_per_1k_out: cost_out,
         }
+    }
+
+    /// Record one effect site. Sites are facts, not estimates: a loop body
+    /// holds one site, not one per estimated iteration.
+    fn add_effect(&mut self, kind: &'static str, location: &str) {
+        self.effects.push(EffectSite {
+            kind,
+            location: location.to_string(),
+        });
     }
 
     fn add_op(&mut self, kind: &'static str, location: String, tokens_in: u32, tokens_out: u32) {
@@ -195,7 +218,74 @@ impl CostWalker {
                     self.walk_expr(&arg.node.value, context, multiplier);
                 }
             }
-            _ => {}
+            Stmt::Spawn(spawn) => {
+                // spawn has zero token cost (no LLM call) but starts an agent
+                self.add_effect("spawn", context);
+                if let Some(alias) = &spawn.alias {
+                    self.walk_expr(alias, context, multiplier);
+                }
+                for option in &spawn.options {
+                    match &option.node {
+                        SpawnOption::ConfidenceCap(expr) => {
+                            self.walk_expr(expr, context, multiplier)
+                        }
+                        SpawnOption::MemoryInit(_, expr) => {
+                            self.walk_expr(expr, context, multiplier)
+                        }
+                        SpawnOption::Isolate(config) => {
+                            self.walk_expr(&config.branch, context, multiplier)
+                        }
+                        // `where category == "X"` is a literal, not an expression.
+                        SpawnOption::KnowledgeFilter(_) => {}
+                    }
+                }
+            }
+            Stmt::MemoryUpdate(_, index, value) => {
+                if let Some(index) = index {
+                    self.walk_expr(index, context, multiplier);
+                }
+                self.walk_expr(value, context, multiplier);
+            }
+            Stmt::StartTimer {
+                context: timer_context,
+                ..
+            }
+            | Stmt::CancelTimer {
+                context: timer_context,
+                ..
+            } => {
+                if let Some(expr) = timer_context {
+                    self.walk_expr(expr, context, multiplier);
+                }
+            }
+            Stmt::Learn(source, category) => {
+                match &source.node {
+                    LearnSource::Direct(expr) | LearnSource::FromDocument(expr) => {
+                        self.walk_expr(expr, context, multiplier)
+                    }
+                    LearnSource::FromInteraction(args) => {
+                        for arg in args {
+                            self.walk_expr(&arg.node.value, context, multiplier);
+                        }
+                    }
+                }
+                if let Some(category) = category {
+                    self.walk_expr(category, context, multiplier);
+                }
+            }
+            Stmt::Retire(retire) => {
+                if let Some(target) = &retire.target {
+                    self.walk_expr(target, context, multiplier);
+                }
+                if let Some(export) = &retire.knowledge_export {
+                    self.walk_expr(export, context, multiplier);
+                }
+            }
+            // These carry a bare name (state, timer, escalation target), never an
+            // expression — so there is nothing to walk. Listed explicitly, with
+            // no catch-all arm, so a new `Stmt` variant is a compile error here
+            // instead of a silent hole in the plan (#477).
+            Stmt::Escalate(_) | Stmt::TransitionTo(_) | Stmt::ResetTimer(_) => {}
         }
     }
 
@@ -218,11 +308,18 @@ impl CostWalker {
             }
             Expr::Exec(_) => {
                 // exec has zero token cost (direct CLI, no LLM)
+                self.add_effect("exec", context);
             }
-            Expr::Command(_) | Expr::CommandMethod(_, _) | Expr::SessionMethod(_, _) => {
-                // command/session method has zero token cost (direct CLI, no LLM)
+            Expr::Command(_) | Expr::CommandMethod(_, _) => {
+                // command has zero token cost (direct CLI, no LLM)
+                self.add_effect("command", context);
+            }
+            Expr::SessionMethod(_, _) => {
+                // a session handle method drives an already-running session
+                self.add_effect("session", context);
             }
             Expr::Session(session) => {
+                self.add_effect("session", context);
                 self.walk_expr(&session.name, context, multiplier);
                 if let Some(ref agent) = session.agent {
                     self.walk_expr(agent, context, multiplier);
@@ -294,7 +391,16 @@ impl CostWalker {
                 self.walk_expr(a, context, multiplier);
                 self.walk_expr(b, context, multiplier);
             }
-            Expr::MethodCall(inner, _, args) => {
+            Expr::MethodCall(inner, method, args) => {
+                // `file.write` and `web.fetch`/`web.post` are effects; every
+                // other namespace method is not (yet) one.
+                if let Expr::Ident(ns) = &inner.node {
+                    match (ns.as_str(), method.node.as_str()) {
+                        ("file", "write") => self.add_effect("file.write", context),
+                        ("web", "fetch") | ("web", "post") => self.add_effect("http", context),
+                        _ => {}
+                    }
+                }
                 self.walk_expr(inner, context, multiplier);
                 for arg in args {
                     self.walk_expr(&arg.node.value, context, multiplier);
@@ -358,6 +464,7 @@ pub fn estimate(program: &Program, config: &ForgeConfig) -> CostEstimate {
 
     CostEstimate {
         operations: walker.operations,
+        effects: walker.effects,
         total_tokens_in: total_in,
         total_tokens_out: total_out,
         total_cost_usd: total_cost,
@@ -396,6 +503,163 @@ mod tests {
             estimate.operations.iter().all(|op| op.kind != "session"),
             "session without explicit budget should not create a synthetic cost: {:?}",
             estimate.operations
+        );
+    }
+
+    /// Effect sites for `source`, with the guarantee that an effect alone adds
+    /// no operation and no tokens (issue #477: effects are not LLM ops).
+    fn effect_sites(source: &str) -> Vec<(&'static str, String)> {
+        let program = parse(source).unwrap();
+        let estimate =
+            crate::cost_estimator::estimate(&program, &ForgeConfig::default_mock_config());
+        assert!(
+            estimate.operations.is_empty(),
+            "effects must not add operations: {:?}",
+            estimate.operations
+        );
+        assert_eq!(
+            (estimate.total_tokens_in, estimate.total_tokens_out),
+            (0, 0),
+            "effects must not change token totals"
+        );
+        estimate
+            .effects
+            .iter()
+            .map(|e| (e.kind, e.location.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn exec_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  out = exec \"ls\"\n"),
+            vec![("exec", "fn main".to_string())]
+        );
+    }
+
+    #[test]
+    fn command_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("task t\n  gives Text\n  do\n    result = command \"echo hi\"\n    give result.stdout\n"),
+            vec![("command", "task t".to_string())]
+        );
+    }
+
+    #[test]
+    fn session_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  result = session \"review\" prompt \"check\"\n"),
+            vec![("session", "fn main".to_string())]
+        );
+    }
+
+    #[test]
+    fn spawn_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  spawn Worker as \"w\"\n"),
+            vec![("spawn", "fn main".to_string())]
+        );
+    }
+
+    /// The runtime evaluates the alias and every spawn option, so an `exec`
+    /// hidden in one of them is a real effect site (issue #477 review).
+    #[test]
+    fn spawn_walks_its_alias_and_options() {
+        assert_eq!(
+            effect_sites(
+                r#"agent W
+  on start
+    say "up"
+
+fn main
+  spawn W as "w-{exec "touch alias"}"
+      with confidence_cap: exec "touch cap"
+      with memory note: exec "touch mem"
+      isolate worktree "b-{exec "touch iso"}"
+"#
+            ),
+            vec![
+                ("spawn", "fn main".to_string()),
+                ("exec", "fn main".to_string()),
+                ("exec", "fn main".to_string()),
+                ("exec", "fn main".to_string()),
+                ("exec", "fn main".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn memory_update_walks_its_value() {
+        assert_eq!(
+            effect_sites(
+                "agent A\n  memory\n    log: Text\n  on tick\n    memory.log = exec \"touch mem\"\n"
+            ),
+            vec![("exec", "agent A.on tick".to_string())]
+        );
+    }
+
+    #[test]
+    fn start_timer_walks_its_context() {
+        assert_eq!(
+            effect_sites("agent A\n  timer t: 5m\n  on tick\n    start t for exec \"touch t1\"\n"),
+            vec![("exec", "agent A.on tick".to_string())]
+        );
+    }
+
+    #[test]
+    fn cancel_timer_walks_its_context() {
+        assert_eq!(
+            effect_sites("agent A\n  timer t: 5m\n  on tick\n    cancel t for exec \"touch t2\"\n"),
+            vec![("exec", "agent A.on tick".to_string())]
+        );
+    }
+
+    #[test]
+    fn retire_walks_its_target_and_export() {
+        assert_eq!(
+            effect_sites(
+                r#"agent A
+  on tick
+    retire "t-{exec "touch r"}"
+      with knowledge export: "e-{exec "touch r2"}"
+"#
+            ),
+            vec![
+                ("exec", "agent A.on tick".to_string()),
+                ("exec", "agent A.on tick".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn learn_walks_its_source_and_category() {
+        assert_eq!(
+            effect_sites(
+                r#"agent A
+  on tick
+    learn "f-{exec "touch l"}" category: "c-{exec "touch l2"}"
+"#
+            ),
+            vec![
+                ("exec", "agent A.on tick".to_string()),
+                ("exec", "agent A.on tick".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn file_write_is_an_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  file.write(\"x\", \"y\")\n"),
+            vec![("file.write", "fn main".to_string())]
+        );
+    }
+
+    #[test]
+    fn web_fetch_is_an_http_effect_site() {
+        assert_eq!(
+            effect_sites("fn main\n  body = web.fetch(\"http://example.com\")\n"),
+            vec![("http", "fn main".to_string())]
         );
     }
 }
