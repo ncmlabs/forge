@@ -189,7 +189,7 @@ fn help_json_lists_every_subcommand_and_its_flags() {
         .iter()
         .map(|arg| arg["name"].as_str().unwrap())
         .collect();
-    for arg in ["files", "merge", "json", "fields"] {
+    for arg in ["files", "merge", "manifest", "json", "fields"] {
         assert!(args.contains(&arg), "check must list {arg}: {args:?}");
     }
     let files = check["args"]
@@ -198,13 +198,30 @@ fn help_json_lists_every_subcommand_and_its_flags() {
         .iter()
         .find(|arg| arg["name"] == "files")
         .unwrap();
-    assert_eq!(files["required"], true);
+    // `required` is clap's own flag, and `check`'s files are
+    // `required_unless_present = "manifest"` — clap prints `[FILES]...`, so the
+    // index reports `false` here. `parse`'s file is unconditionally required.
+    assert_eq!(files["required"], false);
     assert_eq!(files["takes_value"], true);
     assert_eq!(
         files["long"],
         serde_json::Value::Null,
         "files is positional"
     );
+    let parse = doc["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|command| command["name"] == "parse")
+        .expect("parse is listed");
+    let file = parse["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|arg| arg["name"] == "file")
+        .expect("parse takes a file");
+    assert_eq!(file["required"], true);
+    assert_eq!(file["long"], serde_json::Value::Null);
     let merge = check["args"]
         .as_array()
         .unwrap()

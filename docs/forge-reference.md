@@ -3186,7 +3186,7 @@ forge schema                # the shared envelope, `data` left generic
 forge schema --all          # {command: schema} for every command with a schema
 ```
 
-`forge schema <command>` prints one JSON Schema (2020-12) document — the envelope with `properties.data` replaced by that command's payload — so a caller can validate a whole envelope, not just the payload. `forge schema --all` prints the same documents keyed by command. `data` accepts either the command's payload or `{}`: a command that fails before building one (`error.type` `io`, `config` or `runtime`) emits empty data. The diagnostic object shared by `parse`, `check`, `run`, `trace` and `test` lives once in the envelope's `$defs.diagnostic`.
+`forge schema <command>` prints one JSON Schema (2020-12) document — the envelope with `properties.data` replaced by that command's payload — so a caller can validate a whole envelope, not just the payload. `forge schema --all` prints the same documents keyed by command. `data` accepts either the command's payload or `{}`: a command that fails before building one (`error.type` `io`, `config` or `runtime`) emits empty data. The objects shared by several payloads — the diagnostic of `parse`, `check`, `run`, `trace` and `test`, and the `run`/`trace`/`test` run summary — live once in the envelope's `$defs`.
 
 These two introspection surfaces print their document directly and are not wrapped in an envelope; an unknown command is still a usage error (exit `1`, the error envelope in JSON mode). Commands without a schema are the four above — `json_supported` in the index says so.
 
@@ -3198,10 +3198,10 @@ forge help --json
 {
   "commands": [
     {
-      "name": "check",
-      "about": "Type-check capabilities, composition types, and purity constraints",
+      "name": "parse",
+      "about": "Parse a .forge file and print the AST (useful for debugging grammar)",
       "args": [
-        {"name": "files", "long": null, "required": true, "takes_value": true, "help": "Paths to .forge source files"},
+        {"name": "file", "long": null, "required": true, "takes_value": true, "help": "Path to the .forge source file"},
         {"name": "json", "long": "json", "required": false, "takes_value": false, "help": "Emit one JSON envelope on stdout instead of human text (#475)"}
       ],
       "json_supported": true
@@ -3212,6 +3212,6 @@ forge help --json
 }
 ```
 
-`commands` comes from clap's own definition, so it cannot drift from the CLI: every subcommand, nested actions as `wake register` / `store recover`, and their flags. `--json` and `--fields` are listed on every command because clap accepts them at any depth. `json_supported` is `true` exactly for the commands with a schema, plus `schema` and `help` themselves; `exit_codes` is the table above; `env` mirrors the `ENVIRONMENT VARIABLES` block of `forge --help`.
+`commands` comes from clap's own definition, so it cannot drift from the CLI: every subcommand, nested actions as `wake register` / `store recover`, and their flags. `--json` and `--fields` are listed on every command because clap accepts them at any depth. `required` is clap's own flag too: an argument that is required only unless another is present (`check`'s `[FILES]...`, which `--manifest` replaces; `explain`'s code, which `--list` replaces) reports `false`, exactly as the usage line `--help` prints it. `json_supported` is `true` exactly for the commands with a schema, plus `schema` and `help` themselves; `exit_codes` is the table above; `env` mirrors the `ENVIRONMENT VARIABLES` block of `forge --help`.
 
 The schemas are checked against reality by `tests/cli_schema_tests.rs`: it runs every command for real — mock provider, fixtures, temp dirs — and validates stdout against `forge schema <command>`, one test per command, plus a deliberately wrong document that must fail. `jsonschema` is a dev-dependency; the released binary does not link it. Adding a field to a payload therefore fails the suite until the schema under `schemas/` is updated, and adding a command fails until it has both a schema and a drift test.

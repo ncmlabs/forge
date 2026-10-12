@@ -19,7 +19,7 @@
     },
     {
       "title": "replay",
-      "required": ["file", "output", "result"],
+      "required": ["file", "output", "result", "summary"],
       "additionalProperties": false,
       "properties": {
         "file": { "type": "string" },
@@ -30,7 +30,8 @@
         },
         "result": {
           "description": "The program's return value, or `null` when it returned nothing (`Unit`)."
-        }
+        },
+        "summary": { "$ref": "#/$defs/run_summary" }
       }
     },
     {

@@ -59,6 +59,44 @@
     }
   },
   "$defs": {
+    "run_summary": {
+      "title": "RunSummary",
+      "description": "End-of-run economics and trust signals (#479): `data.summary` on `run`, `trace` and `test`. Counters come from the run's cost tracker and trace events, with spawned children and pool workers folded in.",
+      "type": "object",
+      "required": [
+        "llm_calls",
+        "tokens_in",
+        "tokens_out",
+        "cost_usd",
+        "confidence",
+        "warden_events",
+        "duration_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "llm_calls": { "type": "integer", "minimum": 0 },
+        "tokens_in": { "type": "integer", "minimum": 0 },
+        "tokens_out": { "type": "integer", "minimum": 0 },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "confidence": {
+          "description": "Median (`p50`) and minimum of the run's LLM confidences; `null` when the run made no LLM call, because there is no spread to show (Principle I).",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["p50", "min"],
+              "additionalProperties": false,
+              "properties": {
+                "p50": { "type": "number" },
+                "min": { "type": "number" }
+              }
+            }
+          ]
+        },
+        "warden_events": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
     "diagnostic": {
       "title": "Diagnostic",
       "description": "One entry of `data.diagnostics` (shared by `parse`, `check`, `run`, `trace` and `test`). `line`/`col`/`end_line`/`end_col` are `null` when the diagnostic names a file that was not parsed — a missing position is never reported as a fake 1:1.",
