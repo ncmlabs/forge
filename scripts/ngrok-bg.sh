@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ngrok-bg.sh — manage a backgrounded ngrok HTTP tunnel for local clone-dev /
+# ngrok-bg.sh — manage a backgrounded ngrok HTTP tunnel for local
 # Slack-interactivity testing. Writes pid + url to /tmp so other scripts can
 # read them; ngrok's local inspector (127.0.0.1:4040) is the source of truth.
 #
