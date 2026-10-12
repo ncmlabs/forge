@@ -1,0 +1,11 @@
+[project]
+name = "skill-project"
+version = "0.1.0"
+description = "Fixture: a local skill project checked with `forge check --manifest` (#495)"
+
+[build]
+entry = "main.forge"
+sources = ["states.forge"]
+
+[skills]
+greeter = { path = "skills/greeter" }

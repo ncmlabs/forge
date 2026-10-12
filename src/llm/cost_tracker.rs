@@ -23,16 +23,21 @@ impl CostTracker {
     }
 
     pub fn record(&self, resp: &CompletionResponse) -> Result<(), BudgetError> {
-        self.total_tokens_in
-            .fetch_add(resp.tokens_in, Ordering::Relaxed);
-        self.total_tokens_out
-            .fetch_add(resp.tokens_out, Ordering::Relaxed);
-        self.record_cost(resp.cost_usd)
+        self.record_usage(resp.tokens_in, resp.tokens_out, resp.cost_usd)
     }
 
-    /// Accumulate a cost with no `CompletionResponse` behind it (embeddings,
-    /// which report `tokens_used` + `cost_usd` only).
-    pub fn record_cost(&self, cost_usd: f32) -> Result<(), BudgetError> {
+    /// Accumulate one call's tokens and cost. Used directly by paths without a
+    /// `CompletionResponse` behind them — embeddings report input tokens and a
+    /// cost only.
+    pub fn record_usage(
+        &self,
+        tokens_in: u32,
+        tokens_out: u32,
+        cost_usd: f32,
+    ) -> Result<(), BudgetError> {
+        self.total_tokens_in.fetch_add(tokens_in, Ordering::Relaxed);
+        self.total_tokens_out
+            .fetch_add(tokens_out, Ordering::Relaxed);
         let microdollars = (cost_usd * 1_000_000.0) as u64;
         let new_total = self
             .total_cost_usd
@@ -141,6 +146,17 @@ mod tests {
         assert_eq!(s.total_tokens_in, 300);
         assert_eq!(s.total_tokens_out, 150);
         assert!((s.total_cost_usd - 0.003).abs() < 0.0001);
+    }
+
+    #[test]
+    fn record_usage_accumulates_tokens_without_a_completion() {
+        // Embeddings report input tokens and a cost only.
+        let tracker = CostTracker::new(None, 100);
+        tracker.record_usage(120, 0, 0.0001).unwrap();
+        let s = tracker.summary();
+        assert_eq!(s.total_tokens_in, 120);
+        assert_eq!(s.total_tokens_out, 0);
+        assert!((s.total_cost_usd - 0.0001).abs() < 1e-6);
     }
 
     #[test]
