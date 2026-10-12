@@ -2,6 +2,10 @@
 /bin
 .worktrees/
 .claude/
+# Runtime state written relative to the cwd by agents (`knowledge store:`),
+# session and command data. A clone-dev test run used to leave a tracked
+# knowledge store behind (#479 review).
+.forge-knowledge/
 .forge-data/
 .forge-security-allow
 docs/superpowers/

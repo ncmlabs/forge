@@ -153,6 +153,14 @@ impl CompletionResponse {
 
 #[derive(Debug, Error, Clone)]
 pub enum ProviderError {
+    /// `forge.config.toml` cannot serve a request as written — a
+    /// `[llm.routing]` phase with an empty chain or a name no `[providers.*]`
+    /// entry defines (#503), collected across every bad phase (#509). Not an
+    /// `Unavailable` provider: nothing was ever called, and the message must
+    /// not claim a provider is down when the config is what is wrong.
+    #[error("invalid [llm] configuration: {reason}")]
+    InvalidConfig { reason: String },
+
     #[error("provider '{provider}' is unavailable: {reason}")]
     Unavailable { provider: String, reason: String },
 

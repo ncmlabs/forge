@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `forge check --manifest <forge.project.toml>` (#495): the project's declared
+  skills are registered before resolving, so `skill.<name>.<capability>` calls
+  type-check instead of failing with `unknown capability`. The signatures come
+  from the same code path `run` uses (manifest `[skills]`, else the config
+  `skill_dirs` fallback, also honoured through `FORGE_CONFIG`); no provider is
+  contacted and no executor is built. With no files, the manifest's sources are
+  checked exactly as `forge run --manifest` blocks on them — every source per
+  file, plus the cross-file boundary check — so a project `check` accepts is a
+  project `run` does not reject; explicit files are checked instead. Undeclared
+  skills still fail with `E010`, and the `E160` help now names
+  `forge check --manifest forge.project.toml` alongside
+  `forge check --merge <files>`.
+- End-of-run summary (#479): `forge run`, `forge trace` and `forge test` end
+  with the run's economics and trust signals — one line on stderr in human mode
+  (`12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1
+  warden event · 3.4s`, so program stdout stays clean) and `data.summary`
+  (`{llm_calls, tokens_in, tokens_out, cost_usd, confidence:{p50, min}|null,
+  warden_events, duration_ms}`) in JSON mode. Counters come from the trace
+  events the runtime already emits, spawned children and pool workers included;
+  a zero-LLM run reports `0 LLM calls · 0 tok · $0.000` with no confidence
+  spread, and `FORGE_LOG_LEVEL=quiet` silences the human line. Documented in
+  `docs/forge-reference.md` §27.
 - Resolution checker (#496): `forge check` now rejects a plain call to an
   undeclared `task`/`pure`/`flow`/`pool` (`E160`, with a closest-name hint),
   a match arm that can never match a scrutinee whose values are statically
@@ -132,6 +154,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counting bytes for JSON). A span that is not on a character boundary (which
   `forge build` can produce for a merged multi-file program) is now clamped
   instead of panicking ariadne.
+- The JSON envelope's `duration_ms` was ~0 for every command (#479): the clock
+  started lazily inside `emit`, so it measured the time from `emit` to itself.
+  It now starts as the first statement of `main` and reports the command's
+  wall-clock time (a run whose `command` sleeps 200 ms reports ≥ 200 ms).
 - `forge test --expect` line endings (#481): the output comparison ignored
   trailing whitespace but not the line ending, so an LF `expected.txt`
   committed to a repo never matched CRLF stdout on Windows (and a
@@ -169,6 +195,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process completed successfully, 0.3 when it failed, was cancelled or timed
   out, and 0.5 while it is still running. A `when h.sure` guard on a failed,
   cancelled or timed-out background result no longer takes the success branch.
+- Invalid `[llm.routing]` values (#509): a value that is neither a provider
+  name nor a list of provider names — `plan = 7`, `plan = { a = 1 }`,
+  `plan = [1, 2]` — now reports `[llm.routing] phase 'plan' must be a provider
+  name or a list of provider names (got integer)` instead of serde's
+  `data did not match any variant of untagged enum RouteSpec`, which leaked an
+  internal type name and never named the phase. Validation also walks phases in
+  sorted order and reports every bad phase in one error, so the message no
+  longer depends on `HashMap` iteration order. Phases that parse but cannot
+  serve (empty chain, unknown provider) now render as
+  `invalid [llm] configuration: …` via `ProviderError::InvalidConfig` instead
+  of claiming a provider is unavailable, and the CLI types both cases as
+  `error.type: "config"` in the `--json` envelope.
 
 ## [0.2.0] - 2026-08-31
 
