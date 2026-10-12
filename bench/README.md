@@ -38,7 +38,7 @@ reported, never a best-of.
 | `BENCH_BASE_URL` | OpenAI-compatible base URL, e.g. `https://host/v1`. Required unless `BENCH_FAKE` is set. |
 | `BENCH_API_KEY` | Bearer token for that endpoint. Optional — a local vLLM needs none. |
 | `BENCH_MODEL` | Provider model id sent in the request. Required unless `BENCH_FAKE` is set. |
-| `BENCH_FAKE` | `reference` or `broken`: answer locally instead of calling the endpoint. |
+| `BENCH_FAKE` | `reference`, `broken` or `httperr`: answer locally instead of calling the endpoint. |
 | `FORGE_BIN` | The forge command, default `cargo run -q --`; CI uses `./target/release/forge`. |
 
 ```sh
@@ -56,16 +56,23 @@ tokens_out, final_codes, final_diagnostics}`:
   with zero diagnostics.
 - `attempts` — 1 to 3. A spec still unclean after 3 escalates: `pass3` is false,
   `note` says so, and `final_diagnostics` holds the surviving array.
+- `note` — why a spec did not pass when that is not the diagnostics: a call that
+  failed even after curl's retries (`--max-time 300 --retry 2
+  --retry-all-errors`, three tries per attempt) is recorded as `model call
+  failed: <reason>` and the run moves on to the next spec, and a reply that
+  carries no program is recorded as `no .forge program in the reply`.
 - `correct` and `reason` — the `forge test --expect` replay result and, when it
   fails, why: `replay miss: ...` for calls the fixture lacks, an output
   mismatch, or a runtime error.
 - `tokens_in` / `tokens_out` — summed over the attempts the spec took, read from
-  the endpoint's `usage` field.
+  the endpoint's `usage` field (`0` when it is missing or not numeric).
 
 One markdown table goes to stdout and everything else to stderr, so
-`bench/run.sh ... >> "$GITHUB_STEP_SUMMARY"` appends a clean table. A reply with
-no program — or an empty fenced block — is never a pass, and a spec that never
-checks clean is still graded for correctness rather than hidden.
+`bench/run.sh ... >> "$GITHUB_STEP_SUMMARY"` appends a clean table. The results
+file is written even when specs failed — a model failure is a result — and the
+script exits non-zero only for harness or configuration errors. A reply with no
+program — or an empty fenced block — is never a pass, and a spec that produced a
+program is graded for correctness even when it never checked clean.
 
 Offline, with no key and no cost:
 
@@ -73,12 +80,14 @@ Offline, with no key and no cost:
 bench/run.sh --self-test
 ```
 
-It runs specs 01 and 02 against both fake models and fails unless the numbers
-match: `BENCH_FAKE=reference` answers with the spec's own reference (pass@1 =
-pass@3 = correct = 2/2, one attempt each) and `BENCH_FAKE=broken` answers with
-the reference minus its first block-opening `do` (a parse error first, the
-reference on repair: pass@1 = 0, pass@3 = 2/2, two attempts each).
-`tests/bench_corpus_tests.rs` runs it as part of `cargo test`.
+It runs specs 01 and 02 against the three fake models and fails unless the
+numbers match: `BENCH_FAKE=reference` answers with the spec's own reference
+(pass@1 = pass@3 = correct = 2/2, one attempt each); `BENCH_FAKE=broken` answers
+with the reference minus its first block-opening `do` (a parse error first, the
+reference on repair: pass@1 = 0, pass@3 = 2/2, two attempts each); and
+`BENCH_FAKE=httperr` makes spec 01's calls die like a dead endpoint, so spec 01
+is reported as `model call failed: ...` while spec 02 still scores 1/1 in the
+same run. `tests/bench_corpus_tests.rs` runs it as part of `cargo test`.
 
 `.github/workflows/bench.yml` runs the whole corpus weekly (Mondays 05:00 UTC)
 and on `workflow_dispatch` over a matrix of models, uploading each results JSON

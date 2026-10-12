@@ -58,11 +58,17 @@ USAGE
 # `reference`: every reply is the spec's own reference. `broken`: the first
 # reply is the reference minus its first block-opening `do` (a parse error —
 # `gives` is optional, so deleting that line still checks clean), later replies
-# are the reference. Both are wrapped in a fence and returned as the same
-# OpenAI-compatible JSON a /v1 endpoint returns, so everything downstream —
+# are the reference. `httperr`: spec 01's calls fail like a dead endpoint (curl
+# exit 7), every later spec answers with its reference — the transport failure
+# a live run must survive. Every reply is wrapped in a fence and returned as the
+# same OpenAI-compatible JSON a /v1 endpoint returns, so everything downstream —
 # usage accounting included — runs offline with no key and no cost.
 fake_response() {  # $1 = request JSON, $2 = spec dir, $3 = attempt number
   local request="$1" dir="$2" attempt="$3" content fenced
+  if [[ "$BENCH_FAKE" == httperr && "$dir" == *"/01-"* ]]; then
+    echo "curl: (7) Failed to connect to the fake endpoint: Connection refused" >&2
+    return 7
+  fi
   if [[ "$BENCH_FAKE" == broken && "$attempt" == 1 ]]; then
     content="$(awk 'BEGIN{done=0} /^[[:space:]]*do[[:space:]]*$/ && !done {done=1; next} {print}' \
       "$dir/reference.forge")"
@@ -82,33 +88,30 @@ fake_response() {  # $1 = request JSON, $2 = spec dir, $3 = attempt number
 
 # The model's reply: the fake offline, otherwise one POST to the endpoint.
 # `usage` from a live reply feeds the same token accounting the fake exercises.
+# A flaky endpoint gets three tries (--retry 2, all errors) with a 5-minute cap
+# per try; a call that still fails is that spec's outcome, never the run's.
 model_response() {  # $1 = request JSON, $2 = spec dir, $3 = attempt number
   if [[ -n "$BENCH_FAKE" ]]; then
     fake_response "$1" "$2" "$3"
-    return 0
+    return # the fake's status, so `httperr` can fail like a dead endpoint
   fi
   local -a opts=(-sS -X POST "$BENCH_BASE_URL/chat/completions"
-    -H 'Content-Type: application/json' --data-binary "$1")
+    -H 'Content-Type: application/json' --data-binary "$1"
+    --max-time 300 --retry 2 --retry-all-errors)
   if [[ -n "$BENCH_API_KEY" ]]; then
     opts+=(-H "Authorization: Bearer $BENCH_API_KEY")
   fi
   curl "${opts[@]}"
 }
 
-# The first fenced block of a reply, else the whole reply: a program sent
-# without fences is still graded, and pure prose falls through to a parse error
-# instead of to an empty program, which `forge check` accepts as clean.
+# The body of the reply's first fenced block, or nothing: the instruction asks
+# for one fenced block, so a reply without a fence is no program — prose is
+# never handed to `forge check` as if it were a program.
 extract_program() {
-  local text
-  text="$(printf '%s\n' "$1" | awk '
+  printf '%s\n' "$1" | awk '
     /^[[:space:]]*```/ { if (inside) exit; inside = 1; next }
     inside { print }
-  ')"
-  if [[ -z "${text//[[:space:]]/}" ]]; then
-    printf '%s\n' "$1"
-  else
-    printf '%s\n' "$text"
-  fi
+  '
 }
 
 # ------------------------------------------------------------- the grading
@@ -164,6 +167,7 @@ run_spec() {  # $1 = spec directory; appends one result object to $SPECS_JSONL
   local messages request response content text diags turn
   local attempts=0 tokens_in=0 tokens_out=0
   local clean=false pass1=false note="" final_diags='[]'
+  local call_err="$WORK/$id.call.err" status err body
 
   messages="$(jq -cn --rawfile card "$CARD" --rawfile spec "$dir/spec.md" \
     --arg instruction "$INSTRUCTION" \
@@ -174,23 +178,39 @@ run_spec() {  # $1 = spec directory; appends one result object to $SPECS_JSONL
     note=""
     request="$(jq -cn --argjson messages "$messages" --arg model "${BENCH_MODEL:-$MODEL_NAME}" \
       '{model:$model,messages:$messages}')"
-    response="$(model_response "$request" "$dir" "$((attempts + 1))")" \
-      || die "$name: the model call failed"
-    if ! jq -e '(.choices | type == "array") and (.choices | length > 0)' >/dev/null 2>&1 <<<"$response"; then
-      die "$name: no OpenAI-compatible reply — check BENCH_BASE_URL and BENCH_MODEL: $response"
-    fi
-    content="$(jq -r '.choices[0].message.content // ""' <<<"$response")"
-    tokens_in=$((tokens_in + $(jq -r '(.usage.prompt_tokens // 0) | floor' <<<"$response")))
-    tokens_out=$((tokens_out + $(jq -r '(.usage.completion_tokens // 0) | floor' <<<"$response")))
     attempts=$((attempts + 1))
+    status=0
+    response="$(model_response "$request" "$dir" "$attempts" 2>"$call_err")" || status=$?
+    if [[ $status -ne 0 ]]; then
+      # A dead endpoint is this spec's failure, not the run's: record it and
+      # move on, so the other 29 specs still report.
+      err="$(cat "$call_err")"
+      note="model call failed: exit $status"
+      if [[ -n "${err%%$'\n'*}" ]]; then note="$note: ${err%%$'\n'*}"; fi
+      note="${note:0:300}"
+      break
+    fi
+    if ! jq -s -e 'last | (.choices | type == "array") and (.choices | length > 0)' >/dev/null 2>&1 <<<"$response"; then
+      # The last document only: the raw text holds one body per retried attempt.
+      body="$(jq -s -c 'last' <<<"$response" 2>/dev/null || true)"
+      if [[ -z "$body" ]]; then body="${response:0:200}"; fi
+      note="model call failed: no OpenAI-compatible reply: ${body:0:200}"
+      break
+    fi
+    # `last`: curl writes the body of every attempt it retries, so a 500 that a
+    # retry turned into a 200 arrives here as two JSON texts.
+    content="$(jq -s -r 'last | .choices[0].message.content // ""' <<<"$response")"
+    tokens_in=$((tokens_in + $(jq -s -r 'last | ((.usage.prompt_tokens // 0) | tonumber? // 0 | floor)' <<<"$response")))
+    tokens_out=$((tokens_out + $(jq -s -r 'last | ((.usage.completion_tokens // 0) | tonumber? // 0 | floor)' <<<"$response")))
 
     text="$(extract_program "$content")"
-    printf '%s\n' "$text" >"$program"
     if [[ -z "${text//[[:space:]]/}" ]]; then
-      # An empty program checks clean; a reply with no program is not a pass.
+      # No fenced block, so no program: an empty program would check clean, and
+      # prose is not a program — either way this is not a pass.
       note="no .forge program in the reply"
       diags='[]'
     else
+      printf '%s\n' "$text" >"$program"
       diags="$(check_diagnostics "$program")"
     fi
     final_diags="$diags"
@@ -214,9 +234,17 @@ run_spec() {  # $1 = spec directory; appends one result object to $SPECS_JSONL
           + ($diags | tojson) + "\n\n" + $instruction)}]')"
   done
 
-  grade_correct "$dir" "$program"
-  if [[ "$clean" != true && -z "$note" ]]; then
-    note="diagnostics remain after $attempts attempt(s)"
+  # Nothing to grade without a program — a failed call, or replies that carried
+  # no program: the note is the reason, and it is already recorded.
+  if [[ -z "$note" ]]; then
+    grade_correct "$dir" "$program"
+    if [[ "$clean" != true ]]; then
+      note="diagnostics remain after $attempts attempt(s)"
+    fi
+  else
+    # Skipped grading must not inherit the previous spec's verdict.
+    GRADE_CORRECT=false
+    GRADE_REASON=""
   fi
 
   jq -cn --arg spec "$name" --arg difficulty "$difficulty" \
@@ -269,6 +297,33 @@ expect_fake() {  # $1 = fake mode, $2 = pass@1 rate, $3 = pass@3 rate, $4 = atte
 self_test() {
   expect_fake reference 1 1 1
   expect_fake broken 0 1 2
+  expect_fake_httperr
+}
+
+# The transport-failure shape: spec 01's every call dies like a dead endpoint,
+# so it is reported as a failed spec — while spec 02 is still called, checked,
+# graded and reported, and the results file is still written. The run itself
+# exits 0: a model failure is not a harness error.
+expect_fake_httperr() {
+  local json="$WORK/self-httperr.json"
+  log "self-test: BENCH_FAKE=httperr"
+  BENCH_FAKE=httperr bash "$ROOT/bench/run.sh" --model fake-httperr --specs 01,02 --out "$json"
+  if jq -e '
+        (.specs | length) == 2
+        and .totals.pass1_rate == 0.5
+        and .totals.pass3_rate == 0.5
+        and .totals.correct_rate == 0.5
+        and (.specs[0] | .spec == "01-task-greeting" and .pass1 == false
+             and .attempts == 1 and .correct == false
+             and (.note | startswith("model call failed:")))
+        and (.specs[1] | .spec == "02-pure-wrapper" and .pass1 == true
+             and .pass3 == true and .attempts == 1 and .correct == true)' "$json" >/dev/null; then
+    log "self-test httperr: PASS — the dead spec is reported, spec 02 still scores 1/1"
+  else
+    echo "bench self-test: FAIL for BENCH_FAKE=httperr (want spec 01 failed with a model-call note, spec 02 perfect, both reported)" >&2
+    print_table "$json" >&2
+    exit 1
+  fi
 }
 
 # -------------------------------------------------------------------- main
