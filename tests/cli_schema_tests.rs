@@ -418,18 +418,24 @@ fn parse_output_matches_its_schema() {
         &["parse", "--json", "examples/basics/hello.forge"],
         &[],
     );
-    assert_validates(
-        "parse",
-        1,
-        &["parse", "--json", "tests/fixtures/parse_error.forge"],
-        &[],
-    );
+
+    // A parse failure, written here rather than kept as a fixture: every
+    // committed `.forge` file is classified in `examples/validation.toml` and
+    // must parse (`tests/example_validation_tests.rs`), and this one must not.
+    let dir = temp_dir("parse");
+    let broken = dir.join("broken.forge");
+    std::fs::write(&broken, "task broken\n  do\n   say \"three spaces\"\n")
+        .expect("write a source that does not parse");
+    let broken_arg = broken.to_string_lossy().to_string();
+    assert_validates("parse", 1, &["parse", "--json", &broken_arg], &[]);
+
     assert_validates(
         "parse",
         1,
         &["parse", "--json", "examples/errors/nope.forge"],
         &[],
     );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
