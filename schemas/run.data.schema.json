@@ -1,9 +1,48 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "forge run data",
-  "description": "Payload of `forge run --json`: the program's `say` output and its return value, or the diagnostics that blocked it. `say` never writes to stdout in JSON mode, wherever it runs — `fn main`, a spawned agent or a pool worker — so `output` is the whole program output and `cost` covers the run.",
+  "description": "Payload of `forge run --json`: the program's `say` output and its return value, the diagnostics that blocked it, or — with `--dry-run` — the static plan of what would run. `say` never writes to stdout in JSON mode, wherever it runs — `fn main`, a spawned agent or a pool worker — so `output` is the whole program output and `cost` covers the run.",
   "type": "object",
   "anyOf": [
+    {
+      "title": "dry run",
+      "description": "`--dry-run`: the same plan `forge cost --json` reports, plus `dry_run`. Nothing was executed and no provider was built; warnings keep exit 2 without blocking the plan.",
+      "required": [
+        "dry_run",
+        "file",
+        "operations",
+        "effects",
+        "total_tokens_in",
+        "total_tokens_out",
+        "estimated_cost_usd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "dry_run": { "const": true },
+        "file": { "type": "string" },
+        "operations": { "$ref": "#/$defs/plan_operations" },
+        "effects": { "$ref": "#/$defs/plan_effects" },
+        "total_tokens_in": { "type": "integer", "minimum": 0 },
+        "total_tokens_out": { "type": "integer", "minimum": 0 },
+        "estimated_cost_usd": { "type": "number", "minimum": 0 }
+      }
+    },
+    {
+      "title": "dry run blocked",
+      "description": "`--dry-run` with checker errors: no plan is reported, only the diagnostics (`error.type` is `check`).",
+      "required": ["dry_run", "file", "blocked", "diagnostics"],
+      "additionalProperties": false,
+      "properties": {
+        "dry_run": { "const": true },
+        "file": { "type": "string" },
+        "blocked": { "const": true },
+        "diagnostics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/diagnostic" }
+        }
+      }
+    },
     {
       "title": "completed",
       "required": ["file", "output", "result", "summary"],

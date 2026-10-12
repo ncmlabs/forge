@@ -3213,7 +3213,7 @@ forge schema                # the shared envelope, `data` left generic
 forge schema --all          # {command: schema} for every command with a schema
 ```
 
-`forge schema <command>` prints one JSON Schema (2020-12) document — the envelope with `properties.data` replaced by that command's payload — so a caller can validate a whole envelope, not just the payload. `forge schema --all` prints the same documents keyed by command. `data` accepts either the command's payload or `{}`: a command that fails before building one (`error.type` `io`, `config` or `runtime`) emits empty data. The objects shared by several payloads — the diagnostic of `parse`, `check`, `run`, `trace` and `test`, and the `run`/`trace`/`test` run summary — live once in the envelope's `$defs`.
+`forge schema <command>` prints one JSON Schema (2020-12) document — the envelope with `properties.data` replaced by that command's payload — so a caller can validate a whole envelope, not just the payload. `forge schema --all` prints the same documents keyed by command. `data` accepts either the command's payload or `{}`: a command that fails before building one (`error.type` `io`, `config` or `runtime`) emits empty data. The objects shared by several payloads — the diagnostic of `parse`, `check`, `run`, `trace` and `test`, the `run`/`trace`/`test` run summary, and the plan operations/effects of `cost` and `run --dry-run` — live once in the envelope's `$defs`.
 
 These two introspection surfaces print their document directly and are not wrapped in an envelope; an unknown command is still a usage error (exit `1`, the error envelope in JSON mode). Commands without a schema are the four above — `json_supported` in the index says so.
 

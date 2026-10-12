@@ -524,6 +524,36 @@ fn run_output_matches_its_schema() {
         &["run", "--json", "examples/basics/hello.forge"],
         MOCK,
     );
+    // `--dry-run` reports the static plan instead of executing (#477): a clean
+    // plan, one blocked by checker errors, and warnings-only (exit 2).
+    assert_validates(
+        "run",
+        0,
+        &["run", "--json", "--dry-run", "examples/basics/hello.forge"],
+        MOCK,
+    );
+    assert_validates(
+        "run",
+        1,
+        &[
+            "run",
+            "--json",
+            "--dry-run",
+            "examples/errors/uncertain_error.forge",
+        ],
+        MOCK,
+    );
+    assert_validates(
+        "run",
+        2,
+        &[
+            "run",
+            "--json",
+            "--dry-run",
+            "tests/fixtures/warnings_only.forge",
+        ],
+        MOCK,
+    );
     // Blocked by static checks: the `blocked` payload.
     assert_validates(
         "run",

@@ -59,6 +59,55 @@
     }
   },
   "$defs": {
+    "plan_operations": {
+      "title": "Plan operations",
+      "description": "`data.operations` of the static plan that `forge cost --json` and `forge run --dry-run --json` report: one entry per LLM operation, in walk order.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "location",
+          "estimated_tokens_in",
+          "estimated_tokens_out",
+          "estimated_cost_usd"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "description": "Oracle primitive, e.g. `reason`, `classify`, `search`.",
+            "type": "string"
+          },
+          "location": {
+            "description": "Human-readable site, e.g. `task analyze`.",
+            "type": "string"
+          },
+          "estimated_tokens_in": { "type": "integer", "minimum": 0 },
+          "estimated_tokens_out": { "type": "integer", "minimum": 0 },
+          "estimated_cost_usd": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "plan_effects": {
+      "title": "Plan effects",
+      "description": "`data.effects` of the static plan: one entry per side-effect site, in walk order.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "location"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "description": "Effect site: `command`, `exec`, `http`, `file.write`, `session` or `spawn`.",
+            "type": "string"
+          },
+          "location": {
+            "description": "Human-readable site, e.g. `task deploy`.",
+            "type": "string"
+          }
+        }
+      }
+    },
     "run_summary": {
       "title": "RunSummary",
       "description": "End-of-run economics and trust signals (#479): `data.summary` on `run`, `trace` and `test`. Counters come from the run's cost tracker and trace events, with spawned children and pool workers folded in.",
