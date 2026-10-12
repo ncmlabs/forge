@@ -36,6 +36,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skipping entries whose endpoint secret is unset, uploading each results JSON
   as an artifact and appending its table to the run summary; the coordinator
   commits the results under `bench/results/`.
+- `forge run --dry-run <file>` (#477): parse, check, and print the static
+  execution plan — the cost table of every LLM operation, then an `Effects:`
+  list with one `kind  location` line per side-effect site (`command`, `exec`,
+  `http`, `file.write`, `session`, `spawn`) in walk order — then the line
+  `nothing was executed`. No provider is built, no executor starts, no process
+  runs, and no agent is spawned. `--json` reports the #475 envelope with
+  `command: "run"` and `data = {dry_run, file, operations, effects,
+  total_tokens_in, total_tokens_out, estimated_cost_usd}`; exit codes follow
+  `forge check` (`0` clean plan, `1` errors blocked the plan, `2` warnings
+  only). `forge cost` reports the same estimate with `command: "cost"`, runs no
+  checker and never blocks (human output unchanged, JSON `data` gains
+  `effects`). `--dry-run` conflicts with
+  `--record` and refuses `--manifest` for now. Effect sites come from the
+  existing `src/cost_estimator.rs` walker; token totals are unchanged.
+- `forge check --manifest <forge.project.toml>` (#495): the project's declared
+  skills are registered before resolving, so `skill.<name>.<capability>` calls
+  type-check instead of failing with `unknown capability`. The signatures come
+  from the same code path `run` uses (manifest `[skills]`, else the config
+  `skill_dirs` fallback, also honoured through `FORGE_CONFIG`); no provider is
+  contacted and no executor is built. With no files, the manifest's sources are
+  checked exactly as `forge run --manifest` blocks on them — every source per
+  file, plus the cross-file boundary check — so a project `check` accepts is a
+  project `run` does not reject; explicit files are checked instead. Undeclared
+  skills still fail with `E010`, and the `E160` help now names
+  `forge check --manifest forge.project.toml` alongside
+  `forge check --merge <files>`.
 - End-of-run summary (#479): `forge run`, `forge trace` and `forge test` end
   with the run's economics and trust signals — one line on stderr in human mode
   (`12 LLM calls · 31.2k tok · $0.041 · confidence p50 0.86 / min 0.42 · 1
@@ -157,10 +183,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dev-system tracks are deprecated (see roadmap).
 
 ### Removed
+- Clone-dev left core (#505, part (c) of #487); it now lives in
+  ncmlabs/forge-clone-dev. Deleted: `src/runtime/clone_dev_config.rs` and the
+  `config.load_clone_dev(path)` built-in, the `$FORGE_CLONEDEV_CONFIG` startup
+  overlay in `ProviderRegistry::from_config`, `workflows/clone-dev/`,
+  `workflows/dev-cycle/`, `workflows/dev-cycle.forge` and the clone-dev test
+  suites and fixtures. `[llm.routing]` chains from `forge.config.toml` (#503)
+  are unchanged and are now the only routing source. Naming
+  `config.load_clone_dev` in a `use` block now fails `forge check` with `E010`
+  (unknown capability), whose help line points at ncmlabs/forge-clone-dev (a
+  `clone_dev` skill); an inline `config.load_clone_dev(...)` call still passes
+  the checker and fails at runtime.
 - Showcase examples moved to ncmlabs/forge-examples (#488); test fixtures
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- Diagnostic text output pointed at the wrong line/column after non-ASCII
+  characters (#513): `src/diagnostic.rs` built ariadne with the default
+  `IndexType::Char`, but every FORGE span is a byte range (pest offsets), so a
+  `─`, `é` or emoji earlier in the file shifted every rendered caret, or dropped
+  the snippet entirely. Text output's line and column are now correct after
+  multi-byte text, and the column counts characters (`cli_output::line_col` keeps
+  counting bytes for JSON). A span that is not on a character boundary (which
+  `forge build` can produce for a merged multi-file program) is now clamped
+  instead of panicking ariadne.
 - The JSON envelope's `duration_ms` was ~0 for every command (#479): the clock
   started lazily inside `emit`, so it measured the time from `emit` to itself.
   It now starts as the first statement of `main` and reports the command's

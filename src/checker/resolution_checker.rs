@@ -554,8 +554,8 @@ fn literal_text(expr: &Spanned<Expr>) -> Option<String> {
 // ── Diagnostics ─────────────────────────────────────────────────
 
 /// How to check a call target that may live in a sibling source of the same
-/// project: `forge check` only sees the files it is handed, not the manifest.
-const MERGE_HINT: &str = "if it is declared in another file of this project, check the files together: `forge check --merge <files>`";
+/// project: a bare `forge check` only sees the files it is handed.
+const PROJECT_HINT: &str = "if it is declared in another file of this project, check the files together: `forge check --merge <files>` or `forge check --manifest forge.project.toml`";
 
 fn undefined_call(name: &Spanned<String>, index: &Index, file: &str) -> Diagnostic {
     let target = &name.node;
@@ -566,7 +566,7 @@ fn undefined_call(name: &Spanned<String>, index: &Index, file: &str) -> Diagnost
     };
     if index.composed || closest.is_none() {
         help.push(' ');
-        help.push_str(MERGE_HINT);
+        help.push_str(PROJECT_HINT);
     }
     Diagnostic::error(
         "E160",
@@ -694,20 +694,23 @@ mod tests {
             "{ds:?}"
         );
         assert!(ds[0].message.contains("judge"), "{:?}", ds[0].message);
-        let expected = format!("declare a task or pure named `judge` {MERGE_HINT}");
+        let expected = format!("declare a task or pure named `judge` {PROJECT_HINT}");
         assert_eq!(ds[0].help.as_deref(), Some(expected.as_str()));
     }
 
     #[test]
     fn resolution_help_points_at_merge_for_multi_file_projects() {
-        // `workflows/dev-cycle/agents.forge` calls `repo_config_for`, declared
-        // in a sibling manifest source: `forge check <file>` alone cannot see
-        // it, so the help must say how to check the files together.
+        // The dev-cycle workflow in ncmlabs/forge-clone-dev calls
+        // `repo_config_for`, declared in a sibling manifest source:
+        // `forge check <file>` alone cannot see it, so the help must say how
+        // to check the files together.
         let src = "task t\n  gives Text\n  do\n    give repo_config_for(\"x\")\n";
         let ds = diags(src);
         assert_eq!(codes(src), vec!["E160"], "{ds:?}");
         let help = ds[0].help.as_deref().expect("help");
         assert!(help.contains("--merge"), "{help}");
+        // #495: the project-aware path names the flag that also registers skills.
+        assert!(help.contains("--manifest forge.project.toml"), "{help}");
         assert!(
             help.starts_with("declare a task or pure named `repo_config_for`"),
             "{help}"

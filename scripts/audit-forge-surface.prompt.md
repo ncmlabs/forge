@@ -34,7 +34,7 @@ You are running a non-interactive FORGE derived-surface audit. Your job is to de
 
 ## Audit procedure
 
-1. Re-read `AGENTS.md`, `docs/training-development-workflow.md`, and `workflows/dev-cycle.forge` first for grounding.
+1. Re-read `AGENTS.md` and `docs/training-development-workflow.md` first for grounding. (The dev-cycle workflow lives in ncmlabs/forge-clone-dev, not in this repository.)
 2. For each authoritative area, check whether derived surfaces accurately reflect it:
    - **Grammar** (`grammar/forge.pest`): compare every top-level rule against `docs/forge-reference.md` syntax sections. Flag missing or renamed rules.
    - **Reserved keywords** (two classes, both authoritative):

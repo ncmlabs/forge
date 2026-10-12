@@ -60,7 +60,11 @@ impl ResolveError {
                     .filter(|k| k.starts_with(namespace))
                     .map(|k| k.as_str())
                     .collect();
-                let help = if available.is_empty() {
+                let help = if name == "config.load_clone_dev" {
+                    // #505 — the clone-dev config loader left core in v0.3; a
+                    // stale call site gets a pointer instead of a dead end.
+                    Some("moved to ncmlabs/forge-clone-dev (a `clone_dev` skill) in v0.3".into())
+                } else if available.is_empty() {
                     None
                 } else {
                     Some(format!(
@@ -236,17 +240,6 @@ impl CapabilityRegistry {
             CapabilitySignature {
                 inputs: vec![],
                 output: ForgeType::Text,
-            },
-        );
-        // config.load_clone_dev(path) -> CloneDevConfig — read and merge the
-        // clone-dev TOML at `path`, resolving *_env indirections. Returns the
-        // CloneDevConfig record declared in workflows/clone-dev/shared/types.forge.
-        // Issue #357 (T8.2).
-        caps.insert(
-            "config.load_clone_dev".into(),
-            CapabilitySignature {
-                inputs: vec![ForgeType::Text],
-                output: ForgeType::Named("CloneDevConfig".into()),
             },
         );
         // file.read(path) -> Text — read a UTF-8 file at `path`. On failure
@@ -855,6 +848,21 @@ mod tests {
         assert!(
             matches!(&errs[0], ResolveError::UnknownCapability { name, .. } if name == "magic.wand")
         );
+    }
+
+    #[test]
+    fn unknown_clone_dev_capability_points_at_its_new_home() {
+        // #505 — `config.load_clone_dev` no longer exists in core; the E010
+        // diagnostic must name where it moved.
+        let err = ResolveError::UnknownCapability {
+            name: "config.load_clone_dev".into(),
+            span_start: 0,
+            span_end: 1,
+        };
+        let diag = err.to_diagnostic("<test>", &CapabilityRegistry::builtin());
+        assert_eq!(diag.code, "E010");
+        let help = diag.help.expect("E010 carries a help line");
+        assert!(help.contains("forge-clone-dev"), "{help}");
     }
 
     #[test]

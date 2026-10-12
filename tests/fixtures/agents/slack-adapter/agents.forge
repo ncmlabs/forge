@@ -7,12 +7,9 @@
 #
 # Sourced by:
 #   tests/fixtures/agents/slack-adapter/main.forge  (standalone runner)
-#   workflows/dev-cycle/main.forge            (dev-cycle runs this
-#                                              adapter alongside its
-#                                              specialists since #356
-#                                              rewired dev-cycle off
-#                                              direct skill.slack.*)
-#   workflows/clone-dev/main.forge            (top-level assembly)
+#   the dev-cycle workflow in ncmlabs/forge-clone-dev
+#     (it runs this adapter alongside its specialists since #356
+#      rewired dev-cycle off direct skill.slack.*)
 #
 # Specialists never call skill.slack.* directly — they emit
 # PostMessage, PostApproval, PostApprovalResult, PostThreadReply,

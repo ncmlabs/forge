@@ -1,6 +1,6 @@
 # Training Development Workflow
 
-This document is the session-start reference for FORGE training, documentation, and language-development tasks. It complements `workflows/dev-cycle.forge`, which models the same lifecycle as executable FORGE.
+This document is the session-start reference for FORGE training, documentation, and language-development tasks. The dev-cycle workflow that models the same lifecycle as executable FORGE lives in ncmlabs/forge-clone-dev (`workflows/dev-cycle.forge`), not in this repository.
 
 ## Lifecycle
 
@@ -15,7 +15,7 @@ Use the GitHub issue as the working thread. The issue should capture the target 
 ## Startup Checklist
 
 1. Read this file.
-2. Read `workflows/dev-cycle.forge`.
+2. The dev-cycle workflow lives in ncmlabs/forge-clone-dev (`workflows/dev-cycle.forge`); read it there when the task needs it.
 3. Read the GitHub issue and its acceptance criteria.
 4. Cross-check the issue against `docs/forge-reference.md`.
 5. Prefer repo source truth over memory: grammar, AST, parser, checker, runtime, examples, and tests.

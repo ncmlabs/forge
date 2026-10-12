@@ -1,0 +1,8 @@
+[project]
+name = "manifest-cross-state"
+version = "0.1.0"
+description = "Fixture: a source referencing a lifecycle declared in a sibling source (#495)"
+
+[build]
+entry = "main.forge"
+sources = ["states.forge"]

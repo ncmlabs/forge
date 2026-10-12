@@ -1,4 +1,4 @@
-use ariadne::{Color, Config, Label, Report, ReportKind, Source};
+use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,15 +86,23 @@ impl Diagnostic {
             DiagnosticKind::Warning => ReportKind::Warning,
         };
 
-        let span = self.span.clone();
-        // Clamp span to source length to avoid panics
-        let clamped = span.start.min(source.len())
-            ..span.end.min(source.len()).max(span.start.min(source.len()));
+        // Clamp the span to the byte length of `source` and to char boundaries, so
+        // neither an out-of-range span nor one that belongs to another file of a
+        // composed program can panic ariadne by slicing a multi-byte character.
+        let start = floor_char_boundary(source, self.span.start);
+        let end = floor_char_boundary(source, self.span.end).max(start);
+        let clamped = start..end;
 
         let mut builder = Report::build(kind, (self.file.as_str(), clamped.clone()))
             .with_code(self.code)
             .with_message(&self.message)
-            .with_config(Config::default().with_color(color))
+            .with_config(
+                Config::default()
+                    .with_color(color)
+                    // Every FORGE span is a byte range (pest offsets), so ariadne
+                    // must count bytes, not chars (#513).
+                    .with_index_type(IndexType::Byte),
+            )
             .with_label(
                 Label::new((self.file.as_str(), clamped))
                     .with_message(&self.label)
@@ -115,6 +123,15 @@ pub fn render_diagnostics(source: &str, diagnostics: &[Diagnostic]) {
     for diag in diagnostics {
         diag.render(source);
     }
+}
+
+/// Largest char boundary at or below `offset` (and at most `source.len()`).
+fn floor_char_boundary(source: &str, mut offset: usize) -> usize {
+    offset = offset.min(source.len());
+    while !source.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
 }
 
 #[cfg(test)]
@@ -144,6 +161,61 @@ mod tests {
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("src/example.forge"), "output: {text}");
         assert!(text.contains("E030"), "output: {text}");
+        assert!(!text.contains('\x1b'), "output has ANSI: {text:?}");
+    }
+
+    #[test]
+    fn render_to_reports_byte_positions_after_multibyte_text() {
+        // Spans are byte ranges (pest offsets), so a line containing multi-byte
+        // characters must not shift the rendered line:column (#513).
+        let source = "# ── héllo ──\npure f\n  gives Int\n  do\n    give nope(1)\n";
+        let start = source.find("nope").expect("source contains `nope`");
+        let diag = Diagnostic::error(
+            "E030",
+            "src/example.forge",
+            "unknown function `nope`",
+            start..start + "nope".len(),
+            "here",
+        );
+        let mut out = Vec::new();
+        diag.render_to(source, false, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(":5:10"), "output: {text}");
+    }
+
+    #[test]
+    fn render_to_counts_char_columns_for_multibyte_text() {
+        // ariadne prints character columns even with `IndexType::Byte`; JSON
+        // (`cli_output::line_col`) prints byte columns. Text output must stay
+        // char-columned and point at `nope` below, i.e. line 1, column 3.
+        let source = "─ nope\n";
+        let start = source.find("nope").expect("source contains `nope`");
+        let diag = Diagnostic::error(
+            "E030",
+            "src/example.forge",
+            "unknown function `nope`",
+            start..start + "nope".len(),
+            "here",
+        );
+        let mut out = Vec::new();
+        diag.render_to(source, false, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains(":1:3"), "output: {text}");
+    }
+
+    #[test]
+    fn render_to_clamps_spans_inside_a_multibyte_char() {
+        // `forge build` names merged-program diagnostics after the first source
+        // file, so a diagnostic can carry a span that belongs to another file and
+        // has both ends inside a multi-byte character. Rendering it must not
+        // panic and must fall back to the character's own line (#513).
+        let source = "# ── Endpoints ──\nendpoint status() -> Html\n";
+        let diag = Diagnostic::warning("W040", "src/example.forge", "opaque guard", 3..6, "here");
+        let mut out = Vec::new();
+        diag.render_to(source, false, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("W040"), "output: {text}");
+        assert!(text.contains("src/example.forge:1:"), "output: {text}");
         assert!(!text.contains('\x1b'), "output has ANSI: {text:?}");
     }
 }

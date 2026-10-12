@@ -1,5 +1,7 @@
 # Clone-Dev v1 Retrospective (T11.4, closes epic #292)
 
+> **Moved (v0.3, #505):** the clone-dev workflows, tests and config loader now live in ncmlabs/forge-clone-dev. The paths below describe the v1 tree as it sat in this repository at the time of writing, and are kept as history.
+
 **Date:** 2026-09-03 · **Author:** Claude (Hermes agent, on behalf of Marci) · **Scope:** the clone-developer track, epic #292, proof run #372 (T11.3), retro #373 (this document).
 
 ## Summary

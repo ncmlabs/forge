@@ -42,12 +42,6 @@ merge = true
 manifest = "tests/fixtures/agents/slack-adapter/forge.project.toml"
 
 [[cases]]
-name = "clone-dev walking skeleton"
-paths = ["tests/fixtures/agents/clone-dev-skeleton/main.forge"]
-check = "ok"
-manifest = "tests/fixtures/agents/clone-dev-skeleton/forge.project.toml"
-
-[[cases]]
 name = "mock-runnable quiz tutor agent"
 paths = ["tests/fixtures/agents/quiz_tutor.forge"]
 check = "ok"
@@ -223,58 +217,6 @@ config = "tests/fixtures/wiki/forge.config.toml"
 merge = true
 
 [[cases]]
-name = "development lifecycle workflow"
-paths = ["workflows/dev-cycle.forge"]
-check = "ok"
-
-[[cases]]
-name = "label router unit-test harness (tests/fixtures)"
-paths = [
-  "workflows/clone-dev/stage2/label_router.forge",
-  "tests/fixtures/label_router_harness.forge",
-]
-check = "ok"
-merge = true
-
-[[cases]]
-name = "executable dev-cycle (server boundary; T10.2 #368)"
-paths = [
-  "workflows/dev-cycle/main.forge",
-  "workflows/dev-cycle/agents.forge",
-  "workflows/dev-cycle/config.forge",
-  "workflows/dev-cycle/gate_two.forge",
-  "tests/fixtures/agents/slack-adapter/agents.forge",
-]
-check = "ok"
-merge = true
-manifest = "workflows/dev-cycle/forge.project.toml"
-
-[[cases]]
-name = "clone-dev top-level assembly (#356, T8.1; T8.3 #358; T9.1 #362; T9.2 #363; T9.3 #364; T9.4 #365; T9.5 #366; T10.1 #367; T10.2 #368)"
-paths = [
-  "workflows/clone-dev/main.forge",
-  "workflows/clone-dev/shared/types.forge",
-  "workflows/clone-dev/shared/events.forge",
-  "workflows/clone-dev/shared/mastermind.forge",
-  "workflows/clone-dev/stage1/slack_devops_monitor.forge",
-  "workflows/clone-dev/stage1/mastermind_intake.forge",
-  "workflows/clone-dev/stage1/investigators/code_investigator.forge",
-  "workflows/clone-dev/stage1/investigators/ops_investigator.forge",
-  "workflows/clone-dev/stage1/investigators/security_investigator.forge",
-  "workflows/clone-dev/stage1/solution_proposer.forge",
-  "workflows/clone-dev/stage1/gate_one.forge",
-  "workflows/clone-dev/stage1/issue_creator.forge",
-  "workflows/clone-dev/stage2/label_router.forge",
-  "workflows/clone-dev/stage2/triage_specialist.forge",
-  "workflows/dev-cycle/agents.forge",
-  "workflows/dev-cycle/gate_two.forge",
-  "tests/fixtures/agents/slack-adapter/agents.forge",
-]
-check = "ok"
-merge = true
-manifest = "workflows/clone-dev/forge.project.toml"
-
-[[cases]]
 name = "surface-audit drift agent workflow (issues #229/#449)"
 paths = ["workflows/surface-audit.forge"]
 check = "ok"
@@ -339,6 +281,38 @@ check = "ok"
 name = "CLI json: spawned child that says (#475)"
 paths = ["tests/fixtures/spawn_child_say.forge"]
 check = "ok"
+
+[[cases]]
+name = "check --manifest: declared skill + self-contained sources (#495)"
+paths = [
+  "tests/fixtures/skill-project/main.forge",
+  "tests/fixtures/skill-project/states.forge",
+]
+check = "ok"
+manifest = "tests/fixtures/skill-project/forge.project.toml"
+
+[[cases]]
+name = "check --manifest: skill-only source (#495)"
+paths = ["tests/fixtures/skill-project/skill_only.forge"]
+check = "ok"
+manifest = "tests/fixtures/skill-project/forge.project.toml"
+
+[[cases]]
+name = "check --manifest: undeclared skill still errors (#495)"
+paths = ["tests/fixtures/skill-project/undeclared.forge"]
+check = "error"
+expect = ["unknown capability 'skill.ghost.boo'"]
+manifest = "tests/fixtures/skill-project/forge.project.toml"
+
+[[cases]]
+name = "check --manifest: cross-source lifecycle is a per-file error (#495)"
+paths = [
+  "tests/fixtures/manifest-cross-state/main.forge",
+  "tests/fixtures/manifest-cross-state/states.forge",
+]
+check = "error"
+expect = ["unknown lifecycle `GreetingPhase`"]
+manifest = "tests/fixtures/manifest-cross-state/forge.project.toml"
 
 [[cases]]
 name = "CLI json: command that sleeps, for the envelope duration (#479)"

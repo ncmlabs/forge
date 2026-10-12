@@ -66,11 +66,14 @@ enum Command {
     /// Type-check capabilities, composition types, and purity constraints
     Check {
         /// Paths to .forge source files
-        #[arg(required = true)]
+        #[arg(required_unless_present = "manifest")]
         files: Vec<PathBuf>,
         /// Merge files before checking (for multi-file projects with cross-file references)
         #[arg(long)]
         merge: bool,
+        /// Project manifest: check its sources with its declared skills registered
+        #[arg(long)]
+        manifest: Option<PathBuf>,
     },
     /// Explain a diagnostic code, or list every registered code
     Explain {
@@ -91,6 +94,9 @@ enum Command {
         /// Record every provider response as JSON fixtures for `forge test`
         #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
         record: Option<String>,
+        /// Print the static execution plan (operations, cost, effects) and run nothing
+        #[arg(long, conflicts_with = "record")]
+        dry_run: bool,
     },
     /// Replay a .forge program from recorded fixtures (no provider calls)
     Test {
@@ -452,37 +458,75 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                 }
             }
         }
-        Command::Check { files, merge } => {
-            let mut all_diagnostics = Vec::new();
+        Command::Check {
+            files,
+            merge,
+            manifest,
+        } => {
+            // Skills must be registered before resolving (#495), exactly as the
+            // `run` path does: `--manifest` declares project skills, else the
+            // config `skill_dirs` fallback applies. Nothing runs or is spawned.
+            let loaded: Option<(forge::manifest::ProjectManifest, PathBuf)> = match manifest {
+                Some(path) => {
+                    let base_dir = path
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .to_path_buf();
+                    Some((forge::manifest::ProjectManifest::load(&path)?, base_dir))
+                }
+                None => None,
+            };
+            // `check` runs no provider, so having no config at all is fine: it
+            // only means no config-declared skills. A config that exists but
+            // cannot be loaded is still an error (#447) — otherwise its
+            // `skill_dirs` would silently go unregistered.
+            let config = match forge::config::ForgeConfig::try_load_or_default() {
+                Ok(config) => config,
+                Err(forge::config::ConfigError::NoConfigurationFound { .. }) => {
+                    forge::config::ForgeConfig::default_mock_config()
+                }
+                Err(e) => anyhow::bail!("{e}"),
+            };
+            let (m, bd) = match &loaded {
+                Some((m, bd)) => (Some(m), Some(bd.as_path())),
+                None => (None, None),
+            };
+            let skill_sigs = match skills_config_for(&config, m, bd) {
+                Some(skills_cfg) => load_skill_registry(&skills_cfg, m, bd).capability_signatures(),
+                None => HashMap::new(),
+            };
+
+            // Without explicit files, the manifest's sources are checked exactly
+            // as `run --manifest` blocks on them: per source file, never composed (#495).
+            let (files, merge) = match loaded {
+                Some((m, bd)) if files.is_empty() => (m.resolve_sources(&bd)?, false),
+                _ => (files, merge),
+            };
+
             let mut parsed_programs = Vec::new();
 
             for file in &files {
                 let source = read_source(file)?;
                 let program = parse_or_exit(&source, file, "check", out);
-                let fname = file.display().to_string();
-
-                // Per-file: resolver (always runs per-file)
-                let ctx = forge::resolver::CheckContext::new(&fname);
-                if let Err(errors) = ctx.check(&program) {
-                    let registry = forge::resolver::CapabilityRegistry::builtin();
-                    all_diagnostics
-                        .extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
-                }
-
-                parsed_programs.push((program, fname, source));
+                parsed_programs.push((program, file.display().to_string(), source));
             }
+            let source_files: Vec<_> = parsed_programs
+                .iter()
+                .map(|(p, f, s)| forge::compose::SourceFile {
+                    path: f.clone(),
+                    source: s.clone(),
+                    program: p.clone(),
+                })
+                .collect();
 
+            let mut all_diagnostics = Vec::new();
             if merge && parsed_programs.len() > 1 {
                 // Merge mode: combine all files, then run checkers on merged program.
-                // This resolves cross-file references (states, types, functions).
-                let source_files: Vec<_> = parsed_programs
-                    .iter()
-                    .map(|(p, f, s)| forge::compose::SourceFile {
-                        path: f.clone(),
-                        source: s.clone(),
-                        program: p.clone(),
-                    })
-                    .collect();
+                // This resolves cross-file references (states, types, functions);
+                // the resolver still runs per file.
+                for sf in &source_files {
+                    all_diagnostics.extend(resolve_diagnostics(&sf.program, &sf.path, &skill_sigs));
+                }
 
                 match forge::compose::merge_programs(&source_files) {
                     Ok(composed) => {
@@ -515,20 +559,14 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                         out.done(&env);
                     }
                 }
-            } else {
-                // Per-file checkers (pure, states, requires)
-                for (program, fname, _) in &parsed_programs {
-                    all_diagnostics.extend(forge::checker::check_all(program, fname));
-                }
-            }
 
-            // Cross-file: boundary checker (always per-file)
-            let boundary_refs: Vec<_> = parsed_programs
-                .iter()
-                .filter(|(_, f, _)| f != "<merged>")
-                .map(|(p, f, _)| (p, f.as_str()))
-                .collect();
-            all_diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
+                // Cross-file: boundary checker (always per-file)
+                all_diagnostics.extend(boundary_diagnostics(&source_files));
+            } else {
+                // Per source file: resolver, checkers, boundary check — the set
+                // `run --manifest` blocks on (#495).
+                all_diagnostics.extend(check_source_files(&source_files, &skill_sigs));
+            }
 
             let has_errors = all_diagnostics
                 .iter()
@@ -676,7 +714,20 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
             file,
             manifest,
             record,
+            dry_run,
         } => {
+            if dry_run {
+                if manifest.is_some() {
+                    anyhow::bail!(
+                        "--manifest is not supported with --dry-run: a dry run plans one .forge \
+                         file, use `forge cost <file>` for single-file plans"
+                    );
+                }
+                let Some(file) = file else {
+                    anyhow::bail!("--dry-run requires a .forge file");
+                };
+                return dry_run_program(&file, out);
+            }
             if let Some(record) = record {
                 let Some(file) = file else {
                     anyhow::bail!(
@@ -758,25 +809,7 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
             if !out.json {
                 print!("{}", estimate);
             }
-            let data = serde_json::json!({
-                "file": file.display().to_string(),
-                "operations": estimate
-                    .operations
-                    .iter()
-                    .map(|op| {
-                        serde_json::json!({
-                            "kind": op.kind,
-                            "location": op.location,
-                            "estimated_tokens_in": op.estimated_tokens_in,
-                            "estimated_tokens_out": op.estimated_tokens_out,
-                            "estimated_cost_usd": op.estimated_cost_usd,
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-                "total_tokens_in": estimate.total_tokens_in,
-                "total_tokens_out": estimate.total_tokens_out,
-                "estimated_cost_usd": estimate.total_cost_usd,
-            });
+            let data = plan_json(&file, &estimate);
             let env = forge::cli_output::Envelope::success(
                 "cost",
                 data,
@@ -1384,6 +1417,121 @@ fn blocked_run_envelope(
     .with_next_steps(steps)
 }
 
+/// The static plan `forge cost --json` and `forge run --dry-run --json` both
+/// report: LLM operations, effect sites, and the token/cost totals (#477).
+fn plan_json(file: &Path, estimate: &forge::cost_estimator::CostEstimate) -> serde_json::Value {
+    serde_json::json!({
+        "file": file.display().to_string(),
+        "operations": estimate
+            .operations
+            .iter()
+            .map(|op| {
+                serde_json::json!({
+                    "kind": op.kind,
+                    "location": op.location,
+                    "estimated_tokens_in": op.estimated_tokens_in,
+                    "estimated_tokens_out": op.estimated_tokens_out,
+                    "estimated_cost_usd": op.estimated_cost_usd,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "effects": estimate
+            .effects
+            .iter()
+            .map(|e| serde_json::json!({"kind": e.kind, "location": e.location}))
+            .collect::<Vec<_>>(),
+        "total_tokens_in": estimate.total_tokens_in,
+        "total_tokens_out": estimate.total_tokens_out,
+        "estimated_cost_usd": estimate.total_cost_usd,
+    })
+}
+
+/// `forge run --dry-run`: parse, check, print the static plan, execute nothing.
+/// No provider is built, no executor starts, and no process is spawned (#477).
+fn dry_run_program(file: &Path, out: &forge::cli_output::OutputMode) -> anyhow::Result<()> {
+    let source = read_source(file)?;
+    let program = parse_or_exit(&source, file, "run", out);
+    let fname = file.display().to_string();
+
+    // The same static pass `forge check` runs. Skill signatures are not
+    // resolved here: that path builds the provider registry.
+    let mut diagnostics = Vec::new();
+    let ctx = forge::resolver::CheckContext::new(&fname);
+    if let Err(errors) = ctx.check(&program) {
+        let registry = forge::resolver::CapabilityRegistry::builtin();
+        diagnostics.extend(errors.iter().map(|e| e.to_diagnostic(&fname, &registry)));
+    }
+    diagnostics.extend(forge::checker::check_all(&program, &fname));
+    diagnostics.extend(forge::checker::boundary_checker::check(&[(
+        &program,
+        fname.as_str(),
+    )]));
+
+    let errors = diagnostics
+        .iter()
+        .filter(|d| d.kind == forge::diagnostic::DiagnosticKind::Error)
+        .count();
+    if errors > 0 {
+        if !out.json {
+            forge::diagnostic::render_diagnostics(&source, &diagnostics);
+        }
+        let hint = format!("forge check --json {}", file.display());
+        let data = serde_json::json!({
+            "dry_run": true,
+            "file": fname,
+            "blocked": true,
+            "diagnostics": diagnostics
+                .iter()
+                .map(|d| forge::cli_output::diagnostic_json(d, Some(&source)))
+                .collect::<Vec<_>>(),
+        });
+        out.done(&blocked_run_envelope("run", &hint, &diagnostics, data));
+    }
+
+    if !diagnostics.is_empty() && !out.json {
+        forge::diagnostic::render_diagnostics(&source, &diagnostics);
+    }
+
+    let estimate =
+        forge::cost_estimator::estimate(&program, &forge::config::ForgeConfig::load_or_default());
+    let mut data = plan_json(file, &estimate);
+    data["dry_run"] = serde_json::Value::Bool(true);
+
+    if !out.json {
+        print!("{estimate}");
+        if estimate.effects.is_empty() {
+            println!("Effects: none");
+        } else {
+            println!("Effects:");
+            for effect in &estimate.effects {
+                println!("{}  {}", effect.kind, effect.location);
+            }
+        }
+        println!("nothing was executed");
+    }
+
+    let context = format!(
+        "dry run of {}: {} LLM operation(s), {} effect(s); nothing was executed",
+        file.display(),
+        estimate.operations.len(),
+        estimate.effects.len()
+    );
+    // Warnings do not block the plan, but they keep `forge check`'s exit code 2.
+    let env = if diagnostics.is_empty() {
+        forge::cli_output::Envelope::success("run", data, context)
+    } else {
+        forge::cli_output::Envelope::new("run", forge::cli_output::Status::Warning, data, context)
+            .with_warnings(
+                diagnostics
+                    .iter()
+                    .map(|d| format!("{}: {}", d.code, d.message))
+                    .collect(),
+            )
+    }
+    .with_cost(estimate.total_cost_usd as f64);
+    out.done(&env)
+}
+
 /// The run's end-of-run summary (#479): tokens and cost from the run's cost
 /// tracker, LLM calls, confidence spread and warden events from the tracer's
 /// event counters (spawned children and pool workers included).
@@ -1454,40 +1602,39 @@ fn build_skill_executor(
     Option<Arc<forge::runtime::skill_executor::SkillExecutor>>,
     HashMap<String, forge::types::CapabilitySignature>,
 ) {
-    let skills_cfg = match config.skills.as_ref() {
-        Some(cfg) => cfg,
-        None => {
-            // No [skills] in config — try project manifest alone
-            if let (Some(m), Some(bd)) = (manifest, base_dir) {
-                if m.skills.is_some() {
-                    // Manifest declares skills but no config [skills] section;
-                    // use defaults for runtime params.
-                    let default_cfg = forge::config::SkillsConfig {
-                        skill_dirs: None,
-                        timeout_secs: None,
-                        max_turns: None,
-                    };
-                    return build_skill_executor_inner(
-                        &default_cfg,
-                        providers,
-                        tracer,
-                        cost_tracker,
-                        Some(m),
-                        Some(bd),
-                    );
-                }
-            }
-            return (None, HashMap::new());
-        }
-    };
-    build_skill_executor_inner(
-        skills_cfg,
-        providers,
-        tracer,
-        cost_tracker,
-        manifest,
-        base_dir,
-    )
+    match skills_config_for(config, manifest, base_dir) {
+        Some(skills_cfg) => build_skill_executor_inner(
+            &skills_cfg,
+            providers,
+            tracer,
+            cost_tracker,
+            manifest,
+            base_dir,
+        ),
+        None => (None, HashMap::new()),
+    }
+}
+
+/// Skills configuration in effect for a scope: config `[skills]` when present,
+/// otherwise defaults when the manifest declares skills, otherwise none.
+fn skills_config_for(
+    config: &forge::config::ForgeConfig,
+    manifest: Option<&forge::manifest::ProjectManifest>,
+    base_dir: Option<&Path>,
+) -> Option<forge::config::SkillsConfig> {
+    if let Some(cfg) = config.skills.as_ref() {
+        return Some(cfg.clone());
+    }
+    // No [skills] in config — try the project manifest alone. Manifest declares
+    // skills but no config [skills] section; use defaults for runtime params.
+    match (manifest, base_dir) {
+        (Some(m), Some(_)) if m.skills.is_some() => Some(forge::config::SkillsConfig {
+            skill_dirs: None,
+            timeout_secs: None,
+            max_turns: None,
+        }),
+        _ => None,
+    }
 }
 
 fn build_skill_executor_inner(
@@ -1501,6 +1648,31 @@ fn build_skill_executor_inner(
     Option<Arc<forge::runtime::skill_executor::SkillExecutor>>,
     HashMap<String, forge::types::CapabilitySignature>,
 ) {
+    let registry = load_skill_registry(skills_cfg, manifest, base_dir);
+    let signatures = registry.capability_signatures();
+    let shared = Arc::new(Mutex::new(registry));
+    let mut executor =
+        forge::runtime::skill_executor::SkillExecutor::new(Arc::clone(providers), shared);
+    executor.max_turns = skills_cfg.max_turns_or_default();
+    executor.default_timeout = std::time::Duration::from_secs(skills_cfg.timeout_or_default());
+    if let Some(t) = tracer {
+        executor = executor.with_tracer(Arc::new(t.clone()));
+    }
+    if let Some(cost_tracker) = cost_tracker {
+        // Skill LLM calls are billed like any other call (#479 review).
+        executor = executor.with_cost_tracker(cost_tracker.clone());
+    }
+    (Some(Arc::new(executor)), signatures)
+}
+
+/// Skill registry a scope resolves to: a manifest's declared skills when
+/// present, else the config `skill_dirs` scan. Builds no executor, spawns
+/// nothing — suitable for static checking (#495).
+fn load_skill_registry(
+    skills_cfg: &forge::config::SkillsConfig,
+    manifest: Option<&forge::manifest::ProjectManifest>,
+    base_dir: Option<&Path>,
+) -> forge::runtime::skill_registry::SkillRegistry {
     let mut registry = forge::runtime::skill_registry::SkillRegistry::new();
 
     // Project-level skill resolution (authoritative when present)
@@ -1554,20 +1726,62 @@ fn build_skill_executor_inner(
         }
     }
 
-    let signatures = registry.capability_signatures();
-    let shared = Arc::new(Mutex::new(registry));
-    let mut executor =
-        forge::runtime::skill_executor::SkillExecutor::new(Arc::clone(providers), shared);
-    executor.max_turns = skills_cfg.max_turns_or_default();
-    executor.default_timeout = std::time::Duration::from_secs(skills_cfg.timeout_or_default());
-    if let Some(t) = tracer {
-        executor = executor.with_tracer(Arc::new(t.clone()));
+    registry
+}
+
+/// Resolver diagnostics for one program, with the project's skills registered.
+fn resolve_diagnostics(
+    program: &forge::ast::Program,
+    file: &str,
+    skill_sigs: &HashMap<String, forge::types::CapabilitySignature>,
+) -> Vec<forge::diagnostic::Diagnostic> {
+    let ctx = if skill_sigs.is_empty() {
+        forge::resolver::CheckContext::new(file)
+    } else {
+        forge::resolver::CheckContext::with_skills(file, skill_sigs.clone())
+    };
+    match ctx.check(program) {
+        Ok(()) => Vec::new(),
+        Err(errors) => {
+            let registry = if skill_sigs.is_empty() {
+                forge::resolver::CapabilityRegistry::builtin()
+            } else {
+                forge::resolver::CapabilityRegistry::with_skills(skill_sigs.clone())
+            };
+            errors
+                .iter()
+                .map(|e| e.to_diagnostic(file, &registry))
+                .collect()
+        }
     }
-    if let Some(cost_tracker) = cost_tracker {
-        // Skill LLM calls are billed like any other call (#479 review).
-        executor = executor.with_cost_tracker(cost_tracker.clone());
+}
+
+/// Cross-file boundary diagnostics for parsed sources.
+fn boundary_diagnostics(
+    source_files: &[forge::compose::SourceFile],
+) -> Vec<forge::diagnostic::Diagnostic> {
+    let boundary_refs: Vec<_> = source_files
+        .iter()
+        .map(|sf| (&sf.program, sf.path.as_str()))
+        .collect();
+    forge::checker::boundary_checker::check(&boundary_refs)
+}
+
+/// Diagnostics for a multi-file project checked per source file: the resolver
+/// (project skills registered), every checker, then the cross-file boundary
+/// check. This is exactly the set `run --manifest` blocks on before it
+/// executes, so `check --manifest` reports it too (#495).
+fn check_source_files(
+    source_files: &[forge::compose::SourceFile],
+    skill_sigs: &HashMap<String, forge::types::CapabilitySignature>,
+) -> Vec<forge::diagnostic::Diagnostic> {
+    let mut diagnostics = Vec::new();
+    for sf in source_files {
+        diagnostics.extend(resolve_diagnostics(&sf.program, &sf.path, skill_sigs));
+        diagnostics.extend(forge::checker::check_all(&sf.program, &sf.path));
     }
-    (Some(Arc::new(executor)), signatures)
+    diagnostics.extend(boundary_diagnostics(source_files));
+    diagnostics
 }
 
 /// `forge test --expect <file>`: replay in a child process so the program's
@@ -1871,32 +2085,11 @@ async fn run_manifest(
 
     // Parse all source files
     let mut source_files = Vec::new();
-    let mut diagnostics = Vec::new();
 
     for path in &source_paths {
         let source = read_source(&path.to_path_buf())?;
         let fname = path.display().to_string();
         let program = parse_or_exit(&source, path, command, out);
-
-        // Per-file validation (with skill-aware capability registry)
-        let ctx = if skill_sigs.is_empty() {
-            forge::resolver::CheckContext::new(&fname)
-        } else {
-            forge::resolver::CheckContext::with_skills(&fname, skill_sigs.clone())
-        };
-        if let Err(errors) = ctx.check(&program) {
-            let cap_registry = if skill_sigs.is_empty() {
-                forge::resolver::CapabilityRegistry::builtin()
-            } else {
-                forge::resolver::CapabilityRegistry::with_skills(skill_sigs.clone())
-            };
-            diagnostics.extend(
-                errors
-                    .iter()
-                    .map(|e| e.to_diagnostic(&fname, &cap_registry)),
-            );
-        }
-        diagnostics.extend(forge::checker::check_all(&program, &fname));
 
         source_files.push(forge::compose::SourceFile {
             path: fname,
@@ -1905,12 +2098,9 @@ async fn run_manifest(
         });
     }
 
-    // Cross-file boundary check
-    let boundary_refs: Vec<_> = source_files
-        .iter()
-        .map(|sf| (&sf.program, sf.path.as_str()))
-        .collect();
-    diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
+    // What `run --manifest` blocks on: resolver, checkers and the cross-file
+    // boundary check, per source file (#495).
+    let diagnostics = check_source_files(&source_files, &skill_sigs);
 
     if !diagnostics.is_empty() {
         let data = serde_json::json!({
