@@ -159,6 +159,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- Diagnostic text output pointed at the wrong line/column after non-ASCII
+  characters (#513): `src/diagnostic.rs` built ariadne with the default
+  `IndexType::Char`, but every FORGE span is a byte range (pest offsets), so a
+  `─`, `é` or emoji earlier in the file shifted every rendered caret, or dropped
+  the snippet entirely. Text output's line and column are now correct after
+  multi-byte text, and the column counts characters (`cli_output::line_col` keeps
+  counting bytes for JSON). A span that is not on a character boundary (which
+  `forge build` can produce for a merged multi-file program) is now clamped
+  instead of panicking ariadne.
 - The JSON envelope's `duration_ms` was ~0 for every command (#479): the clock
   started lazily inside `emit`, so it measured the time from `emit` to itself.
   It now starts as the first statement of `main` and reports the command's

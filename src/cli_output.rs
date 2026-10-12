@@ -418,7 +418,9 @@ pub fn filter_data(data: &Value, fields: Option<&[String]>) -> Value {
 }
 
 /// 1-based line and column for a byte offset in `source`. Columns count bytes,
-/// matching the byte spans the parser records.
+/// matching the byte spans the parser records. The text renderer counts
+/// characters instead (`diagnostic::render_to`), so the two can differ after a
+/// non-ASCII character (#513).
 pub fn line_col(source: &str, offset: usize) -> (u32, u32) {
     let offset = offset.min(source.len());
     let mut line = 1u32;
