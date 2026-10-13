@@ -537,9 +537,10 @@ fn scrutinee_values(expr: &Spanned<Expr>, bindings: &HashMap<String, Values>) ->
 
 fn spawn_option_expr(option: &SpawnOption) -> Option<&Spanned<Expr>> {
     match option {
-        SpawnOption::ConfidenceCap(e) | SpawnOption::MemoryInit(_, e) => Some(e),
+        SpawnOption::ConfidenceCap(e)
+        | SpawnOption::MemoryInit(_, e)
+        | SpawnOption::KnowledgeFilter(e) => Some(e),
         SpawnOption::Isolate(config) => Some(&config.branch),
-        SpawnOption::KnowledgeFilter(_) => None,
     }
 }
 

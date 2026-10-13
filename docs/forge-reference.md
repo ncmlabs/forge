@@ -2791,6 +2791,8 @@ child = spawn specialist as "specialist_{topic}"
   isolate worktree "specialist-{topic}"
 ```
 
+The category in `with knowledge where category == <expr>` is any Text expression — a literal, an interpolation or a variable — evaluated when the agent is spawned; a non-Text value is a runtime type error.
+
 `find "alias"` locates one runtime instance. `find all template where lifecycle == ready` locates matching instances by template and optional lifecycle.
 
 ```forge

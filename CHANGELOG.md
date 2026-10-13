@@ -190,6 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to v1 complete. Closes epic #292.
 
 ### Changed
+- MSRV raised from 1.89 to 1.90; `redb` updated to 4.2 (#463).
 - `forge check` now exits `2` (not `1`) when a file has warnings but no errors,
   and other commands use the same semantic table: `0` success, `1` error,
   `2` warnings-only, `3` partial, `10` needs-input, `11` async-pending (#475).
@@ -275,6 +276,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a false `E040` — and every diagnostic names the source file its span belongs
   to, with that file's line and column (#519), instead of attributing merged
   spans to the first source.
+- `with knowledge where category == <expr>` used to drop variables and
+  interpolation, so the filter was empty. It is now evaluated at spawn (#538).
 - `run --dry-run --json` and `forge cost --json` reported the plan estimate in the
   envelope's `cost`, which is the USD **spent** by the command (#528). Both
   execute nothing, so `cost` is now `0.0`; the estimate stays in

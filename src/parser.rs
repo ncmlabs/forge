@@ -1654,19 +1654,11 @@ fn build_spawn_stmt(pair: Pair) -> anyhow::Result<Spanned<Stmt>> {
                     Rule::spawn_knowledge_option => {
                         let pred = opt_inner.into_inner().next().unwrap(); // spawn_knowledge_pred
                         let cat_str_arg = pred.into_inner().next().unwrap(); // string_arg
-                        let cat_expr = build_string_arg(cat_str_arg)?;
-                        // Extract the string value from the template expression
-                        let cat_name = match &cat_expr.node {
-                            Expr::Template(parts) => parts
-                                .iter()
-                                .filter_map(|p| match &p.node {
-                                    TemplatePart::Text(t) => Some(t.as_str()),
-                                    _ => None,
-                                })
-                                .collect::<String>(),
-                            _ => String::new(),
-                        };
-                        SpawnOption::KnowledgeFilter(Spanned::new(cat_name, cat_expr.span))
+
+                        // Keep the whole expression: the category is evaluated when
+                        // the agent is spawned, so `"TASKS"`, `"{topic}"` and `topic`
+                        // all work (#538).
+                        SpawnOption::KnowledgeFilter(build_string_arg(cat_str_arg)?)
                     }
                     Rule::spawn_confidence_cap_option => {
                         let expr_pair = opt_inner.into_inner().next().unwrap();

@@ -1404,7 +1404,7 @@ fn parse_spawn_with_all_options() {
             assert_eq!(s.options.len(), 3);
             // Check option types
             assert!(
-                matches!(&s.options[0].node, SpawnOption::KnowledgeFilter(cat) if cat.node == "moves")
+                matches!(&s.options[0].node, SpawnOption::KnowledgeFilter(cat) if literal_text(&cat.node) == "moves")
             );
             assert!(matches!(&s.options[1].node, SpawnOption::ConfidenceCap(_)));
             assert!(
@@ -1426,12 +1426,86 @@ fn parse_spawn_knowledge_filter_only() {
             assert_eq!(s.template.node, "specialist");
             assert_eq!(s.options.len(), 1);
             match &s.options[0].node {
-                SpawnOption::KnowledgeFilter(cat) => assert_eq!(cat.node, "syntax"),
+                SpawnOption::KnowledgeFilter(cat) => assert_eq!(literal_text(&cat.node), "syntax"),
                 other => panic!("expected KnowledgeFilter, got {:?}", other),
             }
         }
         other => panic!("expected Spawn, got {:?}", other),
     }
+}
+
+// ── Spawn knowledge filter is an expression (#538) ──────────
+
+/// Assert `expr` is a plain Text literal (no interpolation) and return its text.
+fn literal_text(expr: &Expr) -> &str {
+    match expr {
+        Expr::Template(parts) => match parts.as_slice() {
+            [p] => match &p.node {
+                TemplatePart::Text(t) => t,
+                other => panic!("expected a plain Text part, got {:?}", other),
+            },
+            other => panic!("expected exactly one Text part, got {:?}", other),
+        },
+        other => panic!("expected a literal template, got {:?}", other),
+    }
+}
+
+/// The category expression of a lone `with knowledge where category == …` option.
+fn knowledge_filter_expr(prog: &Program) -> &Expr {
+    match first_stmt(prog) {
+        Stmt::Spawn(s) => match s.options.as_slice() {
+            [opt] => match &opt.node {
+                SpawnOption::KnowledgeFilter(e) => &e.node,
+                other => panic!("expected KnowledgeFilter, got {:?}", other),
+            },
+            other => panic!("expected exactly one spawn option, got {:?}", other),
+        },
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_knowledge_filter_literal() {
+    let prog = parse_task_multiline(&[
+        r#"id = spawn specialist"#,
+        r#"  with knowledge where category == "TASKS""#,
+    ]);
+    assert!(matches!(
+        knowledge_filter_expr(&prog),
+        Expr::Template(parts) if matches!(&parts[..], [p] if matches!(&p.node, TemplatePart::Text(t) if t == "TASKS"))
+    ));
+}
+
+#[test]
+fn parse_spawn_knowledge_filter_interpolated() {
+    let prog = parse_task_multiline(&[
+        r#"id = spawn specialist"#,
+        r#"  with knowledge where category == "{topic}""#,
+    ]);
+    match knowledge_filter_expr(&prog) {
+        Expr::Template(parts) => match parts.as_slice() {
+            [p] => match &p.node {
+                TemplatePart::Interp(inner) => {
+                    assert!(matches!(&inner.node, Expr::Ident(name) if name == "topic"));
+                }
+                other => panic!("expected interpolation part, got {:?}", other),
+            },
+            other => panic!("expected exactly one template part, got {:?}", other),
+        },
+        other => panic!("expected Template, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_knowledge_filter_ident() {
+    let prog = parse_task_multiline(&[
+        r#"id = spawn specialist"#,
+        r#"  with knowledge where category == topic"#,
+    ]);
+    assert!(matches!(
+        knowledge_filter_expr(&prog),
+        Expr::Ident(name) if name == "topic"
+    ));
 }
 
 // ── Isolate worktree tests (#194) ───────────────────────────
