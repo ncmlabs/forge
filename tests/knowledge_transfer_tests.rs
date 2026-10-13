@@ -2,8 +2,13 @@
 // Tests the toolkit agent knowledge transfer pipeline:
 //   parent export_by_category → confidence cap → merge_imported → child recall
 
+use std::sync::Arc;
+
 use tempfile::TempDir;
 
+use forge::llm::providers::mock::MockProvider;
+use forge::llm::registry::ProviderRegistry;
+use forge::runtime::executor::TaskExecutor;
 use forge::runtime::knowledge_store::{KnowledgeEntry, KnowledgeSource, KnowledgeStore};
 
 // ── Helper ──────────────────────────────────────────────────
@@ -191,5 +196,109 @@ fn full_transfer_cycle_seed_export_cap_merge_recall() {
         parent.entry_count(),
         before + 1,
         "parent should absorb child's learned insight"
+    );
+}
+
+// ── #538: the filter is an expression evaluated at spawn ────
+
+/// Run a program whose parent spawns a child while filtering on
+/// `with knowledge where <filter>`, and return the child's transferred entries.
+/// The parent seeds one TASKS and one FLOWS entry and binds `topic` to
+/// `topic_value`, so only the filter form under test decides what the child gets.
+async fn entries_after_spawn_with_filter(
+    filter: &str,
+    topic_value: &str,
+) -> Result<Vec<KnowledgeEntry>, forge::runtime::executor::RuntimeError> {
+    let tmp = TempDir::new().unwrap();
+    let parent_path = tmp.path().join("parent").to_string_lossy().to_string();
+    let child_path = tmp.path().join("child").to_string_lossy().to_string();
+
+    let source = format!(
+        r#"
+agent worker
+  memory
+    topic: Text
+  knowledge store: "{child_path}"
+  on start
+    say "worker up"
+
+  if stuck for 3 turns
+    escalate to human
+
+agent parent
+  memory
+    topic: Text
+  knowledge store: "{parent_path}"
+  on start
+    learn "TASKS fact: tasks use the task keyword" category: "TASKS"
+    learn "FLOWS fact: flows use the flow keyword" category: "FLOWS"
+    topic = {topic_value}
+    spawn worker as "worker_1"
+      with knowledge where {filter}
+
+fn main
+  spawn parent as "p"
+"#
+    );
+
+    let program = forge::parser::parse(&source).expect("parse failed");
+    let mock = MockProvider::new("mock").with_default("mock response");
+    let mut registry = ProviderRegistry::new("mock");
+    registry.register("mock", Arc::new(mock));
+    let executor = TaskExecutor::new(program, Arc::new(registry), None);
+    executor.run().await?;
+
+    // The transfer is written to the child's declared store during the spawn
+    // statement, so the file is complete when `run` returns.
+    Ok(KnowledgeStore::new(&child_path, None, None).export_entries())
+}
+
+async fn assert_only_tasks_transferred(filter: &str) {
+    let entries = entries_after_spawn_with_filter(filter, r#""TASKS""#)
+        .await
+        .expect("program should run");
+    assert_eq!(
+        entries.len(),
+        1,
+        "filter `{filter}` must transfer exactly the TASKS entry, got: {:?}",
+        entries
+            .iter()
+            .map(|e| (e.content.as_str(), e.category.as_deref()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(entries[0].category.as_deref(), Some("TASKS"));
+    assert!(
+        entries[0].content.contains("TASKS fact"),
+        "got: {}",
+        entries[0].content
+    );
+}
+
+#[tokio::test]
+async fn spawn_knowledge_filter_literal_is_evaluated_at_spawn() {
+    assert_only_tasks_transferred(r#"category == "TASKS""#).await;
+}
+
+#[tokio::test]
+async fn spawn_knowledge_filter_ident_is_evaluated_at_spawn() {
+    assert_only_tasks_transferred("category == topic").await;
+}
+
+#[tokio::test]
+async fn spawn_knowledge_filter_interpolation_is_evaluated_at_spawn() {
+    assert_only_tasks_transferred(r#"category == "{topic}""#).await;
+}
+
+#[tokio::test]
+async fn spawn_knowledge_filter_non_text_is_a_type_error() {
+    let err = entries_after_spawn_with_filter("category == topic", "42")
+        .await
+        .expect_err("a Number category must fail the spawn, not filter silently");
+    assert!(
+        matches!(
+            &err,
+            forge::runtime::executor::RuntimeError::TypeError { expected, .. } if expected == "Text"
+        ),
+        "expected a Text type error, got: {err:?}"
     );
 }
