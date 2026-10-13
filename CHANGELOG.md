@@ -156,6 +156,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relocated to `tests/fixtures/`.
 
 ### Fixed
+- `forge --help` printed `Usage: forge.exe …` on Windows, where clap takes the
+  program name from `argv[0]`, while our own `forge help` printed `forge`
+  (#476). The binary name is now pinned (`bin_name = "forge"`), so both paths
+  print the same usage line on every platform.
 - Diagnostic text output pointed at the wrong line/column after non-ASCII
   characters (#513): `src/diagnostic.rs` built ariadne with the default
   `IndexType::Char`, but every FORGE span is a byte range (pest offsets), so a

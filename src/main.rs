@@ -25,6 +25,10 @@ type BuildResult = (
 #[derive(Parser)]
 #[command(
     name = "forge",
+    // Without this, clap takes the usage's program name from argv[0], so
+    // `forge --help` prints `Usage: forge.exe …` on Windows while our own
+    // `forge help` prints `forge` (tests/cli_schema_tests.rs).
+    bin_name = "forge",
     about = "FORGE — an agent-native programming language",
     long_about = "FORGE — an agent-native programming language\n\n\
         Compiles declarative task/flow/agent definitions into LLM-powered programs.\n\
