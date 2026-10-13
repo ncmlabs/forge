@@ -1268,8 +1268,9 @@ forge check --manifest forge.project.toml       # the project's declared skills 
 checked exactly as `forge run --manifest` blocks on it — as one composed
 program, with the resolver and the cross-file boundary check per file — so a
 project `check` accepts is one `run` does not reject; with files, those files
-are checked instead, composed the same way. Without `--manifest`, `skill_dirs`
-from `forge.config.toml` (or `FORGE_CONFIG`) apply, exactly as for `run`. A
+are checked instead, each on its own unless `--merge` composes them. Without
+`--manifest`, `skill_dirs` from `forge.config.toml` (or `FORGE_CONFIG`) apply,
+exactly as for `run`. A
 check runs no provider: no config at all means no config-declared skills, while
 a config that exists and cannot be loaded is still an error.
 
