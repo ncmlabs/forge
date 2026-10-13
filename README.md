@@ -97,6 +97,20 @@ FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test --test sensei_live_tests
 
 ---
 
+## Use FORGE from your coding agent
+
+Claude Code and Codex can write FORGE programs from the skill that ships with this repo — the
+authoring loop, the CLI's JSON envelope and exit codes, and the syntax traps that break agents:
+
+```bash
+npx skills add ncmlabs/forge
+```
+
+The skill is [`skills/write-forge/SKILL.md`](skills/write-forge/SKILL.md), with the one-page
+[`forge-card.md`](skills/write-forge/forge-card.md) beside it.
+
+---
+
 ## What FORGE is
 
 FORGE is built on a foundational insight: **an LLM call is not a function call. It is an oracle query.**
