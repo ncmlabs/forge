@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Installable `write-forge` agent skill for Claude Code and Codex (#482):
+  `npx skills add ncmlabs/forge` installs `skills/write-forge/` — when to choose
+  FORGE, the authoring loop (`forge init` → `forge check --json` → `forge
+  explain <code>` → `forge test` → `forge run --dry-run` → `forge run --json`),
+  the semantic exit codes (`0` ok, `1` error, `2` warnings only), the JSON
+  envelope fields an agent reads, and the five mistakes that break most
+  programs — with the one-page card copied beside it
+  (`skills/write-forge/forge-card.md`, kept byte-identical to
+  `docs/forge-card.md` by `tests/forge_card_tests.rs`). This is an agent skill,
+  not a FORGE runtime skill: it declares no `capabilities:`, and a project that
+  scans `skills/` keeps loading it without a warning or an error.
 - LLM authoring benchmark harness (#483, part 2): `bench/run.sh` prompts one
   model per corpus spec — `docs/forge-card.md` as the system prompt, `spec.md`
   plus one fixed fence instruction as the user turn — extracts the first fenced
