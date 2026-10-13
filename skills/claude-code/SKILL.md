@@ -39,7 +39,6 @@ When the delegated task involves FORGE language code, `.forge` files, language d
 ```text
 You are working in the FORGE repository. Before answering or editing, read the repo truth for this checkout:
 - docs/training-development-workflow.md
-- workflows/dev-cycle.forge
 - docs/forge-reference.md
 - grammar/forge.pest
 - src/ast.rs

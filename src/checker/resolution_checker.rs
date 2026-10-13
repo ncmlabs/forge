@@ -700,9 +700,10 @@ mod tests {
 
     #[test]
     fn resolution_help_points_at_merge_for_multi_file_projects() {
-        // `workflows/dev-cycle/agents.forge` calls `repo_config_for`, declared
-        // in a sibling manifest source: `forge check <file>` alone cannot see
-        // it, so the help must say how to check the files together.
+        // The dev-cycle workflow in ncmlabs/forge-clone-dev calls
+        // `repo_config_for`, declared in a sibling manifest source:
+        // `forge check <file>` alone cannot see it, so the help must say how
+        // to check the files together.
         let src = "task t\n  gives Text\n  do\n    give repo_config_for(\"x\")\n";
         let ds = diags(src);
         assert_eq!(codes(src), vec!["E160"], "{ds:?}");

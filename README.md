@@ -742,7 +742,7 @@ Three things determine whether this reaches its potential:
 | `CHANGELOG.md` | All notable changes in Keep a Changelog format |
 | `providers.md` | Provider abstraction: trait, registry, implementations, config |
 | `examples/` | Example programs demonstrating language primitives (showcases moving to `ncmlabs/forge-examples`) |
-| `workflows/` | Real FORGE programs: dev-cycle workflow, forge-sensei learning agent |
+| `workflows/` | Real FORGE programs: forge-sensei learning agent, surface-audit drift agent |
 | `conformance/` | Language-agnostic JSON test suite — 84 tests covering parser, checkers, and runtime |
 
 ---

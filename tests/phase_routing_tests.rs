@@ -1,9 +1,11 @@
-// Integration test for T8.6 (#361) — multi-provider phase routing.
+// Integration test for T8.6 (#361) — multi-provider phase routing, kept in
+// core on its own merits (#505).
 //
 // Drives a small `.forge` program through the runtime with three named
 // MockProvider instances (`mock-anthropic`, `mock-openai`, `mock-ollama`)
-// and the new phase-keyed routing chain wired into ProviderRegistry. The
-// program calls `reason "..." for plan` and `reason "..." for ops_investigate`,
+// and a phase-keyed routing chain wired into ProviderRegistry — the same
+// `[llm.routing]` shape `forge.config.toml` declares since #503. The
+// program calls `reason "..." for plan` and `reason "..." for review`,
 // each of which must dispatch to a distinct provider per the routing
 // table. We then force the primary provider to fail and assert the
 // chain falls through to the configured fallback.
@@ -33,19 +35,19 @@ task plan_step
     result = reason "Draft a plan for {issue}" for plan
     give "{result}"
 
-task ops_step
+task review_step
   needs query: Text
   gives Text
   do
-    result = reason "Investigate ops query: {query}" for ops_investigate
+    result = reason "Review query: {query}" for review
     give "{result}"
 
 # Drives both phases in one endpoint call so a single test invocation
 # produces traces for two distinct providers.
 endpoint run_pipeline(issue: Text, query: Text) -> Text
   plan = plan_step(issue)
-  ops = ops_step(query)
-  give "{plan}|{ops}"
+  review_text = review_step(query)
+  give "{plan}|{review_text}"
 "#;
 
 /// FailingProvider — used to validate fallback chain traversal. The
@@ -83,7 +85,7 @@ fn build_registry_two_phases() -> Arc<ProviderRegistry> {
     registry.register("mock-ollama", Arc::new(ollama));
     registry.set_phase_chain("plan", vec!["mock-anthropic".into()]);
     registry.set_phase_chain("implement", vec!["mock-openai".into()]);
-    registry.set_phase_chain("ops_investigate", vec!["mock-ollama".into()]);
+    registry.set_phase_chain("review", vec!["mock-ollama".into()]);
 
     Arc::new(registry)
 }
@@ -104,7 +106,7 @@ fn build_registry_with_fallback() -> Arc<ProviderRegistry> {
     registry.register("mock-anthropic", Arc::new(fallback));
     registry.register("mock-ollama", Arc::new(ollama));
     registry.set_phase_chain("plan", vec!["primary".into(), "mock-anthropic".into()]);
-    registry.set_phase_chain("ops_investigate", vec!["mock-ollama".into()]);
+    registry.set_phase_chain("review", vec!["mock-ollama".into()]);
 
     Arc::new(registry)
 }
@@ -171,10 +173,7 @@ async fn end_to_end_pipeline_dispatches_distinct_providers_per_phase() {
     }
 
     assert_eq!(by_phase.get("plan"), Some(&"mock-anthropic".to_string()));
-    assert_eq!(
-        by_phase.get("ops_investigate"),
-        Some(&"mock-ollama".to_string())
-    );
+    assert_eq!(by_phase.get("review"), Some(&"mock-ollama".to_string()));
 }
 
 #[tokio::test]
