@@ -110,6 +110,10 @@ pub struct InstanceRegistry {
     by_id: HashMap<Uuid, InstanceInfo>,
     by_name: HashMap<String, Vec<Uuid>>,
     by_alias: HashMap<String, Uuid>,
+    /// Handles for agents spawned at runtime from inside an agent handler
+    /// (fire-and-forget, issue #546). A system run must not end while any of
+    /// these is still running, so the spawn site records the handle here.
+    detached: Vec<tokio::task::JoinHandle<()>>,
 }
 
 /// Thread-safe shared reference to the instance registry.
@@ -127,7 +131,20 @@ impl InstanceRegistry {
             by_id: HashMap::new(),
             by_name: HashMap::new(),
             by_alias: HashMap::new(),
+            detached: Vec::new(),
         }
+    }
+
+    /// Record a fire-and-forget spawn (issue #546) so the run can wait for it.
+    pub fn track_detached(&mut self, handle: tokio::task::JoinHandle<()>) {
+        self.detached.push(handle);
+    }
+
+    /// How many tracked detached spawns are still running. Finished handles
+    /// are dropped so the list does not grow for the life of the run.
+    pub fn detached_running(&mut self) -> usize {
+        self.detached.retain(|h| !h.is_finished());
+        self.detached.len()
     }
 
     /// Register a new agent instance with an optional alias. Returns the generated instance ID.

@@ -1784,10 +1784,20 @@ impl TaskExecutor {
                             .with_shared_output(self.output.clone())
                             .with_stdout_echo(self.stdout_echo)
                             .with_cost_tracker_opt(self.cost_tracker.clone());
-                        tokio::spawn(async move {
+                        let handle = tokio::spawn(async move {
                             let mut child_process = child_process;
                             let _ = child_process.run().await;
                         });
+                        // Track the detached child in the shared registry
+                        // (#546) so `System::start` waits for it. Children
+                        // spawned from the child share the same registry
+                        // (`AgentProcess::new` is handed `self.instance_registry`),
+                        // so descendants are covered too. Without a registry
+                        // there is nothing to wait on: keep today's
+                        // fire-and-forget behaviour.
+                        if let Some(ref ir) = self.instance_registry {
+                            ir.write().await.track_detached(handle);
+                        }
                     } else {
                         // Run inline so fn main waits for the child to retire.
                         // Errors are surfaced (unlike background spawn which discards them).
