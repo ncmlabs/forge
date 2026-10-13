@@ -200,10 +200,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Static file serving (#485 step 3): `[server.static]` and the
   `FORGE_STATIC_ROOT` override are gone. A config that still carries the table
   fails to load with "`[server.static]` was removed in v0.3: serve static files
-  from the app or a web server (see CHANGELOG, #485)" instead of silently
-  serving nothing; the root `static/` directory (CSS, JS, logo, demo page) is
-  deleted. Serve assets from the app, a static host or a reverse proxy — HTTP
-  `endpoint` routes, webhooks and introspection are untouched.
+  from the app or a web server (see CHANGELOG, #485)" — as does a stale exported
+  `FORGE_STATIC_ROOT` (same message naming the variable) or an embedded config
+  handed to `forge build --embed-config` — instead of silently serving nothing;
+  the root `static/` directory (CSS, JS, logo, demo page) is deleted. Serve
+  assets from the app, a static host or a reverse proxy — HTTP `endpoint`
+  routes, webhooks and introspection are untouched.
 - `asset()` (#485 step 3): the URL helper left core with static file serving.
   A call to it is now an `E160` undeclared call whose help is "`asset()` was
   removed in v0.3 with static file serving (see CHANGELOG, #485)". Build URLs

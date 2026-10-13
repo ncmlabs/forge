@@ -287,3 +287,45 @@ fn find_agent_by_name() {
     let gamma = compose::find_agent(&f.program, Some("gamma"));
     assert!(gamma.is_none());
 }
+
+// ── embedded config validation (#485) ─────────────────────────
+
+#[test]
+fn embed_config_with_server_static_fails_the_build() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        tmp.path().join("app.forge"),
+        "use\n  llm.reason\n\nagent mybot\n  on hello(name: Text)\n    say \"hi {name}\"\n",
+    )
+    .expect("write source");
+    let manifest_path = tmp.path().join("forge.project.toml");
+    std::fs::write(
+        &manifest_path,
+        "[project]\nname = \"embedtest\"\n\n[build]\nentry = \"app.forge\"\n",
+    )
+    .expect("write manifest");
+    let config_path = tmp.path().join("bad.toml");
+    std::fs::write(
+        &config_path,
+        "[llm]\ndefault = \"mock\"\n\n[providers.mock]\ntype = \"mock\"\n\n[server.static]\nroot = \"public\"\n",
+    )
+    .expect("write config");
+
+    let manifest = forge::manifest::ProjectManifest::load(&manifest_path).expect("load manifest");
+    // `build()` stops at the embedded-config step, so no crate is generated
+    // and no `cargo build` runs.
+    let err = match forge::build::BuildPipeline::new(manifest, tmp.path().to_path_buf())
+        .embed_config(Some(config_path))
+        .build()
+    {
+        Ok(_) => panic!("an embedded config with [server.static] must fail the build"),
+        Err(e) => e,
+    };
+
+    let msg = err.to_string();
+    assert!(msg.contains("invalid embedded config"), "{msg}");
+    assert!(
+        msg.contains("`[server.static]` was removed in v0.3"),
+        "{msg}"
+    );
+}

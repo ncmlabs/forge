@@ -349,7 +349,7 @@ impl ForgeConfig {
                     ));
                 }
                 match Self::load(Path::new(&path)) {
-                    Ok(config) => return Ok(Self::apply_env_overrides(config)),
+                    Ok(config) => return Self::apply_env_overrides(config),
                     Err(e) => {
                         if explicit_mock {
                             break;
@@ -368,7 +368,7 @@ impl ForgeConfig {
         for path in search_paths.iter().flatten() {
             if path.exists() {
                 if let Ok(config) = Self::load(path) {
-                    return Ok(Self::apply_env_overrides(config));
+                    return Self::apply_env_overrides(config);
                 }
                 // parse failure on an existing standard-path config: hard
                 // error (production config is broken — surface it).
@@ -378,7 +378,7 @@ impl ForgeConfig {
 
         // 3. No config anywhere: mock fallback ONLY on explicit selection.
         if explicit_mock {
-            return Ok(Self::apply_env_overrides(Self::default_mock_config()));
+            return Self::apply_env_overrides(Self::default_mock_config());
         }
 
         Err(ConfigError::NoConfigurationFound {
@@ -401,12 +401,23 @@ impl ForgeConfig {
                 // Preserve the historical ambient behavior for non-LLM
                 // subcommands but be LOUD about it.
                 eprintln!("warning: falling back to mock provider config: {e}");
-                Self::apply_env_overrides(Self::default_mock_config())
+                Self::apply_env_overrides(Self::default_mock_config()).unwrap_or_else(|e| {
+                    // A removed env var applies to *every* config, so this
+                    // path fails hard instead of warning again (#485).
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                })
             }
         }
     }
 
-    fn apply_env_overrides(mut config: ForgeConfig) -> ForgeConfig {
+    fn apply_env_overrides(mut config: ForgeConfig) -> Result<ForgeConfig, ConfigError> {
+        // FORGE_STATIC_ROOT left core with static file serving (#485). A stale
+        // variable must fail every loading path, never be silently ignored.
+        if std::env::var_os("FORGE_STATIC_ROOT").is_some() {
+            return Err(ConfigError::StaticRootRemoved);
+        }
+
         config.resolve_env_vars();
 
         // FORGE_MOCK=1 or FORGE_PROVIDER=mock
@@ -481,7 +492,7 @@ impl ForgeConfig {
             }
         }
 
-        config
+        Ok(config)
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
@@ -600,6 +611,9 @@ pub enum ConfigError {
     /// #485: `[server.static]` left core with static file serving.
     #[error("`[server.static]` was removed in v0.3: serve static files from the app or a web server (see CHANGELOG, #485)")]
     StaticRemoved,
+    /// #485: the `FORGE_STATIC_ROOT` env override left core with the same.
+    #[error("`FORGE_STATIC_ROOT` was removed in v0.3: serve static files from the app or a web server (see CHANGELOG, #485)")]
+    StaticRootRemoved,
     /// #447: no config file found and mock was not explicitly selected.
     /// Production runs must hard-error rather than silently degrade to the
     /// mock provider (indistinguishable `mock response` output).
@@ -783,6 +797,34 @@ prefix = "/assets"
         assert_eq!(
             err.to_string(),
             "`[server.static]` was removed in v0.3: serve static files from the app or a web server (see CHANGELOG, #485)"
+        );
+    }
+
+    #[test]
+    fn forge_static_root_env_var_is_rejected() {
+        // #485 — the env override left core with static file serving. A stale
+        // variable must fail config loading, not be silently ignored.
+        let dir = std::env::temp_dir().join("forge_config_static_root_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("forge.config.toml");
+        std::fs::write(
+            &path,
+            "[llm]\ndefault = \"mock\"\n\n[providers.mock]\ntype = \"mock\"\n",
+        )
+        .unwrap();
+
+        std::env::set_var("FORGE_CONFIG", &path);
+        std::env::set_var("FORGE_STATIC_ROOT", "static");
+        let result = ForgeConfig::try_load_or_default();
+        // Clear the env before asserting so a failure cannot leak the vars
+        // into the other tests sharing this process.
+        std::env::remove_var("FORGE_STATIC_ROOT");
+        std::env::remove_var("FORGE_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(
+            result.expect_err("stale FORGE_STATIC_ROOT must fail config loading").to_string(),
+            "`FORGE_STATIC_ROOT` was removed in v0.3: serve static files from the app or a web server (see CHANGELOG, #485)"
         );
     }
 
