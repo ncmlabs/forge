@@ -49,6 +49,14 @@ planning, and record/replay tests that cost nothing to run.
 **pass@3-repair** for Claude, an OpenAI-compatible model and a local model,
 tracked weekly. v0.3 is done when those numbers are published and improve.
 
+Baselines, 2026-10-13: 30 specs, forge `551de6e`, results in `bench/results/`.
+
+| Model | pass@1 | pass@3-repair | correct | tokens in / out |
+|---|---|---|---|---|
+| DeepSeek V4.1 Flash (OpenAI-compatible) | 0.867 | 0.900 | 0.867 | 134,152 / 5,101 |
+| GLM 5.3 Flash (local) | 0.667 | 0.767 | 0.667 | 165,912 / 16,927 |
+| Claude | not run yet | | | |
+
 ## Tracks
 
 ### Lean core — remove what is not language
