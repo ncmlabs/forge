@@ -120,20 +120,20 @@ fn detect_kind_server() {
 #[test]
 fn detect_sensei_cli_and_server_build_shapes() {
     let types =
-        std::fs::read_to_string("workflows/forge-sensei/shared/types.forge").expect("read types");
+        std::fs::read_to_string("tests/fixtures/sensei/shared/types.forge").expect("read types");
     let events =
-        std::fs::read_to_string("workflows/forge-sensei/shared/events.forge").expect("read events");
+        std::fs::read_to_string("tests/fixtures/sensei/shared/events.forge").expect("read events");
     let states =
-        std::fs::read_to_string("workflows/forge-sensei/shared/states.forge").expect("read states");
+        std::fs::read_to_string("tests/fixtures/sensei/shared/states.forge").expect("read states");
     let tasks =
-        std::fs::read_to_string("workflows/forge-sensei/server/tasks.forge").expect("read tasks");
+        std::fs::read_to_string("tests/fixtures/sensei/server/tasks.forge").expect("read tasks");
     let flows =
-        std::fs::read_to_string("workflows/forge-sensei/server/flows.forge").expect("read flows");
+        std::fs::read_to_string("tests/fixtures/sensei/server/flows.forge").expect("read flows");
     let agent =
-        std::fs::read_to_string("workflows/forge-sensei/server/agent.forge").expect("read agent");
-    let web = std::fs::read_to_string("workflows/forge-sensei/server/web.forge").expect("read web");
+        std::fs::read_to_string("tests/fixtures/sensei/server/agent.forge").expect("read agent");
+    let web = std::fs::read_to_string("tests/fixtures/sensei/server/web.forge").expect("read web");
     let client =
-        std::fs::read_to_string("workflows/forge-sensei/client/client.forge").expect("read client");
+        std::fs::read_to_string("tests/fixtures/sensei/client/client.forge").expect("read client");
 
     let cli = compose::merge_programs(&[
         parse_source("types.forge", &types),

@@ -8,13 +8,13 @@ use forge::diagnostic::{Diagnostic, DiagnosticKind};
 
 fn sensei_server_sources() -> Vec<forge::compose::SourceFile> {
     [
-        "workflows/forge-sensei/shared/types.forge",
-        "workflows/forge-sensei/shared/events.forge",
-        "workflows/forge-sensei/shared/states.forge",
-        "workflows/forge-sensei/server/tasks.forge",
-        "workflows/forge-sensei/server/flows.forge",
-        "workflows/forge-sensei/server/agent.forge",
-        "workflows/forge-sensei/server/web.forge",
+        "tests/fixtures/sensei/shared/types.forge",
+        "tests/fixtures/sensei/shared/events.forge",
+        "tests/fixtures/sensei/shared/states.forge",
+        "tests/fixtures/sensei/server/tasks.forge",
+        "tests/fixtures/sensei/server/flows.forge",
+        "tests/fixtures/sensei/server/agent.forge",
+        "tests/fixtures/sensei/server/web.forge",
     ]
     .into_iter()
     .map(|path| {
@@ -39,8 +39,7 @@ fn check_sensei_server() -> Vec<Diagnostic> {
         .collect::<Vec<_>>();
     let composed =
         forge::compose::merge_programs(&source_files).expect("sensei server files should merge");
-    let mut diags =
-        checker::check_all(&composed.program, "workflows/forge-sensei/server/web.forge");
+    let mut diags = checker::check_all(&composed.program, "tests/fixtures/sensei/server/web.forge");
     diags.extend(boundary_checker::check(&refs));
     diags
 }
