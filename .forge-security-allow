@@ -24,3 +24,6 @@ config/forge.config.toml
 # Test fixtures for HMAC webhook handlers — intentional placeholder secrets
 tests/http_server_tests.rs
 tests/webhook_integration_tests.rs
+
+# Bench workflow names the secrets it reads (names only, never values)
+.github/workflows/bench.yml
