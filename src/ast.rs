@@ -827,8 +827,9 @@ pub struct SpawnStmt {
 /// Options for the spawn statement.
 #[derive(Debug, Clone)]
 pub enum SpawnOption {
-    /// `with knowledge where category == "X"`
-    KnowledgeFilter(Spanned<String>),
+    /// `with knowledge where category == <expr>` — any Text expression,
+    /// evaluated at spawn time (#538).
+    KnowledgeFilter(Spanned<Expr>),
     /// `with confidence_cap: 0.8`
     ConfidenceCap(Spanned<Expr>),
     /// `with memory field: value`

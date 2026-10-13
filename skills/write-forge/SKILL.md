@@ -33,7 +33,7 @@ Run these in order. A program is not ready until it has been through all six.
 **0. Install — once per machine, before step 1**
 
 ```bash
-cargo install --git https://github.com/ncmlabs/forge.git   # Rust 1.89+; puts `forge` on PATH
+cargo install --git https://github.com/ncmlabs/forge.git   # Rust 1.90+; puts `forge` on PATH
 forge --version                                            # proves the binary is installed
 ```
 

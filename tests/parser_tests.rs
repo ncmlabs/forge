@@ -1404,7 +1404,7 @@ fn parse_spawn_with_all_options() {
             assert_eq!(s.options.len(), 3);
             // Check option types
             assert!(
-                matches!(&s.options[0].node, SpawnOption::KnowledgeFilter(cat) if cat.node == "moves")
+                matches!(&s.options[0].node, SpawnOption::KnowledgeFilter(cat) if literal_text(&cat.node) == "moves")
             );
             assert!(matches!(&s.options[1].node, SpawnOption::ConfidenceCap(_)));
             assert!(
@@ -1426,12 +1426,86 @@ fn parse_spawn_knowledge_filter_only() {
             assert_eq!(s.template.node, "specialist");
             assert_eq!(s.options.len(), 1);
             match &s.options[0].node {
-                SpawnOption::KnowledgeFilter(cat) => assert_eq!(cat.node, "syntax"),
+                SpawnOption::KnowledgeFilter(cat) => assert_eq!(literal_text(&cat.node), "syntax"),
                 other => panic!("expected KnowledgeFilter, got {:?}", other),
             }
         }
         other => panic!("expected Spawn, got {:?}", other),
     }
+}
+
+// ── Spawn knowledge filter is an expression (#538) ──────────
+
+/// Assert `expr` is a plain Text literal (no interpolation) and return its text.
+fn literal_text(expr: &Expr) -> &str {
+    match expr {
+        Expr::Template(parts) => match parts.as_slice() {
+            [p] => match &p.node {
+                TemplatePart::Text(t) => t,
+                other => panic!("expected a plain Text part, got {:?}", other),
+            },
+            other => panic!("expected exactly one Text part, got {:?}", other),
+        },
+        other => panic!("expected a literal template, got {:?}", other),
+    }
+}
+
+/// The category expression of a lone `with knowledge where category == …` option.
+fn knowledge_filter_expr(prog: &Program) -> &Expr {
+    match first_stmt(prog) {
+        Stmt::Spawn(s) => match s.options.as_slice() {
+            [opt] => match &opt.node {
+                SpawnOption::KnowledgeFilter(e) => &e.node,
+                other => panic!("expected KnowledgeFilter, got {:?}", other),
+            },
+            other => panic!("expected exactly one spawn option, got {:?}", other),
+        },
+        other => panic!("expected Spawn, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_knowledge_filter_literal() {
+    let prog = parse_task_multiline(&[
+        r#"id = spawn specialist"#,
+        r#"  with knowledge where category == "TASKS""#,
+    ]);
+    assert!(matches!(
+        knowledge_filter_expr(&prog),
+        Expr::Template(parts) if matches!(&parts[..], [p] if matches!(&p.node, TemplatePart::Text(t) if t == "TASKS"))
+    ));
+}
+
+#[test]
+fn parse_spawn_knowledge_filter_interpolated() {
+    let prog = parse_task_multiline(&[
+        r#"id = spawn specialist"#,
+        r#"  with knowledge where category == "{topic}""#,
+    ]);
+    match knowledge_filter_expr(&prog) {
+        Expr::Template(parts) => match parts.as_slice() {
+            [p] => match &p.node {
+                TemplatePart::Interp(inner) => {
+                    assert!(matches!(&inner.node, Expr::Ident(name) if name == "topic"));
+                }
+                other => panic!("expected interpolation part, got {:?}", other),
+            },
+            other => panic!("expected exactly one template part, got {:?}", other),
+        },
+        other => panic!("expected Template, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_spawn_knowledge_filter_ident() {
+    let prog = parse_task_multiline(&[
+        r#"id = spawn specialist"#,
+        r#"  with knowledge where category == topic"#,
+    ]);
+    assert!(matches!(
+        knowledge_filter_expr(&prog),
+        Expr::Ident(name) if name == "topic"
+    ));
 }
 
 // ── Isolate worktree tests (#194) ───────────────────────────
@@ -1637,4 +1711,35 @@ fn parse_retire_alias_with_export() {
         },
         _ => panic!("expected task"),
     }
+}
+
+// ── Span base offset (#519) ──────────────────────────────────
+
+#[test]
+fn parse_at_shifts_every_top_level_span() {
+    let src = "task greet\n  do\n    say \"hi\"\n\npure double\n  needs n: Number\n  gives Number\n  do\n    give n * 2\n";
+    let shifted = forge::parser::parse_at(src, 1000).expect("parse_at failed");
+    assert_eq!(shifted.items.len(), 2);
+    for item in &shifted.items {
+        assert!(
+            item.span.start >= 1000 && item.span.end > item.span.start,
+            "span not shifted: {:?}",
+            item.span
+        );
+    }
+    // The same source at base 0 is byte-identical to `parse`.
+    let plain = parse(src).expect("parse failed");
+    let zero = forge::parser::parse_at(src, 0).expect("parse_at failed");
+    let spans = |p: &Program| p.items.iter().map(|i| i.span).collect::<Vec<_>>();
+    assert_eq!(spans(&plain), spans(&zero));
+    assert_eq!(spans(&plain)[0].start, 0);
+}
+
+#[test]
+fn parse_at_restores_the_base_after_a_parse_error() {
+    let bad = "task greet\n  do\n    say\n";
+    assert!(forge::parser::parse_at(bad, 5000).is_err());
+    // The failed parse must not leave the base behind for the next parse.
+    let ok = parse("task greet\n  do\n    say \"hi\"\n").expect("parse failed");
+    assert_eq!(ok.items[0].span.start, 0);
 }
