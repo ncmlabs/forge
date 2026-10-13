@@ -1,8 +1,8 @@
 {
   "name": "html_raw_interpolation_parses",
   "category": "parser",
-  "description": "Raw interpolation syntax {!expr} parses inside template strings",
-  "input": "#! boundary: server\n\npure wrap\n  needs content: Html\n  gives Html\n  do\n    give \"<div>{!content}</div>\"\n",
+  "description": "Raw interpolation syntax {!expr} still parses inside template strings; the checker rejects it (E163, #485)",
+  "input": "#! boundary: server\n\npure wrap\n  needs content: Text\n  gives Text\n  do\n    give \"<div>{!content}</div>\"\n",
   "expected": {
     "outcome": "parse_ok"
   }

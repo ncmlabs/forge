@@ -83,6 +83,30 @@ async fn post_endpoint_with_json_body() {
     assert_eq!(body, "Hello, world!");
 }
 
+#[tokio::test]
+async fn text_endpoint_interpolation_is_unchanged() {
+    // #485: with the Html type gone there is no escape pass left; a `{expr}`
+    // interpolation in a Text endpoint inserts the value verbatim.
+    let source = r#"#! boundary: server
+
+endpoint page(name: Text) -> Text
+  give "Hello, {name}!"
+"#;
+    let base = spawn_server(source).await;
+    let resp = reqwest::get(format!("{base}/page?name=<b>Ada</b>"))
+        .await
+        .expect("request failed");
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(ct, "text/plain");
+    assert_eq!(resp.text().await.unwrap(), "Hello, <b>Ada</b>!");
+}
+
 const API_TYPED_SERVER: &str = r#"#! boundary: server
 
 type TypedPayload
@@ -355,41 +379,17 @@ async fn default_status_is_200() {
     assert_eq!(resp.status(), 200);
 }
 
-// ── Issue #44: Html type and content-type inference ───────────
+// ── Issue #44: content-type inference and overrides ───────────
 
-const HTML_ENDPOINT_SERVER: &str = r#"#! boundary: server
+const CONTENT_TYPE_OVERRIDE_SERVER: &str = r#"#! boundary: server
 
-endpoint page() -> Html
-  give "<h1>Hello</h1>"
-"#;
-
-#[tokio::test]
-async fn html_return_type_infers_content_type() {
-    let base = spawn_server(HTML_ENDPOINT_SERVER).await;
-    let resp = reqwest::get(format!("{base}/page"))
-        .await
-        .expect("request failed");
-    assert_eq!(resp.status(), 200);
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert_eq!(ct, "text/html");
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("<h1>Hello</h1>"));
-}
-
-const HTML_OVERRIDE_SERVER: &str = r#"#! boundary: server
-
-endpoint page() -> Html
+endpoint page() -> Text
   give "<data/>" with content_type: "application/xml"
 "#;
 
 #[tokio::test]
 async fn explicit_content_type_overrides_return_type() {
-    let base = spawn_server(HTML_OVERRIDE_SERVER).await;
+    let base = spawn_server(CONTENT_TYPE_OVERRIDE_SERVER).await;
     let resp = reqwest::get(format!("{base}/page"))
         .await
         .expect("request failed");
@@ -437,108 +437,6 @@ async fn missing_header_field_returns_unit() {
         .expect("request failed");
     // Unit maps to 204 No Content
     assert_eq!(resp.status(), 204);
-}
-
-// ── Issue #45: Html auto-escaping and composition ──────────────
-
-const HTML_ESCAPE_SERVER: &str = r#"#! boundary: server
-
-endpoint safe(name: Text) -> Html
-  give "<p>Hello, {name}</p>"
-"#;
-
-#[tokio::test]
-async fn html_auto_escapes_interpolation() {
-    let base = spawn_server(HTML_ESCAPE_SERVER).await;
-    let resp = reqwest::get(format!("{base}/safe?name=<script>alert(1)</script>"))
-        .await
-        .expect("request failed");
-    assert_eq!(resp.status(), 200);
-    let body = resp.text().await.unwrap();
-    // The interpolated value should be escaped
-    assert!(body.contains("&lt;script&gt;"));
-    assert!(!body.contains("<script>alert"));
-}
-
-const HTML_RAW_SERVER: &str = r#"#! boundary: server
-
-pure nav
-  gives Html
-  do
-    give "<nav>Home</nav>"
-
-endpoint page() -> Html
-  n = nav()
-  give "<div>{!n}</div>"
-"#;
-
-#[tokio::test]
-async fn html_raw_interp_bypasses_escaping() {
-    let base = spawn_server(HTML_RAW_SERVER).await;
-    let resp = reqwest::get(format!("{base}/page"))
-        .await
-        .expect("request failed");
-    assert_eq!(resp.status(), 200);
-    let body = resp.text().await.unwrap();
-    // {!n} should insert raw HTML without escaping
-    assert!(body.contains("<nav>Home</nav>"));
-}
-
-const HTML_LAYOUT_SERVER: &str = r#"#! boundary: server
-
-endpoint doc() -> Html
-  give html.layout("My Page", "<p>content</p>")
-"#;
-
-#[tokio::test]
-async fn html_layout_produces_document() {
-    let base = spawn_server(HTML_LAYOUT_SERVER).await;
-    let resp = reqwest::get(format!("{base}/doc"))
-        .await
-        .expect("request failed");
-    assert_eq!(resp.status(), 200);
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert_eq!(ct, "text/html");
-    let body = resp.text().await.unwrap();
-    assert!(body.starts_with("<!DOCTYPE html>"));
-    assert!(body.contains("<title>My Page</title>"));
-    assert!(body.contains("<p>content</p>"));
-}
-
-const HTML_COMPOSE_SERVER: &str = r#"#! boundary: server
-
-pure header
-  gives Html
-  do
-    give "<header>FORGE</header>"
-
-pure footer
-  gives Html
-  do
-    give "<footer>2026</footer>"
-
-endpoint composed() -> Html
-  h = header()
-  f = footer()
-  give "<div>{!h}<main>body</main>{!f}</div>"
-"#;
-
-#[tokio::test]
-async fn html_composition_via_pure_functions() {
-    let base = spawn_server(HTML_COMPOSE_SERVER).await;
-    let resp = reqwest::get(format!("{base}/composed"))
-        .await
-        .expect("request failed");
-    assert_eq!(resp.status(), 200);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("<header>FORGE</header>"));
-    assert!(body.contains("<main>body</main>"));
-    assert!(body.contains("<footer>2026</footer>"));
 }
 
 // ── Issue #52: Webhook support ────────────────────────────────────
@@ -1077,42 +975,6 @@ async fn multi_file_emit_from_endpoint_with_event_from_other_file() {
     assert_eq!(resp.text().await.unwrap(), "processed: test payload");
 }
 
-// ── Multi-file with Html rendering ────────────────────────────
-
-const MULTI_HTML_CORE: &str = r#"
-pure render_header
-  gives Html
-  do
-    give "<header>FORGE</header>"
-"#;
-
-const MULTI_HTML_WEB: &str = r#"#! boundary: server
-
-endpoint page() -> Html
-  h = render_header()
-  give html.layout("Test Page", h)
-"#;
-
-#[tokio::test]
-async fn multi_file_html_rendering_across_files() {
-    let base = spawn_multi_file_server(&[MULTI_HTML_WEB, MULTI_HTML_CORE]).await;
-    let resp = reqwest::get(format!("{base}/page"))
-        .await
-        .expect("request failed");
-    assert_eq!(resp.status(), 200);
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert_eq!(ct, "text/html");
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("<!DOCTYPE html>"));
-    assert!(body.contains("<title>Test Page</title>"));
-    assert!(body.contains("<header>FORGE</header>"));
-}
-
 // ── forge-sensei web endpoint tests ───────────────────────────
 
 /// Load and merge the actual forge-sensei source files.
@@ -1171,13 +1033,15 @@ async fn sensei_status_returns_html_page() {
         .await
         .expect("request failed");
     assert_eq!(resp.status(), 200);
+    // Endpoints return Text since the Html type was removed (#485); the
+    // fixture's page builders still emit the same markup as plain text.
     let ct = resp
         .headers()
         .get("content-type")
         .unwrap()
         .to_str()
         .unwrap();
-    assert_eq!(ct, "text/html");
+    assert_eq!(ct, "text/plain");
     let body = resp.text().await.unwrap();
     assert!(body.contains("<title>forge-sensei | Status</title>"));
     assert!(body.contains("Sensei Status"));

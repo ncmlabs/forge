@@ -101,11 +101,14 @@ fn build_template_string(pair: Pair) -> anyhow::Result<Vec<Spanned<TemplatePart>
                     ));
                 }
                 Rule::template_interp_raw => {
+                    // Span the whole `{!expr}` so the checker's "removed in
+                    // v0.3" diagnostic points at the syntax, not just the expr.
+                    let span = to_span(&inner);
                     let expr_pair = inner.into_inner().next().unwrap();
                     let expr = build_expr(expr_pair)?;
                     parts.push(Spanned::new(
                         TemplatePart::RawInterp(Box::new(expr.clone())),
-                        expr.span,
+                        span,
                     ));
                 }
                 _ => {}
@@ -153,7 +156,6 @@ fn build_type_name(pair: Pair) -> anyhow::Result<Spanned<TypeName>> {
             "Request" => TypeName::Request,
             "Response" => TypeName::Response,
             "Headers" => TypeName::Headers,
-            "Html" => TypeName::Html,
             "AgentResult" => TypeName::AgentResult,
             other => TypeName::Custom(other.to_string()),
         },
@@ -700,7 +702,6 @@ fn build_atom(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
                 "Request" => TypeName::Request,
                 "Response" => TypeName::Response,
                 "Headers" => TypeName::Headers,
-                "Html" => TypeName::Html,
                 "AgentResult" => TypeName::AgentResult,
                 other => TypeName::Custom(other.to_string()),
             };
@@ -793,7 +794,6 @@ fn build_constructor_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         "Request" => TypeName::Request,
         "Response" => TypeName::Response,
         "Headers" => TypeName::Headers,
-        "Html" => TypeName::Html,
         "AgentResult" => TypeName::AgentResult,
         other => TypeName::Custom(other.to_string()),
     };

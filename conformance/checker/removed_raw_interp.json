@@ -1,0 +1,12 @@
+{
+  "name": "removed_raw_interp_rejected",
+  "category": "checker",
+  "subcategory": "resolution",
+  "description": "{!expr} raw interpolation is rejected in v0.3 with a pointer to {expr} (#485)",
+  "input": "fn main\n  name = \"world\"\n  say \"hello {!name}\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_code": "E163",
+    "error_contains": ["raw interpolation was removed in v0.3", "use `{expr}`"]
+  }
+}

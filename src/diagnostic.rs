@@ -209,7 +209,7 @@ mod tests {
         // file, so a diagnostic can carry a span that belongs to another file and
         // has both ends inside a multi-byte character. Rendering it must not
         // panic and must fall back to the character's own line (#513).
-        let source = "# ── Endpoints ──\nendpoint status() -> Html\n";
+        let source = "# ── Endpoints ──\nendpoint status() -> Text\n";
         let diag = Diagnostic::warning("W040", "src/example.forge", "opaque guard", 3..6, "here");
         let mut out = Vec::new();
         diag.render_to(source, false, &mut out).unwrap();

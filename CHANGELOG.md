@@ -245,6 +245,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sensei_live_tests` suite, and the CI "Install script E2E (Linux)" step.
   No `src/` behavior changed; `html.*`, `markdown.*`, `[server.static_files]`
   and `serve --watch` are untouched and are removed in later #485 steps.
+- The `Html` type, its auto-escaping and the `{!expr}` raw interpolation
+  (#485 step 2). `Html` is no longer a built-in type name: `-> Html` or
+  `needs x: Html` now fails `forge check` with `E164` (unknown type `Html`),
+  whose help says the type was removed in v0.3 and endpoints return `Text`.
+  Template strings no longer escape anything, so `{expr}` inserts the value
+  verbatim, and `{!expr}` is rejected by the checker with `E163` — the syntax
+  stays in the grammar so `{!x}` cannot silently parse as the negation
+  `{ !x }`; write `{x}` instead. An endpoint that used to answer `text/html`
+  answers `text/plain` unless it sets `with content_type: "text/html"`.
+  `E163`/`E164` are new codes in the resolution-checker range and are
+  documented by `forge explain`.
+- The `html.layout`, `html.escape` and `markdown.render` built-in capabilities
+  (#485 step 2), `src/runtime/html.rs`, `src/runtime/markdown.rs` and the
+  `pulldown-cmark` dependency. Naming any of the three in a `use` block fails
+  `forge check` with `E010` (unknown capability) and a help line pointing at
+  the CHANGELOG; return `Text` and build the markup in the program.
 
 ### Fixed
 - `run --dry-run --json` and `forge cost --json` reported the plan estimate in the

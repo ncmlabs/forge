@@ -3,65 +3,62 @@
 # ── HTML Helpers ──────────────────────────────────────────────
 
 pure render_nav
-  gives Html
+  gives Text
   do
     give "<nav class=\"navbar bg-base-200 shadow-sm mb-6\"><div class=\"container mx-auto\"><a href=\"/status\" class=\"btn btn-ghost text-xl\">forge-sensei</a><div class=\"flex gap-2\"><a href=\"/status\" class=\"btn btn-sm btn-ghost\">Status</a><a href=\"/ask\" class=\"btn btn-sm btn-ghost\">Ask</a><a href=\"/review\" class=\"btn btn-sm btn-ghost\">Review</a></div></div></nav>"
 
 pure render_page
-  needs title: Text, body: Html
-  gives Html
+  needs title: Text, body: Text
+  gives Text
   do
     nav = render_nav()
-    content = "<div class=\"container mx-auto px-4 max-w-4xl\">{!nav}{!body}</div>"
-    give html.layout(title, content)
+    give "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>{title}</title></head><body>{nav}<div class=\"container mx-auto px-4 max-w-4xl\">{body}</div></body></html>"
 
 pure render_ask_form
-  gives Html
+  gives Text
   do
     give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Ask forge-sensei</h2><form method=\"POST\" action=\"/ask\"><textarea name=\"question\" class=\"textarea textarea-bordered w-full\" rows=\"3\" placeholder=\"Ask about FORGE...\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Ask</button></form></div></div>"
 
 pure render_review_form
-  gives Html
+  gives Text
   do
     give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Code Review</h2><form method=\"POST\" action=\"/review\"><textarea name=\"code\" class=\"textarea textarea-bordered w-full font-mono\" rows=\"10\" placeholder=\"Paste FORGE code...\"></textarea><button type=\"submit\" class=\"btn btn-primary mt-4\">Review</button></form></div></div>"
 
 pure render_answer
   needs answer: Text, confidence_tier: Text
-  gives Html
+  gives Text
   do
-    rendered = markdown.render(answer)
-    give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Answer</h2><span class=\"badge badge-outline\">{confidence_tier}</span><div class=\"prose max-w-none mt-4\">{!rendered}</div><div class=\"divider\"></div><a href=\"/ask\" class=\"btn btn-ghost btn-sm\">Ask another</a></div></div>"
+    give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Answer</h2><span class=\"badge badge-outline\">{confidence_tier}</span><div class=\"prose max-w-none mt-4\">{answer}</div><div class=\"divider\"></div><a href=\"/ask\" class=\"btn btn-ghost btn-sm\">Ask another</a></div></div>"
 
 pure render_review_result
   needs review_text: Text
-  gives Html
+  gives Text
   do
-    rendered = markdown.render(review_text)
-    give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Review Results</h2><div class=\"prose max-w-none\">{!rendered}</div><div class=\"divider\"></div><a href=\"/review\" class=\"btn btn-ghost btn-sm\">Review more</a></div></div>"
+    give "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Review Results</h2><div class=\"prose max-w-none\">{review_text}</div><div class=\"divider\"></div><a href=\"/review\" class=\"btn btn-ghost btn-sm\">Review more</a></div></div>"
 
 # ── Endpoints ─────────────────────────────────────────────────
 
-endpoint status() -> Html
+endpoint status() -> Text
   level = get_mastery_level()
   score = get_mastery_score()
   interactions = get_interaction_count()
   card = "<div class=\"card bg-base-100 shadow-xl\"><div class=\"card-body\"><h2 class=\"card-title\">Sensei Status</h2><p>Level: <span class=\"badge badge-primary\">{level}</span></p><p>Mastery: {score}%</p><p>Interactions: {interactions}</p></div></div>"
   give render_page("forge-sensei | Status", card)
 
-endpoint ask_form() -> Html
+endpoint ask_form() -> Text
   form = render_ask_form()
   give render_page("forge-sensei | Ask", form)
 
-endpoint ask(question: Text) -> Html
+endpoint ask(question: Text) -> Text
   result = answer_query(question)
   body = render_answer(result.answer, result.confidence_tier)
   give render_page("forge-sensei | Answer", body)
 
-endpoint review_form() -> Html
+endpoint review_form() -> Text
   form = render_review_form()
   give render_page("forge-sensei | Review", form)
 
-endpoint review(code: Text) -> Html
+endpoint review(code: Text) -> Text
   review_result = review_code(code)
   body = render_review_result(review_result)
   give render_page("forge-sensei | Review", body)

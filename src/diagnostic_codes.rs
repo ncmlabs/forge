@@ -1549,6 +1549,38 @@ task t
       Positive -> give "up"
       _ -> give "other""#,
     },
+    CodeInfo {
+        code: "E163",
+        title: "removed raw interpolation",
+        explain: r#"`{!expr}` raw interpolation was removed in v0.3 together with the `Html` type (#485). It exists only to skip the Html auto-escaping, and template strings no longer escape anything. The syntax stays in the grammar so `{!x}` cannot silently parse as the negation `{ !x }`.
+
+Wrong:
+fn main
+  name = "world"
+  say "hello {!name}"
+
+Right:
+fn main
+  name = "world"
+  say "hello {name}""#,
+    },
+    CodeInfo {
+        code: "E164",
+        title: "removed type name",
+        explain: r#"A declaration names a type the language no longer has. `Html` was removed in v0.3 (#485): endpoints and pure functions return `Text`, and the caller decides how to render it.
+
+Wrong:
+#! boundary: server
+
+endpoint page() -> Html
+  give "<h1>Hello</h1>"
+
+Right:
+#! boundary: server
+
+endpoint page() -> Text
+  give "<h1>Hello</h1>""#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.

@@ -3,6 +3,8 @@
 // E160: a plain call target that resolves to nothing.
 // E161: a constructor pattern that can never match the scrutinee.
 // E162: a tag pattern whose case differs from the known tag.
+// E163: `{!expr}` raw interpolation, removed in v0.3 (#485).
+// E164: the `Html` type, removed in v0.3 (#485).
 //
 // Scrutinees with unknown value sets are never flagged: the checker only
 // reasons about values it can prove statically (classify labels, all-literal
@@ -25,7 +27,6 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "Conversation",
     "Failure",
     "Headers",
-    "Html",
     "Intent",
     "Number",
     "Profile",
@@ -37,6 +38,12 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "Summary",
     "Text",
 ];
+
+/// Type names removed from the language, with the help users need (#485).
+const REMOVED_TYPES: &[(&str, &str)] = &[(
+    "Html",
+    "the `Html` type was removed in v0.3: endpoints return `Text` (see CHANGELOG, #485)",
+)];
 
 /// Statically known values a scrutinee can hold.
 #[derive(Clone)]
@@ -117,7 +124,7 @@ impl Index {
 /// Run the resolution checker over every statement body in `program`.
 pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
     let index = Index::build(program);
-    let mut diagnostics = Vec::new();
+    let mut diagnostics = removed_types(program, file);
     for item in &program.items {
         match &item.node {
             TopLevel::Task(d) => {
@@ -139,12 +146,14 @@ pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
                 for handler in &d.handlers {
                     index.stmts(&handler.node.body, file, &mut diagnostics);
                 }
+                index.decl_exprs(d, file, &mut diagnostics);
                 if let Some(stuck) = &d.stuck_policy {
                     index.stmts(&stuck.node.body, file, &mut diagnostics);
                 }
             }
             TopLevel::Endpoint(d) => index.stmts(&d.body, file, &mut diagnostics),
             TopLevel::FnMain(d) => index.stmts(&d.body, file, &mut diagnostics),
+            TopLevel::Import(d) => index.expr(&d.source, file, &mut diagnostics),
             TopLevel::States(d) => {
                 for t in &d.transitions {
                     if let Some(cond) = &t.node.condition {
@@ -157,13 +166,58 @@ pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
                     index.expr(wire, file, &mut diagnostics);
                 }
             }
-            _ => {}
+            // No expression or type slots to walk; `removed_types` already
+            // covered the declaration type names.
+            TopLevel::Use(_)
+            | TopLevel::Pool(_)
+            | TopLevel::Warden(_)
+            | TopLevel::Contract(_)
+            | TopLevel::Event(_)
+            | TopLevel::TypeDef(_) => {}
         }
     }
     diagnostics
 }
 
 impl Index {
+    /// Declaration-level expressions that no statement body owns: knowledge
+    /// store paths and project ids, schedule prompts, subscribe filters and
+    /// handler `requires` guards. A `{!expr}` in any of them would otherwise
+    /// slip past E163 — and a schedule prompt would be dropped silently by
+    /// `extract_prompt_text` at wake time.
+    fn decl_exprs(&self, agent: &AgentDecl, file: &str, diagnostics: &mut Vec<Diagnostic>) {
+        if let Some(knowledge) = &agent.knowledge {
+            self.expr(&knowledge.node.store_path, file, diagnostics);
+            if let Some(project_id) = &knowledge.node.project_id {
+                self.expr(project_id, file, diagnostics);
+            }
+        }
+        for schedule in &agent.schedules {
+            if let Some(prompt) = &schedule.node.prompt {
+                self.expr(prompt, file, diagnostics);
+            }
+        }
+        for subscription in &agent.subscriptions {
+            if let Some(filter) = &subscription.node.filter {
+                self.expr(filter, file, diagnostics);
+            }
+        }
+        for handler in &agent.handlers {
+            for requires in &handler.node.requires {
+                self.expr(&requires.node.condition, file, diagnostics);
+                if let Some(on_fail) = &requires.node.on_fail {
+                    match &on_fail.node {
+                        FailPolicy::Give(expr) => self.expr(expr, file, diagnostics),
+                        // No expression payload.
+                        FailPolicy::Silent
+                        | FailPolicy::Log
+                        | FailPolicy::Escalate
+                        | FailPolicy::Crash => {}
+                    }
+                }
+            }
+        }
+    }
     fn stmts(&self, stmts: &[Spanned<Stmt>], file: &str, diagnostics: &mut Vec<Diagnostic>) {
         self.stmts_with(stmts, &mut HashMap::new(), file, diagnostics);
     }
@@ -180,6 +234,10 @@ impl Index {
         }
     }
 
+    /// Walk every expression a statement owns. The match is exhaustive on
+    /// purpose: a new statement kind with an expression field cannot be added
+    /// without a compile error here, so no template can hide in a discarded
+    /// field (`{!expr}` in one would slip past E163).
     fn stmt(
         &self,
         stmt: &Spanned<Stmt>,
@@ -195,7 +253,15 @@ impl Index {
                 };
                 self.expr(expr, file, diagnostics);
             }
-            Stmt::Give(e, _) | Stmt::Say(e) | Stmt::ExprStmt(e) => self.expr(e, file, diagnostics),
+            Stmt::Give(e, metas) => {
+                self.expr(e, file, diagnostics);
+                // `give x with key: value` — metadata values are ordinary
+                // expressions, so `{!y}` there must be rejected as well.
+                for meta in metas {
+                    self.expr(&meta.node.value, file, diagnostics);
+                }
+            }
+            Stmt::Say(e) | Stmt::ExprStmt(e) => self.expr(e, file, diagnostics),
             Stmt::MemoryUpdate(_, index, value) => {
                 if let Some(i) = index {
                     self.expr(i, file, diagnostics);
@@ -232,19 +298,6 @@ impl Index {
                     self.stmt(&arm.node.body, &mut inner, file, diagnostics);
                 }
             }
-            _ => self.stmt_rest(stmt, bindings, file, diagnostics),
-        }
-    }
-
-    /// Statement forms that only nest or forward expressions.
-    fn stmt_rest(
-        &self,
-        stmt: &Spanned<Stmt>,
-        bindings: &HashMap<String, Values>,
-        file: &str,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        match &stmt.node {
             Stmt::IfElse(ie) => {
                 self.expr(&ie.condition, file, diagnostics);
                 let mut then_b = bindings.clone();
@@ -308,7 +361,9 @@ impl Index {
                     }
                 }
             }
-            _ => {}
+            // Plain names with no expression slot: `escalate to x`,
+            // `transition to x`, `reset x`.
+            Stmt::Escalate(_) | Stmt::TransitionTo(_) | Stmt::ResetTimer(_) => {}
         }
     }
 
@@ -337,11 +392,18 @@ impl Index {
 
     fn walk_expr(&self, expr: &Spanned<Expr>, file: &str, diagnostics: &mut Vec<Diagnostic>) {
         match &expr.node {
-            Expr::NumberLit(_) | Expr::BoolLit(_) | Expr::Ident(_) | Expr::TypeAccess(_, _) => {}
+            Expr::NumberLit(_) | Expr::BoolLit(_) | Expr::Ident(_) => {}
+            Expr::TypeAccess(type_name, _) => push_removed_type(type_name, file, diagnostics),
             Expr::Template(parts) => {
                 for part in parts {
-                    if let TemplatePart::Interp(e) | TemplatePart::RawInterp(e) = &part.node {
-                        self.expr(e, file, diagnostics);
+                    match &part.node {
+                        TemplatePart::Interp(e) => self.expr(e, file, diagnostics),
+                        TemplatePart::RawInterp(e) => {
+                            diagnostics.push(raw_interp_removed(&part.span, file));
+                            // Keep walking so nested problems still surface.
+                            self.expr(e, file, diagnostics);
+                        }
+                        TemplatePart::Text(_) => {}
                     }
                 }
             }
@@ -351,6 +413,7 @@ impl Index {
                 }
             }
             Expr::Constructor(c) => {
+                push_removed_type(&c.type_name, file, diagnostics);
                 for arg in &c.args {
                     self.expr(&arg.node.value, file, diagnostics);
                 }
@@ -549,6 +612,117 @@ fn literal_text(expr: &Spanned<Expr>) -> Option<String> {
         }
     }
     Some(text)
+}
+
+// ── Removed surfaces (#485) ─────────────────────────────────────
+
+/// E164 — the removed `Html` type in any declaration type slot. `Html` now
+/// parses as a custom type name, so it has to be rejected by name.
+fn removed_types(program: &Program, file: &str) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    for item in &program.items {
+        match &item.node {
+            TopLevel::Task(d) => {
+                removed_params(&d.needs, file, &mut diagnostics);
+                removed_output(&d.gives, file, &mut diagnostics);
+            }
+            TopLevel::Pure(d) => {
+                removed_params(&d.needs, file, &mut diagnostics);
+                removed_output(&d.gives, file, &mut diagnostics);
+            }
+            TopLevel::Endpoint(d) => {
+                removed_params(&d.params, file, &mut diagnostics);
+                removed_output(&d.return_type, file, &mut diagnostics);
+            }
+            TopLevel::Flow(d) => {
+                removed_params(&d.needs, file, &mut diagnostics);
+                removed_output(&d.gives, file, &mut diagnostics);
+            }
+            TopLevel::Event(d) => removed_fields(&d.fields, file, &mut diagnostics),
+            TopLevel::TypeDef(d) => removed_fields(&d.fields, file, &mut diagnostics),
+            TopLevel::Agent(d) => {
+                removed_fields(&d.memory, file, &mut diagnostics);
+                for handler in &d.handlers {
+                    removed_params(&handler.node.params, file, &mut diagnostics);
+                    if let Some(payload) = &handler.node.payload_type {
+                        push_removed_type(payload, file, &mut diagnostics);
+                    }
+                }
+            }
+            TopLevel::Contract(d) => {
+                for method in &d.methods {
+                    removed_params(&method.node.params, file, &mut diagnostics);
+                    push_removed_type(&method.node.return_type, file, &mut diagnostics);
+                }
+            }
+            // No `TypeName` slots: `use` paths, pool worker names, warden
+            // symbol names, system bindings, states transitions, `fn main`
+            // and import layers are all plain strings.
+            TopLevel::Use(_)
+            | TopLevel::Pool(_)
+            | TopLevel::Warden(_)
+            | TopLevel::System(_)
+            | TopLevel::States(_)
+            | TopLevel::FnMain(_)
+            | TopLevel::Import(_) => {}
+        }
+    }
+    diagnostics
+}
+
+fn removed_params(params: &[Spanned<Param>], file: &str, out: &mut Vec<Diagnostic>) {
+    for param in params {
+        push_removed_type(&param.node.type_name, file, out);
+    }
+}
+
+fn removed_fields(fields: &[Spanned<FieldDef>], file: &str, out: &mut Vec<Diagnostic>) {
+    for field in fields {
+        push_removed_type(&field.node.type_name, file, out);
+    }
+}
+
+fn removed_output(output: &Option<Spanned<OutputType>>, file: &str, out: &mut Vec<Diagnostic>) {
+    if let Some(output) = output {
+        for ty in &output.node.types {
+            push_removed_type(ty, file, out);
+        }
+    }
+}
+
+fn push_removed_type(ty: &Spanned<TypeName>, file: &str, out: &mut Vec<Diagnostic>) {
+    if let Some((name, help)) = removed_type_name(&ty.node) {
+        out.push(
+            Diagnostic::error(
+                "E164",
+                file,
+                format!("unknown type `{name}`"),
+                ty.span.start..ty.span.end,
+                "this type is no longer part of the language",
+            )
+            .with_help(help),
+        );
+    }
+}
+
+fn removed_type_name(ty: &TypeName) -> Option<(&'static str, &'static str)> {
+    match ty {
+        TypeName::Custom(name) => REMOVED_TYPES.iter().copied().find(|(n, _)| n == name),
+        TypeName::Array(inner, _) => removed_type_name(inner),
+        _ => None,
+    }
+}
+
+/// E163 — `{!expr}` stayed in the grammar so it cannot silently parse as the
+/// negation `{ !expr }`, but it is no longer part of the language.
+fn raw_interp_removed(span: &Span, file: &str) -> Diagnostic {
+    Diagnostic::error(
+        "E163",
+        file,
+        "`{!expr}` raw interpolation was removed in v0.3 with the Html type; use `{expr}` (see CHANGELOG, #485)",
+        span.start..span.end,
+        "raw interpolation only existed to skip the Html auto-escaping",
+    )
 }
 
 // ── Diagnostics ─────────────────────────────────────────────────
@@ -949,6 +1123,188 @@ fn main
             "{:?}",
             ds[0].message
         );
+    }
+
+    // ── E163/E164 — surfaces removed in v0.3 (#485) ─────────────
+
+    #[test]
+    fn resolution_rejects_removed_raw_interpolation() {
+        let src = "fn main\n  name = \"world\"\n  say \"hello {!name}\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E163"], "{ds:?}");
+        assert_eq!(
+            ds[0].message,
+            "`{!expr}` raw interpolation was removed in v0.3 with the Html type; use `{expr}` (see CHANGELOG, #485)"
+        );
+        // The span covers the whole `{!name}`, not just the inner expression.
+        assert_eq!(&src[ds[0].span.start..ds[0].span.end], "{!name}");
+    }
+
+    #[test]
+    fn resolution_still_walks_the_raw_interpolation_expression() {
+        let src = "fn main\n  say \"{!judge(1)}\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E163", "E160"], "{ds:?}");
+    }
+
+    #[test]
+    fn resolution_rejects_the_removed_html_type() {
+        let src = "endpoint status() -> Html\n  give \"hi\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E164"], "{ds:?}");
+        assert_eq!(ds[0].message, "unknown type `Html`");
+        assert_eq!(
+            ds[0].help.as_deref(),
+            Some("the `Html` type was removed in v0.3: endpoints return `Text` (see CHANGELOG, #485)")
+        );
+    }
+
+    #[test]
+    fn resolution_rejects_the_removed_html_type_in_every_type_slot() {
+        // Parameter, field, handler payload, contract return and the array
+        // form all parse `Html` as a custom type name now.
+        let cases = [
+            "task t\n  needs doc: Html\n  gives Text\n  do\n    give \"x\"\n",
+            "type Page\n  body: Html\n",
+            "agent a\n  on ping(p: Html)\n    say \"x\"\n",
+            "contract api\n  can fetch(x: Text) -> Html\n",
+            "pure p\n  gives Html[]\n  do\n    give \"x\"\n",
+            "flow f\n  needs doc: Html\n  gives Text\n  stage s\n    give doc\n",
+        ];
+        for src in cases {
+            assert_eq!(codes(src), vec!["E164"], "{src}");
+        }
+    }
+
+    #[test]
+    fn resolution_rejects_the_removed_html_type_in_a_flow() {
+        // #485 review: `flow` needs/gives were skipped by `removed_types`.
+        let src = "flow f\n  needs doc: Html\n  gives Text\n  stage s\n    give doc\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E164"], "{ds:?}");
+        assert_eq!(ds[0].message, "unknown type `Html`");
+    }
+
+    #[test]
+    fn resolution_rejects_raw_interpolation_in_a_schedule_prompt() {
+        // #485 review: a schedule prompt lives on the declaration, not in a
+        // statement body, so E163 used to miss it — and the wake service then
+        // dropped the raw part silently.
+        let src = "agent a\n  schedule heartbeat\n    when: every 6h\n    mode: spawn\n    prompt: \"hello {!x}\"\n  on start\n    say \"hi\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E163"], "{ds:?}");
+        assert_eq!(
+            ds[0].message,
+            "`{!expr}` raw interpolation was removed in v0.3 with the Html type; use `{expr}` (see CHANGELOG, #485)"
+        );
+    }
+
+    #[test]
+    fn resolution_rejects_raw_interpolation_in_knowledge_paths_and_filters() {
+        // The other declaration-level template slots.
+        let cases = [
+            "agent a\n  knowledge store: \"./kb/{!x}\"\n  on start\n    say \"hi\"\n",
+            "agent a\n  subscribe e2 where \"{!x}\"\n  on e\n    say \"hi\"\n",
+            "agent a\n  on e\n    requires \"{!x}\"\n    say \"hi\"\n",
+        ];
+        for src in cases {
+            assert_eq!(codes(src), vec!["E163"], "{src}");
+        }
+    }
+
+    #[test]
+    fn resolution_rejects_raw_interpolation_in_give_metadata() {
+        // #485 review: `Stmt::Give(e, _)` dropped the `with key: value`
+        // metadata, so `{!y}` there was accepted.
+        let src = "fn main\n  give \"x\" with tag: \"{!y}\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E163"], "{ds:?}");
+        assert_eq!(&src[ds[0].span.start..ds[0].span.end], "{!y}");
+    }
+
+    #[test]
+    fn resolution_rejects_raw_interpolation_in_every_statement_slot() {
+        // Every statement field that holds an expression, so no template can
+        // hide behind a discarded field.
+        let cases = [
+            ("bind", "fn main\n  x = \"{!y}\"\n"),
+            ("say", "fn main\n  say \"{!y}\"\n"),
+            ("bare expression", "fn main\n  \"{!y}\"\n"),
+            ("give", "fn main\n  give \"{!y}\"\n"),
+            ("give metadata", "fn main\n  give \"x\" with tag: \"{!y}\"\n"),
+            ("emit argument", "fn main\n  emit Ping(payload: \"{!y}\")\n"),
+            (
+                "memory update value",
+                "agent a\n  memory\n    f: Text\n  on start\n    memory.f = \"{!y}\"\n",
+            ),
+            (
+                "memory update index",
+                "agent a\n  memory\n    f: Text\n  on start\n    memory.f[\"{!y}\"] = \"x\"\n",
+            ),
+            ("forward", "fn main\n  forward \"{!y}\" to out\n"),
+            ("learn", "fn main\n  learn \"{!y}\"\n"),
+            ("learn category", "fn main\n  learn \"fact\" category: \"{!y}\"\n"),
+            (
+                "spawn alias",
+                "agent w\n  on start\n    say \"hi\"\n\nagent a\n  on start\n    spawn w as \"{!y}\"\n",
+            ),
+            (
+                "spawn confidence cap",
+                "agent w\n  on start\n    say \"hi\"\n\nagent a\n  on start\n    spawn w\n      with confidence_cap: \"{!y}\"\n",
+            ),
+            (
+                "spawn memory init",
+                "agent w\n  on start\n    say \"hi\"\n\nagent a\n  on start\n    spawn w\n      with memory topic: \"{!y}\"\n",
+            ),
+            (
+                "spawn isolate branch",
+                "agent w\n  on start\n    say \"hi\"\n\nagent a\n  on start\n    spawn w\n      isolate worktree \"{!y}\"\n",
+            ),
+            ("retire target", "fn main\n  retire \"{!y}\"\n"),
+            (
+                "retire knowledge export",
+                "task cleanup\n  do\n    retire\n      with knowledge export: \"{!y}\"\n",
+            ),
+            ("start timer context", "fn main\n  start beat for \"{!y}\"\n"),
+            ("cancel timer context", "fn main\n  cancel beat for \"{!y}\"\n"),
+            (
+                "match subject",
+                "task t\n  gives Text\n  do\n    match \"{!y}\"\n      _ -> give \"x\"\n",
+            ),
+            (
+                "for iterable",
+                "task t\n  gives Text\n  do\n    for x in \"{!y}\"\n      give x\n",
+            ),
+            (
+                "if condition",
+                "task t\n  gives Text\n  do\n    if \"{!y}\"\n      give \"x\"\n    give \"y\"\n",
+            ),
+            (
+                "requires on fail give",
+                "agent a\n  on e\n    requires true on fail: give \"{!y}\"\n    say \"hi\"\n",
+            ),
+        ];
+        for (name, src) in cases {
+            let program = crate::parser::parse(src)
+                .unwrap_or_else(|e| panic!("{name} failed to parse: {e}\n{src}"));
+            let ds = check(&program, "test.forge");
+            let got: Vec<&str> = ds.iter().map(|d| d.code).collect();
+            assert_eq!(got, vec!["E163"], "{name}: {src}");
+        }
+    }
+
+    #[test]
+    fn resolution_has_no_template_slot_in_plain_name_statements() {
+        // `escalate`, `transition` and `reset` carry only plain names; their
+        // arms exist so the statement match stays exhaustive.
+        let src = "states Phase\n  idle -> idle\n\nagent a\n  lifecycle: Phase\n  on start\n    escalate to lead\n    transition to idle\n    reset beat\n";
+        assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
+    }
+
+    #[test]
+    fn resolution_leaves_a_text_return_alone() {
+        let src = "endpoint status() -> Text\n  give \"hi\"\n";
+        assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
     }
 
     #[test]

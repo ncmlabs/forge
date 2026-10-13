@@ -83,7 +83,7 @@ task greet_user
     say "The answer is {answer_value}"
 ```
 
-`{!expr}` is the raw-interpolation form for `Html` values (skips the autoescape that the regular `{expr}` form applies inside `Html` strings).
+Removed in v0.3 (#485): the `{!expr}` raw-interpolation form went away with the `Html` type and its auto-escaping. `{!x}` is still parsed but rejected by the checker (E163); use `{expr}`, which inserts the value verbatim.
 
 ### Escape Sequences
 
@@ -2542,15 +2542,17 @@ The `match` construct forces structural dispatch, which clears the taint on each
 
 Without this enforcement, an LLM hallucination could propagate silently through a program and be returned as authoritative output. By requiring explicit confidence dispatch, FORGE guarantees that every oracle result is acknowledged as uncertain before it can influence program output. This is a compile-time guarantee, not a runtime check.
 
-### Resolution Checks (E160–E162)
+### Resolution Checks (E160–E164)
 
-Dispatching on a name that cannot exist is the same silent-failure class: the code reads as if it works and never does. The resolution checker (`src/checker/resolution_checker.rs`) rejects the two shapes below.
+Dispatching on a name that cannot exist is the same silent-failure class: the code reads as if it works and never does. The resolution checker (`src/checker/resolution_checker.rs`) rejects the shapes below.
 
 | Code | Rule |
 |------|------|
 | `E160` | A plain call target that resolves to nothing: not a declared `task`/`pure`/`flow`/`pool`, not a runtime builtin (`winning_lines`) and not an uppercase type-constructor name. `fn main` is the program entry point, not a call target — `main()` is an `E160` |
 | `E161` | A constructor pattern that can never match the scrutinee, **when the scrutinee's value set is statically known** |
 | `E162` | The same, but the pattern differs from a known tag only in case — emitted instead of `E161` |
+| `E163` | Raw interpolation `{!expr}`, removed in v0.3 with the `Html` type (see "Templates"). Checked in every expression slot, including declaration-level ones such as `schedule` prompts, `knowledge store`, `subscribe ... where` and `requires` |
+| `E164` | The `Html` type name, removed in v0.3 with the `Html` type. `Html` parses as a custom type name, so it is rejected by name in every type slot of a declaration — `needs`/`gives` (including `flow`), params, payloads, fields, contract returns and arrays |
 
 The scrutinee's value set is known in exactly three cases: it is bound from `classify ... into [labels]` (the value set is the labels), it is bound from a call to a `pure`/`task` whose every `give` is a Text literal, or it is bound from a call to a declared type name (the value set is that record's `_type`). Anything else — a parameter, an oracle result, a field — is not flagged, so legitimate tag matching keeps working.
 
@@ -2806,7 +2808,7 @@ retire "specialist_FORGE"
 
 ## 21. Skills, Built-In Capabilities, and Project Manifests
 
-FORGE source declares capabilities with `use`. Built-ins include LLM operations, web/data/html/markdown helpers, command execution, and project skills.
+FORGE source declares capabilities with `use`. Built-ins include LLM operations, web/data helpers, command execution, and project skills.
 
 ```forge
 #! boundary: server
@@ -2815,7 +2817,6 @@ use
   llm.reason
   web.fetch
   data.store
-  markdown.render
   skill.repo_check
 ```
 
@@ -2826,8 +2827,6 @@ Built-in capability families:
 | LLM | `llm.reason`, `llm.classify` |
 | Web | `web.fetch`, `web.post` |
 | Data | `data.store`, `data.get`, `data.list`, `data.delete`, `data.embed`, `data.search` |
-| HTML | `html.layout`, `html.escape` |
-| Markdown | `markdown.render` |
 | Command | `command.status`, `command.output`, `command.cancel` |
 | Files | `file.read` (server-only) |
 | Structured Data | `toml.parse`, `json.parse` |
@@ -2836,10 +2835,7 @@ Built-in capability families:
 | Process | `proc.exit` |
 | Skills | `skill.<namespace>.<capability>(...)` |
 
-Removed in v0.3 (#485): the `asset()` helper and static file serving
-(`[server.static]`, `FORGE_STATIC_ROOT`) left core — serve assets from the app
-or a web server — and `forge serve --watch` hot reload went with them; run your
-own dev loop.
+Removed in v0.3 (#485): the HTML and Markdown families (`html.layout`, `html.escape`, `markdown.render`) are gone with the `Html` type — a `use` of any of them fails with E010 and a pointer to the CHANGELOG; return `Text` and build the markup yourself. In the same release the `asset()` helper and static file serving (`[server.static]`, `FORGE_STATIC_ROOT`) left core — serve assets from the app or a web server — and `forge serve --watch` hot reload went with them; run your own dev loop.
 
 `search "query"` is restricted to `#! boundary: server`.
 
@@ -2997,14 +2993,16 @@ All five built-ins are accepted in every boundary (`server`, `client`, `shared`)
 
 ---
 
-## 24. Templates and Raw Interpolation
+## 24. Templates
 
-Normal template interpolation uses `{expr}` and is escaped in HTML contexts. Raw interpolation uses `{!expr}` and skips HTML escaping. Use raw interpolation only for trusted or already-sanitized HTML.
+`{expr}` inserts a value into a template string. Nothing is escaped: the result is exactly what the expression renders.
+
+Removed in v0.3 (#485): raw interpolation `{!expr}` was removed with the `Html` type and its auto-escaping. `{!x}` still parses — so it cannot silently turn into the negation `{ !x }` — but the checker rejects it with E163. Write `{x}` instead. `html.layout`, `html.escape` and `markdown.render` are gone with the same removal; endpoints return `Text`.
 
 ```forge
-endpoint page() -> Html
-  body = markdown.render("# Hello")
-  give html.layout("Docs", "{!body}")
+endpoint page() -> Text
+  body = "# Hello"
+  give "<html><body>{body}</body></html>"
 ```
 
 ---

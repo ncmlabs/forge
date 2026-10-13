@@ -361,7 +361,7 @@ impl ForgeServer {
     }
 }
 
-/// Print endpoint list (reused by banner and reload logging).
+/// Print the endpoint list in the startup banner.
 pub fn print_endpoint_list(endpoints: &HashMap<String, crate::ast::EndpointDecl>) {
     for (name, ep) in endpoints {
         let params: Vec<String> = ep
@@ -1689,7 +1689,6 @@ fn endpoint_result_to_response(result: EndpointResult) -> Response {
 
     let (value_inferred_ct, body) = match &result.value.value {
         Value::Text(s) => ("text/plain", s.clone()),
-        Value::Html(s) => ("text/html", s.clone()),
         Value::Number(n) => ("text/plain", n.to_string()),
         Value::Bool(b) => ("text/plain", b.to_string()),
         Value::Unit => return status_code.into_response(),
@@ -1760,7 +1759,7 @@ fn build_request_record(
 
 fn value_to_json(val: &ConfidentValue) -> serde_json::Value {
     match &val.value {
-        Value::Text(s) | Value::Html(s) => serde_json::Value::String(s.clone()),
+        Value::Text(s) => serde_json::Value::String(s.clone()),
         Value::Number(n) => serde_json::json!(n),
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Unit => serde_json::Value::Null,

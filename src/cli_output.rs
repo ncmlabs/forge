@@ -442,7 +442,7 @@ pub fn line_col(source: &str, offset: usize) -> (u32, u32) {
 pub fn value_json(v: &crate::runtime::confidence::Value) -> Value {
     use crate::runtime::confidence::Value as V;
     match v {
-        V::Text(s) | V::Html(s) => Value::String(s.clone()),
+        V::Text(s) => Value::String(s.clone()),
         V::Number(n) => serde_json::json!(n),
         V::Bool(b) => Value::Bool(*b),
         V::Unit => Value::Null,

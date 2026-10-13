@@ -161,7 +161,7 @@ template_text   = @{ (!("\"" | "{" | "\\") ~ ANY)+ }
 builtin_type = @{
     ( "Text" | "Number" | "Bool" | "Results" | "Report" | "Intent"
     | "Summary" | "Failure" | "Classification" | "Conversation"
-    | "Profile" | "SearchResults" | "Request" | "Response" | "Headers" | "Html"
+    | "Profile" | "SearchResults" | "Request" | "Response" | "Headers"
     | "AgentResult" )
     ~ !(ASCII_ALPHANUMERIC | "_")
 }
