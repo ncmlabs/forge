@@ -13,9 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plus one fixed fence instruction as the user turn — extracts the first fenced
   `.forge` block, checks it with `forge check --json`, repairs at most twice
   from the previous attempt's diagnostics array (the #471 loop shape), and
-  grades correctness with `forge test --expect` against the spec's recorded
-  fixture, which replays offline at zero cost. Every spec is reported: pass@1,
-  pass@3, attempts, correctness, tokens in/out per spec in
+  grades correctness by behaviour, not prompt text: the surviving program is
+  re-run with `--record` under the mock provider, its own prompts and call keys
+  are paired with the reference fixture's responses in call order, and that
+  grading fixture is replayed with `forge test --expect` at zero cost — so a
+  correct program scores correct whatever its prompts say, and a program with a
+  different call count is reported as `program made N model calls, the spec's
+  fixture has M`. Every spec is reported: pass@1, pass@3, attempts, correctness, tokens in/out per spec in
   `bench/results/<date>-<model>.json`, plus one markdown table on stdout.
   Endpoints and credentials come only from `BENCH_BASE_URL`, `BENCH_API_KEY`
   (optional) and `BENCH_MODEL`; tokens are the endpoint's own `usage` numbers
@@ -26,8 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still run, the results file is still written, and the run exits 0. A reply
   with no fenced block is recorded as `no .forge program in the reply` rather
   than being handed to `forge check`. `bench/run.sh --self-test` proves the loop
-  offline with three fake models (`BENCH_FAKE=reference`: pass@1 = pass@3 =
-  correct = 2/2 in one attempt each; `BENCH_FAKE=broken`: a parse error first,
+  offline with four fake models (`BENCH_FAKE=reference`: pass@1 = pass@3 =
+  correct = 2/2 in one attempt each; `BENCH_FAKE=reworded`: the same program
+  with different prompt wording, still correct 2/2, which is exactly what the
+  behaviour-based grading buys; `BENCH_FAKE=broken`: a parse error first,
   so pass@1 = 0, pass@3 = 2/2, two attempts; `BENCH_FAKE=httperr`: spec 01's
   calls fail, spec 02 still scores 1/1 in the same run), and
   `tests/bench_corpus_tests.rs` runs it with `cargo test`.

@@ -58,18 +58,24 @@ USAGE
 # `reference`: every reply is the spec's own reference. `broken`: the first
 # reply is the reference minus its first block-opening `do` (a parse error —
 # `gives` is optional, so deleting that line still checks clean), later replies
-# are the reference. `httperr`: spec 01's calls fail like a dead endpoint (curl
-# exit 7), every later spec answers with its reference — the transport failure
-# a live run must survive. Every reply is wrapped in a fence and returned as the
-# same OpenAI-compatible JSON a /v1 endpoint returns, so everything downstream —
-# usage accounting included — runs offline with no key and no cost.
+# are the reference. `reworded`: the reference with the first prompt's wording
+# changed — clean and behaviourally identical, but every fixture key (the prompt
+# hash) differs, which is what a real model does. `httperr`: spec 01's calls fail
+# like a dead endpoint (curl exit 7), every later spec answers with its reference
+# — the transport failure a live run must survive. Every reply is wrapped in a
+# fence and returned as the same OpenAI-compatible JSON a /v1 endpoint returns,
+# so everything downstream — usage accounting included — runs offline with no
+# key and no cost.
 fake_response() {  # $1 = request JSON, $2 = spec dir, $3 = attempt number
   local request="$1" dir="$2" attempt="$3" content fenced
   if [[ "$BENCH_FAKE" == httperr && "$dir" == *"/01-"* ]]; then
     echo "curl: (7) Failed to connect to the fake endpoint: Connection refused" >&2
     return 7
   fi
-  if [[ "$BENCH_FAKE" == broken && "$attempt" == 1 ]]; then
+  if [[ "$BENCH_FAKE" == reworded ]]; then
+    content="$(awk '!done && sub(/reason "/, "reason \"Please ") {done=1} {print}' \
+      "$dir/reference.forge")"
+  elif [[ "$BENCH_FAKE" == broken && "$attempt" == 1 ]]; then
     content="$(awk 'BEGIN{done=0} /^[[:space:]]*do[[:space:]]*$/ && !done {done=1; next} {print}' \
       "$dir/reference.forge")"
   else
@@ -130,17 +136,48 @@ check_diagnostics() {  # $1 = program file
 GRADE_CORRECT=false
 GRADE_REASON=""
 
-# `forge test --expect` replays the spec's recorded fixture beside the model's
-# program, offline and at zero cost: exit 0 is correct. A program that makes
-# calls the fixture lacks is a replay miss, recorded as incorrect with its
-# reason rather than retried.
+# Correctness is graded on behaviour, not on prompt text. A fixture is keyed by
+# the hash of the exact prompt a program sends (`src/llm/fixtures.rs`), so the
+# reference's answers only replay under the reference's own wording — any model
+# that words its prompt differently would be marked wrong for being right. So:
+# record the model program once against the mock provider to get *its* prompts in
+# call order, hand it the reference's responses in that same order (call 1 →
+# response 1), and replay that with `forge test --expect`. A program that makes a
+# different number of model calls is not correct: the spec's oracle calls are
+# part of the behaviour being measured.
 grade_correct() {  # $1 = spec dir, $2 = program file
-  local dir="$1" program="$2" out status
+  local dir="$1" program="$2"
+  local ref="$dir/reference.forge.fixtures.json"
+  local recorded="$program.recorded.json" grading="$program.grading.json"
+  local record_err="$program.record.err" out status have want err
   GRADE_CORRECT=false
   GRADE_REASON=""
-  cp "$dir/reference.forge.fixtures.json" "$program.fixtures.json"
+
+  status=0
+  FORGE_CONFIG="$MOCK_CONFIG" "${FORGE_CMD[@]}" run "$program" --record "$recorded" \
+    >/dev/null 2>"$record_err" || status=$?
+  have="$(jq '.calls | length' "$recorded" 2>/dev/null || true)"
+  want="$(jq '.calls | length' "$ref")"
+  if [[ -z "$have" ]]; then have=0; fi
+  if [[ "$have" != "$want" ]]; then
+    GRADE_REASON="program made $have model calls, the spec's fixture has $want"
+    err="$(cat "$record_err" 2>/dev/null || true)"
+    if [[ $status -ne 0 && -n "${err%%$'\n'*}" ]]; then
+      GRADE_REASON="$GRADE_REASON (record run: ${err%%$'\n'*})"
+    fi
+    GRADE_REASON="${GRADE_REASON:0:300}"
+    return 0
+  fi
+
+  # The model's keys and prompt previews, the reference's answers by position.
+  jq -n --slurpfile model "$recorded" --slurpfile ref "$ref" \
+    '{version: 1,
+      calls: [range(0; ($model[0].calls | length)) as $i
+              | $model[0].calls[$i] + {response: $ref[0].calls[$i].response}]}' >"$grading"
+
+  status=0
   out="$(FORGE_CONFIG="$MOCK_CONFIG" "${FORGE_CMD[@]}" test "$program" \
-    --expect "$dir/expected.txt" --json 2>/dev/null)" && status=0 || status=$?
+    --fixtures "$grading" --expect "$dir/expected.txt" --json 2>/dev/null)" && status=0 || status=$?
   if [[ $status -eq 0 ]]; then
     GRADE_CORRECT=true
     return 0
@@ -296,6 +333,7 @@ expect_fake() {  # $1 = fake mode, $2 = pass@1 rate, $3 = pass@3 rate, $4 = atte
 
 self_test() {
   expect_fake reference 1 1 1
+  expect_fake reworded 1 1 1
   expect_fake broken 0 1 2
   expect_fake_httperr
 }
