@@ -15,7 +15,7 @@ use crate::diagnostic::Diagnostic;
 
 /// Bare `Call` targets the runtime dispatches itself — see `Expr::Call` in
 /// `src/runtime/executor.rs`.
-pub const BUILTIN_CALLS: &[&str] = &["asset", "winning_lines"];
+pub const BUILTIN_CALLS: &[&str] = &["winning_lines"];
 
 /// Built-in type names (grammar `builtin_type`) a pattern may legitimately name.
 pub const BUILTIN_TYPES: &[&str] = &[
@@ -560,11 +560,17 @@ const PROJECT_HINT: &str = "if it is declared in another file of this project, c
 fn undefined_call(name: &Spanned<String>, index: &Index, file: &str) -> Diagnostic {
     let target = &name.node;
     let closest = closest_name(target, index.callable.iter());
-    let mut help = match &closest {
-        Some(closest) => format!("did you mean `{closest}`?"),
-        None => format!("declare a task or pure named `{target}`"),
+    // #485 — `asset()` left core with static file serving in v0.3; a stale
+    // call site gets a pointer instead of a dead end.
+    let mut help = if target == "asset" {
+        "`asset()` was removed in v0.3 with static file serving (see CHANGELOG, #485)".to_string()
+    } else {
+        match &closest {
+            Some(closest) => format!("did you mean `{closest}`?"),
+            None => format!("declare a task or pure named `{target}`"),
+        }
     };
-    if index.composed || closest.is_none() {
+    if target != "asset" && (index.composed || closest.is_none()) {
         help.push(' ');
         help.push_str(PROJECT_HINT);
     }
@@ -699,6 +705,20 @@ mod tests {
     }
 
     #[test]
+    fn resolution_asset_call_points_at_the_v0_3_removal() {
+        // #485 — `asset()` left core with static file serving, so the help
+        // points at the changelog instead of the closest declared name.
+        let src = "fn main\n  say asset(\"logo.png\")\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E160"], "{ds:?}");
+        assert!(ds[0].message.contains("`asset`"), "{:?}", ds[0].message);
+        assert_eq!(
+            ds[0].help.as_deref(),
+            Some("`asset()` was removed in v0.3 with static file serving (see CHANGELOG, #485)")
+        );
+    }
+
+    #[test]
     fn resolution_help_points_at_merge_for_multi_file_projects() {
         // The dev-cycle workflow in ncmlabs/forge-clone-dev calls
         // `repo_config_for`, declared in a sibling manifest source:
@@ -761,7 +781,6 @@ fn main
   say p("x")
   say f("x")
   say Rec("id")
-  say asset("logo.png")
   say winning_lines([1, 2, 3])
 "#;
         assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
@@ -790,12 +809,13 @@ fn main
 
     #[test]
     fn resolution_suggestion_prefers_a_declared_name_over_a_builtin() {
-        // `assed` is one edit from the builtin `asset` and from the declared
-        // `asses`: the declaration wins.
-        let src = "task asses\n  gives Text\n  do\n    give \"a\"\n\nfn main\n  say assed()\n";
+        // `winning_line` is one edit from the declared `winning_lane` and one
+        // from the builtin `winning_lines`: the declaration wins.
+        let src =
+            "task winning_lane\n  gives Text\n  do\n    give \"a\"\n\nfn main\n  say winning_line()\n";
         let ds = diags(src);
         assert_eq!(codes(src), vec!["E160"], "{ds:?}");
-        assert_eq!(ds[0].help.as_deref(), Some("did you mean `asses`?"));
+        assert_eq!(ds[0].help.as_deref(), Some("did you mean `winning_lane`?"));
 
         // Builtins still get suggested when nothing declared is closer.
         let src = "fn main\n  say winning_line([1, 2])\n";

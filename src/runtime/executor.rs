@@ -2973,23 +2973,6 @@ impl TaskExecutor {
                             .unwrap_or_else(|| "default".to_string());
                         let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
                         pool.send(&event, payload).await
-                    } else if name == "asset" {
-                        // Static file serving left core in v0.3 (#485): the
-                        // config-driven prefix is gone, so `asset()` keeps its
-                        // default for this commit — the dispatch goes next.
-                        let path = arg_vals
-                            .first()
-                            .map(|v| format!("{}", v.value))
-                            .unwrap_or_default();
-                        let prefix = "/static";
-                        let path = if path.starts_with('/') {
-                            path
-                        } else {
-                            format!("/{path}")
-                        };
-                        Ok(ConfidentValue::deterministic(Value::Text(format!(
-                            "{prefix}{path}"
-                        ))))
                     } else if name.starts_with(|c: char| c.is_uppercase()) {
                         // Uppercase names not in task/pure/flow/pool maps are type constructors
                         let mut fields = HashMap::new();
