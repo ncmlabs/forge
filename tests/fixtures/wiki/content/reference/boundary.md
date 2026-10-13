@@ -22,7 +22,7 @@ Boundaries enforce architectural isolation at compile time. Server-only code (en
 ```forge
 #! boundary: server
 
-endpoint admin_panel() -> Html
+endpoint admin_panel() -> Text
   give "<h1>Admin</h1>"
 ```
 

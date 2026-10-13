@@ -361,7 +361,7 @@ impl ForgeServer {
     }
 }
 
-/// Print endpoint list (reused by banner and reload logging).
+/// Print the endpoint list in the startup banner.
 pub fn print_endpoint_list(endpoints: &HashMap<String, crate::ast::EndpointDecl>) {
     for (name, ep) in endpoints {
         let params: Vec<String> = ep
