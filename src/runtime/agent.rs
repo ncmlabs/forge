@@ -295,6 +295,10 @@ pub struct AgentProcess {
     /// Parent's `say` output buffer to share, when spawned inline from
     /// `fn main` (#437) — makes the parent's `outputs()` see child output.
     shared_output: Option<Arc<Mutex<Vec<String>>>>,
+    /// System start gate (#545): `run()` holds `on start` until this flips to
+    /// `true`, so no start handler can publish before every agent subscribed.
+    /// `None` — a standalone or runtime-spawned agent — never waits.
+    start_gate: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl AgentProcess {
@@ -457,6 +461,7 @@ impl AgentProcess {
             storage,
             worktree_branch: None,
             shared_output: None,
+            start_gate: None,
         }
     }
 
@@ -787,6 +792,17 @@ impl AgentProcess {
 
     // ── EventBus integration (issue #19) ──────────────────────────────────
 
+    /// Hold `on start` until the system's start gate opens (#545).
+    ///
+    /// A `system` subscribes every agent before any `on start` runs, so an
+    /// emit from a start handler cannot outrun a later binding. The gate
+    /// receiver stays usable across restarts: once the flag is `true` — or the
+    /// sender is dropped — later `run()` calls proceed without waiting.
+    pub fn with_start_gate(mut self, gate: tokio::sync::watch::Receiver<bool>) -> Self {
+        self.start_gate = Some(gate);
+        self
+    }
+
     /// Attach an event bus and register all declared subscriptions.
     ///
     /// Each declared `schedule` also gets an implicit bus subscription on its
@@ -852,6 +868,16 @@ impl AgentProcess {
     /// events, dispatch to handlers, and drain emitted events back through the bus.
     /// Returns when all event channels are closed.
     pub async fn run(&mut self) -> Result<(), RuntimeError> {
+        // Two-phase startup (#545): wait for the system to finish subscribing
+        // every agent before `on start` dispatches. `wait_for` returns at once
+        // when the flag already reads `true`, so a warden restart after the
+        // gate opened — and any agent without a gate — never waits. A dropped
+        // sender means no one will open the gate; treat it as open rather than
+        // hanging the agent.
+        if let Some(gate) = self.start_gate.as_mut() {
+            let _ = gate.wait_for(|open| *open).await;
+        }
+
         // Emit AgentStarted lifecycle event (issue #255)
         if let Some(t) = self.executor.tracer() {
             t.agent_started(&self.decl.name.node, std::process::id());

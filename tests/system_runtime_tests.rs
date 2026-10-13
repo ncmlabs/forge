@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use forge::ast::{Program, SystemDecl, TopLevel};
 use forge::config::SystemConfig;
@@ -215,6 +216,89 @@ async fn system_spawns_agents_and_exits_cleanly() {
     // Agents will spawn and exit quickly (mock provider, no events to process)
     let result = runtime.start().await;
     assert!(result.is_ok(), "system start failed: {:?}", result);
+}
+
+// ── Start gate Tests (#545) ──────────────────────────────────────────────────
+
+/// Build a system where `starter` (which emits `Kickoff` from `on start`) is
+/// bound first and `worker` (the only subscriber) last, with `fillers` agents
+/// in between.
+fn start_gate_source(fillers: usize) -> String {
+    let mut src = String::from(
+        "event Kickoff\n  topic: Text\n\nagent starter\n  on start()\n    emit Kickoff(topic: \"go\")\n\n",
+    );
+    for i in 0..fillers {
+        src.push_str(&format!(
+            "agent filler_{i}\n  on start()\n    say \"filler {i}\"\n\n"
+        ));
+    }
+    src.push_str("agent worker\n  subscribe Kickoff\n\n  on Kickoff(topic: Text)\n    say \"worker handled the kickoff\"\n\nsystem chain\n  use\n    starter: starter\n");
+    for i in 0..fillers {
+        src.push_str(&format!("    filler_{i}: filler_{i}\n"));
+    }
+    src.push_str("    worker: worker\n");
+    src
+}
+
+/// A system subscribes every agent before any `on start` runs, so an earlier
+/// agent's start emit reaches a later binding (#545). Multi-threaded on
+/// purpose: the bug was a scheduling race, invisible on a single thread.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_gate_subscribes_every_agent_before_on_start() {
+    const FILLERS: usize = 5;
+    use forge::tracer::Tracer;
+
+    // `worker`'s subscription keeps its bus channel open, so the system never
+    // runs out of agents and `start()` cannot return on its own. Run it in the
+    // background and watch the trace instead.
+    for round in 0..20 {
+        let src = start_gate_source(FILLERS);
+        let (system_decl, program) = parse_system(&src);
+        let providers = mock_providers();
+        let tracer = Tracer::with_capture();
+
+        let runtime = SystemRuntime::new(
+            &system_decl,
+            &program,
+            providers,
+            Some(tracer.clone()),
+            None,
+        )
+        .unwrap();
+        let system = tokio::spawn(async move { runtime.start().await });
+
+        // Worker's handler is what the race swallowed. Wait for it, so the
+        // assertions below read a settled trace.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && !worker_handled(&tracer) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        system.abort();
+
+        let log = tracer.captured_log();
+        // The publish counts its deliveries: zero means `on start` outran the
+        // subscriber's binding, which is the bug.
+        let kickoff: Vec<u64> = log
+            .iter()
+            .filter(|(name, v)| name == "event_emit" && v["event"] == "Kickoff")
+            .map(|(_, v)| v["subscribers"].as_u64().unwrap_or(0))
+            .collect();
+        assert!(
+            !kickoff.is_empty() && kickoff.iter().all(|n| *n >= 1),
+            "round {round}: starter's `on start` emit reached {kickoff:?} subscriber(s)"
+        );
+        assert!(
+            worker_handled(&tracer),
+            "round {round}: worker's Kickoff handler never ran"
+        );
+    }
+}
+
+fn worker_handled(tracer: &forge::tracer::Tracer) -> bool {
+    tracer
+        .captured_log()
+        .iter()
+        .any(|(name, v)| name == "say" && v["text"] == "worker handled the kickoff")
 }
 
 // ── Warden Integration Tests ─────────────────────────────────────────────────
