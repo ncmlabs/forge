@@ -1585,7 +1585,7 @@ endpoint page() -> Text
     CodeInfo {
         code: "E165",
         title: "emit outside an agent",
-        explain: r#"`emit` publishes to the system event bus, which only exists inside an agent handler or an endpoint. `fn main` has neither, so the statement can only fail at runtime.
+        explain: r#"`emit` publishes to the system event bus, which only exists inside an agent handler or an endpoint. `fn main` has neither, so the statement can only fail at runtime. An `on start` handler starts a chain when the program runs.
 
 Wrong:
 fn main

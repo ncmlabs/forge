@@ -1392,7 +1392,7 @@ Event names must start with an uppercase letter. Each field occupies its own lin
 
 ### Emitting Events
 
-Events are emitted from agent handlers and endpoints using the `emit` statement with named arguments. `emit` written in `fn main` is error `E165`: there is no event bus there. An `on start` handler emits while a `system` is still bringing agents up, so its event only reaches agents already subscribed when the handler runs.
+Events are emitted from agent handlers and endpoints using the `emit` statement with named arguments. `emit` written in `fn main` is error `E165`: there is no event bus there. An `on start` handler starts a chain when the program runs: the system subscribes every agent before any start handler dispatches.
 
 ```
 emit <EventName>(<field>: <expr>, <field>: <expr>)

@@ -275,6 +275,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the CHANGELOG; return `Text` and build the markup in the program.
 
 ### Fixed
+- A system subscribes every agent before any `on start` runs (#545): `run()`
+  waits on a start gate that `System::start` opens once all supervised and
+  unsupervised agents are spawned, so an `on start` emit reaches a subscriber
+  bound later in the `system` instead of racing it to zero subscribers.
 - A `system` exited while agents spawned at runtime were still running (#546):
   a `spawn` from inside an agent handler is fire-and-forget, and the run waited
   only for the agents bound in the system, so a child was torn down mid-call —

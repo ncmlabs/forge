@@ -80,6 +80,10 @@ pub struct WardedRuntime {
     pub degraded_agents: HashSet<String>,
     /// Shared snapshot handle updated on state changes (for introspection).
     shared_snapshots: Option<SharedWardenSnapshots>,
+    /// System start gate (#545): handed to each spawned agent so `on start`
+    /// waits until the system has subscribed everyone. `None` — a warden used
+    /// on its own — never waits.
+    start_gate: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl WardedRuntime {
@@ -152,6 +156,7 @@ impl WardedRuntime {
             degraded_agents: HashSet::new(),
             storage: None,
             shared_snapshots: None,
+            start_gate: None,
         }
     }
 
@@ -221,6 +226,7 @@ impl WardedRuntime {
             degraded_agents: HashSet::new(),
             storage: None,
             shared_snapshots: None,
+            start_gate: None,
         }
     }
 
@@ -263,6 +269,12 @@ impl WardedRuntime {
     /// Inject shared storage so agents can use data.store/data.get.
     pub fn set_storage(&mut self, storage: crate::runtime::storage::SharedStorage) {
         self.storage = Some(storage);
+    }
+
+    /// Hand the system start gate to every agent spawned from here (#545).
+    /// Call before `spawn_all`.
+    pub fn set_start_gate(&mut self, gate: tokio::sync::watch::Receiver<bool>) {
+        self.start_gate = Some(gate);
     }
 
     /// Build a read-only snapshot of current warden state.
@@ -344,6 +356,10 @@ impl WardedRuntime {
         // Attach skill executor if available (#276)
         if let Some(ref se) = blueprint.skill_executor {
             process = process.with_skill_executor(se.clone());
+        }
+
+        if let Some(ref gate) = self.start_gate {
+            process = process.with_start_gate(gate.clone());
         }
 
         process = process.with_event_bus(self.event_bus.clone()).await;

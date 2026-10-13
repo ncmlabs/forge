@@ -476,7 +476,11 @@ impl SystemRuntime {
     }
 
     /// Spawn an unsupervised agent by alias.
-    async fn spawn_unsupervised(&mut self, alias: &str) -> Result<(), RuntimeError> {
+    async fn spawn_unsupervised(
+        &mut self,
+        alias: &str,
+        start_gate: &tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), RuntimeError> {
         let blueprint = self.blueprints.get(alias).ok_or_else(|| {
             RuntimeError::Unsupported(format!("no blueprint for alias '{}'", alias))
         })?;
@@ -508,6 +512,7 @@ impl SystemRuntime {
             process = process.with_skill_executor(se.clone());
         }
 
+        process = process.with_start_gate(start_gate.clone());
         process = process.with_event_bus(self.event_bus.clone()).await;
 
         let context_ref = process.context().clone();
@@ -537,16 +542,27 @@ impl SystemRuntime {
         // Set up event routing from wiring chains
         self.setup_routing().await?;
 
+        // Two-phase startup (#545): every agent subscribes first (both spawn
+        // paths register subscriptions before `tokio::spawn`), and only then
+        // does `on start` run — so a start emit reaches the whole system
+        // regardless of binding order.
+        let (start_gate_tx, start_gate_rx) = tokio::sync::watch::channel(false);
+
         // Spawn supervised agents via warded runtimes
         for warded in &mut self.warded_runtimes {
+            warded.set_start_gate(start_gate_rx.clone());
             warded.spawn_all().await?;
         }
 
         // Spawn unsupervised agents
         let unsupervised_aliases: Vec<String> = self.unsupervised_blueprints.clone();
         for alias in &unsupervised_aliases {
-            self.spawn_unsupervised(alias).await?;
+            self.spawn_unsupervised(alias, &start_gate_rx).await?;
         }
+
+        // All subscriptions exist: open the gate. The sender lives until
+        // `start()` returns, so a warden restart never blocks on a closed gate.
+        let _ = start_gate_tx.send(true);
 
         let total_agents = self.bindings.len(); // all bound agents were spawned
         eprintln!(

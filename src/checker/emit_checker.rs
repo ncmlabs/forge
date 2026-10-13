@@ -11,10 +11,9 @@ use crate::ast::*;
 use crate::diagnostic::Diagnostic;
 
 /// How to place an emit that works (#532). Verified against a `system` run:
-/// a subscriber bound before the emitting agent receives the event, one bound
-/// after does not — `on start` runs while later agents are still being bound,
-/// so such an emit is published to zero subscribers.
-const HELP: &str = "emit from an agent's `on` handler or from an endpoint; an `on start` emit only reaches agents already subscribed when it runs";
+/// the system subscribes every agent before any `on start` runs (#545), so a
+/// start handler's emit reaches the whole system — it starts a chain.
+const HELP: &str = "emit from an agent's `on` handler or from an endpoint; an `on start` handler starts a chain when the program runs";
 
 /// Run the emit checker over the program: `emit` in `fn main` is E165.
 pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
