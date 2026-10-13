@@ -1,6 +1,5 @@
 // FORGE HTTP server runtime
 // Dispatches HTTP requests to endpoint declarations. See issue #43.
-// Hot-reload support via SwappableExecutor. See issue #47.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -36,18 +35,16 @@ use crate::runtime::warded::SharedWardenSnapshots;
 use crate::runtime::webhook_driver::WebhookDriver;
 use crate::runtime::webhook_rate_limiter::WebhookRateLimiter;
 
-// ── Swappable executor for hot-reload ───────────────────────────────────────
+// ── Shared server state ─────────────────────────────────────────────────────
 
-/// Shared executor state that can be hot-swapped by the file watcher.
-/// Handlers clone the executor out under a brief read lock, then release it.
+/// Shared executor state. Handlers clone the executor out under a brief read
+/// lock, then release it.
 pub type SwappableExecutor = Arc<RwLock<TaskExecutor>>;
 
 /// Combined server state shared with axum handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub executor: SwappableExecutor,
-    /// Broadcast channel for SSE reload notifications (only in watch mode).
-    pub reload_tx: Option<broadcast::Sender<()>>,
     /// Broadcast channel for live trace events (SSE).
     pub events_tx: Option<broadcast::Sender<String>>,
     /// Shared event bus for webhook → agent event delivery.
@@ -82,12 +79,6 @@ pub struct AppState {
     pub webhook_rate_limiter: Arc<WebhookRateLimiter>,
 }
 
-impl AppState {
-    fn is_watch_mode(&self) -> bool {
-        self.reload_tx.is_some()
-    }
-}
-
 // ── Server ───────────────────────────────────────────────────────────────────
 
 pub struct ForgeServer {
@@ -97,7 +88,6 @@ pub struct ForgeServer {
     cors_origins: Vec<String>,
     static_root: Option<String>,
     static_prefix: Option<String>,
-    watch_mode: bool,
     webhook_secrets: HashMap<String, String>,
 }
 
@@ -121,7 +111,6 @@ impl ForgeServer {
         Self {
             state: AppState {
                 executor: Arc::new(RwLock::new(executor)),
-                reload_tx: None,
                 events_tx: None,
                 event_bus: None,
                 webhook_secrets: HashMap::new(),
@@ -143,19 +132,8 @@ impl ForgeServer {
             cors_origins,
             static_root,
             static_prefix,
-            watch_mode: false,
             webhook_secrets: HashMap::new(),
         }
-    }
-
-    /// Enable watch mode: adds SSE reload endpoint and injects reload script in HTML responses.
-    pub fn with_watch_mode(mut self, watch: bool) -> Self {
-        self.watch_mode = watch;
-        if watch {
-            let (tx, _) = broadcast::channel(16);
-            self.state.reload_tx = Some(tx);
-        }
-        self
     }
 
     /// Override host (CLI flag takes precedence over config).
@@ -189,11 +167,6 @@ impl ForgeServer {
         self.state.webhook_secrets = secrets.clone();
         self.webhook_secrets = secrets;
         self
-    }
-
-    /// Get a handle to the swappable executor for the file watcher.
-    pub fn swappable_executor(&self) -> SwappableExecutor {
-        self.state.executor.clone()
     }
 
     /// Attach a live trace event broadcast channel for the SSE endpoint.
@@ -280,17 +253,11 @@ impl ForgeServer {
         self
     }
 
-    /// Get a handle to the reload broadcast sender (for the watcher to signal reloads).
-    pub fn reload_sender(&self) -> Option<broadcast::Sender<()>> {
-        self.state.reload_tx.clone()
-    }
-
     /// Build the axum router with dynamic endpoint dispatch. Public so
     /// integration tests can mount it against a random TCP port without
     /// going through `run()`'s signal-handling loop.
     pub fn build_router(&self) -> Router<()> {
-        // Dynamic catch-all routing: endpoint lookup happens at request time,
-        // so new/removed endpoints are visible immediately after hot-reload.
+        // Dynamic catch-all routing: endpoint lookup happens at request time.
         // Webhook route: POST /webhook/:name with Content-Type validation and optional HMAC
         let mut router = Router::new()
             // Dedicated approval webhook: handles Slack interactive payloads
@@ -314,11 +281,6 @@ impl ForgeServer {
                 "/",
                 get(|| async { axum::response::Redirect::temporary("/home") }),
             );
-
-        // SSE reload endpoint (watch mode only)
-        if self.watch_mode {
-            router = router.route("/__forge/reload", get(handle_sse_reload));
-        }
 
         // SSE live trace endpoint (always in serve mode when events channel is wired)
         if self.state.events_tx.is_some() {
@@ -374,13 +336,9 @@ impl ForgeServer {
 
     /// Print startup banner listing registered endpoints.
     fn print_banner(&self) {
-        let mode = if self.watch_mode { " (watch mode)" } else { "" };
-        println!("Listening on http://{}:{}{}", self.host, self.port, mode);
+        println!("Listening on http://{}:{}", self.host, self.port);
         if let (Some(ref root), Some(ref prefix)) = (&self.static_root, &self.static_prefix) {
             println!("  Static files: {} -> {}", root, prefix);
-        }
-        if self.watch_mode {
-            println!("  SSE reload:   /__forge/reload");
         }
         if self.state.events_tx.is_some() {
             println!("  SSE trace:    /__forge/events");
@@ -450,10 +408,6 @@ pub fn print_endpoint_list(endpoints: &HashMap<String, crate::ast::EndpointDecl>
     }
 }
 
-/// Dev-mode reload script injected before </body> in HTML responses.
-const RELOAD_SCRIPT: &str =
-    r#"<script>new EventSource("/__forge/reload").onmessage=()=>location.reload()</script>"#;
-
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 async fn handle_get(
@@ -493,14 +447,7 @@ async fn handle_get_endpoint(
     }
     let request = build_request_record("GET", &endpoint_name, &params, &headers, "");
     let args = string_params_to_args(params, endpoint.as_ref());
-    dispatch_endpoint(
-        executor,
-        &endpoint_name,
-        args,
-        request,
-        state.is_watch_mode(),
-    )
-    .await
+    dispatch_endpoint(executor, &endpoint_name, args, request).await
 }
 
 async fn handle_post(
@@ -588,32 +535,7 @@ async fn handle_post_endpoint(
         };
 
     let request = build_request_record("POST", &endpoint_name, &params, &headers, &raw_body);
-    dispatch_endpoint(
-        executor,
-        &endpoint_name,
-        args,
-        request,
-        state.is_watch_mode(),
-    )
-    .await
-}
-
-/// SSE endpoint for browser auto-reload in watch mode.
-async fn handle_sse_reload(
-    State(state): State<AppState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
-    let rx = state
-        .reload_tx
-        .as_ref()
-        .expect("SSE reload route registered without watch mode")
-        .subscribe();
-
-    let stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(()) => Some(Ok(Event::default().data("reload"))),
-        Err(_) => None, // lagged — skip
-    });
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    dispatch_endpoint(executor, &endpoint_name, args, request).await
 }
 
 /// SSE endpoint for live trace event streaming.
@@ -1341,14 +1263,7 @@ async fn handle_webhook(
         };
 
     let request = build_request_record("POST", &endpoint_name, &params, &headers, &body_str);
-    dispatch_endpoint(
-        executor,
-        &endpoint_name,
-        args,
-        request,
-        state.is_watch_mode(),
-    )
-    .await
+    dispatch_endpoint(executor, &endpoint_name, args, request).await
 }
 
 /// Verify GitHub-style HMAC-SHA256 signature.
@@ -1746,7 +1661,6 @@ async fn dispatch_endpoint(
     endpoint_name: &str,
     args: HashMap<String, ConfidentValue>,
     request: ConfidentValue,
-    inject_reload: bool,
 ) -> Response {
     let start = Instant::now();
 
@@ -1761,7 +1675,7 @@ async fn dispatch_endpoint(
     {
         Ok(result) => {
             let duration_ms = start.elapsed().as_millis() as u64;
-            let response = endpoint_result_to_response(result, inject_reload);
+            let response = endpoint_result_to_response(result);
             let status = response.status().as_u16();
             if let Some(tracer) = executor.tracer() {
                 tracer.http_response(endpoint_name, status, duration_ms);
@@ -1782,7 +1696,7 @@ async fn dispatch_endpoint(
     }
 }
 
-fn endpoint_result_to_response(result: EndpointResult, inject_reload: bool) -> Response {
+fn endpoint_result_to_response(result: EndpointResult) -> Response {
     let default_status = if matches!(result.value.value, Value::Unit) {
         StatusCode::NO_CONTENT
     } else {
@@ -1795,15 +1709,7 @@ fn endpoint_result_to_response(result: EndpointResult, inject_reload: bool) -> R
 
     let (value_inferred_ct, body) = match &result.value.value {
         Value::Text(s) => ("text/plain", s.clone()),
-        Value::Html(s) => {
-            // In watch mode, inject the reload script before </body> or at the end
-            let html = if inject_reload {
-                inject_reload_script(s)
-            } else {
-                s.clone()
-            };
-            ("text/html", html)
-        }
+        Value::Html(s) => ("text/html", s.clone()),
         Value::Number(n) => ("text/plain", n.to_string()),
         Value::Bool(b) => ("text/plain", b.to_string()),
         Value::Unit => return status_code.into_response(),
@@ -1831,23 +1737,6 @@ fn endpoint_result_to_response(result: EndpointResult, inject_reload: bool) -> R
         .or(result.default_content_type.as_deref())
         .unwrap_or(value_inferred_ct);
     (status_code, [(axum::http::header::CONTENT_TYPE, ct)], body).into_response()
-}
-
-/// Inject the reload script into an HTML body string.
-fn inject_reload_script(html: &str) -> String {
-    // Insert before </body> if present, otherwise append
-    if let Some(pos) = html.to_lowercase().rfind("</body>") {
-        let mut result = String::with_capacity(html.len() + RELOAD_SCRIPT.len());
-        result.push_str(&html[..pos]);
-        result.push_str(RELOAD_SCRIPT);
-        result.push_str(&html[pos..]);
-        result
-    } else {
-        let mut result = String::with_capacity(html.len() + RELOAD_SCRIPT.len());
-        result.push_str(html);
-        result.push_str(RELOAD_SCRIPT);
-        result
-    }
 }
 
 fn build_request_record(

@@ -142,8 +142,9 @@ enum Command {
         /// Port to bind to (overrides config)
         #[arg(long)]
         port: Option<u16>,
-        /// Watch for file changes and hot-reload (dev mode)
-        #[arg(long)]
+        /// Removed in v0.3: hot reload belongs to the app (#485). Hidden so a
+        /// stale invocation gets the removal message, not clap's unknown flag.
+        #[arg(long, hide = true)]
         watch: bool,
         /// Additional source files to merge (for multi-file projects)
         #[arg(long = "source", short = 's')]
@@ -365,6 +366,11 @@ async fn run() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// `forge serve --watch` was removed in v0.3 (#485): hot reload is the app's
+/// job, not the language's. One message for the CLI error and its test.
+const SERVE_WATCH_REMOVED: &str =
+    "`forge serve --watch` was removed in v0.3: hot reload belongs to the app, not the language (see CHANGELOG, #485)";
 
 /// A command line clap could not parse. `--help` and `--version` print as usual
 /// and exit `0`; every other usage error exits `1`, not clap's default `2`,
@@ -830,10 +836,17 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
             sources,
             manifest,
         } => {
+            if watch {
+                // #485 — hot reload left core in v0.3: the app owns its dev loop.
+                usage_exit(clap::Error::raw(
+                    clap::error::ErrorKind::UnknownArgument,
+                    SERVE_WATCH_REMOVED,
+                ));
+            }
             if out.json {
                 out.unsupported("serve");
             }
-            serve_program(&file, &sources, host, port, watch, manifest.as_deref()).await?;
+            serve_program(&file, &sources, host, port, manifest.as_deref()).await?;
         }
         Command::Export {
             file,
@@ -2585,7 +2598,6 @@ async fn serve_program(
     sources: &[PathBuf],
     cli_host: Option<String>,
     cli_port: Option<u16>,
-    watch: bool,
     manifest_path: Option<&Path>,
 ) -> anyhow::Result<()> {
     // Auto-discover forge.config.toml next to the served file when FORGE_CONFIG is not set.
@@ -2615,253 +2627,239 @@ async fn serve_program(
         (None, None)
     };
 
-    if watch {
-        serve_with_watch(
-            file,
-            sources,
-            cli_host,
-            cli_port,
-            manifest.as_ref(),
-            base_dir.as_deref(),
-        )
-        .await
-    } else {
-        // Non-watch mode: build once and serve. Exits on errors.
-        let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
-        let (executor, config, _skill_sigs, _skill_exec) = match try_build_executor_multi(
-            file,
-            sources,
-            Some(events_tx.clone()),
-            manifest.as_ref(),
-            base_dir.as_deref(),
-        ) {
-            Ok(r) => r,
-            Err(_) => std::process::exit(1),
-        };
+    // Build once and serve. Exits on errors.
+    let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+    let (executor, config, _skill_sigs, _skill_exec) = match try_build_executor_multi(
+        file,
+        sources,
+        Some(events_tx.clone()),
+        manifest.as_ref(),
+        base_dir.as_deref(),
+    ) {
+        Ok(r) => r,
+        Err(_) => std::process::exit(1),
+    };
 
-        // Create shared infrastructure for both HTTP server and system runtime (#140).
-        // Inject the executor's tracer so agent-originated emits reach SSE (#325):
-        // without this, EventBus::publish has no tracer and the agent-handler emit
-        // path never produces event_emit/event_delivered frames.
-        let event_bus = forge::runtime::event_bus::EventBus::new_shared(executor.tracer().cloned());
-        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
-            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
-        );
-        let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
-            Arc::new(tokio::sync::RwLock::new(Vec::new()));
+    // Create shared infrastructure for both HTTP server and system runtime (#140).
+    // Inject the executor's tracer so agent-originated emits reach SSE (#325):
+    // without this, EventBus::publish has no tracer and the agent-handler emit
+    // path never produces event_emit/event_delivered frames.
+    let event_bus = forge::runtime::event_bus::EventBus::new_shared(executor.tracer().cloned());
+    let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
+        tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
+    );
+    let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
+        Arc::new(tokio::sync::RwLock::new(Vec::new()));
 
-        // Create storage for data.store/data.get/data.list/data.delete (#59)
-        // Unified root via [storage] in forge.config.toml (#253).
-        let mut inspect_storage: Option<forge::runtime::storage::SharedStorage> = None;
-        let executor = match forge::runtime::storage::ForgeStorage::open_from_config(
-            config.storage.as_ref(),
-            None,
-            "server.redb",
-        ) {
-            Ok(storage) => {
-                seed_content_dir(file, &storage);
-                let shared = std::sync::Arc::new(storage);
-                inspect_storage = Some(shared.clone());
-                executor.with_storage(shared)
-            }
-            Err(e) => {
-                eprintln!("Warning: could not open storage: {e}");
-                executor
-            }
-        };
-        let wake_storage = match forge::runtime::storage::ForgeStorage::open_wake_from_config(
-            config.storage.as_ref(),
-            None,
-        ) {
-            Ok(storage) => Some(std::sync::Arc::new(storage)),
-            Err(e) => {
-                eprintln!("Warning: could not open wake storage: {e}");
-                None
-            }
-        };
+    // Create storage for data.store/data.get/data.list/data.delete (#59)
+    // Unified root via [storage] in forge.config.toml (#253).
+    let mut inspect_storage: Option<forge::runtime::storage::SharedStorage> = None;
+    let executor = match forge::runtime::storage::ForgeStorage::open_from_config(
+        config.storage.as_ref(),
+        None,
+        "server.redb",
+    ) {
+        Ok(storage) => {
+            seed_content_dir(file, &storage);
+            let shared = std::sync::Arc::new(storage);
+            inspect_storage = Some(shared.clone());
+            executor.with_storage(shared)
+        }
+        Err(e) => {
+            eprintln!("Warning: could not open storage: {e}");
+            executor
+        }
+    };
+    let wake_storage = match forge::runtime::storage::ForgeStorage::open_wake_from_config(
+        config.storage.as_ref(),
+        None,
+    ) {
+        Ok(storage) => Some(std::sync::Arc::new(storage)),
+        Err(e) => {
+            eprintln!("Warning: could not open wake storage: {e}");
+            None
+        }
+    };
 
-        // Build embedding provider if [embeddings] is configured (#50)
-        let executor = if let Some(ref embed_config) = config.embeddings {
-            match config.providers.get(&embed_config.provider) {
-                Some(provider_config) => {
-                    match forge::llm::providers::build_embedding_provider(
-                        provider_config,
-                        embed_config,
-                    ) {
-                        Ok(embed_provider) => {
-                            let dimensions = embed_provider.embedding_dimensions();
-                            let vectors_path = file
-                                .parent()
-                                .unwrap_or(std::path::Path::new("."))
-                                .join(".forge-data/vectors.json");
-                            let vector_index = std::sync::Arc::new(tokio::sync::Mutex::new(
-                                forge::runtime::vector_index::VectorIndex::new(
-                                    dimensions,
-                                    Some(&vectors_path),
-                                ),
-                            ));
-                            executor.with_embeddings(embed_provider, vector_index)
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: could not build embedding provider: {e}");
-                            executor
-                        }
+    // Build embedding provider if [embeddings] is configured (#50)
+    let executor = if let Some(ref embed_config) = config.embeddings {
+        match config.providers.get(&embed_config.provider) {
+            Some(provider_config) => {
+                match forge::llm::providers::build_embedding_provider(provider_config, embed_config)
+                {
+                    Ok(embed_provider) => {
+                        let dimensions = embed_provider.embedding_dimensions();
+                        let vectors_path = file
+                            .parent()
+                            .unwrap_or(std::path::Path::new("."))
+                            .join(".forge-data/vectors.json");
+                        let vector_index = std::sync::Arc::new(tokio::sync::Mutex::new(
+                            forge::runtime::vector_index::VectorIndex::new(
+                                dimensions,
+                                Some(&vectors_path),
+                            ),
+                        ));
+                        executor.with_embeddings(embed_provider, vector_index)
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: could not build embedding provider: {e}");
+                        executor
                     }
                 }
-                None => {
-                    eprintln!(
-                        "Warning: [embeddings] references unknown provider '{}'",
-                        embed_config.provider
-                    );
-                    executor
-                }
             }
-        } else {
-            executor
-        };
-
-        // Create shared knowledge store from agent declaration (#309).
-        // The same Arc is passed to both the executor (for endpoint recall) and
-        // the system runtime (for agent learn), ensuring a single source of truth.
-        let executor = if let Some(cfg) = extract_knowledge_config(executor.program()) {
-            let ks = KnowledgeStore::new_scoped(
-                &cfg.store_path,
-                cfg.project_id.as_deref(),
-                cfg.max_entries,
-                cfg.retention_days,
-            );
-            let shared_ks = Arc::new(Mutex::new(ks));
-            executor.with_shared_knowledge_store_arc(shared_ks)
-        } else {
-            executor
-        };
-
-        // Build system runtime (if declared) and inject shared infrastructure (#140)
-        let topology = executor.extract_topology();
-        let mut system_runtime = match executor.build_system_runtime() {
-            Ok(Some(sr)) => {
-                let mut sr = sr
-                    .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
-                    .with_shared_warden_snapshots(warden_snapshots.clone());
-                if let Some(ref storage) = inspect_storage {
-                    sr = sr.with_shared_storage(storage.clone());
-                }
-                Some(sr)
+            None => {
+                eprintln!(
+                    "Warning: [embeddings] references unknown provider '{}'",
+                    embed_config.provider
+                );
+                executor
             }
-            Ok(None) => None,
-            Err(e) => {
-                eprintln!("Warning: failed to build system runtime: {e}");
-                None
-            }
-        };
+        }
+    } else {
+        executor
+    };
 
-        // Correlation + webhook routing (issues #334, #335): when agents declare
-        // `correlate on Event.field` or `webhook TRIGGER`, share one lifecycle
-        // with the serving executor and the HTTP wake handler so rehydrations
-        // register in a single `InstanceRegistry`.
-        let (executor, webhook_driver, agent_lifecycle) = if let Some(ref mut sr) = system_runtime {
-            let correlation_driver = sr.build_correlation_driver();
-            let webhook_driver = sr.build_webhook_driver().map(Arc::new);
-            let needs_lifecycle = correlation_driver.is_some() || webhook_driver.is_some();
-            let lifecycle = if needs_lifecycle {
-                Some(sr.ensure_lifecycle())
-            } else {
-                None
-            };
-            let executor = match (correlation_driver, lifecycle.clone()) {
-                (Some(driver), Some(lc)) => executor.with_correlation(driver, lc),
-                _ => executor,
-            };
-            (executor, webhook_driver, lifecycle)
-        } else {
-            (executor, None, None)
-        };
-
-        // Collect signal senders before system runtime is consumed (issue #143)
-        let signal_senders = system_runtime
-            .as_ref()
-            .map(|sr| sr.collect_signal_senders());
-
-        // Cost aggregator (issue #142) — subscribe before server consumes events_tx
-        let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
-            forge::runtime::cost_aggregator::CostAggregator::new(),
-        ));
-        forge::runtime::cost_aggregator::spawn_cost_listener(
-            events_tx.subscribe(),
-            cost_aggregator.clone(),
+    // Create shared knowledge store from agent declaration (#309).
+    // The same Arc is passed to both the executor (for endpoint recall) and
+    // the system runtime (for agent learn), ensuring a single source of truth.
+    let executor = if let Some(cfg) = extract_knowledge_config(executor.program()) {
+        let ks = KnowledgeStore::new_scoped(
+            &cfg.store_path,
+            cfg.project_id.as_deref(),
+            cfg.max_entries,
+            cfg.retention_days,
         );
+        let shared_ks = Arc::new(Mutex::new(ks));
+        executor.with_shared_knowledge_store_arc(shared_ks)
+    } else {
+        executor
+    };
 
-        // Task-history aggregator (issue #304) — subscribe to `TaskCompleted`
-        // on the event bus so the mastery tile has per-task `review_rounds`
-        // data. Grab the knowledge-store handle here too, before the executor
-        // is moved into the server, so the endpoint can read mastery snapshots.
-        let mastery_knowledge_store = executor.knowledge_store_handle();
-        let task_history_aggregator = Arc::new(tokio::sync::RwLock::new(
-            forge::runtime::task_history_aggregator::TaskHistoryAggregator::default(),
-        ));
-        forge::runtime::task_history_aggregator::spawn_task_listener(
-            event_bus.clone(),
-            task_history_aggregator.clone(),
-        )
-        .await;
-
-        let mut server =
-            forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
-                .with_event_bus(event_bus)
-                .with_events_tx(events_tx)
-                .with_instance_registry(instance_registry)
-                .with_warden_snapshots(warden_snapshots)
-                .with_cost_aggregator(cost_aggregator)
-                .with_task_history_aggregator(task_history_aggregator);
-
-        if let Some(ks) = mastery_knowledge_store {
-            server = server.with_mastery_knowledge_store(ks);
-        }
-        if let Some(senders) = signal_senders {
-            server = server.with_signal_senders(senders);
-        }
-        if let Some(storage) = inspect_storage {
-            server = server.with_inspect_storage(storage.clone());
-        }
-        if let Some(storage) = wake_storage {
-            server = server.with_wake_storage(storage);
-        }
-        if let Some(topo) = topology {
-            server = server.with_topology(topo);
-        }
-        if let Some(d) = webhook_driver {
-            eprintln!("  webhook triggers registered: {}", d.len());
-            server = server.with_webhook_driver(d);
-        }
-        if let Some(lc) = agent_lifecycle {
-            server = server.with_agent_lifecycle(lc);
-        }
-
-        // Wire webhook secrets from config
-        if let Some(ref srv_config) = config.server {
-            if let Some(ref secrets) = srv_config.webhook_secrets {
-                server = server.with_webhook_secrets(secrets.clone());
+    // Build system runtime (if declared) and inject shared infrastructure (#140)
+    let topology = executor.extract_topology();
+    let mut system_runtime = match executor.build_system_runtime() {
+        Ok(Some(sr)) => {
+            let mut sr = sr
+                .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
+                .with_shared_warden_snapshots(warden_snapshots.clone());
+            if let Some(ref storage) = inspect_storage {
+                sr = sr.with_shared_storage(storage.clone());
             }
+            Some(sr)
         }
+        Ok(None) => None,
+        Err(e) => {
+            eprintln!("Warning: failed to build system runtime: {e}");
+            None
+        }
+    };
 
-        if let Some(host) = cli_host {
-            server = server.with_host(host);
-        }
-        if let Some(port) = cli_port {
-            server = server.with_port(port);
-        }
+    // Correlation + webhook routing (issues #334, #335): when agents declare
+    // `correlate on Event.field` or `webhook TRIGGER`, share one lifecycle
+    // with the serving executor and the HTTP wake handler so rehydrations
+    // register in a single `InstanceRegistry`.
+    let (executor, webhook_driver, agent_lifecycle) = if let Some(ref mut sr) = system_runtime {
+        let correlation_driver = sr.build_correlation_driver();
+        let webhook_driver = sr.build_webhook_driver().map(Arc::new);
+        let needs_lifecycle = correlation_driver.is_some() || webhook_driver.is_some();
+        let lifecycle = if needs_lifecycle {
+            Some(sr.ensure_lifecycle())
+        } else {
+            None
+        };
+        let executor = match (correlation_driver, lifecycle.clone()) {
+            (Some(driver), Some(lc)) => executor.with_correlation(driver, lc),
+            _ => executor,
+        };
+        (executor, webhook_driver, lifecycle)
+    } else {
+        (executor, None, None)
+    };
 
-        // Spawn system runtime as background task (#140)
-        if let Some(sr) = system_runtime {
-            tokio::spawn(async move {
-                if let Err(e) = sr.start().await {
-                    eprintln!("System runtime error: {e}");
-                }
-            });
-        }
+    // Collect signal senders before system runtime is consumed (issue #143)
+    let signal_senders = system_runtime
+        .as_ref()
+        .map(|sr| sr.collect_signal_senders());
 
-        server.run().await
+    // Cost aggregator (issue #142) — subscribe before server consumes events_tx
+    let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
+        forge::runtime::cost_aggregator::CostAggregator::new(),
+    ));
+    forge::runtime::cost_aggregator::spawn_cost_listener(
+        events_tx.subscribe(),
+        cost_aggregator.clone(),
+    );
+
+    // Task-history aggregator (issue #304) — subscribe to `TaskCompleted`
+    // on the event bus so the mastery tile has per-task `review_rounds`
+    // data. Grab the knowledge-store handle here too, before the executor
+    // is moved into the server, so the endpoint can read mastery snapshots.
+    let mastery_knowledge_store = executor.knowledge_store_handle();
+    let task_history_aggregator = Arc::new(tokio::sync::RwLock::new(
+        forge::runtime::task_history_aggregator::TaskHistoryAggregator::default(),
+    ));
+    forge::runtime::task_history_aggregator::spawn_task_listener(
+        event_bus.clone(),
+        task_history_aggregator.clone(),
+    )
+    .await;
+
+    let mut server =
+        forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
+            .with_event_bus(event_bus)
+            .with_events_tx(events_tx)
+            .with_instance_registry(instance_registry)
+            .with_warden_snapshots(warden_snapshots)
+            .with_cost_aggregator(cost_aggregator)
+            .with_task_history_aggregator(task_history_aggregator);
+
+    if let Some(ks) = mastery_knowledge_store {
+        server = server.with_mastery_knowledge_store(ks);
     }
+    if let Some(senders) = signal_senders {
+        server = server.with_signal_senders(senders);
+    }
+    if let Some(storage) = inspect_storage {
+        server = server.with_inspect_storage(storage.clone());
+    }
+    if let Some(storage) = wake_storage {
+        server = server.with_wake_storage(storage);
+    }
+    if let Some(topo) = topology {
+        server = server.with_topology(topo);
+    }
+    if let Some(d) = webhook_driver {
+        eprintln!("  webhook triggers registered: {}", d.len());
+        server = server.with_webhook_driver(d);
+    }
+    if let Some(lc) = agent_lifecycle {
+        server = server.with_agent_lifecycle(lc);
+    }
+
+    // Wire webhook secrets from config
+    if let Some(ref srv_config) = config.server {
+        if let Some(ref secrets) = srv_config.webhook_secrets {
+            server = server.with_webhook_secrets(secrets.clone());
+        }
+    }
+
+    if let Some(host) = cli_host {
+        server = server.with_host(host);
+    }
+    if let Some(port) = cli_port {
+        server = server.with_port(port);
+    }
+
+    // Spawn system runtime as background task (#140)
+    if let Some(sr) = system_runtime {
+        tokio::spawn(async move {
+            if let Err(e) = sr.start().await {
+                eprintln!("System runtime error: {e}");
+            }
+        });
+    }
+
+    server.run().await
 }
 
 /// Seed markdown files from `content/` directory into storage.
@@ -2972,290 +2970,6 @@ fn seed_content_recursive(
                 let key = format!("page:{slug}");
                 if storage.store(&key, &content).is_ok() {
                     *count += 1;
-                }
-            }
-        }
-    }
-}
-
-async fn serve_with_watch(
-    file: &Path,
-    sources: &[PathBuf],
-    cli_host: Option<String>,
-    cli_port: Option<u16>,
-    manifest: Option<&forge::manifest::ProjectManifest>,
-    base_dir: Option<&Path>,
-) -> anyhow::Result<()> {
-    use forge::runtime::watcher::WatchAction;
-
-    // Create events channel outside the loop so SSE connections survive config restarts.
-    let (events_tx, _) = tokio::sync::broadcast::channel::<String>(256);
-
-    loop {
-        let (executor, config, skill_sigs, skill_exec) = match try_build_executor_multi(
-            file,
-            sources,
-            Some(events_tx.clone()),
-            manifest,
-            base_dir,
-        ) {
-            Ok(r) => r,
-            Err(_) => std::process::exit(1),
-        };
-
-        // Create shared infrastructure for both HTTP server and system runtime (#140).
-        // Inject the executor's tracer so agent-originated emits reach SSE (#325):
-        // without this, EventBus::publish has no tracer and the agent-handler emit
-        // path never produces event_emit/event_delivered frames.
-        let event_bus = forge::runtime::event_bus::EventBus::new_shared(executor.tracer().cloned());
-        let instance_registry: forge::runtime::instance_registry::SharedInstanceRegistry = Arc::new(
-            tokio::sync::RwLock::new(forge::runtime::instance_registry::InstanceRegistry::new()),
-        );
-        let warden_snapshots: forge::runtime::warded::SharedWardenSnapshots =
-            Arc::new(tokio::sync::RwLock::new(Vec::new()));
-
-        // Create storage for data.store/data.get/data.list/data.delete (#59)
-        // Unified root via [storage] in forge.config.toml (#253).
-        let mut inspect_storage: Option<forge::runtime::storage::SharedStorage> = None;
-        let executor = match forge::runtime::storage::ForgeStorage::open_from_config(
-            config.storage.as_ref(),
-            None,
-            "server.redb",
-        ) {
-            Ok(storage) => {
-                seed_content_dir(file, &storage);
-                let shared = std::sync::Arc::new(storage);
-                inspect_storage = Some(shared.clone());
-                executor.with_storage(shared)
-            }
-            Err(e) => {
-                eprintln!("Warning: could not open storage: {e}");
-                executor
-            }
-        };
-        let wake_storage = match forge::runtime::storage::ForgeStorage::open_wake_from_config(
-            config.storage.as_ref(),
-            None,
-        ) {
-            Ok(storage) => Some(std::sync::Arc::new(storage)),
-            Err(e) => {
-                eprintln!("Warning: could not open wake storage: {e}");
-                None
-            }
-        };
-
-        // Build embedding provider if [embeddings] is configured (#50)
-        let executor = if let Some(ref embed_config) = config.embeddings {
-            match config.providers.get(&embed_config.provider) {
-                Some(provider_config) => {
-                    match forge::llm::providers::build_embedding_provider(
-                        provider_config,
-                        embed_config,
-                    ) {
-                        Ok(embed_provider) => {
-                            let dimensions = embed_provider.embedding_dimensions();
-                            let vectors_path = file
-                                .parent()
-                                .unwrap_or(std::path::Path::new("."))
-                                .join(".forge-data/vectors.json");
-                            let vector_index = std::sync::Arc::new(tokio::sync::Mutex::new(
-                                forge::runtime::vector_index::VectorIndex::new(
-                                    dimensions,
-                                    Some(&vectors_path),
-                                ),
-                            ));
-                            executor.with_embeddings(embed_provider, vector_index)
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: could not build embedding provider: {e}");
-                            executor
-                        }
-                    }
-                }
-                None => {
-                    eprintln!(
-                        "Warning: [embeddings] references unknown provider '{}'",
-                        embed_config.provider
-                    );
-                    executor
-                }
-            }
-        } else {
-            executor
-        };
-
-        // Create shared knowledge store from agent declaration (#309).
-        let executor = if let Some(cfg) = extract_knowledge_config(executor.program()) {
-            let ks = KnowledgeStore::new_scoped(
-                &cfg.store_path,
-                cfg.project_id.as_deref(),
-                cfg.max_entries,
-                cfg.retention_days,
-            );
-            let shared_ks = Arc::new(Mutex::new(ks));
-            executor.with_shared_knowledge_store_arc(shared_ks)
-        } else {
-            executor
-        };
-
-        // Build system runtime (if declared) and inject shared infrastructure (#140)
-        let topology = executor.extract_topology();
-        let mut system_runtime = match executor.build_system_runtime() {
-            Ok(Some(sr)) => {
-                let mut sr = sr
-                    .with_shared_infrastructure(event_bus.clone(), instance_registry.clone())
-                    .with_shared_warden_snapshots(warden_snapshots.clone());
-                if let Some(ref storage) = inspect_storage {
-                    sr = sr.with_shared_storage(storage.clone());
-                }
-                Some(sr)
-            }
-            Ok(None) => None,
-            Err(e) => {
-                eprintln!("Warning: failed to build system runtime: {e}");
-                None
-            }
-        };
-
-        // Correlation + webhook routing (issues #334, #335): share one
-        // lifecycle between the correlate executor path and the HTTP wake
-        // handler so rehydrations register in a single `InstanceRegistry`.
-        let (executor, webhook_driver, agent_lifecycle) = if let Some(ref mut sr) = system_runtime {
-            let correlation_driver = sr.build_correlation_driver();
-            let webhook_driver = sr.build_webhook_driver().map(Arc::new);
-            let needs_lifecycle = correlation_driver.is_some() || webhook_driver.is_some();
-            let lifecycle = if needs_lifecycle {
-                Some(sr.ensure_lifecycle())
-            } else {
-                None
-            };
-            let executor = match (correlation_driver, lifecycle.clone()) {
-                (Some(driver), Some(lc)) => executor.with_correlation(driver, lc),
-                _ => executor,
-            };
-            (executor, webhook_driver, lifecycle)
-        } else {
-            (executor, None, None)
-        };
-
-        // Collect signal senders before system runtime is consumed (issue #143)
-        let signal_senders = system_runtime
-            .as_ref()
-            .map(|sr| sr.collect_signal_senders());
-
-        // Cost aggregator (issue #142)
-        let cost_aggregator = Arc::new(tokio::sync::RwLock::new(
-            forge::runtime::cost_aggregator::CostAggregator::new(),
-        ));
-        forge::runtime::cost_aggregator::spawn_cost_listener(
-            events_tx.subscribe(),
-            cost_aggregator.clone(),
-        );
-
-        // Task-history aggregator (issue #304) — see matching block above.
-        let mastery_knowledge_store = executor.knowledge_store_handle();
-        let task_history_aggregator = Arc::new(tokio::sync::RwLock::new(
-            forge::runtime::task_history_aggregator::TaskHistoryAggregator::default(),
-        ));
-        forge::runtime::task_history_aggregator::spawn_task_listener(
-            event_bus.clone(),
-            task_history_aggregator.clone(),
-        )
-        .await;
-
-        let mut server =
-            forge::runtime::http_server::ForgeServer::new(executor, config.server.as_ref())
-                .with_watch_mode(true)
-                .with_event_bus(event_bus)
-                .with_events_tx(events_tx.clone())
-                .with_instance_registry(instance_registry)
-                .with_warden_snapshots(warden_snapshots)
-                .with_cost_aggregator(cost_aggregator)
-                .with_task_history_aggregator(task_history_aggregator);
-
-        if let Some(ks) = mastery_knowledge_store {
-            server = server.with_mastery_knowledge_store(ks);
-        }
-
-        if let Some(senders) = signal_senders {
-            server = server.with_signal_senders(senders);
-        }
-        if let Some(storage) = inspect_storage {
-            server = server.with_inspect_storage(storage.clone());
-        }
-        if let Some(storage) = wake_storage {
-            server = server.with_wake_storage(storage);
-        }
-        if let Some(topo) = topology {
-            server = server.with_topology(topo);
-        }
-        if let Some(d) = webhook_driver {
-            eprintln!("  webhook triggers registered: {}", d.len());
-            server = server.with_webhook_driver(d);
-        }
-        if let Some(lc) = agent_lifecycle {
-            server = server.with_agent_lifecycle(lc);
-        }
-
-        // Wire webhook secrets from config
-        if let Some(ref srv_config) = config.server {
-            if let Some(ref secrets) = srv_config.webhook_secrets {
-                server = server.with_webhook_secrets(secrets.clone());
-            }
-        }
-
-        if let Some(ref host) = cli_host {
-            server = server.with_host(host.clone());
-        }
-        if let Some(port) = cli_port {
-            server = server.with_port(port);
-        }
-
-        // Spawn system runtime as background task (#140)
-        if let Some(sr) = system_runtime {
-            tokio::spawn(async move {
-                if let Err(e) = sr.start().await {
-                    eprintln!("System runtime error: {e}");
-                }
-            });
-        }
-
-        let swappable = server.swappable_executor();
-        let reload_tx = server.reload_sender();
-        let watcher_events_tx = Some(events_tx.clone());
-
-        let watch_file = file.to_path_buf();
-        let watcher_handle = tokio::spawn(async move {
-            forge::runtime::watcher::watch_and_reload(
-                watch_file,
-                swappable,
-                reload_tx,
-                watcher_events_tx,
-                skill_sigs,
-                skill_exec,
-            )
-            .await
-        });
-
-        tokio::select! {
-            result = server.run() => {
-                // Server stopped (SIGINT) — watcher task is dropped and cancelled
-                return result;
-            }
-            watch_result = watcher_handle => {
-                match watch_result {
-                    Ok(Ok(WatchAction::RestartServer)) => {
-                        eprintln!("Config changed -- restarting server...");
-                        continue;
-                    }
-                    Ok(Err(e)) => {
-                        eprintln!("Watcher error: {e}");
-                        return Err(e);
-                    }
-                    Err(e) => {
-                        eprintln!("Watcher task failed: {e}");
-                        return Err(anyhow::anyhow!("watcher task failed: {e}"));
-                    }
                 }
             }
         }
