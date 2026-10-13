@@ -269,6 +269,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the CHANGELOG; return `Text` and build the markup in the program.
 
 ### Fixed
+- A `system` exited while agents spawned at runtime were still running (#546):
+  a `spawn` from inside an agent handler is fire-and-forget, and the run waited
+  only for the agents bound in the system, so a child was torn down mid-call —
+  its `say` never happened and its LLM calls were missing from the run summary.
+  Detached spawns are recorded in the shared `InstanceRegistry` (which the
+  children inherit, so descendants are covered) and `System::start` now waits
+  for them.
 - `run --dry-run --json` and `forge cost --json` reported the plan estimate in the
   envelope's `cost`, which is the USD **spent** by the command (#528). Both
   execute nothing, so `cost` is now `0.0`; the estimate stays in
