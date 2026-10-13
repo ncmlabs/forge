@@ -1,10 +1,10 @@
 # FORGE authoring benchmark — spec corpus
 
-Part 1 of [#483](https://github.com/ncmlabs/forge/issues/483). This directory is
-the **corpus only**: the natural-language specs, a reference solution per spec,
-and the offline acceptance fixture. The model-running harness (prompting a model,
-collecting `forge check --json` diagnostics, repairing, reporting a table) is
-part 2 and lands after [#475](https://github.com/ncmlabs/forge/issues/475).
+Part 1 of [#483](https://github.com/ncmlabs/forge/issues/483) is the **corpus**:
+the natural-language specs, a reference solution and an offline acceptance
+fixture per spec. Part 2 is `bench/run.sh` — the harness that prompts a model,
+checks the reply with `forge check --json`, repairs from the diagnostics, and
+reports the table; see [Running the harness](#running-the-harness).
 
 ## What the benchmark measures
 
@@ -15,19 +15,102 @@ program. Three numbers come out of that:
 | ------ | ---------- |
 | **pass@1** | The first draft passes `forge check` with **zero diagnostics** — no errors *and* no warnings. |
 | **pass@3-repair** | The program passes `forge check` within 3 attempts total, where each repair is driven by the diagnostics from the previous attempt (the draft → deterministic validate → repair loop of [#471](https://github.com/ncmlabs/forge/pull/471), validated with `forge check --json`). |
-| **correctness** | `forge test <model>.forge --expect expected.txt` exits 0 against the spec's recorded fixture: the program reproduces the required output exactly. |
+| **correctness** | The program *behaves* like the reference. The harness records the model program's own model calls with the mock provider, replays the spec's recorded responses under those prompts, and runs `forge test --expect expected.txt`: the program reproduces the required output exactly, whatever its prompts say. |
 
 The model never sees `reference.forge`, `reference.forge.fixtures.json`, or
 `expected.txt`. Those exist so the benchmark costs nothing to grade: replay never
 calls a provider and reports zero tokens and zero cost
 ([#478](https://github.com/ncmlabs/forge/issues/478)).
 
+## Running the harness
+
+`bench/run.sh` (bash + curl + jq) sends `docs/forge-card.md` as the system
+prompt and `spec.md` plus one fixed instruction as the user turn — *reply with
+one complete `.forge` program in a single fenced block* — extracts the first
+fenced block, and checks it with `forge check --json`. Diagnostics mean not
+clean: the harness repairs at most twice, each time sending the previous
+program and the diagnostics array back unchanged. A surviving program is then
+graded on behaviour, not wording: the harness re-runs it under
+`bench/mock.config.toml` with `--record`, writes a grading fixture that keeps
+the model program's own prompts and keys but the reference fixture's responses
+in call order, and replays that with `forge test --expect`. Every spec is
+reported, never a best-of.
+
+| Variable | Meaning |
+| -------- | ------- |
+| `BENCH_BASE_URL` | OpenAI-compatible base URL, e.g. `https://host/v1`. Required unless `BENCH_FAKE` is set. |
+| `BENCH_API_KEY` | Bearer token for that endpoint. Optional — a local vLLM needs none. |
+| `BENCH_MODEL` | Provider model id sent in the request. Required unless `BENCH_FAKE` is set. |
+| `BENCH_FAKE` | `reference`, `broken`, `reworded` or `httperr`: answer locally instead of calling the endpoint. |
+| `FORGE_BIN` | The forge command, default `cargo run -q --`; CI uses `./target/release/forge`. |
+
+```sh
+BENCH_BASE_URL=https://host/v1 BENCH_API_KEY=... BENCH_MODEL=my-model \
+  bench/run.sh --model my-model --specs 01,02,10 --out bench/results/2026-01-05-my-model.json
+```
+
+`--specs` takes two-digit ids and defaults to the whole corpus. The results file
+is `{model, date, forge_rev, totals: {pass1_rate, pass3_rate, correct_rate,
+tokens_in, tokens_out}, specs: [...]}`, and each spec carries `{spec,
+difficulty, pass1, pass3, attempts, correct, note, reason, tokens_in,
+tokens_out, final_codes, final_diagnostics}`:
+
+- `pass1` / `pass3` — the first draft, and any of the three attempts, checked
+  with zero diagnostics.
+- `attempts` — 1 to 3. A spec still unclean after 3 escalates: `pass3` is false,
+  `note` says so, and `final_diagnostics` holds the surviving array.
+- `note` — why a spec did not pass when that is not the diagnostics: a call that
+  failed even after curl's retries (`--max-time 300 --retry 2
+  --retry-all-errors`, three tries per attempt) is recorded as `model call
+  failed: <reason>` and the run moves on to the next spec, and a reply that
+  carries no program is recorded as `no .forge program in the reply`.
+- `correct` and `reason` — the replay verdict and, when it fails, why: a program
+  whose call count differs from the spec's fixture is reported as `program made
+  N model calls, the spec's fixture has M`, and a replay that reaches a prompt
+  the fixture cannot answer is `replay miss: ...`; the rest are output
+  mismatches or runtime errors.
+- `tokens_in` / `tokens_out` — summed over the attempts the spec took, read from
+  the endpoint's `usage` field (`0` when it is missing or not numeric).
+
+One markdown table goes to stdout and everything else to stderr, so
+`bench/run.sh ... >> "$GITHUB_STEP_SUMMARY"` appends a clean table. The results
+file is written even when specs failed — a model failure is a result — and the
+script exits non-zero only for harness or configuration errors. A reply with no
+program — or an empty fenced block — is never a pass, and a spec that produced a
+program is graded for correctness even when it never checked clean.
+
+Offline, with no key and no cost:
+
+```sh
+bench/run.sh --self-test
+```
+
+It runs specs 01 and 02 against the four fake models and fails unless the
+numbers match: `BENCH_FAKE=reference` answers with the spec's own reference
+(pass@1 = pass@3 = correct = 2/2, one attempt each); `BENCH_FAKE=reworded`
+answers with the same program but different prompt wording — pass@1 = pass@3 =
+2/2 as well, but correctness is 2/2 **only** because grading goes by behaviour,
+which turns red if grading ever goes back to matching prompt text (before that
+fix it scored `correct 0`); `BENCH_FAKE=broken` answers with the reference minus
+its first block-opening `do` (a parse error first, the reference on repair:
+pass@1 = 0, pass@3 = 2/2, two attempts each); and `BENCH_FAKE=httperr` makes
+spec 01's calls die like a dead endpoint, so spec 01 is reported as `model call
+failed: ...` while spec 02 still scores 1/1 in the same run.
+`tests/bench_corpus_tests.rs` runs it as part of `cargo test`.
+
+`.github/workflows/bench.yml` runs the whole corpus weekly (Mondays 05:00 UTC)
+and on `workflow_dispatch` over a matrix of models, uploading each results JSON
+as an artifact and appending its table to the run summary. The coordinator
+commits the JSON under `bench/results/`.
+
 ## Layout
 
 ```
 bench/
   README.md                  this file
+  run.sh                     the model-running harness (part 2)
   mock.config.toml           a copy of config/mock.config.toml (the mock provider)
+  results/                   one JSON per run (the coordinator commits them)
   specs/
     01-task-greeting/
       spec.md                  the task the model receives (5–15 lines, no FORGE code)

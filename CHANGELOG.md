@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- LLM authoring benchmark harness (#483, part 2): `bench/run.sh` prompts one
+  model per corpus spec — `docs/forge-card.md` as the system prompt, `spec.md`
+  plus one fixed fence instruction as the user turn — extracts the first fenced
+  `.forge` block, checks it with `forge check --json`, repairs at most twice
+  from the previous attempt's diagnostics array (the #471 loop shape), and
+  grades correctness by behaviour, not prompt text: the surviving program is
+  re-run with `--record` under the mock provider, its own prompts and call keys
+  are paired with the reference fixture's responses in call order, and that
+  grading fixture is replayed with `forge test --expect` at zero cost — so a
+  correct program scores correct whatever its prompts say, and a program with a
+  different call count is reported as `program made N model calls, the spec's
+  fixture has M`. Every spec is reported: pass@1, pass@3, attempts, correctness, tokens in/out per spec in
+  `bench/results/<date>-<model>.json`, plus one markdown table on stdout.
+  Endpoints and credentials come only from `BENCH_BASE_URL`, `BENCH_API_KEY`
+  (optional) and `BENCH_MODEL`; tokens are the endpoint's own `usage` numbers
+  (0 when missing or non-numeric), summed over the attempts a spec took. A flaky
+  endpoint gets three tries per attempt (`--max-time 300 --retry 2
+  --retry-all-errors`) and a call that still fails is recorded as
+  `model call failed: <reason>` for that spec only — the remaining specs are
+  still run, the results file is still written, and the run exits 0. A reply
+  with no fenced block is recorded as `no .forge program in the reply` rather
+  than being handed to `forge check`. `bench/run.sh --self-test` proves the loop
+  offline with four fake models (`BENCH_FAKE=reference`: pass@1 = pass@3 =
+  correct = 2/2 in one attempt each; `BENCH_FAKE=reworded`: the same program
+  with different prompt wording, still correct 2/2, which is exactly what the
+  behaviour-based grading buys; `BENCH_FAKE=broken`: a parse error first,
+  so pass@1 = 0, pass@3 = 2/2, two attempts; `BENCH_FAKE=httperr`: spec 01's
+  calls fail, spec 02 still scores 1/1 in the same run), and
+  `tests/bench_corpus_tests.rs` runs it with `cargo test`.
+  `.github/workflows/bench.yml` runs the corpus
+  weekly (Mondays 05:00 UTC) and on `workflow_dispatch` over a model matrix,
+  skipping entries whose endpoint secret is unset, uploading each results JSON
+  as an artifact and appending its table to the run summary; the coordinator
+  commits the results under `bench/results/`.
 - `forge run --dry-run <file>` (#477): parse, check, and print the static
   execution plan — the cost table of every LLM operation, then an `Effects:`
   list with one `kind  location` line per side-effect site (`command`, `exec`,
