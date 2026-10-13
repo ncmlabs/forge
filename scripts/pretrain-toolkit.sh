@@ -632,7 +632,7 @@ Syntax:
     stage test
       needs implement.<field>
       <testing>
-Example from dev-cycle.forge:
+Example from the dev-cycle workflow (ncmlabs/forge-clone-dev):
   flow implementation_pipeline
     needs issue: Issue
     gives PullRequest
@@ -1163,7 +1163,7 @@ FACT
 
 ingest_fact "AGENTS" "$(cat <<'FACT'
 FORGE multi-agent cooperation pattern. Multiple agents in a system communicate via events and coordinate through a warden.
-Example from dev-cycle.forge (5 cooperating agents):
+Example from the dev-cycle workflow in ncmlabs/forge-clone-dev (5 cooperating agents):
   agent planner
     subscribe IssueAssigned
     on IssueAssigned(issue: Issue)
@@ -1502,7 +1502,7 @@ FACT
 
 ingest_fact "SYSTEMS" "$(cat <<'FACT'
 FORGE system with multiple agents pattern. Complete system declaration showing how all components wire together.
-Example from dev-cycle.forge:
+Example from the dev-cycle workflow (ncmlabs/forge-clone-dev):
   type Issue
     title: Text
     body: Text
