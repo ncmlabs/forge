@@ -190,6 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to v1 complete. Closes epic #292.
 
 ### Changed
+- MSRV raised from 1.89 to 1.90; `redb` updated to 4.2 (#463).
 - `forge check` now exits `2` (not `1`) when a file has warnings but no errors,
   and other commands use the same semantic table: `0` success, `1` error,
   `2` warnings-only, `3` partial, `10` needs-input, `11` async-pending (#475).

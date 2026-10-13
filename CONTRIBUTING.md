@@ -6,7 +6,7 @@ Thank you for your interest in contributing to FORGE! This guide will help you g
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (stable toolchain, MSRV 1.89)
+- [Rust](https://rustup.rs/) (stable toolchain, MSRV 1.90)
 - Git
 
 ### Getting Started
