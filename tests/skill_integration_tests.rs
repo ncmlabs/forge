@@ -119,6 +119,20 @@ fn skill_loader_parses_repo_reference_cli_skills() {
 }
 
 #[test]
+fn write_forge_agent_skill_does_not_disturb_the_loader() {
+    // #482: `skills/write-forge/SKILL.md` is an *agent* skill (Claude Code,
+    // Codex) installed from this repo, not a FORGE runtime skill. A project
+    // whose `skill_dirs` scans `skills/` must load it without a warning or an
+    // error; like every capabilities-less SKILL.md it stays a legacy
+    // Text -> Text skill (the same shape `skill.git_analysis` uses).
+    let skill = SkillLoader::parse_skill_md(Path::new("skills/write-forge/SKILL.md"))
+        .expect("skills/write-forge/SKILL.md must not break the FORGE loader");
+    assert_eq!(skill.manifest.name, "write-forge");
+    assert!(skill.manifest.capabilities.is_empty());
+    assert!(skill.manifest.legacy_signature.is_some());
+}
+
+#[test]
 fn skill_loader_discovers_skills_from_directory() {
     let dir = create_temp_skill(
         "test-echo",
