@@ -49,6 +49,14 @@ planning, and record/replay tests that cost nothing to run.
 **pass@3-repair** for Claude, an OpenAI-compatible model and a local model,
 tracked weekly. v0.3 is done when those numbers are published and improve.
 
+Baselines, 2026-10-13: 30 specs, forge `551de6e`, results in `bench/results/`.
+
+| Model | pass@1 | pass@3-repair | correct | tokens in / out |
+|---|---|---|---|---|
+| DeepSeek V4.1 Flash (OpenAI-compatible) | 0.867 | 0.900 | 0.867 | 134,152 / 5,101 |
+| GLM 5.3 Flash (local) | 0.667 | 0.767 | 0.667 | 165,912 / 16,927 |
+| Claude | not run yet | | | |
+
 ## Tracks
 
 ### Lean core — remove what is not language
@@ -69,7 +77,7 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | ----- | ----- | ------ |
 | [#474](https://github.com/ncmlabs/forge/issues/474) | diagnostics: stable error codes, real file path, plain output off-TTY, forge explain | Done ✅ |
 | [#475](https://github.com/ncmlabs/forge/issues/475) | cli: JSON output envelope, semantic exit codes and --fields for every command | Done ✅ |
-| [#476](https://github.com/ncmlabs/forge/issues/476) | cli: forge schema and forge help --json introspection | Open |
+| [#476](https://github.com/ncmlabs/forge/issues/476) | cli: forge schema and forge help --json introspection | Done ✅ |
 | [#477](https://github.com/ncmlabs/forge/issues/477) | cli: forge run --dry-run static execution plan (LLM sites, cost, effects) | Done ✅ |
 | [#478](https://github.com/ncmlabs/forge/issues/478) | test: forge run --record and forge test replay through MockProvider | Done ✅ |
 | [#479](https://github.com/ncmlabs/forge/issues/479) | runtime: end-of-run summary (calls, tokens, cost, confidence, warden events) | Done ✅ |

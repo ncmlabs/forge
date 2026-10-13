@@ -12,6 +12,11 @@ use forge::diagnostic::{Diagnostic, DiagnosticKind};
 use forge::resolver::{CapabilityRegistry, CheckContext};
 
 const CARD: &str = "docs/forge-card.md";
+/// The installable `write-forge` agent skill ships its own copy of the card
+/// (#482): `npx skills add ncmlabs/forge` installs a skill directory, so the
+/// card has to travel with it. `skill_card_copy_matches_the_card` keeps the two
+/// byte-identical.
+const SKILL_CARD: &str = "skills/write-forge/forge-card.md";
 const MAX_CARD_LINES: usize = 300;
 
 /// A fenced block: its info string, the 1-based line where its body starts, and the body.
@@ -84,6 +89,18 @@ fn card_is_at_most_300_lines() {
     assert!(
         lines <= MAX_CARD_LINES,
         "{CARD} is {lines} lines; the card must stay at or under {MAX_CARD_LINES}"
+    );
+}
+
+#[test]
+fn skill_card_copy_matches_the_card() {
+    let read = |relative: &str| {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative);
+        std::fs::read(&path).unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()))
+    };
+    assert!(
+        read(SKILL_CARD) == read(CARD),
+        "{SKILL_CARD} has drifted from {CARD} — copy the card again: cp {CARD} {SKILL_CARD}"
     );
 }
 

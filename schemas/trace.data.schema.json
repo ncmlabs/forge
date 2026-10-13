@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge trace data",
+  "description": "Payload of `forge trace --json`. Same document as `run` — the difference is the JSON trace `trace` writes to stderr, not the envelope.",
+  "type": "object",
+  "anyOf": [
+    {
+      "title": "completed",
+      "required": ["file", "output", "result", "summary"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "description": "Program file, or the manifest path when `--manifest` was used.",
+          "type": "string"
+        },
+        "output": {
+          "description": "Every `say` line, in order.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "result": {
+          "description": "The program's return value, or `null` when it returned nothing (`Unit`)."
+        },
+        "summary": { "$ref": "#/$defs/run_summary" }
+      }
+    },
+    {
+      "title": "blocked",
+      "description": "Static checks failed, so the program never started; `error.type` is `check`.",
+      "required": ["file", "blocked", "output", "result", "diagnostics"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "blocked": { "const": true },
+        "output": { "type": "array", "maxItems": 0, "items": { "type": "string" } },
+        "result": { "type": "null" },
+        "diagnostics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/diagnostic" }
+        }
+      }
+    }
+  ]
+}

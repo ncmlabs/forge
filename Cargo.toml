@@ -47,4 +47,5 @@ getrandom = "0.3"
 libc = "0.2"
 
 [dev-dependencies]
+jsonschema = { version = "0.57.0", default-features = false }
 tempfile = "3"

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge build data",
+  "description": "Payload of `forge build --json`: what was built (or, with `--dry-run`, what would be built after validation).",
+  "type": "object",
+  "required": [
+    "path",
+    "output_name",
+    "binary_path",
+    "program_kind",
+    "release",
+    "dry_run",
+    "built"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "description": "The file or directory passed to `forge build`.",
+      "type": "string"
+    },
+    "output_name": {
+      "description": "Binary name from the manifest or `--output`.",
+      "type": "string"
+    },
+    "binary_path": {
+      "description": "Where the binary was written. On a dry run this is the path it would take.",
+      "type": "string"
+    },
+    "program_kind": {
+      "description": "Kind detected from the merged program (`ProgramKind`'s debug name).",
+      "enum": ["Executable", "AgentCli", "Server", "System"]
+    },
+    "release": {
+      "description": "`--release` was passed.",
+      "type": "boolean"
+    },
+    "dry_run": {
+      "description": "`--dry-run` was passed: validation only, nothing written.",
+      "type": "boolean"
+    },
+    "built": {
+      "description": "`!dry_run`: a dry run reports `false`.",
+      "type": "boolean"
+    }
+  }
+}

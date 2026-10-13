@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge test data",
+  "description": "Payload of `forge test --json`. Without `--expect` this is the replay of the recorded fixtures (`run`'s shape). With `--expect` it also reports whether the replayed output matched the expected file.",
+  "type": "object",
+  "anyOf": [
+    {
+      "title": "no fixtures",
+      "description": "Nothing to replay and the default fixture path does not exist; `error.type` is `io` and the suggestion is the `--record` invocation.",
+      "required": ["file", "fixtures"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "fixtures": {
+          "description": "Fixture path that was looked for (`--fixtures`, or `<file>.fixtures.json`).",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "replay",
+      "required": ["file", "output", "result", "summary"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "output": {
+          "description": "Every `say` line the replay produced, in order.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "result": {
+          "description": "The program's return value, or `null` when it returned nothing (`Unit`)."
+        },
+        "summary": { "$ref": "#/$defs/run_summary" }
+      }
+    },
+    {
+      "title": "replay with --expect",
+      "description": "The comparison runs the replay in a child process in human mode; its stdout is this `output`.",
+      "required": ["file", "fixtures", "expect", "matched", "output"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "fixtures": {
+          "description": "Fixture file that was replayed.",
+          "type": "string"
+        },
+        "expect": {
+          "description": "File the output was compared against.",
+          "type": "string"
+        },
+        "matched": {
+          "description": "`false` makes the envelope an error (`error.type` is `runtime`) and exits 1.",
+          "type": "boolean"
+        },
+        "output": {
+          "description": "The lines the replay printed.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    {
+      "title": "blocked",
+      "description": "Static checks failed before the replay started.",
+      "required": ["file", "blocked", "output", "result", "diagnostics"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "blocked": { "const": true },
+        "output": { "type": "array", "maxItems": 0, "items": { "type": "string" } },
+        "result": { "type": "null" },
+        "diagnostics": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/diagnostic" }
+        }
+      }
+    }
+  ]
+}
