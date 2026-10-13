@@ -269,6 +269,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the CHANGELOG; return `Text` and build the markup in the program.
 
 ### Fixed
+- `forge run` (and `trace`, `test`, `run --manifest`) blocked on warnings, so a
+  W080-only program exited 1 and human mode never said the run had been blocked
+  (#547). Only errors block now: warnings are printed in human mode and listed
+  in the envelope's `warnings` in JSON mode, the run proceeds and exits with its
+  own code, and a human-mode blocked run ends with
+  `run blocked: N error(s); nothing was executed`.
 - `run --dry-run --json` and `forge cost --json` reported the plan estimate in the
   envelope's `cost`, which is the USD **spent** by the command (#528). Both
   execute nothing, so `cost` is now `0.0`; the estimate stays in
