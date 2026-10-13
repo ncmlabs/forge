@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "forge run data",
-  "description": "Payload of `forge run --json`: the program's `say` output and its return value, the diagnostics that blocked it, or — with `--dry-run` — the static plan of what would run. `say` never writes to stdout in JSON mode, wherever it runs — `fn main`, a spawned agent or a pool worker — so `output` is the whole program output and `cost` covers the run.",
+  "description": "Payload of `forge run --json`: the program's `say` output and its return value, the diagnostics that blocked it, or — with `--dry-run` — the static plan of what would run. `say` never writes to stdout in JSON mode, wherever it runs — `fn main`, a spawned agent or a pool worker — so `output` is the whole program output and `cost` covers the run (`0.0` with `--dry-run`, where nothing runs and the plan estimate is `estimated_cost_usd`).",
   "type": "object",
   "anyOf": [
     {

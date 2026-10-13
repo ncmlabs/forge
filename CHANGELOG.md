@@ -226,6 +226,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `serve --watch` are untouched and are removed in later #485 steps.
 
 ### Fixed
+- `run --dry-run --json` and `forge cost --json` reported the plan estimate in the
+  envelope's `cost`, which is the USD **spent** by the command (#528). Both
+  execute nothing, so `cost` is now `0.0`; the estimate stays in
+  `data.estimated_cost_usd`.
 - `forge --help` printed `Usage: forge.exe …` on Windows, where clap takes the
   program name from `argv[0]`, while our own `forge help` printed `forge`
   (#476). The binary name is now pinned (`bin_name = "forge"`), so both paths
