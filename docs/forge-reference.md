@@ -1265,13 +1265,14 @@ forge check --manifest forge.project.toml       # the project's declared skills 
 (`[skills]` → `skills/<name>/SKILL.md`) before resolving, so
 `skill.<name>.<capability>` calls type-check instead of failing with
 `unknown capability`. With no files, every source the manifest declares is
-checked exactly as `forge run --manifest` blocks on it — per source file, plus
-the cross-file boundary check — so a project `check` accepts is one `run` does
-not reject; with files, those files are checked instead (`--merge` composes
-them). Without `--manifest`, `skill_dirs` from `forge.config.toml` (or
-`FORGE_CONFIG`) apply, exactly as for `run`. A check runs no provider: no config
-at all means no config-declared skills, while a config that exists and cannot be
-loaded is still an error.
+checked exactly as `forge run --manifest` blocks on it — as one composed
+program, with the resolver and the cross-file boundary check per file — so a
+project `check` accepts is one `run` does not reject; with files, those files
+are checked instead, each on its own unless `--merge` composes them. Without
+`--manifest`, `skill_dirs` from `forge.config.toml` (or `FORGE_CONFIG`) apply,
+exactly as for `run`. A
+check runs no provider: no config at all means no config-declared skills, while
+a config that exists and cannot be loaded is still an error.
 
 #### `forge run <file>`
 Execute a FORGE program using the configured provider.
@@ -2796,6 +2797,8 @@ child = spawn specialist as "specialist_{topic}"
   isolate worktree "specialist-{topic}"
 ```
 
+The category in `with knowledge where category == <expr>` is any Text expression — a literal, an interpolation or a variable — evaluated when the agent is spawned; a non-Text value is a runtime type error.
+
 `find "alias"` locates one runtime instance. `find all template where lifecycle == ready` locates matching instances by template and optional lifecycle.
 
 ```forge
@@ -2859,6 +2862,8 @@ repo_check = {}
 ```
 
 Then a FORGE file can use `skill.repo_check` and call declared capabilities. Skill calls are side-effecting and rejected inside `pure`.
+
+A manifest project is checked as one composed program — `entry` plus every `[build] sources` file, so a lifecycle or task declared in one source resolves from another — while the resolver (`use` and skills) and the boundary check stay per file and every diagnostic names the source file its span belongs to, at that file's line and column; `forge check --manifest`, `forge run --manifest`, `forge build` and `forge check --merge` all check that composition.
 
 Typed skill capabilities may optionally declare deterministic execution metadata in `SKILL.md`. When present, the runtime expands capability arguments into a structured `argv` command and executes it directly; when absent, the existing LLM-mediated SKILL.md agentic loop remains the fallback. Deterministic skill executors do not make LLM requests and have zero token cost, but they still return skill confidence rather than deterministic confidence because they perform external side effects.
 
