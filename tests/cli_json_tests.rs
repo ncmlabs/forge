@@ -1232,3 +1232,78 @@ fn explain_json_lists_and_explains_codes() {
     assert_eq!(doc["status"], "error");
     assert_eq!(doc["error"]["code"], serde_json::Value::Null);
 }
+
+// ── #485 — surfaces removed with the web app stack ──────────────
+
+#[test]
+fn serve_watch_reports_the_v0_3_removal() {
+    let human = forge(&["serve", "--watch", "examples/basics/hello.forge"]);
+    assert_exit(&human, 1);
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(
+        stderr.contains(
+            "`forge serve --watch` was removed in v0.3: hot reload belongs to the app, not the language (see CHANGELOG, #485)"
+        ),
+        "stderr: {stderr}"
+    );
+
+    // `--json` mode gets the usual usage envelope rather than clap's stderr text.
+    let json = forge(&["serve", "--json", "--watch", "examples/basics/hello.forge"]);
+    assert_exit(&json, 1);
+    let doc = parse_stdout(&json);
+    assert_eq!(doc["command"], "serve");
+    assert_eq!(doc["error"]["type"], "usage");
+    assert!(
+        doc["error"]["message"].as_str().unwrap().contains(
+            "`forge serve --watch` was removed in v0.3: hot reload belongs to the app, not the language (see CHANGELOG, #485)"
+        ),
+        "{doc}"
+    );
+}
+
+#[test]
+fn config_with_server_static_reports_the_v0_3_removal() {
+    let dir = temp_dir("server-static");
+    let config = dir.join("forge.config.toml");
+    std::fs::write(
+        &config,
+        "[llm]\n\
+         default = \"mock\"\n\n\
+         [providers.mock]\n\
+         type = \"mock\"\n\n\
+         [server.static]\n\
+         root = \"public\"\n",
+    )
+    .expect("write config");
+
+    let output = forge_env(
+        &["check", "--json", "examples/basics/hello.forge"],
+        &[("FORGE_CONFIG", config.to_str().unwrap())],
+    );
+    assert_exit(&output, 1);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["status"], "error");
+    assert_eq!(
+        doc["error"]["message"],
+        "`[server.static]` was removed in v0.3: serve static files from the app or a web server (see CHANGELOG, #485)"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn asset_call_is_an_e160_with_the_removal_help() {
+    let dir = temp_dir("asset-call");
+    let program = dir.join("asset.forge");
+    std::fs::write(&program, "fn main\n  say asset(\"logo.png\")\n").expect("write program");
+
+    let output = forge(&["check", "--json", program.to_str().unwrap()]);
+    assert_exit(&output, 1);
+    let doc = parse_stdout(&output);
+    let diagnostic = &doc["data"]["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "E160");
+    assert_eq!(
+        diagnostic["help"],
+        "`asset()` was removed in v0.3 with static file serving (see CHANGELOG, #485)"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

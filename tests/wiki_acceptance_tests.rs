@@ -245,51 +245,6 @@ async fn spawn_wiki_server() -> (String, tempfile::TempDir) {
     (format!("http://127.0.0.1:{port}"), tmp)
 }
 
-/// Spawn a wiki server with static file serving configured.
-async fn spawn_wiki_server_with_static() -> (String, tempfile::TempDir) {
-    use forge::config::{ServerConfig, StaticConfig};
-
-    let program = load_wiki_program();
-    let (tmp, storage) = temp_wiki_storage();
-
-    let static_dir = std::env::current_dir()
-        .unwrap()
-        .join("tests/fixtures/wiki/static");
-
-    let server_config = ServerConfig {
-        host: None,
-        port: None,
-        cors_origins: None,
-        webhook_secrets: None,
-        static_files: Some(StaticConfig {
-            root: Some(static_dir.to_str().unwrap().to_string()),
-            prefix: Some("/static".to_string()),
-        }),
-    };
-
-    let config = forge::config::ForgeConfig::default_mock_config();
-    let executor = TaskExecutor::new(program, wiki_mock_registry(), None)
-        .with_storage(storage)
-        .with_config(config);
-
-    let server = forge::runtime::http_server::ForgeServer::new(executor, Some(&server_config));
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind failed");
-    let port = listener.local_addr().unwrap().port();
-
-    tokio::spawn(async move {
-        server
-            .run_on_listener(listener)
-            .await
-            .expect("server failed");
-    });
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    (format!("http://127.0.0.1:{port}"), tmp)
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // Category 1: Checker / Parse Validation
 // ═══════════════════════════════════════════════════════════════════
@@ -718,25 +673,6 @@ async fn wiki_http_api_search() {
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
     assert!(!body.is_empty(), "api_search should return results");
-}
-
-#[tokio::test]
-async fn wiki_http_static_css() {
-    let (base, _tmp) = spawn_wiki_server_with_static().await;
-    let resp = reqwest::get(format!("{base}/static/css/style.css"))
-        .await
-        .expect("request failed");
-    assert_eq!(resp.status(), 200);
-    let content_type = resp
-        .headers()
-        .get("content-type")
-        .map(|v| v.to_str().unwrap_or(""))
-        .unwrap_or("");
-    assert!(
-        content_type.contains("text/css"),
-        "should serve CSS with correct MIME type, got: {}",
-        content_type
-    );
 }
 
 #[tokio::test]

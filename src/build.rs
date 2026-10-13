@@ -206,6 +206,11 @@ impl BuildPipeline {
         if let Some(path) = config_path {
             let content = std::fs::read_to_string(&path)
                 .map_err(|e| anyhow::anyhow!("cannot read config {}: {}", path.display(), e))?;
+            // Same parser/validator as `ForgeConfig::load`, so a config the
+            // runtime would reject (or silently ignore) fails the build (#485).
+            crate::config::ForgeConfig::from_toml_str(&content).map_err(|e| {
+                anyhow::anyhow!("invalid embedded config {}: {}", path.display(), e)
+            })?;
             Ok(Some(content))
         } else {
             Ok(None)
@@ -1057,7 +1062,7 @@ async fn main() -> anyhow::Result<()> {{
             host: Some(cli.host),
             port: Some(cli.port),
             cors_origins: None,
-            static_files: None,
+            removed_static: None,
             webhook_secrets: None,
         }});
     }}

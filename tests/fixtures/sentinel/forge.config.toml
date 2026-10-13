@@ -1,5 +1,5 @@
 # FORGE Sentinel — configuration
-# Start: forge serve tests/fixtures/sentinel/server.forge -s tests/fixtures/sentinel/shared.forge --watch
+# Start: forge serve tests/fixtures/sentinel/server.forge -s tests/fixtures/sentinel/shared.forge
 
 [llm]
 default = "sentinel-provider"
@@ -12,10 +12,6 @@ timeout_secs = 60
 [server]
 host = "127.0.0.1"
 port = 3001
-
-[server.static]
-root = "tests/fixtures/sentinel/static"
-prefix = "/static"
 
 [skills]
 skill_dirs = ["tests/fixtures/sentinel/skills"]

@@ -2548,7 +2548,7 @@ Dispatching on a name that cannot exist is the same silent-failure class: the co
 
 | Code | Rule |
 |------|------|
-| `E160` | A plain call target that resolves to nothing: not a declared `task`/`pure`/`flow`/`pool`, not a runtime builtin (`asset`, `winning_lines`) and not an uppercase type-constructor name. `fn main` is the program entry point, not a call target — `main()` is an `E160` |
+| `E160` | A plain call target that resolves to nothing: not a declared `task`/`pure`/`flow`/`pool`, not a runtime builtin (`winning_lines`) and not an uppercase type-constructor name. `fn main` is the program entry point, not a call target — `main()` is an `E160` |
 | `E161` | A constructor pattern that can never match the scrutinee, **when the scrutinee's value set is statically known** |
 | `E162` | The same, but the pattern differs from a known tag only in case — emitted instead of `E161` |
 | `E163` | Raw interpolation `{!expr}`, removed in v0.3 with the `Html` type (see "Templates"). Checked in every expression slot, including declaration-level ones such as `schedule` prompts, `knowledge store`, `subscribe ... where` and `requires` |
@@ -2808,7 +2808,7 @@ retire "specialist_FORGE"
 
 ## 21. Skills, Built-In Capabilities, and Project Manifests
 
-FORGE source declares capabilities with `use`. Built-ins include LLM operations, web/data helpers, assets, command execution, and project skills.
+FORGE source declares capabilities with `use`. Built-ins include LLM operations, web/data helpers, command execution, and project skills.
 
 ```forge
 #! boundary: server
@@ -2827,7 +2827,6 @@ Built-in capability families:
 | LLM | `llm.reason`, `llm.classify` |
 | Web | `web.fetch`, `web.post` |
 | Data | `data.store`, `data.get`, `data.list`, `data.delete`, `data.embed`, `data.search` |
-| Assets | `asset` |
 | Command | `command.status`, `command.output`, `command.cancel` |
 | Files | `file.read` (server-only) |
 | Structured Data | `toml.parse`, `json.parse` |
@@ -2836,7 +2835,7 @@ Built-in capability families:
 | Process | `proc.exit` |
 | Skills | `skill.<namespace>.<capability>(...)` |
 
-Removed in v0.3 (#485): the HTML and Markdown families (`html.layout`, `html.escape`, `markdown.render`) are gone with the `Html` type. A `use` of any of them fails with E010 and a pointer to the CHANGELOG; return `Text` and build the markup yourself.
+Removed in v0.3 (#485): the HTML and Markdown families (`html.layout`, `html.escape`, `markdown.render`) are gone with the `Html` type — a `use` of any of them fails with E010 and a pointer to the CHANGELOG; return `Text` and build the markup yourself. In the same release the `asset()` helper and static file serving (`[server.static]`, `FORGE_STATIC_ROOT`) left core — serve assets from the app or a web server — and `forge serve --watch` hot reload went with them; run your own dev loop.
 
 `search "query"` is restricted to `#! boundary: server`.
 
@@ -3026,7 +3025,7 @@ When an example intentionally exercises a checker limitation, document the limit
 
 ## 26. Diagnostics and Error Codes
 
-Every diagnostic emitted by `forge check`, `forge run`, `forge build`, `forge serve` and the watcher carries a stable code (`Exxx` for errors, `Wxxx` for warnings). The full registry lives in `src/diagnostic_codes.rs`.
+Every diagnostic emitted by `forge check`, `forge run`, `forge build` and `forge serve` carries a stable code (`Exxx` for errors, `Wxxx` for warnings). The full registry lives in `src/diagnostic_codes.rs`.
 
 | Range | Source |
 |-------|--------|

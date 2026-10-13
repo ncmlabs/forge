@@ -38,6 +38,5 @@ pub mod verification_engine;
 pub mod wake_service;
 pub mod warded;
 pub mod warden;
-pub mod watcher;
 pub mod webhook_driver;
 pub mod webhook_rate_limiter;
