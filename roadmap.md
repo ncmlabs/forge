@@ -77,7 +77,7 @@ Baselines, 2026-10-13: 30 specs, forge `551de6e`, results in `bench/results/`.
 | ----- | ----- | ------ |
 | [#474](https://github.com/ncmlabs/forge/issues/474) | diagnostics: stable error codes, real file path, plain output off-TTY, forge explain | Done ✅ |
 | [#475](https://github.com/ncmlabs/forge/issues/475) | cli: JSON output envelope, semantic exit codes and --fields for every command | Done ✅ |
-| [#476](https://github.com/ncmlabs/forge/issues/476) | cli: forge schema and forge help --json introspection | Open |
+| [#476](https://github.com/ncmlabs/forge/issues/476) | cli: forge schema and forge help --json introspection | Done ✅ |
 | [#477](https://github.com/ncmlabs/forge/issues/477) | cli: forge run --dry-run static execution plan (LLM sites, cost, effects) | Done ✅ |
 | [#478](https://github.com/ncmlabs/forge/issues/478) | test: forge run --record and forge test replay through MockProvider | Done ✅ |
 | [#479](https://github.com/ncmlabs/forge/issues/479) | runtime: end-of-run summary (calls, tokens, cost, confidence, warden events) | Done ✅ |

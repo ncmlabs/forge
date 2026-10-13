@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/envelope.schema.json",
+  "title": "FORGE CLI envelope",
+  "description": "The one JSON document every in-scope FORGE command prints in `--json` mode (#475). `forge schema <command>` prints this document with `properties.data` replaced by that command's payload schema.",
+  "type": "object",
+  "required": [
+    "status",
+    "command",
+    "data",
+    "context",
+    "next_steps",
+    "warnings",
+    "cost",
+    "error",
+    "duration_ms"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "description": "Terminal status of the command; `pending` is for paths that stop and wait (approval gate, needs input).",
+      "enum": ["success", "error", "warning", "pending"]
+    },
+    "command": {
+      "description": "Subcommand that produced the document (`check`, `run`, `wake`, ...), or the subcommand named in argv for a usage error, or `\"\"` when none was given.",
+      "type": "string"
+    },
+    "data": {
+      "description": "Command payload, filterable with `--fields`. One `<command>.data.schema.json` describes each command's shape; see `forge schema <command>`.",
+      "type": "object"
+    },
+    "context": {
+      "description": "One human sentence describing what happened.",
+      "type": "string"
+    },
+    "next_steps": {
+      "description": "Concrete commands to run next (`forge explain <code>` for check errors).",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "warnings": {
+      "description": "Non-fatal findings, also present in `data.diagnostics` for `check`.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "cost": {
+      "description": "USD spent by this command. `0.0` on paths with no LLM calls, `null` when spend cannot be measured.",
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "error": {
+      "description": "`null` on success and on warnings-only runs, else the error taxonomy.",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/error" }]
+    },
+    "duration_ms": {
+      "description": "Wall-clock time of the command.",
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "plan_operations": {
+      "title": "Plan operations",
+      "description": "`data.operations` of the static plan that `forge cost --json` and `forge run --dry-run --json` report: one entry per LLM operation, in walk order.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "location",
+          "estimated_tokens_in",
+          "estimated_tokens_out",
+          "estimated_cost_usd"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "description": "Oracle primitive, e.g. `reason`, `classify`, `search`.",
+            "type": "string"
+          },
+          "location": {
+            "description": "Human-readable site, e.g. `task analyze`.",
+            "type": "string"
+          },
+          "estimated_tokens_in": { "type": "integer", "minimum": 0 },
+          "estimated_tokens_out": { "type": "integer", "minimum": 0 },
+          "estimated_cost_usd": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "plan_effects": {
+      "title": "Plan effects",
+      "description": "`data.effects` of the static plan: one entry per side-effect site, in walk order.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "location"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "description": "Effect site: `command`, `exec`, `http`, `file.write`, `session` or `spawn`.",
+            "type": "string"
+          },
+          "location": {
+            "description": "Human-readable site, e.g. `task deploy`.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "run_summary": {
+      "title": "RunSummary",
+      "description": "End-of-run economics and trust signals (#479): `data.summary` on `run`, `trace` and `test`. Counters come from the run's cost tracker and trace events, with spawned children and pool workers folded in.",
+      "type": "object",
+      "required": [
+        "llm_calls",
+        "tokens_in",
+        "tokens_out",
+        "cost_usd",
+        "confidence",
+        "warden_events",
+        "duration_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "llm_calls": { "type": "integer", "minimum": 0 },
+        "tokens_in": { "type": "integer", "minimum": 0 },
+        "tokens_out": { "type": "integer", "minimum": 0 },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "confidence": {
+          "description": "Median (`p50`) and minimum of the run's LLM confidences; `null` when the run made no LLM call, because there is no spread to show (Principle I).",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["p50", "min"],
+              "additionalProperties": false,
+              "properties": {
+                "p50": { "type": "number" },
+                "min": { "type": "number" }
+              }
+            }
+          ]
+        },
+        "warden_events": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "diagnostic": {
+      "title": "Diagnostic",
+      "description": "One entry of `data.diagnostics` (shared by `parse`, `check`, `run`, `trace` and `test`). `line`/`col`/`end_line`/`end_col` are `null` when the diagnostic names a file that was not parsed — a missing position is never reported as a fake 1:1.",
+      "type": "object",
+      "required": [
+        "code",
+        "severity",
+        "file",
+        "line",
+        "col",
+        "end_line",
+        "end_col",
+        "message",
+        "label",
+        "help"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "Stable diagnostic code (`E020`, `W041`); see `forge explain --list`.",
+          "type": "string"
+        },
+        "severity": { "enum": ["error", "warning"] },
+        "file": { "type": "string" },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "col": { "type": ["integer", "null"], "minimum": 1 },
+        "end_line": { "type": ["integer", "null"], "minimum": 1 },
+        "end_col": { "type": ["integer", "null"], "minimum": 1 },
+        "message": { "type": "string" },
+        "label": {
+          "description": "The span's label, rendered under the source line in human mode.",
+          "type": "string"
+        },
+        "help": { "type": ["string", "null"] }
+      }
+    },
+    "error": {
+      "title": "ErrorInfo",
+      "type": "object",
+      "required": ["type", "code", "message", "suggestion"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Error taxonomy. `io`, `parse`, `config` and `runtime` are classified from the failure; `usage` is an invalid command line, `check` is static diagnostics blocking execution, `unsupported` is a command without a JSON contract.",
+          "enum": ["io", "parse", "config", "runtime", "usage", "check", "unsupported"]
+        },
+        "code": {
+          "description": "Diagnostic code (`E020`) when the failure carries one.",
+          "type": ["string", "null"]
+        },
+        "message": { "type": "string" },
+        "suggestion": {
+          "description": "Concrete next action, e.g. `run forge check --help`.",
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

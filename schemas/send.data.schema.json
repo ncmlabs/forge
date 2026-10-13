@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge send data",
+  "description": "Payload of `forge send --json`: one event dispatched to an agent. The handler's `say` lines are in `output`, never on stdout, and the envelope's `cost` is the dispatch's measured LLM spend — `0.0` when the handler made no LLM call.",
+  "type": "object",
+  "required": ["file", "agent", "event", "result", "output"],
+  "additionalProperties": false,
+  "properties": {
+    "file": {
+      "description": "Program file the agent was declared in.",
+      "type": "string"
+    },
+    "agent": {
+      "description": "Agent the event was dispatched to.",
+      "type": "string"
+    },
+    "event": {
+      "description": "Event name as given on the command line.",
+      "type": "string"
+    },
+    "result": {
+      "description": "The handler's return value, or `null` when it returned nothing. A failed dispatch also reports `null`, with `error.type` `runtime`."
+    },
+    "output": {
+      "description": "Every `say` line the handler printed, in order.",
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

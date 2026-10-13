@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge init data",
+  "description": "Payload of `forge init --json`: the files a template scaffolds into a directory (or, with `--dry-run`, the files it would write).",
+  "type": "object",
+  "required": ["dir", "template", "dry_run", "files"],
+  "additionalProperties": false,
+  "properties": {
+    "dir": {
+      "description": "Target directory as given on the command line.",
+      "type": "string"
+    },
+    "template": {
+      "description": "Template that was scaffolded: `pipeline`, `agent` or `webhook-bot`.",
+      "type": "string"
+    },
+    "dry_run": {
+      "description": "`--dry-run`: nothing was written.",
+      "type": "boolean"
+    },
+    "files": {
+      "description": "Paths written, relative to `dir`; empty under `--dry-run` for an existing file that `--force` would be needed to replace.",
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
