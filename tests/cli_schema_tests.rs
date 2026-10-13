@@ -288,14 +288,21 @@ fn plain_help_stays_as_it_was() {
     // `forge help` is our own subcommand now (#476); it must print exactly what
     // clap's built-in help subcommand printed.
     assert_eq!(stdout_of(&["help"]), stdout_of(&["--help"]));
-    assert_eq!(
-        stdout_of(&["help", "check"]),
-        stdout_of(&["check", "--help"])
-    );
-    assert_eq!(
-        stdout_of(&["help", "store", "recover"]),
-        stdout_of(&["store", "recover", "--help"])
-    );
+
+    // Every command and nested action the index knows, so no parent with
+    // children can drift again: `forge help wake` used to list clap's
+    // synthesised `help` subcommand, which `forge wake --help` does not have.
+    for name in names(&help_index()) {
+        let mut via_help: Vec<&str> = vec!["help"];
+        via_help.extend(name.split(' '));
+        let mut via_flag: Vec<&str> = name.split(' ').collect();
+        via_flag.push("--help");
+        assert_eq!(
+            stdout_of(&via_help),
+            stdout_of(&via_flag),
+            "`forge help {name}` must be `forge {name} --help`"
+        );
+    }
 
     // An unknown command is a usage error, not a silent success.
     let unknown = forge(&["help", "bogus"]);
@@ -304,6 +311,27 @@ fn plain_help_stays_as_it_was() {
     assert!(
         stderr.contains("unrecognized subcommand 'bogus'"),
         "{stderr}"
+    );
+}
+
+#[test]
+fn json_mode_with_a_help_command_is_a_usage_error() {
+    // `forge help --json <command>` is a clap conflict; `FORGE_OUTPUT=json`
+    // applies JSON mode after parsing, so the same combination has to reach the
+    // same usage error — one envelope, exit 1 — instead of printing text.
+    let output = forge_env(&["help", "check"], &[("FORGE_OUTPUT", "json")]);
+    assert_exit(&output, 1);
+    let doc = parse_stdout(&output);
+    assert_eq!(doc["status"], "error", "{doc}");
+    assert_eq!(doc["error"]["type"], "usage", "{doc}");
+    assert_eq!(doc["command"], "help", "{doc}");
+    assert_eq!(doc["data"], serde_json::json!({}), "{doc}");
+
+    // Without the variable the page is printed as usual, so the error is JSON
+    // mode's, not the command's.
+    assert_eq!(
+        stdout_of(&["help", "check"]),
+        stdout_of(&["check", "--help"])
     );
 }
 
@@ -858,6 +886,62 @@ fn init_output_matches_its_schema() {
         real.display()
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fields_output_matches_its_schema() {
+    // `--fields` keeps only the listed top-level keys, so `data` loses keys the
+    // payload schema requires; the schema accepts that projection, and only at
+    // the top level: a nested value is kept whole (asserted by
+    // `a_wrong_document_fails_validation`, which still rejects a diagnostic
+    // missing `severity`).
+    assert_validates(
+        "check",
+        0,
+        &[
+            "check",
+            "--json",
+            "--fields",
+            "diagnostics",
+            "examples/basics/hello.forge",
+        ],
+        &[],
+    );
+    assert_validates(
+        "run",
+        0,
+        &[
+            "run",
+            "--json",
+            "--dry-run",
+            "--fields",
+            "operations",
+            "examples/basics/hello.forge",
+        ],
+        &[],
+    );
+
+    // The projection is the whole payload's schema minus `required`, nothing
+    // more: a projected key still has to have the right shape.
+    let schema = parse_stdout(&forge(&["schema", "check"]));
+    let validator = jsonschema::validator_for(&schema).expect("compile schema");
+    let projected = forge_env(
+        &[
+            "check",
+            "--json",
+            "--fields",
+            "diagnostics",
+            "examples/basics/hello.forge",
+        ],
+        &[],
+    );
+    let mut wrong = parse_stdout(&projected);
+    assert!(validator.is_valid(&wrong), "the projection must validate");
+    wrong["data"]["diagnostics"] = serde_json::json!("not an array");
+    assert!(
+        !validator.is_valid(&wrong),
+        "a projected key keeps its type"
+    );
 }
 
 // ── the guard's own guards ──────────────────────────────────────

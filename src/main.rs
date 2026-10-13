@@ -1172,13 +1172,29 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
             ));
         }
         Command::Help { command } => {
-            // `forge help --json` prints the index for the whole CLI; clap
-            // rejects the combination of `--json` and a command name, so the
-            // only way here with a name is `FORGE_OUTPUT=json`, where the
-            // explicit argument wins and help is printed as usual.
-            if out.json && command.is_empty() {
-                println!("{}", serde_json::to_string_pretty(&help_index())?);
-                forge::cli_output::exit(forge::cli_output::ExitCode::Success);
+            // `forge help --json` prints the index for the whole CLI. JSON mode
+            // with a command name is a usage error, exactly as `forge help
+            // --json <command>` is today: JSON mode is one envelope per
+            // command, and a help page is not an envelope. `--json` cannot
+            // reach this point with a name (clap rejects the conflict), but
+            // `FORGE_OUTPUT=json` can, and must not print text.
+            if out.json {
+                if command.is_empty() {
+                    println!("{}", serde_json::to_string_pretty(&help_index())?);
+                    forge::cli_output::exit(forge::cli_output::ExitCode::Success);
+                }
+                introspection_usage_error(
+                    out,
+                    "help",
+                    format!(
+                        "JSON mode (`--json` or FORGE_OUTPUT=json) cannot be combined with a command name ('{}')",
+                        command.join(" ")
+                    ),
+                    format!(
+                        "run `forge help --json` for the index, or `forge help {}` without JSON mode",
+                        command.join(" ")
+                    ),
+                );
             }
             print_help_for(&command);
         }
@@ -1273,7 +1289,11 @@ fn print_help_for(path: &[String]) -> ! {
         .collect();
     for name in path {
         match command.find_subcommand(name).cloned() {
-            Some(subcommand) => command = subcommand,
+            // A stand-alone clone is unbuilt, so the root's
+            // `disable_help_subcommand` has not reached it yet: clap would
+            // synthesise its auto `help` subcommand and the page would list a
+            // command that `forge <path> --help` does not have.
+            Some(subcommand) => command = subcommand.disable_help_subcommand(true),
             None => usage_exit(command.error(
                 clap::error::ErrorKind::InvalidSubcommand,
                 format!("unrecognized subcommand '{name}'"),

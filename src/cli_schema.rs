@@ -53,20 +53,47 @@ pub fn envelope_only() -> Value {
 /// `properties.data` replaced by that command's payload schema. `None` when the
 /// command has no JSON envelope.
 ///
-/// `data` accepts `{}` as well as the payload: a command that fails before it
-/// builds one (`out.fail` — io, config and runtime failures) emits an error
-/// envelope with empty data, so the escape hatch is part of the contract rather
+/// `data` accepts three shapes: the payload, the payload `--fields` projected to
+/// the listed top-level keys, and `{}` — a command that fails before it builds a
+/// payload (`out.fail` — io, config and runtime failures) emits an error
+/// envelope with empty data, so that escape hatch is part of the contract rather
 /// than a variant each payload schema repeats.
 pub fn envelope_for(command: &str) -> Option<Value> {
     let data = data_schema_for(command)?;
     let mut envelope = envelope_only();
     envelope["properties"]["data"] = serde_json::json!({
         "description": format!(
-            "`{command}` payload, or `{{}}` when the command failed before building one."
+            "`{command}` payload, that payload projected by `--fields`, or `{{}}` when the command failed before building one."
         ),
-        "anyOf": [data, { "title": "no payload", "type": "object", "maxProperties": 0 }]
+        "anyOf": [
+            data.clone(),
+            projection_of(&data),
+            { "title": "no payload", "type": "object", "maxProperties": 0 }
+        ]
     });
     Some(envelope)
+}
+
+/// The payload schema as `--fields` can leave it. `cli_output::filter_data`
+/// keeps only the listed top-level keys, so under a projection every top-level
+/// key is optional: drop `required` from the payload object and from each branch
+/// of its top-level `anyOf`. Nested objects keep theirs — a kept value is copied
+/// whole, so only the top level can lose a key.
+fn projection_of(data: &Value) -> Value {
+    let mut schema = data.clone();
+    drop_required(&mut schema);
+    if let Some(branches) = schema.get_mut("anyOf").and_then(Value::as_array_mut) {
+        for branch in branches {
+            drop_required(branch);
+        }
+    }
+    schema
+}
+
+fn drop_required(schema: &mut Value) {
+    if let Some(object) = schema.as_object_mut() {
+        object.remove("required");
+    }
 }
 
 /// `forge schema --all`: `{command: schema}`, each value exactly what

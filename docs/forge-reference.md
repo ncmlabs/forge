@@ -3199,6 +3199,8 @@ JSON mode prints no summary line: the same data is `data.summary`.
 forge check --json --fields diagnostics src/main.forge
 ```
 
+A `--fields` payload is a projection of the command's schema: `forge schema <command>` accepts it with every top-level key optional, since the projection can drop any of them (a kept value is copied whole, so nested keys are unchanged).
+
 ### Commands without JSON support
 
 `serve`, `agent` (REPL), `agent-inspect` and `fleet` are interactive or long-running. In JSON mode they emit `{"status":"error","error":{"type":"unsupported", ...}}` and exit `1` instead of starting.
