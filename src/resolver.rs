@@ -350,14 +350,6 @@ impl CapabilityRegistry {
                 output: ForgeType::Html,
             },
         );
-        caps.insert(
-            "asset".into(),
-            CapabilitySignature {
-                inputs: vec![ForgeType::Text],
-                output: ForgeType::Text,
-            },
-        );
-
         // command.status / command.output / command.cancel — issue #162
         caps.insert(
             "command.status".into(),
