@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "forge cost data",
-  "description": "Payload of `forge cost --json`: the static estimate, the same plan `forge run --dry-run` reports. No provider is called, so the envelope's `cost` repeats `estimated_cost_usd` and nothing was actually spent.",
+  "description": "Payload of `forge cost --json`: the static estimate, the same plan `forge run --dry-run` reports. No provider is called and nothing is spent, so the envelope's `cost` is `0.0` and the estimate is this `estimated_cost_usd`.",
   "type": "object",
   "required": [
     "file",

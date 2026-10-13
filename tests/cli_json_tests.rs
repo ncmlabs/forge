@@ -682,7 +682,36 @@ fn run_dry_run_json_lists_operations_and_effects() {
     assert_eq!(effects.len(), 1, "one effect expected: {doc}");
     assert_eq!(effects[0]["kind"], "command");
     assert_eq!(effects[0]["location"], "task run_it");
-    assert!(doc["cost"].as_f64().unwrap() > 0.0);
+    // A dry run executes nothing, so the envelope's `cost` (USD spent) is 0.0
+    // and the plan estimate stays in `data` (#528).
+    assert_eq!(doc["cost"], 0.0);
+    assert!(doc["data"]["estimated_cost_usd"].as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn dry_run_and_cost_envelopes_report_zero_spend() {
+    let dir = temp_dir("dry-run-zero-cost");
+    let program = dir.join("plan.forge");
+    std::fs::write(&program, DRY_RUN_PROGRAM).expect("write dry-run program");
+
+    let cases: [&[&str]; 2] = [&["run", "--dry-run", "--json"], &["cost", "--json"]];
+    for args in cases {
+        let mut argv = args.to_vec();
+        argv.push(program.to_str().unwrap());
+        let output = forge(&argv);
+        assert_exit(&output, 0);
+        let doc = parse_stdout(&output);
+        assert_eq!(
+            doc["cost"], 0.0,
+            "`forge {}` spends nothing, so `cost` must be 0.0: {doc}",
+            args[0]
+        );
+        assert!(
+            doc["data"]["estimated_cost_usd"].as_f64().unwrap() > 0.0,
+            "the estimate must stay in `data.estimated_cost_usd`: {doc}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

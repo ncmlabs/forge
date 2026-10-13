@@ -881,6 +881,8 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                 print!("{}", estimate);
             }
             let data = plan_json(&file, &estimate);
+            // `cost` estimates only: nothing is spent, so the envelope keeps its
+            // default `cost: 0.0` (#528) and the estimate stays in `data`.
             let env = forge::cli_output::Envelope::success(
                 "cost",
                 data,
@@ -889,8 +891,7 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                     estimate.operations.len(),
                     file.display()
                 ),
-            )
-            .with_cost(estimate.total_cost_usd as f64);
+            );
             out.done(&env);
         }
         Command::Serve {
@@ -1740,6 +1741,8 @@ fn dry_run_program(file: &Path, out: &forge::cli_output::OutputMode) -> anyhow::
         estimate.effects.len()
     );
     // Warnings do not block the plan, but they keep `forge check`'s exit code 2.
+    // Nothing is executed, so nothing is spent: the envelope keeps its default
+    // `cost: 0.0` (#528) and the estimate stays in `data.estimated_cost_usd`.
     let env = if diagnostics.is_empty() {
         forge::cli_output::Envelope::success("run", data, context)
     } else {
@@ -1750,8 +1753,7 @@ fn dry_run_program(file: &Path, out: &forge::cli_output::OutputMode) -> anyhow::
                     .map(|d| format!("{}: {}", d.code, d.message))
                     .collect(),
             )
-    }
-    .with_cost(estimate.total_cost_usd as f64);
+    };
     out.done(&env)
 }
 
