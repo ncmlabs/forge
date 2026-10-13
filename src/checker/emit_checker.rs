@@ -1,7 +1,8 @@
 // FORGE emit checker — issue #532.
 //
-// E165: an `emit` statement written in `fn main`. The runtime only carries an
-// event bus inside agent handlers and endpoints (`emit_precomputed` in
+// E165: an `emit` written in `fn main` — the `emit` statement or a session
+// hook's `-> emit`. The runtime only carries an event bus inside agent handlers
+// and endpoints (`emit_precomputed`/`emit_session_hook` in
 // `src/runtime/executor.rs`), so a `fn main` emit can never run. Tasks and
 // flows are deliberately not flagged: a task called from an agent handler
 // emits correctly at runtime, so rejecting it would reject working programs.
@@ -35,6 +36,12 @@ fn check_stmts(stmts: &[Spanned<Stmt>], file: &str, diagnostics: &mut Vec<Diagno
 fn check_stmt(stmt: &Spanned<Stmt>, file: &str, diagnostics: &mut Vec<Diagnostic>) {
     match &stmt.node {
         Stmt::Emit(event, _) => diagnostics.push(emit_in_main(event, file)),
+        // A session's `-> emit` hook runs on the executor that created the
+        // session — in `fn main`, the bus-less one. The statement slots that
+        // can hold a session expression.
+        Stmt::Bind(_, expr) | Stmt::Say(expr) | Stmt::ExprStmt(expr) | Stmt::Give(expr, _) => {
+            check_session_hooks(expr, file, diagnostics)
+        }
         // Recurse into nested statement bodies.
         Stmt::IfElse(ie) => {
             check_stmts(&ie.then_body, file, diagnostics);
@@ -74,6 +81,21 @@ fn emit_in_main(event: &Spanned<String>, file: &str) -> Diagnostic {
         "emitted from fn main",
     )
     .with_help(HELP)
+}
+
+/// E165 — a session hook (`on progress -> emit ...` / `on complete -> emit ...`)
+/// created in `fn main` emits on the bus-less executor, so it gets the same
+/// diagnostic as an `emit` statement.
+fn check_session_hooks(expr: &Spanned<Expr>, file: &str, diagnostics: &mut Vec<Diagnostic>) {
+    let Expr::Session(session) = &expr.node else {
+        return;
+    };
+    for hook in [&session.on_progress, &session.on_complete]
+        .into_iter()
+        .flatten()
+    {
+        diagnostics.push(emit_in_main(&hook.node.event, file));
+    }
 }
 
 #[cfg(test)]
@@ -142,6 +164,56 @@ mod tests {
         ];
         for (name, src) in cases {
             assert_eq!(codes(src), vec!["E165"], "{name}: {src}");
+        }
+    }
+
+    #[test]
+    fn session_hook_emit_in_main_is_e165() {
+        // A session hook's `-> emit` runs on the executor that created the
+        // session; in `fn main` that executor has no bus.
+        let cases = [
+            (
+                "on complete",
+                "fn main\n  result = session \"helper\" agent \"x\" prompt \"hi\" on complete -> emit Kickoff(topic: \"a\")\n  say result\n",
+            ),
+            (
+                "on progress",
+                "fn main\n  result = session \"helper\" agent \"x\" prompt \"hi\" on progress -> emit Kickoff(topic: \"a\")\n  say result\n",
+            ),
+        ];
+        for (name, src) in cases {
+            assert_eq!(codes(src), vec!["E165"], "{name}: {src}");
+        }
+        // Same message, span and help as the statement form.
+        let src = "fn main\n  result = session \"helper\" agent \"x\" prompt \"hi\" on complete -> emit Kickoff(topic: \"a\")\n  say result\n";
+        let ds = {
+            let program = parse(src).expect("parse failed");
+            check(&program, "test.forge")
+        };
+        assert_eq!(ds.len(), 1, "{ds:?}");
+        assert_eq!(
+            ds[0].message,
+            "`emit` needs an agent: `fn main` has no event bus"
+        );
+        assert_eq!(ds[0].label, "emitted from fn main");
+        assert_eq!(&src[ds[0].span.start..ds[0].span.end], "Kickoff");
+        assert_eq!(ds[0].help.as_deref(), Some(HELP));
+    }
+
+    #[test]
+    fn session_hook_emit_outside_main_is_not_e165() {
+        let cases = [
+            (
+                "agent handler",
+                "agent a\n  on go(topic: Text)\n    result = session \"helper\" agent \"x\" prompt \"hi\" on complete -> emit Kickoff(topic: topic)\n    say result\n",
+            ),
+            (
+                "task",
+                "task go\n  needs topic: Text\n  gives Text\n  do\n    result = session \"helper\" agent \"x\" prompt \"hi\" on progress -> emit Kickoff(topic: topic)\n    give result\n",
+            ),
+        ];
+        for (name, src) in cases {
+            assert_eq!(codes(src), Vec::<&str>::new(), "{name}: {src}");
         }
     }
 

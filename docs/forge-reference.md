@@ -2578,7 +2578,7 @@ Renaming `Buy` to `BUY` here is an `E162` (``pattern `BUY` never matches `"Buy"`
 
 ### Emit Checks (E165)
 
-`emit` publishes to the system event bus, which only exists inside an agent handler or an endpoint. An `emit` statement in `fn main` — including one nested in an `if`/`else`, `for`, `when` or `match` body — is dead on arrival, so `forge check` rejects it instead of letting `forge run` fail with `emit outside agent`.
+`emit` publishes to the system event bus, which only exists inside an agent handler or an endpoint. An `emit` statement in `fn main` — including one nested in an `if`/`else`, `for`, `when` or `match` body, and a session's `on progress -> emit` / `on complete -> emit` hook — is dead on arrival, so `forge check` rejects it instead of letting `forge run` fail with `emit outside agent`.
 
 | Code | Rule |
 |------|------|
