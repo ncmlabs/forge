@@ -215,6 +215,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `serve --watch` are untouched and are removed in later #485 steps.
 
 ### Fixed
+- `forge --help` printed `Usage: forge.exe …` on Windows, where clap takes the
+  program name from `argv[0]`, while our own `forge help` printed `forge`
+  (#476). The binary name is now pinned (`bin_name = "forge"`), so both paths
+  print the same usage line on every platform.
 - Diagnostic text output pointed at the wrong line/column after non-ASCII
   characters (#513): `src/diagnostic.rs` built ariadne with the default
   `IndexType::Char`, but every FORGE span is a byte range (pest offsets), so a
@@ -518,6 +522,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 First release of FORGE — the agent-native programming language where LLM calls are oracle queries, not function calls. All 14 language primitives, 7 semantic checkers, full async runtime, and 3 showcase applications. 883 tests passing across unit, conformance, integration, and E2E.
 
 ### Added
+- CLI introspection (#476): `forge schema <command>` prints the JSON Schema
+  (2020-12) of that command's `--json` envelope — the shared envelope with
+  `properties.data` replaced by the command's payload — `forge schema` alone
+  prints the envelope with `data` left generic, and `forge schema --all`
+  prints `{command: schema}`. The schemas are hand-written under `schemas/`
+  (`data` is built ad hoc as `serde_json::Value`, so there are no Rust types
+  to derive from) and embedded through the table in `src/cli_schema.rs`;
+  `forge help --json` prints the command index clap cannot drift from —
+  `{commands: [{name, about, args: [{name, long, required, takes_value,
+  help}], json_supported}], exit_codes, env}`, nested actions included
+  (`wake register`), with `json_supported` derived from the schema table.
+  `tests/cli_schema_tests.rs` is the drift guard: it runs every command for
+  real and validates stdout against `forge schema <command>`, so a payload
+  that gains or renames a key fails until the schema is updated. `jsonschema`
+  is a dev-dependency only. Plain `forge help` / `forge --help` are unchanged.
+  Documented in `docs/forge-reference.md` §27.
+- `forge run --dry-run <file>` (#477): parse, check, and print the static
+  execution plan — the cost table of every LLM operation, then an `Effects:`
+  list with one `kind  location` line per side-effect site (`command`, `exec`,
+  `http`, `file.write`, `session`, `spawn`) in walk order — then the line
+  `nothing was executed`. No provider is built, no executor starts, no process
+  runs, and no agent is spawned. `--json` reports the #475 envelope with
+  `command: "run"` and `data = {dry_run, file, operations, effects,
+  total_tokens_in, total_tokens_out, estimated_cost_usd}`; exit codes follow
+  `forge check` (`0` clean plan, `1` errors blocked the plan, `2` warnings
+  only). `forge cost` reports the same estimate with `command: "cost"`, runs no
+  checker and never blocks (human output unchanged, JSON `data` gains
+  `effects`). `--dry-run` conflicts with
+  `--record` and refuses `--manifest` for now. Effect sites come from the
+  existing `src/cost_estimator.rs` walker; token totals are unchanged.
 
 #### Core Language
 - Core language with 14 primitives: task, flow, agent, pool, system, warden, event, states, pure, endpoint, type, contract, use, uncertain

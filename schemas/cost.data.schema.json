@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge cost data",
+  "description": "Payload of `forge cost --json`: the static estimate, the same plan `forge run --dry-run` reports. No provider is called, so the envelope's `cost` repeats `estimated_cost_usd` and nothing was actually spent.",
+  "type": "object",
+  "required": [
+    "file",
+    "operations",
+    "effects",
+    "total_tokens_in",
+    "total_tokens_out",
+    "estimated_cost_usd"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "file": {
+      "description": "Source path as given on the command line.",
+      "type": "string"
+    },
+    "operations": { "$ref": "#/$defs/plan_operations" },
+    "effects": { "$ref": "#/$defs/plan_effects" },
+    "total_tokens_in": { "type": "integer", "minimum": 0 },
+    "total_tokens_out": { "type": "integer", "minimum": 0 },
+    "estimated_cost_usd": { "type": "number", "minimum": 0 }
+  }
+}

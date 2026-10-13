@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge store data",
+  "description": "Payload of `forge store recover --json`: a health check of every `.redb` file under the storage root, and the rotation of the broken ones.",
+  "type": "object",
+  "required": ["action", "root", "dry_run", "healthy", "broken", "stores"],
+  "additionalProperties": false,
+  "properties": {
+    "action": { "const": "recover" },
+    "root": {
+      "description": "Storage root that was scanned.",
+      "type": "string"
+    },
+    "dry_run": {
+      "description": "`--dry-run`: broken stores are reported but nothing is renamed.",
+      "type": "boolean"
+    },
+    "healthy": {
+      "description": "Stores that opened cleanly.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "broken": {
+      "description": "Stores that failed to open; each one appears in `stores`.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "stores": {
+      "description": "One entry per broken store.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "backup", "error", "rotated"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "backup": {
+            "description": "Where it was (or would be) rotated to: `<name>.redb.bak-<unix-seconds>`.",
+            "type": "string"
+          },
+          "error": {
+            "description": "Why the store would not open.",
+            "type": "string"
+          },
+          "rotated": {
+            "description": "`false` under `--dry-run`, otherwise `true`.",
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}
