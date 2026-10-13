@@ -15,11 +15,22 @@ type Pairs<'a> = pest::iterators::Pairs<'a, Rule>;
 
 // ── Helpers ──────────────────────────────────────────────────
 
+// ponytail: the span base offset is a thread-local so `to_span` and the two raw
+// offset sites below can read it without threading `base` through every builder.
+thread_local! {
+    static SPAN_BASE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn span_base() -> usize {
+    SPAN_BASE.with(|b| b.get())
+}
+
 fn to_span(pair: &Pair) -> Span {
     let s = pair.as_span();
+    let base = span_base();
     Span {
-        start: s.start(),
-        end: s.end(),
+        start: base + s.start(),
+        end: base + s.end(),
     }
 }
 
@@ -547,8 +558,9 @@ fn build_webhook_block(pair: Pair) -> anyhow::Result<Spanned<WebhookField>> {
 }
 
 fn build_field_def(ident_pair: Pair, type_pair: Pair) -> anyhow::Result<Spanned<FieldDef>> {
-    let start = ident_pair.as_span().start();
-    let end = type_pair.as_span().end();
+    let base = span_base();
+    let start = base + ident_pair.as_span().start();
+    let end = base + type_pair.as_span().end();
     let name = ident_pair.as_str().to_string();
     let type_name = build_type_name(type_pair)?;
     Ok(Spanned::new(
@@ -1162,7 +1174,7 @@ fn build_postfix_expr(pair: Pair) -> anyhow::Result<Spanned<Expr>> {
         let op_str = op_pair.as_str();
         let op_span = Span {
             start: result.span.start,
-            end: op_pair.as_span().end(),
+            end: span_base() + op_pair.as_span().end(),
         };
         let mut op_inner = op_pair.into_inner();
 
@@ -2959,6 +2971,22 @@ impl ParseError {
 }
 
 pub fn parse(source: &str) -> Result<Program, ParseError> {
+    parse_at(source, 0)
+}
+
+/// Parse `source` adding `base` to every span's byte offsets.
+///
+/// A composed program reparses each source at a cumulative base, so its spans
+/// are unique across files and can be mapped back to a file and local span
+/// (#519). The base is restored before returning, error included.
+pub fn parse_at(source: &str, base: usize) -> Result<Program, ParseError> {
+    let prev = SPAN_BASE.with(|b| b.replace(base));
+    let parsed = parse_source(source);
+    SPAN_BASE.with(|b| b.set(prev));
+    parsed
+}
+
+fn parse_source(source: &str) -> Result<Program, ParseError> {
     let pairs = ForgeParser::parse(Rule::program, source).map_err(|e| {
         let (start, end) = match e.location {
             pest::error::InputLocation::Pos(p) => (p, (p + 1).min(source.len())),

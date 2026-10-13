@@ -62,6 +62,28 @@ fn check_json_error_file_reports_code_and_next_step() {
 }
 
 #[test]
+fn check_explicit_files_without_merge_are_checked_independently() {
+    // Two unrelated programs, each with its own `fn main`: without `--merge`
+    // every file is checked on its own, so a batch of examples stays OK (#544).
+    let files = [
+        "examples/basics/hello.forge",
+        "examples/basics/structured_config.forge",
+    ];
+    let output = forge(&["check", files[0], files[1]]);
+    assert_exit(&output, 0);
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "OK\n");
+
+    // With `--merge` they are one program, and two `fn main` blocks cannot merge.
+    let merged = forge(&["check", "--merge", files[0], files[1]]);
+    assert_exit(&merged, 1);
+    let stderr = String::from_utf8_lossy(&merged.stderr);
+    assert!(
+        stderr.contains("multiple `fn main` blocks found"),
+        "expected the merge error: {stderr}"
+    );
+}
+
+#[test]
 fn check_json_warnings_only_exits_two() {
     // tests/fixtures/warnings_only.forge produces exactly one W041 warning.
     let output = forge(&["check", "--json", "tests/fixtures/warnings_only.forge"]);

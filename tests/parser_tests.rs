@@ -1712,3 +1712,34 @@ fn parse_retire_alias_with_export() {
         _ => panic!("expected task"),
     }
 }
+
+// ── Span base offset (#519) ──────────────────────────────────
+
+#[test]
+fn parse_at_shifts_every_top_level_span() {
+    let src = "task greet\n  do\n    say \"hi\"\n\npure double\n  needs n: Number\n  gives Number\n  do\n    give n * 2\n";
+    let shifted = forge::parser::parse_at(src, 1000).expect("parse_at failed");
+    assert_eq!(shifted.items.len(), 2);
+    for item in &shifted.items {
+        assert!(
+            item.span.start >= 1000 && item.span.end > item.span.start,
+            "span not shifted: {:?}",
+            item.span
+        );
+    }
+    // The same source at base 0 is byte-identical to `parse`.
+    let plain = parse(src).expect("parse failed");
+    let zero = forge::parser::parse_at(src, 0).expect("parse_at failed");
+    let spans = |p: &Program| p.items.iter().map(|i| i.span).collect::<Vec<_>>();
+    assert_eq!(spans(&plain), spans(&zero));
+    assert_eq!(spans(&plain)[0].start, 0);
+}
+
+#[test]
+fn parse_at_restores_the_base_after_a_parse_error() {
+    let bad = "task greet\n  do\n    say\n";
+    assert!(forge::parser::parse_at(bad, 5000).is_err());
+    // The failed parse must not leave the base behind for the next parse.
+    let ok = parse("task greet\n  do\n    say \"hi\"\n").expect("parse failed");
+    assert_eq!(ok.items[0].span.start, 0);
+}

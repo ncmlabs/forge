@@ -547,10 +547,11 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                 None => HashMap::new(),
             };
 
-            // Without explicit files, the manifest's sources are checked exactly
-            // as `run --manifest` blocks on them: per source file, never composed (#495).
-            let (files, merge) = match loaded {
-                Some((m, bd)) if files.is_empty() => (m.resolve_sources(&bd)?, false),
+            // A manifest project is one composed program (#516). Explicit files
+            // compose only with `--merge`: without it each file stands alone, so
+            // `forge check a.forge b.forge` over unrelated programs still works.
+            let (files, compose) = match loaded {
+                Some((m, bd)) if files.is_empty() => (m.resolve_sources(&bd)?, true),
                 _ => (files, merge),
             };
 
@@ -570,28 +571,12 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                 })
                 .collect();
 
-            let mut all_diagnostics = Vec::new();
-            if merge && parsed_programs.len() > 1 {
-                // Merge mode: combine all files, then run checkers on merged program.
-                // This resolves cross-file references (states, types, functions);
-                // the resolver still runs per file.
-                for sf in &source_files {
-                    all_diagnostics.extend(resolve_diagnostics(&sf.program, &sf.path, &skill_sigs));
-                }
-
-                match forge::compose::merge_programs(&source_files) {
-                    Ok(composed) => {
-                        let merged_source = parsed_programs
-                            .iter()
-                            .map(|(_, _, s)| s.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        let merged_fname = "<merged>".to_string();
-                        all_diagnostics
-                            .extend(forge::checker::check_all(&composed.program, &merged_fname));
-                        // Store merged program for diagnostic rendering
-                        parsed_programs.push((composed.program, merged_fname, merged_source));
-                    }
+            let all_diagnostics = if compose {
+                // One composed program: the checkers run once on the merge, so a
+                // lifecycle declared in one source resolves from another (#516).
+                // The resolver and the boundary check stay per file.
+                match check_source_files(&source_files, &skill_sigs) {
+                    Ok(diagnostics) => diagnostics,
                     Err(errs) => {
                         let messages: Vec<String> = errs.iter().map(|e| e.to_string()).collect();
                         if !out.json {
@@ -610,14 +595,12 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                         out.done(&env);
                     }
                 }
-
-                // Cross-file: boundary checker (always per-file)
-                all_diagnostics.extend(boundary_diagnostics(&source_files));
             } else {
-                // Per source file: resolver, checkers, boundary check — the set
-                // `run --manifest` blocks on (#495).
-                all_diagnostics.extend(check_source_files(&source_files, &skill_sigs));
-            }
+                // Explicit files without `--merge`: each is checked on its own,
+                // so a set of unrelated programs (each with its own `fn main`)
+                // is not reported as one broken composition.
+                check_files_individually(&source_files, &skill_sigs)
+            };
 
             let has_errors = all_diagnostics
                 .iter()
@@ -1992,11 +1975,42 @@ fn boundary_diagnostics(
     forge::checker::boundary_checker::check(&boundary_refs)
 }
 
-/// Diagnostics for a multi-file project checked per source file: the resolver
-/// (project skills registered), every checker, then the cross-file boundary
-/// check. This is exactly the set `run --manifest` blocks on before it
-/// executes, so `check --manifest` reports it too (#495).
+/// A compose failure is not a diagnostic — it carries no code — so it fails the
+/// command with the conflicts spelled out, one per line.
+fn compose_failure(errs: &[forge::compose::ComposeError]) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{}",
+        errs.iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
+/// Diagnostics for a multi-file project checked as one composed program: the
+/// resolver (project skills registered) and the cross-file boundary check
+/// per file, every checker once on the merged program. This is exactly the set
+/// `run --manifest` blocks on before it executes, so `check --manifest` reports
+/// it too (#495, #516). A compose failure is returned — it has no diagnostic
+/// code, so callers fail the command the way they already fail a merge.
 fn check_source_files(
+    source_files: &[forge::compose::SourceFile],
+    skill_sigs: &HashMap<String, forge::types::CapabilitySignature>,
+) -> Result<Vec<forge::diagnostic::Diagnostic>, Vec<forge::compose::ComposeError>> {
+    let mut diagnostics = Vec::new();
+    for sf in source_files {
+        diagnostics.extend(resolve_diagnostics(&sf.program, &sf.path, skill_sigs));
+    }
+    diagnostics.extend(forge::compose::check_composed(source_files)?);
+    diagnostics.extend(boundary_diagnostics(source_files));
+    Ok(diagnostics)
+}
+
+/// Diagnostics for explicit files checked independently — the resolver (project
+/// skills registered), every checker and the boundary check per file. This is
+/// what `forge check a.forge b.forge` does without `--merge`: many unrelated
+/// programs are one file each, so two `fn main` blocks are not a merge error.
+fn check_files_individually(
     source_files: &[forge::compose::SourceFile],
     skill_sigs: &HashMap<String, forge::types::CapabilitySignature>,
 ) -> Vec<forge::diagnostic::Diagnostic> {
@@ -2323,9 +2337,11 @@ async fn run_manifest(
         });
     }
 
-    // What `run --manifest` blocks on: resolver, checkers and the cross-file
-    // boundary check, per source file (#495).
-    let diagnostics = check_source_files(&source_files, &skill_sigs);
+    // What `run --manifest` blocks on: the resolver and the cross-file boundary
+    // check per source file, and the checker once on the composed program
+    // (#495, #516).
+    let diagnostics =
+        check_source_files(&source_files, &skill_sigs).map_err(|errs| compose_failure(&errs))?;
 
     if !diagnostics.is_empty() {
         let data = serde_json::json!({
@@ -2361,15 +2377,8 @@ async fn run_manifest(
     }
 
     // Merge and execute
-    let composed = forge::compose::merge_programs(&source_files).map_err(|errs| {
-        anyhow::anyhow!(
-            "{}",
-            errs.iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    })?;
+    let composed =
+        forge::compose::merge_programs(&source_files).map_err(|errs| compose_failure(&errs))?;
 
     let cmd_mgr = Arc::new(Mutex::new(CommandManager::new()));
     let session_mgr =
@@ -2647,24 +2656,14 @@ fn try_build_executor_multi(
 
     // Merge programs before semantic checks so cross-file references
     // (e.g. lifecycle states declared in one file, used in another) resolve (#313)
-    let composed = forge::compose::merge_programs(&source_files).map_err(|errs| {
-        anyhow::anyhow!(
-            "{}",
-            errs.iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    })?;
+    let composed =
+        forge::compose::merge_programs(&source_files).map_err(|errs| compose_failure(&errs))?;
 
-    // Semantic checkers on merged program (states, requires, spawn, etc.)
-    // The first source path identifies the merged program; an empty id would
-    // render as `<unknown>` (#474).
-    let merged_fname = source_files
-        .first()
-        .map(|sf| sf.path.clone())
-        .ok_or_else(|| anyhow::anyhow!("no source files to check"))?;
-    diagnostics.extend(forge::checker::check_all(&composed.program, &merged_fname));
+    // Semantic checkers on the composed program (states, requires, spawn, etc.),
+    // each diagnostic naming the source file its span belongs to (#516, #519).
+    diagnostics.extend(
+        forge::compose::check_composed(&source_files).map_err(|errs| compose_failure(&errs))?,
+    );
 
     // Render all diagnostics, but only fail on errors (not warnings)
     if !diagnostics.is_empty() {
