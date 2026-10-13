@@ -1645,7 +1645,7 @@ Timers can be controlled with statements:
 Schedules are durable, cross-session wall-clock triggers. Where a `timer` is agent-local, cancellable, and protocol-scoped (a countdown the agent arms inside a flow), a `schedule` is declarative and persistent: it fires on its own cadence, independently of any particular session.
 
 ```forge
-agent forge_sensei
+agent reviewer
   memory persistent
     current_level: Text
   schedule mastery_review
@@ -2746,11 +2746,11 @@ FORGE agents can own persistent searchable knowledge and spawn specialized child
 ### Knowledge Store
 
 ```forge
-exportable agent forge_sensei
-  lifecycle: MasteryLevel
+exportable agent tutor
+  lifecycle: TutorPhase
   memory
     interaction_count: Number
-  knowledge store: ".forge-knowledge/sensei"
+  knowledge store: ".forge-knowledge/tutor"
     max_entries: 50000
     retention: 365d
 ```

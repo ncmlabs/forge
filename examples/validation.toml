@@ -222,30 +222,30 @@ paths = ["workflows/surface-audit.forge"]
 check = "ok"
 
 [[cases]]
-name = "forge-sensei single-file workflow"
-paths = ["workflows/forge-sensei.forge"]
+name = "sensei fixture single-file workflow"
+paths = ["tests/fixtures/sensei.forge"]
 check = "ok"
 
 [[cases]]
-name = "forge-sensei multi-file workflow"
+name = "sensei fixture multi-file server workflow"
 paths = [
-  "workflows/forge-sensei/shared/types.forge",
-  "workflows/forge-sensei/shared/events.forge",
-  "workflows/forge-sensei/shared/states.forge",
-  "workflows/forge-sensei/server/tasks.forge",
-  "workflows/forge-sensei/server/flows.forge",
-  "workflows/forge-sensei/server/agent.forge",
-  "workflows/forge-sensei/server/web.forge",
+  "tests/fixtures/sensei/shared/types.forge",
+  "tests/fixtures/sensei/shared/events.forge",
+  "tests/fixtures/sensei/shared/states.forge",
+  "tests/fixtures/sensei/server/tasks.forge",
+  "tests/fixtures/sensei/server/flows.forge",
+  "tests/fixtures/sensei/server/agent.forge",
+  "tests/fixtures/sensei/server/web.forge",
 ]
 check = "ok"
-manifest = "workflows/forge-sensei/forge.project.toml"
+manifest = "tests/fixtures/sensei/forge.project.toml"
 merge = true
 
 [[cases]]
-name = "forge-sensei client workflow"
-paths = ["workflows/forge-sensei/client/client.forge"]
+name = "sensei fixture client workflow"
+paths = ["tests/fixtures/sensei/client/client.forge"]
 check = "ok"
-manifest = "workflows/forge-sensei/client/forge.project.toml"
+manifest = "tests/fixtures/sensei/client/forge.project.toml"
 
 # ── #475 CLI JSON fixtures ──────────────────────────────────────────────────
 # Small programs used only by `tests/cli_json_tests.rs`; classified here so the
