@@ -1347,13 +1347,13 @@ async fn spawn_sensei_web_server() -> String {
 
 fn sensei_server_source_files() -> Vec<forge::compose::SourceFile> {
     [
-        ("types.forge", "workflows/forge-sensei/shared/types.forge"),
-        ("events.forge", "workflows/forge-sensei/shared/events.forge"),
-        ("states.forge", "workflows/forge-sensei/shared/states.forge"),
-        ("tasks.forge", "workflows/forge-sensei/server/tasks.forge"),
-        ("flows.forge", "workflows/forge-sensei/server/flows.forge"),
-        ("agent.forge", "workflows/forge-sensei/server/agent.forge"),
-        ("web.forge", "workflows/forge-sensei/server/web.forge"),
+        ("types.forge", "tests/fixtures/sensei/shared/types.forge"),
+        ("events.forge", "tests/fixtures/sensei/shared/events.forge"),
+        ("states.forge", "tests/fixtures/sensei/shared/states.forge"),
+        ("tasks.forge", "tests/fixtures/sensei/server/tasks.forge"),
+        ("flows.forge", "tests/fixtures/sensei/server/flows.forge"),
+        ("agent.forge", "tests/fixtures/sensei/server/agent.forge"),
+        ("web.forge", "tests/fixtures/sensei/server/web.forge"),
     ]
     .into_iter()
     .map(|(name, path)| {
