@@ -275,6 +275,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the CHANGELOG; return `Text` and build the markup in the program.
 
 ### Fixed
+- A system subscribes every agent before any `on start` runs (#545): `run()`
+  waits on a start gate that `System::start` opens once all supervised and
+  unsupervised agents are spawned, so an `on start` emit reaches a subscriber
+  bound later in the `system` instead of racing it to zero subscribers.
 - `forge run` (and `trace`, `test`, `run --manifest`) blocked on warnings, so a
   W080-only program exited 1 and human mode never said the run had been blocked
   (#547). Only errors block now: warnings are printed in human mode and listed
