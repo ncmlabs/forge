@@ -210,8 +210,17 @@ async fn entries_after_spawn_with_filter(
     topic_value: &str,
 ) -> Result<Vec<KnowledgeEntry>, forge::runtime::executor::RuntimeError> {
     let tmp = TempDir::new().unwrap();
-    let parent_path = tmp.path().join("parent").to_string_lossy().to_string();
-    let child_path = tmp.path().join("child").to_string_lossy().to_string();
+    // Forward slashes: a Windows `\` in a FORGE template string is an escape.
+    let parent_path = tmp
+        .path()
+        .join("parent")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let child_path = tmp
+        .path()
+        .join("child")
+        .to_string_lossy()
+        .replace('\\', "/");
 
     let source = format!(
         r#"
