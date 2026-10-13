@@ -17,7 +17,6 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
 
 use crate::config::ServerConfig;
 use crate::runtime::agent_lifecycle::AgentLifecycle;
@@ -86,26 +85,18 @@ pub struct ForgeServer {
     host: String,
     port: u16,
     cors_origins: Vec<String>,
-    static_root: Option<String>,
-    static_prefix: Option<String>,
     webhook_secrets: HashMap<String, String>,
 }
 
 impl ForgeServer {
     pub fn new(executor: TaskExecutor, config: Option<&ServerConfig>) -> Self {
-        let (host, port, cors_origins, static_root, static_prefix) = match config {
+        let (host, port, cors_origins) = match config {
             Some(c) => (
                 c.host_or_default().to_string(),
                 c.port_or_default(),
                 c.cors_origins.clone().unwrap_or_default(),
-                c.static_files
-                    .as_ref()
-                    .map(|s| s.root_or_default().to_string()),
-                c.static_files
-                    .as_ref()
-                    .map(|s| s.prefix_or_default().to_string()),
             ),
-            None => ("127.0.0.1".to_string(), 3000, Vec::new(), None, None),
+            None => ("127.0.0.1".to_string(), 3000, Vec::new()),
         };
 
         Self {
@@ -130,8 +121,6 @@ impl ForgeServer {
             host,
             port,
             cors_origins,
-            static_root,
-            static_prefix,
             webhook_secrets: HashMap::new(),
         }
     }
@@ -322,24 +311,15 @@ impl ForgeServer {
                 .allow_headers(Any)
         };
 
-        let router = if let Some(ref root) = self.static_root {
-            let prefix = self.static_prefix.as_deref().unwrap_or("/static");
-            router
-                .nest_service(prefix, ServeDir::new(root))
-                .fallback(fallback_handler)
-        } else {
-            router.fallback(fallback_handler)
-        };
-
-        router.layer(cors).with_state(self.state.clone())
+        router
+            .fallback(fallback_handler)
+            .layer(cors)
+            .with_state(self.state.clone())
     }
 
     /// Print startup banner listing registered endpoints.
     fn print_banner(&self) {
         println!("Listening on http://{}:{}", self.host, self.port);
-        if let (Some(ref root), Some(ref prefix)) = (&self.static_root, &self.static_prefix) {
-            println!("  Static files: {} -> {}", root, prefix);
-        }
         if self.state.events_tx.is_some() {
             println!("  SSE trace:    /__forge/events");
         }

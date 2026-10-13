@@ -30,27 +30,14 @@ pub struct ServerConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub cors_origins: Option<Vec<String>>,
+    /// #485 — static file serving left core in v0.3. The table is still
+    /// deserialized so [`ForgeConfig::validate`] can reject it with a pointer
+    /// instead of silently ignoring it.
     #[serde(rename = "static")]
-    pub static_files: Option<StaticConfig>,
+    pub removed_static: Option<toml::Value>,
     /// HMAC secrets for webhook signature verification, keyed by endpoint name.
     /// Example: `webhook_secrets = { github_push = "my-secret" }`
     pub webhook_secrets: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct StaticConfig {
-    pub root: Option<String>,
-    pub prefix: Option<String>,
-}
-
-impl StaticConfig {
-    pub fn root_or_default(&self) -> &str {
-        self.root.as_deref().unwrap_or("static")
-    }
-
-    pub fn prefix_or_default(&self) -> &str {
-        self.prefix.as_deref().unwrap_or("/static")
-    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -453,7 +440,7 @@ impl ForgeConfig {
                 host: None,
                 port: None,
                 cors_origins: None,
-                static_files: None,
+                removed_static: None,
                 webhook_secrets: None,
             });
             server.host = Some(host);
@@ -464,27 +451,11 @@ impl ForgeConfig {
                     host: None,
                     port: None,
                     cors_origins: None,
-                    static_files: None,
+                    removed_static: None,
                     webhook_secrets: None,
                 });
                 server.port = Some(val);
             }
-        }
-
-        // FORGE_STATIC_ROOT override
-        if let Ok(root) = std::env::var("FORGE_STATIC_ROOT") {
-            let server = config.server.get_or_insert(ServerConfig {
-                host: None,
-                port: None,
-                cors_origins: None,
-                static_files: None,
-                webhook_secrets: None,
-            });
-            let static_cfg = server.static_files.get_or_insert(StaticConfig {
-                root: None,
-                prefix: None,
-            });
-            static_cfg.root = Some(root);
         }
 
         // FORGE_MAX_AGENTS override
@@ -514,6 +485,13 @@ impl ForgeConfig {
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
+        if self
+            .server
+            .as_ref()
+            .is_some_and(|server| server.removed_static.is_some())
+        {
+            return Err(ConfigError::StaticRemoved);
+        }
         if !self.providers.contains_key(&self.llm.default) {
             return Err(ConfigError::UnknownProvider(format!(
                 "default provider '{}' not defined in [providers]",
@@ -619,6 +597,9 @@ pub enum ConfigError {
     UnknownProvider(String),
     #[error("circular fallback chain starting at '{0}'")]
     CircularFallback(String),
+    /// #485: `[server.static]` left core with static file serving.
+    #[error("`[server.static]` was removed in v0.3: serve static files from the app or a web server (see CHANGELOG, #485)")]
+    StaticRemoved,
     /// #447: no config file found and mock was not explicitly selected.
     /// Production runs must hard-error rather than silently degrade to the
     /// mock provider (indistinguishable `mock response` output).
@@ -784,7 +765,9 @@ model = "mock-model"
     }
 
     #[test]
-    fn parse_toml_with_static_config() {
+    fn server_static_table_is_rejected_with_a_pointer() {
+        // #485 — static file serving left core in v0.3, so an old config must
+        // fail loudly instead of silently serving nothing.
         let toml_str = r#"
 [llm]
 default = "mock"
@@ -796,20 +779,11 @@ type = "mock"
 root = "public"
 prefix = "/assets"
 "#;
-        let config: ForgeConfig = toml::from_str(toml_str).unwrap();
-        let static_cfg = config.server.unwrap().static_files.unwrap();
-        assert_eq!(static_cfg.root_or_default(), "public");
-        assert_eq!(static_cfg.prefix_or_default(), "/assets");
-    }
-
-    #[test]
-    fn static_config_defaults() {
-        let cfg = StaticConfig {
-            root: None,
-            prefix: None,
-        };
-        assert_eq!(cfg.root_or_default(), "static");
-        assert_eq!(cfg.prefix_or_default(), "/static");
+        let err = ForgeConfig::from_toml_str(toml_str).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "`[server.static]` was removed in v0.3: serve static files from the app or a web server (see CHANGELOG, #485)"
+        );
     }
 
     // ── #503 — [llm.routing] string and chain forms ────────────────────

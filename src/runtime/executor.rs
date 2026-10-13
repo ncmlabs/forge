@@ -2974,18 +2974,14 @@ impl TaskExecutor {
                         let payload: Vec<ConfidentValue> = arg_vals.into_iter().skip(1).collect();
                         pool.send(&event, payload).await
                     } else if name == "asset" {
+                        // Static file serving left core in v0.3 (#485): the
+                        // config-driven prefix is gone, so `asset()` keeps its
+                        // default for this commit — the dispatch goes next.
                         let path = arg_vals
                             .first()
                             .map(|v| format!("{}", v.value))
                             .unwrap_or_default();
-                        let prefix = self
-                            .config
-                            .as_ref()
-                            .and_then(|c| c.server.as_ref())
-                            .and_then(|s| s.static_files.as_ref())
-                            .map(|sc| sc.prefix_or_default().to_string())
-                            .unwrap_or_else(|| "/static".to_string());
-                        let prefix = prefix.trim_end_matches('/');
+                        let prefix = "/static";
                         let path = if path.starts_with('/') {
                             path
                         } else {

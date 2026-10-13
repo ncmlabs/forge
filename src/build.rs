@@ -1057,7 +1057,7 @@ async fn main() -> anyhow::Result<()> {{
             host: Some(cli.host),
             port: Some(cli.port),
             cors_origins: None,
-            static_files: None,
+            removed_static: None,
             webhook_secrets: None,
         }});
     }}
