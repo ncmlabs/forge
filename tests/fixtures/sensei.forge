@@ -381,7 +381,7 @@ warden sensei_warden
   max_retries 3 per 1h then escalate
 
 # ── Usage ─────────────────────────────────────────────────────
-# Build:  forge build workflows/forge-sensei.forge -o bin/forge-sensei
+# Build:  forge build tests/fixtures/sensei.forge -o bin/forge-sensei
 # Run:    bin/forge-sensei query "how do flows work?"
 # REPL:   bin/forge-sensei repl
 # Help:   bin/forge-sensei --help

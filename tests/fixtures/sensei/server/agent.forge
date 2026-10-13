@@ -232,5 +232,5 @@ warden sensei_warden
   max_retries 3 per 1h then escalate
 
 # ── Usage ─────────────────────────────────────────────────────
-# Build:  forge build workflows/forge-sensei/server -o bin/forge-sensei-server
+# Build:  forge build tests/fixtures/sensei/server -o bin/forge-sensei-server
 # Run:    bin/forge-sensei-server --port 3000

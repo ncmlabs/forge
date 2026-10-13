@@ -1,17 +1,17 @@
 // FORGE forge-sensei parser tests
-// Validates the AST structure of the split workflows/forge-sensei server after parsing.
+// Validates the AST structure of the split sensei fixture server after parsing.
 
 use forge::ast::{Program, TopLevel};
 
 fn parse_sensei_server() -> Program {
     let files = [
-        "workflows/forge-sensei/shared/types.forge",
-        "workflows/forge-sensei/shared/events.forge",
-        "workflows/forge-sensei/shared/states.forge",
-        "workflows/forge-sensei/server/tasks.forge",
-        "workflows/forge-sensei/server/flows.forge",
-        "workflows/forge-sensei/server/agent.forge",
-        "workflows/forge-sensei/server/web.forge",
+        "tests/fixtures/sensei/shared/types.forge",
+        "tests/fixtures/sensei/shared/events.forge",
+        "tests/fixtures/sensei/shared/states.forge",
+        "tests/fixtures/sensei/server/tasks.forge",
+        "tests/fixtures/sensei/server/flows.forge",
+        "tests/fixtures/sensei/server/agent.forge",
+        "tests/fixtures/sensei/server/web.forge",
     ];
     let source_files = files
         .into_iter()

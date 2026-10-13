@@ -63,9 +63,8 @@ paid APIs, even if credentials are set in your shell. Slow or external-system
 tests are gated behind explicit opt-in env vars:
 
 - `FORGE_LLM_LIVE=1` — run real-LLM tests against Anthropic (requires
-  `ANTHROPIC_API_KEY`). Covers `sensei_live_*` and `wiki_real_*`.
+  `ANTHROPIC_API_KEY`). Covers `wiki_real_*`.
   ```bash
-  FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test --test sensei_live_tests -- --nocapture
   FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test wiki_real_
   ```
 - `FORGE_SERVICE_E2E=1` — run the launchctl/systemd startup-manager E2E tests

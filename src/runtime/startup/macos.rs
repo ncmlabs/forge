@@ -15,8 +15,8 @@ impl Launchctl {
     }
 
     fn domain() -> String {
-        // Use `gui/$UID` domain so plist is loaded into the user's GUI
-        // session, matching scripts/install-sensei-server.sh.
+        // Use `gui/$UID` domain so the plist is loaded into the user's GUI
+        // session, the launchctl domain a user agent belongs to.
         let uid = unsafe { libc_getuid() };
         format!("gui/{}", uid)
     }
