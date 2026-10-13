@@ -252,6 +252,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of claiming a provider is unavailable, and the CLI types both cases as
   `error.type: "config"` in the `--json` envelope.
 
+### Security
+- RUSTSEC-2026-0338, RUSTSEC-2026-0339, RUSTSEC-2026-0340, RUSTSEC-2026-0341
+  and RUSTSEC-2026-0342: bumped `quinn-proto` to 0.11.19 in `Cargo.lock`.
+
 ## [0.2.0] - 2026-08-31
 
 ### Fixed
