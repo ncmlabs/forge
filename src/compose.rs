@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{AgentDecl, Program, Spanned, StatesDecl, TopLevel};
+use crate::diagnostic::Diagnostic;
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -146,6 +147,55 @@ fn top_level_name(item: &TopLevel) -> Option<&str> {
         TopLevel::System(d) => Some(&d.name.node),
         TopLevel::Use(_) | TopLevel::FnMain(_) | TopLevel::Import(_) => None,
     }
+}
+
+// ── Composed checking (#516, #519) ────────────────────────────
+
+/// Check a multi-file project as one composed program (#516), naming the source
+/// file of every diagnostic (#519).
+///
+/// Each source is reparsed at a cumulative base offset, so the spans in the
+/// merged program are unique across files. `check_all` then runs once — a
+/// lifecycle declared in one file resolves from another — and every diagnostic
+/// is rebased onto the source it came from. The `SourceFile` programs used to
+/// run the project stay parsed at offset 0.
+pub fn check_composed(files: &[SourceFile]) -> Result<Vec<Diagnostic>, Vec<ComposeError>> {
+    let mut programs = Vec::with_capacity(files.len());
+    let mut bases = Vec::with_capacity(files.len()); // (path, base, source len)
+    let mut base = 0;
+
+    for file in files {
+        let program = match crate::parser::parse_at(&file.source, base) {
+            Ok(program) => program,
+            // Unreachable from the CLI: the file parsed before it got here. A
+            // parse error is still a diagnostic, never a panic.
+            Err(e) => return Ok(vec![e.to_diagnostic(&file.path)]),
+        };
+        bases.push((file.path.as_str(), base, file.source.len()));
+        programs.push(SourceFile {
+            path: file.path.clone(),
+            source: file.source.clone(),
+            program,
+        });
+        base += file.source.len() + 1;
+    }
+
+    let composed = merge_programs(&programs)?;
+    // No file name of its own: every diagnostic is attributed below.
+    let mut diagnostics = crate::checker::check_all(&composed.program, "");
+
+    for diag in &mut diagnostics {
+        if let Some((path, base, len)) = bases
+            .iter()
+            .rev()
+            .find(|(_, base, len)| diag.span.start >= *base && diag.span.start <= base + len)
+        {
+            diag.span = (diag.span.start - base)..(diag.span.end.saturating_sub(*base)).min(*len);
+            diag.file = path.to_string();
+        }
+    }
+
+    Ok(diagnostics)
 }
 
 // ── Public helpers for generated binaries ─────────────────────
@@ -344,6 +394,46 @@ mod tests {
         assert_eq!(
             detect_kind(&composed.program),
             Some(ProgramKind::Executable)
+        );
+    }
+
+    #[test]
+    fn check_composed_checks_across_files() {
+        // `b.forge` uses a lifecycle declared in `a.forge`: composed, it resolves.
+        let a = parse_source("a.forge", "states Greeting\n  idle -> greeting\n");
+        let b = parse_source(
+            "b.forge",
+            "agent bot\n  lifecycle: Greeting\n\n  on start()\n    say \"hi\"\n",
+        );
+
+        let diagnostics = check_composed(&[a, b]).expect("compose should succeed");
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.kind == crate::diagnostic::DiagnosticKind::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "cross-file lifecycle must resolve: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn check_composed_attributes_a_diagnostic_to_its_file() {
+        let a = parse_source("a.forge", "task greet\n  do\n    say \"hi\"\n");
+        let b_source = "agent bot\n  lifecycle: Missing\n\n  on start()\n    say \"hi\"\n";
+        let b = parse_source("b.forge", b_source);
+
+        let diagnostics = check_composed(&[a, b]).expect("compose should succeed");
+        let diag = diagnostics
+            .iter()
+            .find(|d| d.code == "E040")
+            .unwrap_or_else(|| panic!("expected an E040 diagnostic, got {diagnostics:?}"));
+        assert_eq!(diag.file, "b.forge");
+        assert_eq!(
+            b_source.get(diag.span.clone()),
+            Some("Missing"),
+            "span {:?} must slice the offending text out of b.forge",
+            diag.span
         );
     }
 }
