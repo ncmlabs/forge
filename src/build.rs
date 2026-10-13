@@ -109,7 +109,9 @@ impl BuildPipeline {
             )
         })?;
 
-        // Step 5: Validate the merged program
+        // Step 5: Validate the composed program. The resolver runs on the merge
+        // (named by its first source); the checkers run composed, each diagnostic
+        // naming the source file its span belongs to (#516, #519).
         let merged_fname = source_files
             .first()
             .map(|sf| sf.path.clone())
@@ -123,7 +125,17 @@ impl BuildPipeline {
                     .map(|e| e.to_diagnostic(&merged_fname, &registry)),
             );
         }
-        diagnostics.extend(crate::checker::check_all(&composed.program, &merged_fname));
+        diagnostics.extend(
+            crate::compose::check_composed(&source_files).map_err(|errs| {
+                anyhow::anyhow!(
+                    "composition failed:\n{}",
+                    errs.iter()
+                        .map(|e| format!("  {}", e))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            })?,
+        );
 
         // Render all diagnostics, but only fail on errors
         if !diagnostics.is_empty() {
