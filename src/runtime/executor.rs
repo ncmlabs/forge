@@ -1619,8 +1619,19 @@ impl TaskExecutor {
 
                     for opt in &spawn.options {
                         match &opt.node {
-                            SpawnOption::KnowledgeFilter(cat) => {
-                                knowledge_category = Some(cat.node.clone());
+                            SpawnOption::KnowledgeFilter(expr) => {
+                                let val = self.eval_expr(expr, env).await?;
+                                match &val.value {
+                                    Value::Text(s) => {
+                                        knowledge_category = Some(s.clone());
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::TypeError {
+                                            expected: "Text".to_string(),
+                                            got: format!("{:?}", val.value),
+                                        });
+                                    }
+                                }
                             }
                             SpawnOption::ConfidenceCap(expr) => {
                                 let val = self.eval_expr(expr, env).await?;
