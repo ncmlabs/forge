@@ -633,8 +633,14 @@ impl SystemRuntime {
             // Check warded runtimes
             warded_handles.retain(|h| !h.is_finished());
 
-            // All done?
-            if self.unsupervised_agents.is_empty() && warded_handles.is_empty() {
+            // All done? Detached spawns (#546) are fire-and-forget tasks, so
+            // the system must also wait for every recorded child to finish
+            // before it exits — a bound agent retiring says nothing about the
+            // agents it spawned from its handlers.
+            if self.unsupervised_agents.is_empty()
+                && warded_handles.is_empty()
+                && self.instance_registry.write().await.detached_running() == 0
+            {
                 break;
             }
 
