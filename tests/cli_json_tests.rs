@@ -849,6 +849,54 @@ fn run_dry_run_json_prints_the_plan_at_warnings_only() {
 }
 
 #[test]
+fn run_warnings_only_runs_and_reports_the_warning() {
+    // #547: W080 must not block the run. `forge check` reports this program as
+    // warnings-only (exit 2); `forge run` executes it and exits with the run's
+    // own status, listing the warning in the envelope.
+    let dir = temp_dir("run-warning");
+    let program = dir.join("warn.forge");
+    std::fs::write(&program, WARNINGS_PROGRAM).expect("write warnings program");
+    let path = program.to_str().unwrap();
+
+    let human = forge_env(&["run", path], &[("FORGE_MOCK", "1")]);
+    assert_exit(&human, 0);
+    assert!(
+        !String::from_utf8_lossy(&human.stdout).is_empty(),
+        "a warnings-only program must run: {}",
+        String::from_utf8_lossy(&human.stderr)
+    );
+
+    let json = forge_env(&["run", "--json", path], &[("FORGE_MOCK", "1")]);
+    assert_exit(&json, 0);
+    let doc = parse_stdout(&json);
+    assert_eq!(doc["status"], "success");
+    assert_eq!(doc["data"]["blocked"], serde_json::Value::Null);
+    assert!(
+        !doc["data"]["output"].as_array().unwrap().is_empty(),
+        "the run's output must be present: {doc}"
+    );
+    assert!(
+        doc["warnings"][0].as_str().unwrap().starts_with("W080"),
+        "the W080 warning must be listed in the run envelope: {doc}"
+    );
+}
+
+#[test]
+fn run_human_mode_says_when_the_run_is_blocked() {
+    // #547: an error still blocks, and human mode says so after the diagnostics.
+    let output = forge_env(
+        &["run", "examples/errors/uncertain_error.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("run blocked: 1 error(s); nothing was executed"),
+        "a blocked run must say so on stderr: {stderr}"
+    );
+}
+
+#[test]
 fn cost_json_keeps_every_field_and_adds_effects() {
     let output = forge(&["cost", "--json", "examples/errors/uncertain_error.forge"]);
     assert_exit(&output, 0);

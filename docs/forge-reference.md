@@ -1281,6 +1281,12 @@ Execute a FORGE program using the configured provider.
 forge run program.forge
 ```
 
+Static checks gate the run, and only **errors** block it: the diagnostics are
+printed and human mode ends with `run blocked: N error(s); nothing was
+executed` (`--json` reports the `check` error envelope with `data.blocked`).
+Warnings never block — human mode prints them, JSON mode lists them in the
+envelope's `warnings`, and the run executes and exits with its own code.
+
 ##### Dry run: `forge run --dry-run <file>`
 
 `--dry-run` parses the program, runs the same static checks as `forge check`,
@@ -3120,7 +3126,7 @@ forge check --json --fields diagnostics src/main.forge
 | Code | Name | Meaning |
 |------|------|---------|
 | `0` | success | command completed |
-| `1` | error | command failed, a run was blocked by diagnostics, or the command line was invalid |
+| `1` | error | command failed, a run was blocked by errors, or the command line was invalid |
 | `2` | warning | `check` or `run --dry-run` found warnings but no errors — this code means "warnings only" and nothing else |
 | `3` | partial | reserved for partially completed work |
 | `10` | needs input | reserved for approval / needs-input paths |
@@ -3243,7 +3249,7 @@ forge help --json
       "json_supported": true
     }
   ],
-  "exit_codes": {"0": "success: command completed", "1": "error: command failed, a run was blocked by diagnostics, or the command line was invalid", "2": "warning: static checks found warnings but no errors — this code means \"warnings only\" and nothing else"},
+  "exit_codes": {"0": "success: command completed", "1": "error: command failed, a run was blocked by errors, or the command line was invalid", "2": "warning: static checks found warnings but no errors — this code means \"warnings only\" and nothing else"},
   "env": [{"name": "FORGE_OUTPUT", "description": "json = emit one JSON envelope per command (same as --json)"}]
 }
 ```
