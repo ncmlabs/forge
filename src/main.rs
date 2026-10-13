@@ -1641,6 +1641,12 @@ fn blocked_run_envelope(
     .with_next_steps(steps)
 }
 
+/// Human-mode end of a blocked run (#547): after the diagnostics, one line
+/// naming what stopped it. `errors` is the count the blocking decision used.
+fn report_blocked_run(command: &str, errors: usize) {
+    eprintln!("{command} blocked: {errors} error(s); nothing was executed");
+}
+
 /// The static plan `forge cost --json` and `forge run --dry-run --json` both
 /// report: LLM operations, effect sites, and the token/cost totals (#477).
 fn plan_json(file: &Path, estimate: &forge::cost_estimator::CostEstimate) -> serde_json::Value {
@@ -2187,7 +2193,21 @@ async fn run_program(
     let boundary_refs = vec![(&program, fname.as_str())];
     diagnostics.extend(forge::checker::boundary_checker::check(&boundary_refs));
 
-    if !diagnostics.is_empty() {
+    // Only errors block a run (#547): a warning is not an error with the wrong
+    // label (Principle I). Warnings are printed in human mode and listed in the
+    // final envelope's `warnings` in JSON mode, and the run proceeds.
+    let errors = diagnostics
+        .iter()
+        .filter(|d| d.kind == forge::diagnostic::DiagnosticKind::Error)
+        .count();
+    if !diagnostics.is_empty() && !out.json {
+        forge::diagnostic::render_diagnostics(&source, &diagnostics);
+    }
+    let warnings: Vec<String> = diagnostics
+        .iter()
+        .map(|d| format!("{}: {}", d.code, d.message))
+        .collect();
+    if errors > 0 {
         let data = serde_json::json!({
             "file": fname,
             "blocked": true,
@@ -2201,7 +2221,7 @@ async fn run_program(
         let hint = format!("forge check --json {}", file.display());
         let blocked = blocked_run_envelope(command, &hint, &diagnostics, data);
         if !out.json {
-            forge::diagnostic::render_diagnostics(&source, &diagnostics);
+            report_blocked_run(command, errors);
         }
         out.done(&blocked);
     }
@@ -2235,7 +2255,8 @@ async fn run_program(
             let summary = run_summary(&cost_tracker, executor.tracer());
             summary.report(out);
             let env =
-                run_error_envelope(command, &fname, executor.outputs(), e.to_string(), &summary);
+                run_error_envelope(command, &fname, executor.outputs(), e.to_string(), &summary)
+                    .with_warnings(warnings.clone());
             out.done(&env);
         }
     }
@@ -2260,7 +2281,8 @@ async fn run_program(
     let output = executor.outputs();
     let summary = run_summary(&cost_tracker, executor.tracer());
     summary.report(out);
-    let env = run_envelope(command, &fname, output, cached_result, &summary);
+    let env = run_envelope(command, &fname, output, cached_result, &summary)
+        .with_warnings(warnings.clone());
     out.done(&env);
 }
 
@@ -2324,10 +2346,25 @@ async fn run_manifest(
     }
 
     // What `run --manifest` blocks on: resolver, checkers and the cross-file
-    // boundary check, per source file (#495).
+    // boundary check, per source file (#495) — errors only (#547).
     let diagnostics = check_source_files(&source_files, &skill_sigs);
 
-    if !diagnostics.is_empty() {
+    let errors = diagnostics
+        .iter()
+        .filter(|d| d.kind == forge::diagnostic::DiagnosticKind::Error)
+        .count();
+    if !diagnostics.is_empty() && !out.json {
+        for diag in &diagnostics {
+            if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
+                diag.render(&sf.source);
+            }
+        }
+    }
+    let warnings: Vec<String> = diagnostics
+        .iter()
+        .map(|d| format!("{}: {}", d.code, d.message))
+        .collect();
+    if errors > 0 {
         let data = serde_json::json!({
             "file": fname,
             "blocked": true,
@@ -2351,11 +2388,7 @@ async fn run_manifest(
             data,
         );
         if !out.json {
-            for diag in &diagnostics {
-                if let Some(sf) = source_files.iter().find(|sf| sf.path == diag.file) {
-                    diag.render(&sf.source);
-                }
-            }
+            report_blocked_run(command, errors);
         }
         out.done(&blocked);
     }
@@ -2403,14 +2436,16 @@ async fn run_manifest(
             let summary = run_summary(&cost_tracker, executor.tracer());
             summary.report(out);
             let env =
-                run_error_envelope(command, &fname, executor.outputs(), e.to_string(), &summary);
+                run_error_envelope(command, &fname, executor.outputs(), e.to_string(), &summary)
+                    .with_warnings(warnings.clone());
             out.done(&env);
         }
     }
 
     let summary = run_summary(&cost_tracker, executor.tracer());
     summary.report(out);
-    let env = run_envelope(command, &fname, executor.outputs(), cached_result, &summary);
+    let env = run_envelope(command, &fname, executor.outputs(), cached_result, &summary)
+        .with_warnings(warnings.clone());
     out.done(&env);
 }
 
