@@ -5,3 +5,6 @@ agent cross
     requires lifecycle == idle on fail: silent
     say who
     transition to greeting
+
+fn main
+  say "cross-state project ready"

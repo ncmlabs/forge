@@ -62,6 +62,28 @@ fn check_json_error_file_reports_code_and_next_step() {
 }
 
 #[test]
+fn check_explicit_files_without_merge_are_checked_independently() {
+    // Two unrelated programs, each with its own `fn main`: without `--merge`
+    // every file is checked on its own, so a batch of examples stays OK (#544).
+    let files = [
+        "examples/basics/hello.forge",
+        "examples/basics/structured_config.forge",
+    ];
+    let output = forge(&["check", files[0], files[1]]);
+    assert_exit(&output, 0);
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "OK\n");
+
+    // With `--merge` they are one program, and two `fn main` blocks cannot merge.
+    let merged = forge(&["check", "--merge", files[0], files[1]]);
+    assert_exit(&merged, 1);
+    let stderr = String::from_utf8_lossy(&merged.stderr);
+    assert!(
+        stderr.contains("multiple `fn main` blocks found"),
+        "expected the merge error: {stderr}"
+    );
+}
+
+#[test]
 fn check_json_warnings_only_exits_two() {
     // tests/fixtures/warnings_only.forge produces exactly one W041 warning.
     let output = forge(&["check", "--json", "tests/fixtures/warnings_only.forge"]);
@@ -823,6 +845,54 @@ fn run_dry_run_json_prints_the_plan_at_warnings_only() {
     assert!(
         doc["warnings"][0].as_str().unwrap().starts_with("W080"),
         "the W080 warning must be listed in the envelope: {doc}"
+    );
+}
+
+#[test]
+fn run_warnings_only_runs_and_reports_the_warning() {
+    // #547: W080 must not block the run. `forge check` reports this program as
+    // warnings-only (exit 2); `forge run` executes it and exits with the run's
+    // own status, listing the warning in the envelope.
+    let dir = temp_dir("run-warning");
+    let program = dir.join("warn.forge");
+    std::fs::write(&program, WARNINGS_PROGRAM).expect("write warnings program");
+    let path = program.to_str().unwrap();
+
+    let human = forge_env(&["run", path], &[("FORGE_MOCK", "1")]);
+    assert_exit(&human, 0);
+    assert!(
+        !String::from_utf8_lossy(&human.stdout).is_empty(),
+        "a warnings-only program must run: {}",
+        String::from_utf8_lossy(&human.stderr)
+    );
+
+    let json = forge_env(&["run", "--json", path], &[("FORGE_MOCK", "1")]);
+    assert_exit(&json, 0);
+    let doc = parse_stdout(&json);
+    assert_eq!(doc["status"], "success");
+    assert_eq!(doc["data"]["blocked"], serde_json::Value::Null);
+    assert!(
+        !doc["data"]["output"].as_array().unwrap().is_empty(),
+        "the run's output must be present: {doc}"
+    );
+    assert!(
+        doc["warnings"][0].as_str().unwrap().starts_with("W080"),
+        "the W080 warning must be listed in the run envelope: {doc}"
+    );
+}
+
+#[test]
+fn run_human_mode_says_when_the_run_is_blocked() {
+    // #547: an error still blocks, and human mode says so after the diagnostics.
+    let output = forge_env(
+        &["run", "examples/errors/uncertain_error.forge"],
+        &[("FORGE_MOCK", "1")],
+    );
+    assert_exit(&output, 1);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("run blocked: 1 error(s); nothing was executed"),
+        "a blocked run must say so on stderr: {stderr}"
     );
 }
 

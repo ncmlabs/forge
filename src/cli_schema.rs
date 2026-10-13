@@ -166,7 +166,7 @@ pub const EXIT_CODES: &[(i32, &str, &str)] = &[
     (
         1,
         "error",
-        "command failed, a run was blocked by diagnostics, or the command line was invalid",
+        "command failed, a run was blocked by errors, or the command line was invalid",
     ),
     (
         2,

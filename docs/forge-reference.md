@@ -1265,13 +1265,14 @@ forge check --manifest forge.project.toml       # the project's declared skills 
 (`[skills]` → `skills/<name>/SKILL.md`) before resolving, so
 `skill.<name>.<capability>` calls type-check instead of failing with
 `unknown capability`. With no files, every source the manifest declares is
-checked exactly as `forge run --manifest` blocks on it — per source file, plus
-the cross-file boundary check — so a project `check` accepts is one `run` does
-not reject; with files, those files are checked instead (`--merge` composes
-them). Without `--manifest`, `skill_dirs` from `forge.config.toml` (or
-`FORGE_CONFIG`) apply, exactly as for `run`. A check runs no provider: no config
-at all means no config-declared skills, while a config that exists and cannot be
-loaded is still an error.
+checked exactly as `forge run --manifest` blocks on it — as one composed
+program, with the resolver and the cross-file boundary check per file — so a
+project `check` accepts is one `run` does not reject; with files, those files
+are checked instead, each on its own unless `--merge` composes them. Without
+`--manifest`, `skill_dirs` from `forge.config.toml` (or `FORGE_CONFIG`) apply,
+exactly as for `run`. A
+check runs no provider: no config at all means no config-declared skills, while
+a config that exists and cannot be loaded is still an error.
 
 #### `forge run <file>`
 Execute a FORGE program using the configured provider.
@@ -1279,6 +1280,12 @@ Execute a FORGE program using the configured provider.
 ```bash
 forge run program.forge
 ```
+
+Static checks gate the run, and only **errors** block it: the diagnostics are
+printed and human mode ends with `run blocked: N error(s); nothing was
+executed` (`--json` reports the `check` error envelope with `data.blocked`).
+Warnings never block — human mode prints them, JSON mode lists them in the
+envelope's `warnings`, and the run executes and exits with its own code.
 
 ##### Dry run: `forge run --dry-run <file>`
 
@@ -1385,7 +1392,7 @@ Event names must start with an uppercase letter. Each field occupies its own lin
 
 ### Emitting Events
 
-Events are emitted from agent handlers using the `emit` statement with named arguments:
+Events are emitted from agent handlers and endpoints using the `emit` statement with named arguments. `emit` written in `fn main` is error `E165`: there is no event bus there. An `on start` handler emits while a `system` is still bringing agents up, so its event only reaches agents already subscribed when the handler runs.
 
 ```
 emit <EventName>(<field>: <expr>, <field>: <expr>)
@@ -2576,6 +2583,23 @@ Renaming `Buy` to `BUY` here is an `E162` (``pattern `BUY` never matches `"Buy"`
 
 **Limitation:** `classify` returns the model's text. The checker treats the declared label list as the value set, so a program whose model answers off-list is still a runtime honesty problem, not a compile-time one.
 
+### Emit Checks (E165)
+
+`emit` publishes to the system event bus, which only exists inside an agent handler or an endpoint. An `emit` statement in `fn main` — including one nested in an `if`/`else`, `for`, `when` or `match` body, and a session's `on progress -> emit` / `on complete -> emit` hook — is dead on arrival, so `forge check` rejects it instead of letting `forge run` fail with `emit outside agent`.
+
+| Code | Rule |
+|------|------|
+| `E165` | `emit` in `fn main`: there is no event bus there. Emit from an agent's `on` handler or from an endpoint. A `task` or `flow` is never flagged — a task called from an agent handler emits correctly at runtime |
+
+```forge
+event Kickoff
+  topic: Text
+
+agent starter
+  on request(topic: Text)
+    emit Kickoff(topic: topic)
+```
+
 ---
 
 ## 18. Command, Exec, and Process Handles
@@ -2856,6 +2880,8 @@ repo_check = {}
 
 Then a FORGE file can use `skill.repo_check` and call declared capabilities. Skill calls are side-effecting and rejected inside `pure`.
 
+A manifest project is checked as one composed program — `entry` plus every `[build] sources` file, so a lifecycle or task declared in one source resolves from another — while the resolver (`use` and skills) and the boundary check stay per file and every diagnostic names the source file its span belongs to, at that file's line and column; `forge check --manifest`, `forge run --manifest`, `forge build` and `forge check --merge` all check that composition.
+
 Typed skill capabilities may optionally declare deterministic execution metadata in `SKILL.md`. When present, the runtime expands capability arguments into a structured `argv` command and executes it directly; when absent, the existing LLM-mediated SKILL.md agentic loop remains the fallback. Deterministic skill executors do not make LLM requests and have zero token cost, but they still return skill confidence rather than deterministic confidence because they perform external side effects.
 
 ```yaml
@@ -3045,7 +3071,8 @@ Every diagnostic emitted by `forge check`, `forge run`, `forge build` and `forge
 | `E130`–`E139` | correlate checker |
 | `E140`–`E149` | webhook checker |
 | `E150`–`E159` | command gate checker |
-| `E160`–`E169` | resolution checker (undeclared calls, impossible match patterns) |
+| `E160`–`E164` | resolution checker (undeclared calls, impossible match patterns) |
+| `E165` | emit checker (`emit` in `fn main`) |
 
 Warnings reuse the same range with a `W` prefix (for example `W070` is the "requires clause uses an LLM operation" warning).
 
@@ -3117,7 +3144,7 @@ forge check --json --fields diagnostics src/main.forge
 | Code | Name | Meaning |
 |------|------|---------|
 | `0` | success | command completed |
-| `1` | error | command failed, a run was blocked by diagnostics, or the command line was invalid |
+| `1` | error | command failed, a run was blocked by errors, or the command line was invalid |
 | `2` | warning | `check` or `run --dry-run` found warnings but no errors — this code means "warnings only" and nothing else |
 | `3` | partial | reserved for partially completed work |
 | `10` | needs input | reserved for approval / needs-input paths |
@@ -3240,7 +3267,7 @@ forge help --json
       "json_supported": true
     }
   ],
-  "exit_codes": {"0": "success: command completed", "1": "error: command failed, a run was blocked by diagnostics, or the command line was invalid", "2": "warning: static checks found warnings but no errors — this code means \"warnings only\" and nothing else"},
+  "exit_codes": {"0": "success: command completed", "1": "error: command failed, a run was blocked by errors, or the command line was invalid", "2": "warning: static checks found warnings but no errors — this code means \"warnings only\" and nothing else"},
   "env": [{"name": "FORGE_OUTPUT", "description": "json = emit one JSON envelope per command (same as --json)"}]
 }
 ```

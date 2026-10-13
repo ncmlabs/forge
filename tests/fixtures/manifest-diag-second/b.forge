@@ -1,0 +1,10 @@
+# b.forge: this agent names a lifecycle the project never declares
+task helper
+  do
+    say "ok"
+
+agent bot
+  lifecycle: Missing
+
+  on start()
+    say "hi"

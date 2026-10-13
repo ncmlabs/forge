@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `emit` in `fn main` is now a check error, `E165` (#532): the runtime has no
+  event bus there, so the program could only fail with `emit outside agent` at
+  run time. The new emit checker pass covers nested `if`/`else`, `for`, `when`
+  and `match` bodies plus a session's `on progress`/`on complete` `-> emit`
+  hook, and leaves agents, endpoints, tasks and flows alone; the help points at
+  an agent's `on` handler or an endpoint.
 - Installable `write-forge` agent skill for Claude Code and Codex (#482):
   `npx skills add ncmlabs/forge` installs `skills/write-forge/` — when to choose
   FORGE, the authoring loop (`forge init` → `forge check --json` → `forge
@@ -276,6 +282,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Detached spawns are recorded in the shared `InstanceRegistry` (which the
   children inherit, so descendants are covered) and `System::start` now waits
   for them.
+- `forge run` (and `trace`, `test`, `run --manifest`) blocked on warnings, so a
+  W080-only program exited 1 and human mode never said the run had been blocked
+  (#547). Only errors block now: warnings are printed in human mode and listed
+  in the envelope's `warnings` in JSON mode, the run proceeds and exits with its
+  own code, and a human-mode blocked run ends with
+  `run blocked: N error(s); nothing was executed`.
+- A manifest or multi-file project is now checked as one composed program
+  (#516): `check --manifest`, `run --manifest`, `forge build` and
+  `check --merge` run the checker once on the merged program, so a lifecycle
+  declared in `a.forge` and used in `b.forge` resolves instead of failing with
+  a false `E040` — and every diagnostic names the source file its span belongs
+  to, with that file's line and column (#519), instead of attributing merged
+  spans to the first source.
 - `with knowledge where category == <expr>` used to drop variables and
   interpolation, so the filter was empty. It is now evaluated at spawn (#538).
 - `run --dry-run --json` and `forge cost --json` reported the plan estimate in the
