@@ -206,8 +206,13 @@ impl Index {
             for requires in &handler.node.requires {
                 self.expr(&requires.node.condition, file, diagnostics);
                 if let Some(on_fail) = &requires.node.on_fail {
-                    if let FailPolicy::Give(expr) = &on_fail.node {
-                        self.expr(expr, file, diagnostics);
+                    match &on_fail.node {
+                        FailPolicy::Give(expr) => self.expr(expr, file, diagnostics),
+                        // No expression payload.
+                        FailPolicy::Silent
+                        | FailPolicy::Log
+                        | FailPolicy::Escalate
+                        | FailPolicy::Crash => {}
                     }
                 }
             }
@@ -229,6 +234,10 @@ impl Index {
         }
     }
 
+    /// Walk every expression a statement owns. The match is exhaustive on
+    /// purpose: a new statement kind with an expression field cannot be added
+    /// without a compile error here, so no template can hide in a discarded
+    /// field (`{!expr}` in one would slip past E163).
     fn stmt(
         &self,
         stmt: &Spanned<Stmt>,
@@ -244,7 +253,15 @@ impl Index {
                 };
                 self.expr(expr, file, diagnostics);
             }
-            Stmt::Give(e, _) | Stmt::Say(e) | Stmt::ExprStmt(e) => self.expr(e, file, diagnostics),
+            Stmt::Give(e, metas) => {
+                self.expr(e, file, diagnostics);
+                // `give x with key: value` — metadata values are ordinary
+                // expressions, so `{!y}` there must be rejected as well.
+                for meta in metas {
+                    self.expr(&meta.node.value, file, diagnostics);
+                }
+            }
+            Stmt::Say(e) | Stmt::ExprStmt(e) => self.expr(e, file, diagnostics),
             Stmt::MemoryUpdate(_, index, value) => {
                 if let Some(i) = index {
                     self.expr(i, file, diagnostics);
@@ -281,19 +298,6 @@ impl Index {
                     self.stmt(&arm.node.body, &mut inner, file, diagnostics);
                 }
             }
-            _ => self.stmt_rest(stmt, bindings, file, diagnostics),
-        }
-    }
-
-    /// Statement forms that only nest or forward expressions.
-    fn stmt_rest(
-        &self,
-        stmt: &Spanned<Stmt>,
-        bindings: &HashMap<String, Values>,
-        file: &str,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        match &stmt.node {
             Stmt::IfElse(ie) => {
                 self.expr(&ie.condition, file, diagnostics);
                 let mut then_b = bindings.clone();
@@ -357,7 +361,9 @@ impl Index {
                     }
                 }
             }
-            _ => {}
+            // Plain names with no expression slot: `escalate to x`,
+            // `transition to x`, `reset x`.
+            Stmt::Escalate(_) | Stmt::TransitionTo(_) | Stmt::ResetTimer(_) => {}
         }
     }
 
@@ -1184,6 +1190,95 @@ fn main
         for src in cases {
             assert_eq!(codes(src), vec!["E163"], "{src}");
         }
+    }
+
+    #[test]
+    fn resolution_rejects_raw_interpolation_in_give_metadata() {
+        // #485 review: `Stmt::Give(e, _)` dropped the `with key: value`
+        // metadata, so `{!y}` there was accepted.
+        let src = "fn main\n  give \"x\" with tag: \"{!y}\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E163"], "{ds:?}");
+        assert_eq!(&src[ds[0].span.start..ds[0].span.end], "{!y}");
+    }
+
+    #[test]
+    fn resolution_rejects_raw_interpolation_in_every_statement_slot() {
+        // Every statement field that holds an expression, so no template can
+        // hide behind a discarded field.
+        let cases = [
+            ("bind", "fn main\n  x = \"{!y}\"\n"),
+            ("say", "fn main\n  say \"{!y}\"\n"),
+            ("bare expression", "fn main\n  \"{!y}\"\n"),
+            ("give", "fn main\n  give \"{!y}\"\n"),
+            ("give metadata", "fn main\n  give \"x\" with tag: \"{!y}\"\n"),
+            ("emit argument", "fn main\n  emit Ping(payload: \"{!y}\")\n"),
+            (
+                "memory update value",
+                "agent a\n  memory\n    f: Text\n  on start\n    memory.f = \"{!y}\"\n",
+            ),
+            (
+                "memory update index",
+                "agent a\n  memory\n    f: Text\n  on start\n    memory.f[\"{!y}\"] = \"x\"\n",
+            ),
+            ("forward", "fn main\n  forward \"{!y}\" to out\n"),
+            ("learn", "fn main\n  learn \"{!y}\"\n"),
+            ("learn category", "fn main\n  learn \"fact\" category: \"{!y}\"\n"),
+            (
+                "spawn alias",
+                "agent w\n  on start\n    say \"hi\"\n\nagent a\n  on start\n    spawn w as \"{!y}\"\n",
+            ),
+            (
+                "spawn confidence cap",
+                "agent w\n  on start\n    say \"hi\"\n\nagent a\n  on start\n    spawn w\n      with confidence_cap: \"{!y}\"\n",
+            ),
+            (
+                "spawn memory init",
+                "agent w\n  on start\n    say \"hi\"\n\nagent a\n  on start\n    spawn w\n      with memory topic: \"{!y}\"\n",
+            ),
+            (
+                "spawn isolate branch",
+                "agent w\n  on start\n    say \"hi\"\n\nagent a\n  on start\n    spawn w\n      isolate worktree \"{!y}\"\n",
+            ),
+            ("retire target", "fn main\n  retire \"{!y}\"\n"),
+            (
+                "retire knowledge export",
+                "task cleanup\n  do\n    retire\n      with knowledge export: \"{!y}\"\n",
+            ),
+            ("start timer context", "fn main\n  start beat for \"{!y}\"\n"),
+            ("cancel timer context", "fn main\n  cancel beat for \"{!y}\"\n"),
+            (
+                "match subject",
+                "task t\n  gives Text\n  do\n    match \"{!y}\"\n      _ -> give \"x\"\n",
+            ),
+            (
+                "for iterable",
+                "task t\n  gives Text\n  do\n    for x in \"{!y}\"\n      give x\n",
+            ),
+            (
+                "if condition",
+                "task t\n  gives Text\n  do\n    if \"{!y}\"\n      give \"x\"\n    give \"y\"\n",
+            ),
+            (
+                "requires on fail give",
+                "agent a\n  on e\n    requires true on fail: give \"{!y}\"\n    say \"hi\"\n",
+            ),
+        ];
+        for (name, src) in cases {
+            let program = crate::parser::parse(src)
+                .unwrap_or_else(|e| panic!("{name} failed to parse: {e}\n{src}"));
+            let ds = check(&program, "test.forge");
+            let got: Vec<&str> = ds.iter().map(|d| d.code).collect();
+            assert_eq!(got, vec!["E163"], "{name}: {src}");
+        }
+    }
+
+    #[test]
+    fn resolution_has_no_template_slot_in_plain_name_statements() {
+        // `escalate`, `transition` and `reset` carry only plain names; their
+        // arms exist so the statement match stays exhaustive.
+        let src = "states Phase\n  idle -> idle\n\nagent a\n  lifecycle: Phase\n  on start\n    escalate to lead\n    transition to idle\n    reset beat\n";
+        assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
     }
 
     #[test]
