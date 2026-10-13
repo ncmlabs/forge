@@ -30,8 +30,9 @@ that scope stated plainly.
 
 ## Architecture
 
-- Design spec: `docs/proof-runs/2026-05-clone-dev-playground.md` and the
-  milestone issues T1.1–T11.4 (see `docs/archive/roadmap-v3.md`, Layer 3 table).
+- Design spec: `docs/proof-runs/2026-05-clone-dev-playground.md` in
+  `ncmlabs/forge-clone-dev`, and the milestone issues T1.1–T11.4 (see
+  `docs/archive/roadmap-v3.md`, Layer 3 table).
 - Topology: `workflows/clone-dev/` — mastermind intake (conversational
   classifier, T9.1), investigators with skill allow-lists (T9.2), solution
   proposer (T9.3), issue creator (T9.4), label router (T8.3), and the dev-cycle

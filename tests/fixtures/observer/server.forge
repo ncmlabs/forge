@@ -5,4 +5,4 @@
 # Start: forge serve tests/fixtures/observer/server.forge -s tests/fixtures/observer/shared.forge
 
 endpoint home() -> Text
-  give "<!DOCTYPE html><html><head><meta http-equiv='refresh' content='0; url=/static/index.html'></head></html>"
+  give "FORGE Observer — the standalone Observer UI was removed in v0.3 (#485).\nThe runtime inspect API is unchanged: /__forge/inspect/agents, /__forge/inspect/topology, /__forge/inspect/wardens, /__forge/inspect/costs, /__forge/events (SSE)."

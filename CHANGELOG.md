@@ -200,6 +200,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dev-system tracks are deprecated (see roadmap).
 
 ### Removed
+- Fixture static assets orphaned by the static-serving removal (#485 cleanup):
+  `tests/fixtures/{wiki,sentinel}/static/` and the `/static/…` `<link>`/`<script>`
+  tags in those fixtures are gone, the observer fixture's `home()` answers a
+  short `Text` page instead of redirecting to the deleted Observer SPA, and the
+  e2e specs for the Observer SPA, theme toggle and copy buttons are deleted.
 - `forge serve --watch` hot reload (#485 step 3): hot reload belongs to the app,
   not the language. The flag still parses
   (hidden) and exits `1` with "`forge serve --watch` was removed in v0.3: hot
