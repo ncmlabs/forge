@@ -64,7 +64,7 @@ Baselines, 2026-10-13: 30 specs, forge `551de6e`, results in `bench/results/`.
 | Issue | Title | Status |
 | ----- | ----- | ------ |
 | [#473](https://github.com/ncmlabs/forge/issues/473) | docs: reset roadmap to v0.3 — Agent-Native FORGE | Done ✅ |
-| [#485](https://github.com/ncmlabs/forge/issues/485) | lean: remove web app stack from core (templates, static/Tailwind, hot-reload, markdown) | Open |
+| [#485](https://github.com/ncmlabs/forge/issues/485) | lean: remove web app stack from core (templates, static/Tailwind, hot-reload, markdown) | Done ✅ |
 | [#486](https://github.com/ncmlabs/forge/issues/486) | lean: close WASM/browser targets; keep server/shared boundary checker | Done ✅ |
 | [#487](https://github.com/ncmlabs/forge/issues/487) | lean: extract clone-dev into ncmlabs/forge-clone-dev | Done ✅ |
 | [#488](https://github.com/ncmlabs/forge/issues/488) | examples: create public ncmlabs/forge-examples and move showcases | Done ✅ |
@@ -93,7 +93,7 @@ Baselines, 2026-10-13: 30 specs, forge `551de6e`, results in `bench/results/`.
 | [#480](https://github.com/ncmlabs/forge/issues/480) | docs: forge-card.md + llms.txt — the one-page language for agents | Done ✅ |
 | [#496](https://github.com/ncmlabs/forge/issues/496) | checker: undefined calls, undeclared match variants and case-mismatched tag patterns pass forge check | Done ✅ |
 | [#481](https://github.com/ncmlabs/forge/issues/481) | cli: forge init <template> project scaffolding | Done ✅ |
-| [#482](https://github.com/ncmlabs/forge/issues/482) | skills: installable write-forge skill for Claude Code and Codex | Open |
+| [#482](https://github.com/ncmlabs/forge/issues/482) | skills: installable write-forge skill for Claude Code and Codex | Done ✅ |
 | [#229](https://github.com/ncmlabs/forge/issues/229) | Automate FORGE derived-surface drift detection (continuous #229) | Open |
 
 ### Proof — measure that agents choose and write FORGE
