@@ -69,12 +69,12 @@ jobs:
         run: FORGE_SERVICE_E2E=1 cargo test --locked --test startup_manager_tests
 
   msrv:
-    name: MSRV (1.89)
+    name: MSRV
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.89"
+          toolchain: "1.90"
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked
