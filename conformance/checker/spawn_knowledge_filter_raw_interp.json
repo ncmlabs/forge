@@ -1,0 +1,12 @@
+{
+  "name": "spawn_knowledge_filter_raw_interp_rejected",
+  "category": "checker",
+  "subcategory": "resolution",
+  "description": "The spawn knowledge filter is an expression the checker walks, so `{!expr}` in it is rejected (#538)",
+  "input": "agent worker\n  memory\n    topic: Text\n  on start\n    say \"up\"\n\n  if stuck for 3 turns\n    escalate to human\n\ntask run_it\n  do\n    topic = \"TASKS\"\n    spawn worker as \"w\"\n      with knowledge where category == \"{!topic}\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_code": "E163",
+    "error_contains": ["raw interpolation was removed in v0.3", "use `{expr}`"]
+  }
+}

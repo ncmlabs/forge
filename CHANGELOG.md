@@ -269,6 +269,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the CHANGELOG; return `Text` and build the markup in the program.
 
 ### Fixed
+- `with knowledge where category == <expr>` used to drop variables and
+  interpolation, so the filter was empty. It is now evaluated at spawn (#538).
 - `run --dry-run --json` and `forge cost --json` reported the plan estimate in the
   envelope's `cost`, which is the USD **spent** by the command (#528). Both
   execute nothing, so `cost` is now `0.0`; the estimate stays in

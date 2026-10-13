@@ -226,7 +226,7 @@ impl CostWalker {
                 }
                 for option in &spawn.options {
                     match &option.node {
-                        SpawnOption::ConfidenceCap(expr) => {
+                        SpawnOption::ConfidenceCap(expr) | SpawnOption::KnowledgeFilter(expr) => {
                             self.walk_expr(expr, context, multiplier)
                         }
                         SpawnOption::MemoryInit(_, expr) => {
@@ -235,8 +235,6 @@ impl CostWalker {
                         SpawnOption::Isolate(config) => {
                             self.walk_expr(&config.branch, context, multiplier)
                         }
-                        // `where category == "X"` is a literal, not an expression.
-                        SpawnOption::KnowledgeFilter(_) => {}
                     }
                 }
             }
