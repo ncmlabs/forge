@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge check data",
+  "description": "Payload of `forge check --json`: every file checked and every diagnostic found across the resolver, the checkers and the boundary pass. `warnings` in the envelope repeats the warnings-only findings; `status` is `error` when any diagnostic is an error, `warning` when there are warnings but no errors.",
+  "type": "object",
+  "required": ["files", "diagnostics"],
+  "additionalProperties": false,
+  "properties": {
+    "files": {
+      "description": "Paths as given on the command line, in order.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "diagnostics": {
+      "description": "Empty on a clean check; codes are stable (`forge explain <code>`).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    }
+  }
+}

@@ -275,6 +275,35 @@ fn every_reference_replays_to_its_expected_output() {
     );
 }
 
+/// The harness itself (#483 part 2), offline and for free: `--self-test` runs
+/// specs 01 and 02 against two fake models and exits non-zero unless pass@1,
+/// pass@3, correctness and attempts land exactly where the fakes put them. The
+/// harness is a bash script, so this is unix-only, and it needs `jq`.
+#[test]
+#[cfg(unix)]
+fn harness_self_test_passes_offline() {
+    if Command::new("jq").arg("--version").output().is_err() {
+        eprintln!("skipping: jq is not installed, and bench/run.sh needs it");
+        return;
+    }
+    let output = Command::new("bash")
+        .arg("bench/run.sh")
+        .arg("--self-test")
+        // The binary cargo just built, not a nested `cargo run`: no rebuild,
+        // no lock contention with the running test harness.
+        .env("FORGE_BIN", env!("CARGO_BIN_EXE_forge"))
+        .current_dir(repo_root())
+        .output()
+        .expect("run bash bench/run.sh --self-test");
+    assert!(
+        output.status.success(),
+        "bench/run.sh --self-test failed ({})\n--- stdout\n{}\n--- stderr\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout).trim_end(),
+        String::from_utf8_lossy(&output.stderr).trim_end()
+    );
+}
+
 /// The specs that gate on a `command` result. Each one records the *failure*
 /// path, so a solution that skips the success check cannot reproduce its
 /// expected output — that is what makes the deterministic gate (#484)

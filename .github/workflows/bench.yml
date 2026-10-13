@@ -1,0 +1,86 @@
+name: Bench
+
+# The LLM authoring benchmark (#483 part 2): can an agent write FORGE?
+# Weekly (Monday 05:00 UTC) and on manual dispatch, every model in the matrix
+# runs the 30-spec corpus through bench/run.sh — pass@1, pass@3-repair,
+# correctness, tokens. The results JSON is uploaded as an artifact and the
+# table is appended to the run summary; nothing is committed, the coordinator
+# commits bench/results/<date>-<name>.json from the artifact.
+#
+# Endpoints are never hardcoded: BENCH_<NAME>_BASE_URL and BENCH_<NAME>_API_KEY
+# supply the OpenAI-compatible URL and key for the matching matrix entry. A
+# model whose base-URL secret is unset (forks, PRs, an unconfigured provider)
+# is skipped with a notice instead of failing the run. The key secret may be
+# empty — a local vLLM needs none.
+
+on:
+  schedule:
+    # Mondays 05:00 UTC.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: ${{ matrix.model.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # Also the skip gate below: an unset secret evaluates to an empty string.
+      BENCH_BASE_URL: ${{ secrets[matrix.model.base_url_secret] }}
+      BENCH_MODEL: ${{ matrix.model.model }}
+      FORGE_BIN: ./target/release/forge
+    strategy:
+      fail-fast: false
+      matrix:
+        model:
+          - name: claude
+            base_url_secret: BENCH_CLAUDE_BASE_URL
+            key_secret: BENCH_CLAUDE_API_KEY
+            model: claude-sonnet-4-5
+          - name: openai
+            base_url_secret: BENCH_OPENAI_BASE_URL
+            key_secret: BENCH_OPENAI_API_KEY
+            model: gpt-4.1
+          - name: gemma
+            base_url_secret: BENCH_GEMMA_BASE_URL
+            key_secret: BENCH_GEMMA_API_KEY
+            model: google/gemma-3-27b-it
+    steps:
+      - name: Skip when the endpoint secret is not configured
+        if: env.BENCH_BASE_URL == ''
+        run: |
+          echo "::notice::${{ matrix.model.name }}: ${{ matrix.model.base_url_secret }} is not set — skipping this matrix entry."
+
+      - uses: actions/checkout@v7
+        if: env.BENCH_BASE_URL != ''
+      - uses: dtolnay/rust-toolchain@stable
+        if: env.BENCH_BASE_URL != ''
+      - uses: Swatinem/rust-cache@v2
+        if: env.BENCH_BASE_URL != ''
+
+      - name: Build forge
+        if: env.BENCH_BASE_URL != ''
+        run: cargo build --release
+
+      - name: Run the benchmark
+        if: env.BENCH_BASE_URL != ''
+        shell: bash
+        env:
+          # Optional by design: a local vLLM serves without a key.
+          BENCH_API_KEY: ${{ secrets[matrix.model.key_secret] }}
+        run: |
+          set -o pipefail
+          out="bench/results/$(date -u +%F)-${{ matrix.model.name }}.json"
+          bash bench/run.sh --model "${{ matrix.model.name }}" --out "$out" | tee "$RUNNER_TEMP/bench-table.md"
+          cat "$RUNNER_TEMP/bench-table.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the results JSON
+        if: env.BENCH_BASE_URL != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-${{ matrix.model.name }}
+          path: bench/results/*.json
+          if-no-files-found: error

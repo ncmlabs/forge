@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge wake data",
+  "description": "Payload of `forge wake --json`, one shape per action. Secret material is only ever in `rotate`, which is the one time it is shown.",
+  "type": "object",
+  "anyOf": [
+    {
+      "title": "register",
+      "required": ["action", "agent", "trigger", "chars"],
+      "additionalProperties": false,
+      "properties": {
+        "action": { "const": "register" },
+        "agent": { "type": "string" },
+        "trigger": { "type": "string" },
+        "chars": {
+          "description": "Length of the secret read from stdin. The secret itself is never echoed.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    {
+      "title": "rotate",
+      "required": ["action", "agent", "trigger", "secret"],
+      "additionalProperties": false,
+      "properties": {
+        "action": { "const": "rotate" },
+        "agent": { "type": "string" },
+        "trigger": { "type": "string" },
+        "secret": {
+          "description": "Freshly generated 32-byte secret, hex-encoded. Shown exactly once, as in human mode.",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "list",
+      "required": ["action", "triggers"],
+      "additionalProperties": false,
+      "properties": {
+        "action": { "const": "list" },
+        "triggers": {
+          "description": "Every `(agent, trigger)` pair with a registered secret, in store order.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["agent", "trigger"],
+            "additionalProperties": false,
+            "properties": {
+              "agent": { "type": "string" },
+              "trigger": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "delete",
+      "required": ["action", "agent", "trigger", "removed"],
+      "additionalProperties": false,
+      "properties": {
+        "action": { "const": "delete" },
+        "agent": { "type": "string" },
+        "trigger": { "type": "string" },
+        "removed": {
+          "description": "Whether a row was deleted; `false` is a success, not an error.",
+          "type": "boolean"
+        }
+      }
+    }
+  ]
+}

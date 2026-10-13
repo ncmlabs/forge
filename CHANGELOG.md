@@ -19,6 +19,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/forge-card.md` by `tests/forge_card_tests.rs`). This is an agent skill,
   not a FORGE runtime skill: it declares no `capabilities:`, and a project that
   scans `skills/` keeps loading it without a warning or an error.
+- LLM authoring benchmark harness (#483, part 2): `bench/run.sh` prompts one
+  model per corpus spec — `docs/forge-card.md` as the system prompt, `spec.md`
+  plus one fixed fence instruction as the user turn — extracts the first fenced
+  `.forge` block, checks it with `forge check --json`, repairs at most twice
+  from the previous attempt's diagnostics array (the #471 loop shape), and
+  grades correctness by behaviour, not prompt text: the surviving program is
+  re-run with `--record` under the mock provider, its own prompts and call keys
+  are paired with the reference fixture's responses in call order, and that
+  grading fixture is replayed with `forge test --expect` at zero cost — so a
+  correct program scores correct whatever its prompts say, and a program with a
+  different call count is reported as `program made N model calls, the spec's
+  fixture has M`. Every spec is reported: pass@1, pass@3, attempts, correctness, tokens in/out per spec in
+  `bench/results/<date>-<model>.json`, plus one markdown table on stdout.
+  Endpoints and credentials come only from `BENCH_BASE_URL`, `BENCH_API_KEY`
+  (optional) and `BENCH_MODEL`; tokens are the endpoint's own `usage` numbers
+  (0 when missing or non-numeric), summed over the attempts a spec took. A flaky
+  endpoint gets three tries per attempt (`--max-time 300 --retry 2
+  --retry-all-errors`) and a call that still fails is recorded as
+  `model call failed: <reason>` for that spec only — the remaining specs are
+  still run, the results file is still written, and the run exits 0. A reply
+  with no fenced block is recorded as `no .forge program in the reply` rather
+  than being handed to `forge check`. `bench/run.sh --self-test` proves the loop
+  offline with four fake models (`BENCH_FAKE=reference`: pass@1 = pass@3 =
+  correct = 2/2 in one attempt each; `BENCH_FAKE=reworded`: the same program
+  with different prompt wording, still correct 2/2, which is exactly what the
+  behaviour-based grading buys; `BENCH_FAKE=broken`: a parse error first,
+  so pass@1 = 0, pass@3 = 2/2, two attempts; `BENCH_FAKE=httperr`: spec 01's
+  calls fail, spec 02 still scores 1/1 in the same run), and
+  `tests/bench_corpus_tests.rs` runs it with `cargo test`.
+  `.github/workflows/bench.yml` runs the corpus
+  weekly (Mondays 05:00 UTC) and on `workflow_dispatch` over a model matrix,
+  skipping entries whose endpoint secret is unset, uploading each results JSON
+  as an artifact and appending its table to the run summary; the coordinator
+  commits the results under `bench/results/`.
 - `forge run --dry-run <file>` (#477): parse, check, and print the static
   execution plan — the cost table of every LLM operation, then an `Effects:`
   list with one `kind  location` line per side-effect site (`command`, `exec`,
@@ -179,8 +213,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the checker and fails at runtime.
 - Showcase examples moved to ncmlabs/forge-examples (#488); test fixtures
   relocated to `tests/fixtures/`.
+- forge-sensei moved out of core to ncmlabs/forge-examples, pinned to v0.2.x
+  (#485 step 1). Its `.forge` programs stay here as test fixtures:
+  `workflows/forge-sensei/` is now `tests/fixtures/sensei/` and
+  `workflows/forge-sensei.forge` is now `tests/fixtures/sensei.forge`, so the
+  build, http-server, resilience, checker and parser suites keep their coverage.
+  Deleted with it: the served `workflows/forge-sensei/static/` assets,
+  `docs/forge-sensei.md`, the `scripts/*sensei*.sh` install/pretrain/assess
+  tooling (and `scripts/pretrain-toolkit.sh`, its curriculum), the
+  `sensei_live_tests` suite, and the CI "Install script E2E (Linux)" step.
+  No `src/` behavior changed; `html.*`, `markdown.*`, `[server.static_files]`
+  and `serve --watch` are untouched and are removed in later #485 steps.
 
 ### Fixed
+- `forge --help` printed `Usage: forge.exe …` on Windows, where clap takes the
+  program name from `argv[0]`, while our own `forge help` printed `forge`
+  (#476). The binary name is now pinned (`bin_name = "forge"`), so both paths
+  print the same usage line on every platform.
 - Diagnostic text output pointed at the wrong line/column after non-ASCII
   characters (#513): `src/diagnostic.rs` built ariadne with the default
   `IndexType::Char`, but every FORGE span is a byte range (pest offsets), so a
@@ -243,6 +292,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `invalid [llm] configuration: …` via `ProviderError::InvalidConfig` instead
   of claiming a provider is unavailable, and the CLI types both cases as
   `error.type: "config"` in the `--json` envelope.
+
+### Security
+- RUSTSEC-2026-0338, RUSTSEC-2026-0339, RUSTSEC-2026-0340, RUSTSEC-2026-0341
+  and RUSTSEC-2026-0342: bumped `quinn-proto` to 0.11.19 in `Cargo.lock`.
 
 ## [0.2.0] - 2026-08-31
 
@@ -480,6 +533,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 First release of FORGE — the agent-native programming language where LLM calls are oracle queries, not function calls. All 14 language primitives, 7 semantic checkers, full async runtime, and 3 showcase applications. 883 tests passing across unit, conformance, integration, and E2E.
 
 ### Added
+- CLI introspection (#476): `forge schema <command>` prints the JSON Schema
+  (2020-12) of that command's `--json` envelope — the shared envelope with
+  `properties.data` replaced by the command's payload — `forge schema` alone
+  prints the envelope with `data` left generic, and `forge schema --all`
+  prints `{command: schema}`. The schemas are hand-written under `schemas/`
+  (`data` is built ad hoc as `serde_json::Value`, so there are no Rust types
+  to derive from) and embedded through the table in `src/cli_schema.rs`;
+  `forge help --json` prints the command index clap cannot drift from —
+  `{commands: [{name, about, args: [{name, long, required, takes_value,
+  help}], json_supported}], exit_codes, env}`, nested actions included
+  (`wake register`), with `json_supported` derived from the schema table.
+  `tests/cli_schema_tests.rs` is the drift guard: it runs every command for
+  real and validates stdout against `forge schema <command>`, so a payload
+  that gains or renames a key fails until the schema is updated. `jsonschema`
+  is a dev-dependency only. Plain `forge help` / `forge --help` are unchanged.
+  Documented in `docs/forge-reference.md` §27.
+- `forge run --dry-run <file>` (#477): parse, check, and print the static
+  execution plan — the cost table of every LLM operation, then an `Effects:`
+  list with one `kind  location` line per side-effect site (`command`, `exec`,
+  `http`, `file.write`, `session`, `spawn`) in walk order — then the line
+  `nothing was executed`. No provider is built, no executor starts, no process
+  runs, and no agent is spawned. `--json` reports the #475 envelope with
+  `command: "run"` and `data = {dry_run, file, operations, effects,
+  total_tokens_in, total_tokens_out, estimated_cost_usd}`; exit codes follow
+  `forge check` (`0` clean plan, `1` errors blocked the plan, `2` warnings
+  only). `forge cost` reports the same estimate with `command: "cost"`, runs no
+  checker and never blocks (human output unchanged, JSON `data` gains
+  `effects`). `--dry-run` conflicts with
+  `--record` and refuses `--manifest` for now. Effect sites come from the
+  existing `src/cost_estimator.rs` walker; token totals are unchanged.
 
 #### Core Language
 - Core language with 14 primitives: task, flow, agent, pool, system, warden, event, states, pure, endpoint, type, contract, use, uncertain

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge explain data",
+  "description": "Payload of `forge explain --json`: one diagnostic code, or every registered code with `--list`. An unknown code is an error envelope with empty data and `error.suggestion` pointing at `--list`.",
+  "type": "object",
+  "anyOf": [
+    {
+      "title": "one code",
+      "required": ["code", "title", "explain"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "description": "The code that was asked for, e.g. `E030`.",
+          "type": "string"
+        },
+        "title": {
+          "description": "One-line summary.",
+          "type": "string"
+        },
+        "explain": {
+          "description": "Full explanation, with a `Wrong:` and a `Right:` snippet.",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "code list",
+      "required": ["codes"],
+      "additionalProperties": false,
+      "properties": {
+        "codes": {
+          "description": "Every registered code, in registry order.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "title"],
+            "additionalProperties": false,
+            "properties": {
+              "code": { "type": "string" },
+              "title": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

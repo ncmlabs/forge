@@ -92,7 +92,7 @@ forge build examples/basics/hello.forge -o bin/hello
 cargo test
 
 # Run real-LLM tests locally to verify end-to-end (opt-in — issue #288)
-FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test --test sensei_live_tests
+FORGE_LLM_LIVE=1 ANTHROPIC_API_KEY=sk-... cargo test wiki_real_
 ```
 
 ---
@@ -330,8 +330,8 @@ You write stages and declare dependencies. The compiler figures out the parallel
 
 ```
   ┌─────────┐    spawn specialist as "syntax_expert"
-  │  Sensei  │    with knowledge where category == "SYNTAX"
-  │  Agent   │──────────────────────────────────────────────┐
+  │  Agent  │    with knowledge where category == "SYNTAX"
+  │         │──────────────────────────────────────────────┐
   └────┬─────┘                                              │
        │ find "syntax_expert"                               ▼
        │◄──────────────────────────────── ┌──────────────────────┐
@@ -392,55 +392,20 @@ A `system` declaration wires agents together with a shared event bus, instance r
 
 Agents in FORGE are born, learn, specialize, discover each other, and gracefully retire — all as language primitives.
 
-```forge
-# A specialist agent that learns within a domain
-agent specialist
-  memory
-    topic: Text
-    query_count: Number
-  knowledge store: ".forge-knowledge/specialist"
-    max_entries: 10000
-    retention: 180d
-  subscribe LearnedInsight where category == memory.topic
-
-  on query(question: Text)
-    memory.query_count = memory.query_count + 1
-    prior = recall "{memory.topic} {question}"
-    answer = answer_forge_question(question, prior)
-    learn from interaction(question, answer, 0.6) category: "{memory.topic}"
-    give answer
-
-# The sensei spawns specialists on demand
-exportable agent forge_sensei
-  # ...
-  on deep_dive(topic: Text)
-    existing = find "specialist_{topic}"
-    if existing
-      give existing
-    child = spawn specialist as "specialist_{topic}"
-      with knowledge where category == topic
-      with confidence_cap: 0.8
-      with memory topic: topic
-    give child
-
-# Supervision — the warden watches everything
-warden sensei_warden
-  manages [forge_sensei, specialist]
-  on stuck: nudge, self
-    after 3: escalate
-  on hallucination: restart, self
-  on crash: restart, self
-  max_retries 3 per 1h then escalate
-```
-
-This is not a toy example — it is the actual `forge-sensei` program that teaches the FORGE language, compiled to a standalone binary at `bin/forge-sensei`.
+The end-to-end example — a specialist agent with a knowledge store, an
+`exportable` parent that spawns it, and the warden that supervises them — is
+`forge-sensei`, which now lives in
+[`ncmlabs/forge-examples`](https://github.com/ncmlabs/forge-examples) (pinned to
+v0.2.x) together with the other showcases. Its programs stay in this repository
+as test fixtures under `tests/fixtures/sensei/`. See
+[`docs/forge-reference.md`](docs/forge-reference.md) §20 for the primitives.
 
 ---
 
 ## See it in action
 
-The showcases built with FORGE — the wiki, sentinel and tictactoe — have moved
-to their own public repository,
+The showcases built with FORGE — the wiki, sentinel, tictactoe and the
+`forge-sensei` learning agent — have moved to their own public repository,
 [`ncmlabs/forge-examples`](https://github.com/ncmlabs/forge-examples/tree/main)
 ([#488](https://github.com/ncmlabs/forge/issues/488)), so that this repository
 stays the language and the runtime. What remains under `examples/` is the small
@@ -552,32 +517,13 @@ See [`roadmap.md`](roadmap.md) for the v0.3 tracks.
 FORGE programs compile to standalone native binaries. Each agent becomes a CLI with subcommands for its handlers and an interactive REPL.
 
 ```bash
-# Compile an agent to a binary
-forge build workflows/forge-sensei.forge -o bin/forge-sensei
+# Compile a program to a standalone binary
+forge build examples/basics/hello.forge -o bin/hello
 
-# The binary has subcommands for each handler
-bin/forge-sensei query "how do flows work?"
-bin/forge-sensei review "pure bad_fn\n  do\n    reason 'hello'"
-bin/forge-sensei status
-bin/forge-sensei repl    # interactive session
+# An agent's handlers become CLI subcommands, plus an interactive REPL
+forge build workflows/surface-audit.forge -o bin/surface-audit
+bin/surface-audit --help
 ```
-
-#### Installing forge-sensei as a service
-
-The install script handles building, wrapper creation, config, and service registration across platforms:
-
-```bash
-bash scripts/install-sensei.sh              # full install (build + pretrain + PATH)
-bash scripts/install-sensei.sh --skip-pretrain  # skip LLM pre-training step
-bash scripts/install-sensei-server.sh install   # register as auto-start service
-bash scripts/install-sensei.sh --uninstall      # remove service registration
-```
-
-**Platform notes:**
-
-- **macOS:** The firewall may block the server's LAN access on first run. Allow incoming connections in System Settings > Privacy & Security > Firewall, or bind to localhost only with `--host 127.0.0.1`.
-- **Linux:** Service auto-start requires a systemd user session (`systemctl --user`). Works on Ubuntu 20.04+, Fedora, Arch.
-- **WSL:** Uses the Linux path. If systemd is unavailable (WSL 1 or WSL 2 without `systemd=true` in `/etc/wsl.conf`), start the server manually.
 
 Multi-file projects use a manifest:
 
@@ -756,7 +702,8 @@ Three things determine whether this reaches its potential:
 | `CHANGELOG.md` | All notable changes in Keep a Changelog format |
 | `providers.md` | Provider abstraction: trait, registry, implementations, config |
 | `examples/` | Example programs demonstrating language primitives (showcases moving to `ncmlabs/forge-examples`) |
-| `workflows/` | Real FORGE programs: forge-sensei learning agent, surface-audit drift agent |
+| `workflows/` | Real FORGE programs: surface-audit drift agent |
+| `tests/fixtures/sensei/` | The forge-sensei programs, kept in core as test fixtures |
 | `conformance/` | Language-agnostic JSON test suite — 84 tests covering parser, checkers, and runtime |
 
 ---

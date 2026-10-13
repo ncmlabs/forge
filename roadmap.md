@@ -68,10 +68,10 @@ tracked weekly. v0.3 is done when those numbers are published and improve.
 | Issue | Title | Status |
 | ----- | ----- | ------ |
 | [#474](https://github.com/ncmlabs/forge/issues/474) | diagnostics: stable error codes, real file path, plain output off-TTY, forge explain | Done ✅ |
-| [#475](https://github.com/ncmlabs/forge/issues/475) | cli: JSON output envelope, semantic exit codes and --fields for every command | Open |
-| [#476](https://github.com/ncmlabs/forge/issues/476) | cli: forge schema and forge help --json introspection | Open |
+| [#475](https://github.com/ncmlabs/forge/issues/475) | cli: JSON output envelope, semantic exit codes and --fields for every command | Done ✅ |
+| [#476](https://github.com/ncmlabs/forge/issues/476) | cli: forge schema and forge help --json introspection | Done ✅ |
 | [#477](https://github.com/ncmlabs/forge/issues/477) | cli: forge run --dry-run static execution plan (LLM sites, cost, effects) | Done ✅ |
-| [#478](https://github.com/ncmlabs/forge/issues/478) | test: forge run --record and forge test replay through MockProvider | Open |
+| [#478](https://github.com/ncmlabs/forge/issues/478) | test: forge run --record and forge test replay through MockProvider | Done ✅ |
 | [#479](https://github.com/ncmlabs/forge/issues/479) | runtime: end-of-run summary (calls, tokens, cost, confidence, warden events) | Done ✅ |
 | [#489](https://github.com/ncmlabs/forge/issues/489) | ci: clippy -D warnings fails on stable 1.99 (double_must_use via async-trait 0.1.89) | Done ✅ |
 | [#495](https://github.com/ncmlabs/forge/issues/495) | cli: `forge check --manifest` so project skills resolve during check | Done ✅ |

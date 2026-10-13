@@ -1645,7 +1645,7 @@ Timers can be controlled with statements:
 Schedules are durable, cross-session wall-clock triggers. Where a `timer` is agent-local, cancellable, and protocol-scoped (a countdown the agent arms inside a flow), a `schedule` is declarative and persistent: it fires on its own cadence, independently of any particular session.
 
 ```forge
-agent forge_sensei
+agent reviewer
   memory persistent
     current_level: Text
   schedule mastery_review
@@ -2746,11 +2746,11 @@ FORGE agents can own persistent searchable knowledge and spawn specialized child
 ### Knowledge Store
 
 ```forge
-exportable agent forge_sensei
-  lifecycle: MasteryLevel
+exportable agent tutor
+  lifecycle: TutorPhase
   memory
     interaction_count: Number
-  knowledge store: ".forge-knowledge/sensei"
+  knowledge store: ".forge-knowledge/tutor"
     max_entries: 50000
     retention: 365d
 ```
@@ -3156,6 +3156,7 @@ A command line clap cannot parse exits `1` in both modes — never clap's defaul
 | `send` | `{file, agent, event, result, output}` — the handler's `say` lines are in `output`, never on stdout, and `cost` is the dispatch's measured LLM spend (`0.0` when the handler made no LLM call) |
 | `wake` | `{action, ...}` per subcommand (`rotate` includes the one-time `secret`) |
 | `store recover` | `{action, root, dry_run, healthy, broken, stores:[...]}` |
+| `init` | `{dir, template, dry_run, files}` |
 
 ### Run summary
 
@@ -3198,6 +3199,48 @@ JSON mode prints no summary line: the same data is `data.summary`.
 forge check --json --fields diagnostics src/main.forge
 ```
 
+A `--fields` payload is a projection of the command's schema: `forge schema <command>` accepts it with every top-level key optional, since the projection can drop any of them (a kept value is copied whole, so nested keys are unchanged).
+
 ### Commands without JSON support
 
 `serve`, `agent` (REPL), `agent-inspect` and `fleet` are interactive or long-running. In JSON mode they emit `{"status":"error","error":{"type":"unsupported", ...}}` and exit `1` instead of starting.
+
+### Schemas and introspection
+
+`data` payloads are built ad hoc as `serde_json::Value` at each call site, so the schemas are hand-written: `schemas/envelope.schema.json` plus one `<command>.data.schema.json` per command, embedded with `include_str!` through the table in `src/cli_schema.rs`.
+
+```bash
+forge schema check          # the envelope schema with check's `data` payload
+forge schema                # the shared envelope, `data` left generic
+forge schema --all          # {command: schema} for every command with a schema
+```
+
+`forge schema <command>` prints one JSON Schema (2020-12) document — the envelope with `properties.data` replaced by that command's payload — so a caller can validate a whole envelope, not just the payload. `forge schema --all` prints the same documents keyed by command. `data` accepts either the command's payload or `{}`: a command that fails before building one (`error.type` `io`, `config` or `runtime`) emits empty data. The objects shared by several payloads — the diagnostic of `parse`, `check`, `run`, `trace` and `test`, the `run`/`trace`/`test` run summary, and the plan operations/effects of `cost` and `run --dry-run` — live once in the envelope's `$defs`.
+
+These two introspection surfaces print their document directly and are not wrapped in an envelope; an unknown command is still a usage error (exit `1`, the error envelope in JSON mode). Commands without a schema are the four above — `json_supported` in the index says so.
+
+```bash
+forge help --json
+```
+
+```json
+{
+  "commands": [
+    {
+      "name": "parse",
+      "about": "Parse a .forge file and print the AST (useful for debugging grammar)",
+      "args": [
+        {"name": "file", "long": null, "required": true, "takes_value": true, "help": "Path to the .forge source file"},
+        {"name": "json", "long": "json", "required": false, "takes_value": false, "help": "Emit one JSON envelope on stdout instead of human text (#475)"}
+      ],
+      "json_supported": true
+    }
+  ],
+  "exit_codes": {"0": "success: command completed", "1": "error: command failed, a run was blocked by diagnostics, or the command line was invalid", "2": "warning: static checks found warnings but no errors — this code means \"warnings only\" and nothing else"},
+  "env": [{"name": "FORGE_OUTPUT", "description": "json = emit one JSON envelope per command (same as --json)"}]
+}
+```
+
+`commands` comes from clap's own definition, so it cannot drift from the CLI: every subcommand, nested actions as `wake register` / `store recover`, and their flags. `--json` and `--fields` are listed on every command because clap accepts them at any depth. `required` is clap's own flag too: an argument that is required only unless another is present (`check`'s `[FILES]...`, which `--manifest` replaces; `explain`'s code, which `--list` replaces) reports `false`, exactly as the usage line `--help` prints it. `json_supported` is `true` exactly for the commands with a schema, plus `schema` and `help` themselves; `exit_codes` is the table above; `env` mirrors the `ENVIRONMENT VARIABLES` block of `forge --help`.
+
+The schemas are checked against reality by `tests/cli_schema_tests.rs`: it runs every command for real — mock provider, fixtures, temp dirs — and validates stdout against `forge schema <command>`, one test per command, plus a deliberately wrong document that must fail. `jsonschema` is a dev-dependency; the released binary does not link it. Adding a field to a payload therefore fails the suite until the schema under `schemas/` is updated, and adding a command fails until it has both a schema and a drift test.

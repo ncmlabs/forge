@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge inspect data",
+  "description": "Payload of `forge inspect --json`: the human-readable rendering of a `.forgepkg.json` package, carried as a string so both modes report the same inspection.",
+  "type": "object",
+  "required": ["package", "inspection"],
+  "additionalProperties": false,
+  "properties": {
+    "package": {
+      "description": "Package path as given on the command line.",
+      "type": "string"
+    },
+    "inspection": {
+      "description": "The rendered package summary, exactly what human mode prints.",
+      "type": "string"
+    }
+  }
+}
