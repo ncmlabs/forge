@@ -451,6 +451,9 @@ pub fn print_endpoint_list(endpoints: &HashMap<String, crate::ast::EndpointDecl>
 }
 
 /// Dev-mode reload script injected before </body> in HTML responses.
+/// ponytail: unreachable since `Html` responses were removed (#485 step 2);
+/// removed with the watcher in #485 step 3.
+#[allow(dead_code)]
 const RELOAD_SCRIPT: &str =
     r#"<script>new EventSource("/__forge/reload").onmessage=()=>location.reload()</script>"#;
 
@@ -1783,6 +1786,10 @@ async fn dispatch_endpoint(
 }
 
 fn endpoint_result_to_response(result: EndpointResult, inject_reload: bool) -> Response {
+    // ponytail: the reload script only ever applied to `Html` responses, which
+    // are gone (#485 step 2). Watch mode still passes the flag; #485 step 3
+    // deletes this plumbing together with the watcher.
+    let _ = inject_reload;
     let default_status = if matches!(result.value.value, Value::Unit) {
         StatusCode::NO_CONTENT
     } else {
@@ -1795,15 +1802,6 @@ fn endpoint_result_to_response(result: EndpointResult, inject_reload: bool) -> R
 
     let (value_inferred_ct, body) = match &result.value.value {
         Value::Text(s) => ("text/plain", s.clone()),
-        Value::Html(s) => {
-            // In watch mode, inject the reload script before </body> or at the end
-            let html = if inject_reload {
-                inject_reload_script(s)
-            } else {
-                s.clone()
-            };
-            ("text/html", html)
-        }
         Value::Number(n) => ("text/plain", n.to_string()),
         Value::Bool(b) => ("text/plain", b.to_string()),
         Value::Unit => return status_code.into_response(),
@@ -1834,6 +1832,9 @@ fn endpoint_result_to_response(result: EndpointResult, inject_reload: bool) -> R
 }
 
 /// Inject the reload script into an HTML body string.
+/// ponytail: unreachable since `Html` responses were removed (#485 step 2);
+/// removed with the watcher in #485 step 3.
+#[allow(dead_code)]
 fn inject_reload_script(html: &str) -> String {
     // Insert before </body> if present, otherwise append
     if let Some(pos) = html.to_lowercase().rfind("</body>") {
@@ -1891,7 +1892,7 @@ fn build_request_record(
 
 fn value_to_json(val: &ConfidentValue) -> serde_json::Value {
     match &val.value {
-        Value::Text(s) | Value::Html(s) => serde_json::Value::String(s.clone()),
+        Value::Text(s) => serde_json::Value::String(s.clone()),
         Value::Number(n) => serde_json::json!(n),
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Unit => serde_json::Value::Null,

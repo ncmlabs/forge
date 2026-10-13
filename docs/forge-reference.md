@@ -83,7 +83,7 @@ task greet_user
     say "The answer is {answer_value}"
 ```
 
-`{!expr}` is the raw-interpolation form for `Html` values (skips the autoescape that the regular `{expr}` form applies inside `Html` strings).
+Removed in v0.3 (#485): the `{!expr}` raw-interpolation form went away with the `Html` type and its auto-escaping. `{!x}` is still parsed but rejected by the checker (E163); use `{expr}`, which inserts the value verbatim.
 
 ### Escape Sequences
 
@@ -2806,7 +2806,7 @@ retire "specialist_FORGE"
 
 ## 21. Skills, Built-In Capabilities, and Project Manifests
 
-FORGE source declares capabilities with `use`. Built-ins include LLM operations, web/data/html/markdown helpers, assets, command execution, and project skills.
+FORGE source declares capabilities with `use`. Built-ins include LLM operations, web/data helpers, assets, command execution, and project skills.
 
 ```forge
 #! boundary: server
@@ -2815,7 +2815,6 @@ use
   llm.reason
   web.fetch
   data.store
-  markdown.render
   skill.repo_check
 ```
 
@@ -2826,8 +2825,6 @@ Built-in capability families:
 | LLM | `llm.reason`, `llm.classify` |
 | Web | `web.fetch`, `web.post` |
 | Data | `data.store`, `data.get`, `data.list`, `data.delete`, `data.embed`, `data.search` |
-| HTML | `html.layout`, `html.escape` |
-| Markdown | `markdown.render` |
 | Assets | `asset` |
 | Command | `command.status`, `command.output`, `command.cancel` |
 | Files | `file.read` (server-only) |
@@ -2836,6 +2833,8 @@ Built-in capability families:
 | Environment | `env.get` |
 | Process | `proc.exit` |
 | Skills | `skill.<namespace>.<capability>(...)` |
+
+Removed in v0.3 (#485): the HTML and Markdown families (`html.layout`, `html.escape`, `markdown.render`) are gone with the `Html` type. A `use` of any of them fails with E010 and a pointer to the CHANGELOG; return `Text` and build the markup yourself.
 
 `search "query"` is restricted to `#! boundary: server`.
 
@@ -2993,14 +2992,16 @@ All five built-ins are accepted in every boundary (`server`, `client`, `shared`)
 
 ---
 
-## 24. Templates and Raw Interpolation
+## 24. Templates
 
-Normal template interpolation uses `{expr}` and is escaped in HTML contexts. Raw interpolation uses `{!expr}` and skips HTML escaping. Use raw interpolation only for trusted or already-sanitized HTML.
+`{expr}` inserts a value into a template string. Nothing is escaped: the result is exactly what the expression renders.
+
+Removed in v0.3 (#485): raw interpolation `{!expr}` was removed with the `Html` type and its auto-escaping. `{!x}` still parses — so it cannot silently turn into the negation `{ !x }` — but the checker rejects it with E163. Write `{x}` instead. `html.layout`, `html.escape` and `markdown.render` are gone with the same removal; endpoints return `Text`.
 
 ```forge
-endpoint page() -> Html
-  body = markdown.render("# Hello")
-  give html.layout("Docs", "{!body}")
+endpoint page() -> Text
+  body = "# Hello"
+  give "<html><body>{body}</body></html>"
 ```
 
 ---

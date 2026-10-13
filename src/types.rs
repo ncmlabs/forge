@@ -24,7 +24,6 @@ pub enum ForgeType {
     Request,
     Response,
     Headers,
-    Html,
     Embedding,
     Duration,
     AgentResult,
@@ -51,7 +50,6 @@ impl std::fmt::Display for ForgeType {
             ForgeType::Request => write!(f, "Request"),
             ForgeType::Response => write!(f, "Response"),
             ForgeType::Headers => write!(f, "Headers"),
-            ForgeType::Html => write!(f, "Html"),
             ForgeType::Embedding => write!(f, "Embedding"),
             ForgeType::Duration => write!(f, "Duration"),
             ForgeType::AgentResult => write!(f, "AgentResult"),
@@ -114,7 +112,6 @@ pub fn from_type_name(tn: &TypeName) -> ForgeType {
         TypeName::Request => ForgeType::Request,
         TypeName::Response => ForgeType::Response,
         TypeName::Headers => ForgeType::Headers,
-        TypeName::Html => ForgeType::Html,
         TypeName::AgentResult => ForgeType::AgentResult,
         TypeName::Custom(s) => ForgeType::Named(s.clone()),
         TypeName::Array(inner, size) => ForgeType::Array(Box::new(from_type_name(inner)), *size),
@@ -133,10 +130,6 @@ pub fn is_compatible(from: &ForgeType, to: &ForgeType) -> bool {
     }
     // POC: Text >> anything always works
     if *from == ForgeType::Text {
-        return true;
-    }
-    // Html is compatible with Text (Html can flow where Text is expected)
-    if *from == ForgeType::Html && *to == ForgeType::Text {
         return true;
     }
     // AgentResult is compatible with Text (for >> composition into text-consuming tasks)

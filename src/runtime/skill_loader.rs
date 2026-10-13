@@ -250,7 +250,6 @@ fn parse_forge_type(name: &str) -> Result<ForgeType, String> {
         "Request" => Ok(ForgeType::Request),
         "Response" => Ok(ForgeType::Response),
         "Headers" => Ok(ForgeType::Headers),
-        "Html" => Ok(ForgeType::Html),
         "Embedding" => Ok(ForgeType::Embedding),
         "Duration" => Ok(ForgeType::Duration),
         other => Ok(ForgeType::Named(other.to_string())),

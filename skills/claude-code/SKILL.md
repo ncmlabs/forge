@@ -59,7 +59,7 @@ Current FORGE surfaces to account for include:
 - `spawn`, `find`, `retire`, `exportable agent`
 - project skills via `forge.project.toml` and `skill.<namespace>.<capability>(...)`
 - `schedule` blocks with `mode: spawn` (prompt-driven stateless turn) and `mode: wake` (memory rehydration + event emit); both modes are runtime-dispatched via `WakeService`/`CronDriver`
-- server-only `search`, boundary directives, and raw Html interpolation with `{!expr}`
+- server-only `search`, boundary directives, and `{expr}` template interpolation; `{!expr}` raw interpolation is removed in v0.3 (#485) and rejected with E163
 
 Validation notes:
 - Positive single-file examples should pass `cargo run -- check <file>`.

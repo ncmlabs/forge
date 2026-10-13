@@ -1,0 +1,14 @@
+{
+  "name": "removed_html_type_rejected",
+  "category": "checker",
+  "subcategory": "resolution",
+  "description": "The Html type is rejected in v0.3: endpoints return Text (#485)",
+  "input": "#! boundary: server\n\nendpoint page() -> Html\n  give \"<h1>Hello</h1>\"\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_code": "E164",
+    "error_contains": [
+      "unknown type `Html`"
+    ]
+  }
+}

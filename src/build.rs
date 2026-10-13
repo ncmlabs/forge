@@ -749,7 +749,7 @@ fn server_route(event: &str) -> (&'static str, String) {{
 fn value_to_json(value: &forge::runtime::confidence::ConfidentValue) -> serde_json::Value {{
     use forge::runtime::confidence::Value;
     match &value.value {{
-        Value::Text(s) | Value::Html(s) => serde_json::Value::String(s.clone()),
+        Value::Text(s) => serde_json::Value::String(s.clone()),
         Value::Number(n) => serde_json::json!(n),
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Unit => serde_json::Value::Null,

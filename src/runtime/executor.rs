@@ -3,7 +3,6 @@
 // calls LLM providers. See issue #9.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::ast::*;
@@ -158,8 +157,6 @@ pub struct TaskExecutor {
     agent_name: Option<String>,
     memory_persistent: bool,
     config: Option<crate::config::ForgeConfig>,
-    /// When true, template strings produce `Value::Html` and auto-escape interpolated values.
-    html_context: AtomicBool,
     /// Standalone knowledge store for endpoint/webhook context (no agent required).
     knowledge_store: Option<Arc<Mutex<crate::runtime::knowledge_store::KnowledgeStore>>>,
     /// Skill executor for LLM-mediated skill bridge (issue #40).
@@ -208,7 +205,6 @@ impl Clone for TaskExecutor {
             agent_name: self.agent_name.clone(),
             memory_persistent: self.memory_persistent,
             config: self.config.clone(),
-            html_context: AtomicBool::new(self.html_context.load(Ordering::Relaxed)),
             knowledge_store: self.knowledge_store.clone(),
             skill_executor: self.skill_executor.clone(),
             embedding_provider: self.embedding_provider.clone(),
@@ -276,7 +272,6 @@ impl TaskExecutor {
             agent_name: None,
             memory_persistent: false,
             config: None,
-            html_context: AtomicBool::new(false),
             knowledge_store: None,
             skill_executor: None,
             embedding_provider: None,
@@ -742,7 +737,6 @@ impl TaskExecutor {
             TypeName::Request => "Request".to_string(),
             TypeName::Response => "Response".to_string(),
             TypeName::Headers => "Headers".to_string(),
-            TypeName::Html => "Html".to_string(),
             TypeName::AgentResult => "AgentResult".to_string(),
             TypeName::Custom(name) => name.clone(),
             TypeName::Array(inner, Some(size)) => {
@@ -941,7 +935,7 @@ impl TaskExecutor {
 
     fn coerce_session_result_to_text(&self, result: ConfidentValue) -> ConfidentValue {
         match result.value {
-            Value::Text(_) | Value::Html(_) => result,
+            Value::Text(_) => result,
             other => {
                 ConfidentValue::from_skill(Value::Text(format!("{}", other)), result.confidence)
             }
@@ -1016,16 +1010,6 @@ impl TaskExecutor {
         }
     }
 
-    /// Check if an OutputType includes Html.
-    fn returns_html_output(gives: &Option<Spanned<OutputType>>) -> bool {
-        gives.as_ref().is_some_and(|ot| {
-            ot.node
-                .types
-                .iter()
-                .any(|t| matches!(&t.node, TypeName::Html))
-        })
-    }
-
     /// Execute an endpoint body with the given arguments and optional request context.
     pub async fn exec_endpoint(
         &self,
@@ -1043,7 +1027,6 @@ impl TaskExecutor {
         // Derive default content-type from return type annotation
         let default_ct = endpoint.return_type.as_ref().and_then(|ot| {
             ot.node.types.first().and_then(|tn| match &tn.node {
-                crate::ast::TypeName::Html => Some("text/html".to_string()),
                 crate::ast::TypeName::Text => Some("text/plain".to_string()),
                 _ => None,
             })
@@ -1057,13 +1040,7 @@ impl TaskExecutor {
             env.bind(&k, v);
         }
 
-        // Set html_context if this endpoint returns Html
-        let prev_html = self.html_context.load(Ordering::Relaxed);
-        if Self::returns_html_output(&endpoint.return_type) {
-            self.html_context.store(true, Ordering::Relaxed);
-        }
-
-        let result = match self.exec_stmts(&endpoint.body, &mut env).await {
+        match self.exec_stmts(&endpoint.body, &mut env).await {
             Ok(val) => Ok(EndpointResult {
                 value: val,
                 status: None,
@@ -1077,10 +1054,7 @@ impl TaskExecutor {
                 default_content_type: default_ct,
             }),
             Err(e) => Err(e),
-        };
-
-        self.html_context.store(prev_html, Ordering::Relaxed);
-        result
+        }
     }
 
     /// Run the program starting from `fn main`, or from a `system` declaration
@@ -1231,7 +1205,7 @@ impl TaskExecutor {
                                 }
                             }
                             "content_type" => {
-                                if let Value::Text(s) | Value::Html(s) = &meta_val.value {
+                                if let Value::Text(s) = &meta_val.value {
                                     content_type = Some(s.clone());
                                 }
                             }
@@ -1945,7 +1919,6 @@ impl TaskExecutor {
                 }
 
                 Expr::Template(parts) => {
-                    let is_html = self.html_context.load(Ordering::Relaxed);
                     let mut result = String::new();
                     let mut min_conf: f32 = 1.0;
                     for part in parts {
@@ -1954,35 +1927,18 @@ impl TaskExecutor {
                             TemplatePart::Interp(inner_expr) => {
                                 let val = self.eval_expr(inner_expr, env).await?;
                                 min_conf = min_conf.min(val.confidence);
-                                if is_html {
-                                    // In Html context: Html values pass through raw,
-                                    // everything else gets escaped for XSS prevention.
-                                    match &val.value {
-                                        Value::Html(s) => result.push_str(s),
-                                        other => {
-                                            let escaped = crate::runtime::html::html_escape(
-                                                &format!("{}", other),
-                                            );
-                                            result.push_str(&escaped);
-                                        }
-                                    }
-                                } else {
-                                    result.push_str(&format!("{}", val.value));
-                                }
-                            }
-                            TemplatePart::RawInterp(inner_expr) => {
-                                // {!expr} — always raw, no escaping even in Html context
-                                let val = self.eval_expr(inner_expr, env).await?;
-                                min_conf = min_conf.min(val.confidence);
                                 result.push_str(&format!("{}", val.value));
+                            }
+                            TemplatePart::RawInterp(_) => {
+                                // `{!expr}` is removed (#485); the checker rejects
+                                // it, so the executor should never see one.
+                                return Err(RuntimeError::Unsupported(
+                                    "`{!expr}` raw interpolation was removed in v0.3; use `{expr}` (see CHANGELOG, #485)".to_string(),
+                                ));
                             }
                         }
                     }
-                    let value = if is_html {
-                        Value::Html(result)
-                    } else {
-                        Value::Text(result)
-                    };
+                    let value = Value::Text(result);
                     if min_conf >= 1.0 {
                         Ok(ConfidentValue::deterministic(value))
                     } else {
@@ -2060,7 +2016,7 @@ impl TaskExecutor {
                         (Value::Array(v) | Value::List(v), "len" | "length" | "count") => {
                             Ok(ConfidentValue::deterministic(Value::Number(v.len() as f64)))
                         }
-                        (Value::Text(s) | Value::Html(s), "len" | "length") => {
+                        (Value::Text(s), "len" | "length") => {
                             Ok(ConfidentValue::deterministic(Value::Number(s.len() as f64)))
                         }
                         // Record field access — transparently unwrap _type/_value wrapper
@@ -2110,70 +2066,6 @@ impl TaskExecutor {
                 }
 
                 Expr::MethodCall(obj_expr, method, args) => {
-                    // html.layout() / html.escape() — built-in HTML capabilities
-                    if let Expr::Ident(ref ns) = obj_expr.node {
-                        if ns == "html" {
-                            let mut arg_vals = Vec::new();
-                            for arg in args {
-                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
-                            }
-                            match method.node.as_str() {
-                                "layout" => {
-                                    let title = arg_vals
-                                        .first()
-                                        .map(|v| format!("{}", v.value))
-                                        .unwrap_or_default();
-                                    let body = arg_vals
-                                        .get(1)
-                                        .map(|v| format!("{}", v.value))
-                                        .unwrap_or_default();
-                                    let html = crate::runtime::html::html_layout(&title, &body);
-                                    return Ok(ConfidentValue::deterministic(Value::Html(html)));
-                                }
-                                "escape" => {
-                                    let text = arg_vals
-                                        .first()
-                                        .map(|v| format!("{}", v.value))
-                                        .unwrap_or_default();
-                                    let escaped = crate::runtime::html::html_escape(&text);
-                                    return Ok(ConfidentValue::deterministic(Value::Text(escaped)));
-                                }
-                                other => {
-                                    return Err(RuntimeError::Unsupported(format!(
-                                        "html.{}()",
-                                        other
-                                    )));
-                                }
-                            }
-                        }
-                    }
-
-                    // markdown.render() — built-in Markdown capability
-                    if let Expr::Ident(ref ns) = obj_expr.node {
-                        if ns == "markdown" {
-                            let mut arg_vals = Vec::new();
-                            for arg in args {
-                                arg_vals.push(self.eval_expr(&arg.node.value, env).await?);
-                            }
-                            match method.node.as_str() {
-                                "render" => {
-                                    let content = arg_vals
-                                        .first()
-                                        .map(|v| format!("{}", v.value))
-                                        .unwrap_or_default();
-                                    let html = crate::runtime::markdown::render_markdown(&content);
-                                    return Ok(ConfidentValue::deterministic(Value::Html(html)));
-                                }
-                                other => {
-                                    return Err(RuntimeError::Unsupported(format!(
-                                        "markdown.{}()",
-                                        other
-                                    )));
-                                }
-                            }
-                        }
-                    }
-
                     // env.get(name, default) — read an environment variable with fallback.
                     // See issue #251 (part of epic #249).
                     if let Expr::Ident(ref ns) = obj_expr.node {
@@ -2724,7 +2616,7 @@ impl TaskExecutor {
                         "len" | "count" => {
                             let len = match &obj.value {
                                 Value::Array(v) | Value::List(v) => v.len(),
-                                Value::Text(s) | Value::Html(s) => s.len(),
+                                Value::Text(s) => s.len(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Array, List, or Text".to_string(),
@@ -2746,10 +2638,8 @@ impl TaskExecutor {
                                 Value::Array(v) | Value::List(v) => v
                                     .iter()
                                     .any(|item| values_equal(&item.value, &needle.value)),
-                                Value::Text(s) | Value::Html(s) => {
-                                    if let Value::Text(needle_s) | Value::Html(needle_s) =
-                                        &needle.value
-                                    {
+                                Value::Text(s) => {
+                                    if let Value::Text(needle_s) = &needle.value {
                                         s.contains(needle_s.as_str())
                                     } else {
                                         false
@@ -2800,9 +2690,8 @@ impl TaskExecutor {
                             Ok(ConfidentValue::deterministic(Value::Bool(none)))
                         }
                         "lower" => {
-                            let (text, wrap) = match &obj.value {
-                                Value::Text(s) => (s.to_lowercase(), false),
-                                Value::Html(s) => (s.to_lowercase(), true),
+                            let text = match &obj.value {
+                                Value::Text(s) => s.to_lowercase(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text".to_string(),
@@ -2810,17 +2699,11 @@ impl TaskExecutor {
                                     })
                                 }
                             };
-                            let val = if wrap {
-                                Value::Html(text)
-                            } else {
-                                Value::Text(text)
-                            };
-                            Ok(ConfidentValue::derived(val, obj.confidence))
+                            Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
                         }
                         "upper" => {
-                            let (text, wrap) = match &obj.value {
-                                Value::Text(s) => (s.to_uppercase(), false),
-                                Value::Html(s) => (s.to_uppercase(), true),
+                            let text = match &obj.value {
+                                Value::Text(s) => s.to_uppercase(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text".to_string(),
@@ -2828,17 +2711,11 @@ impl TaskExecutor {
                                     })
                                 }
                             };
-                            let val = if wrap {
-                                Value::Html(text)
-                            } else {
-                                Value::Text(text)
-                            };
-                            Ok(ConfidentValue::derived(val, obj.confidence))
+                            Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
                         }
                         "trim" => {
-                            let (text, wrap) = match &obj.value {
-                                Value::Text(s) => (s.trim().to_string(), false),
-                                Value::Html(s) => (s.trim().to_string(), true),
+                            let text = match &obj.value {
+                                Value::Text(s) => s.trim().to_string(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text".to_string(),
@@ -2846,12 +2723,7 @@ impl TaskExecutor {
                                     })
                                 }
                             };
-                            let val = if wrap {
-                                Value::Html(text)
-                            } else {
-                                Value::Text(text)
-                            };
-                            Ok(ConfidentValue::derived(val, obj.confidence))
+                            Ok(ConfidentValue::derived(Value::Text(text), obj.confidence))
                         }
                         "split" => {
                             if args.len() != 1 {
@@ -2862,7 +2734,7 @@ impl TaskExecutor {
                             }
                             let delim_val = self.eval_expr(&args[0].node.value, env).await?;
                             let delimiter = match &delim_val.value {
-                                Value::Text(s) | Value::Html(s) => s.clone(),
+                                Value::Text(s) => s.clone(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text delimiter".to_string(),
@@ -2871,7 +2743,7 @@ impl TaskExecutor {
                                 }
                             };
                             let text = match &obj.value {
-                                Value::Text(s) | Value::Html(s) => s.as_str(),
+                                Value::Text(s) => s.as_str(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text".to_string(),
@@ -2896,7 +2768,7 @@ impl TaskExecutor {
                             }
                             let delim_val = self.eval_expr(&args[0].node.value, env).await?;
                             let delimiter = match &delim_val.value {
-                                Value::Text(s) | Value::Html(s) => s.clone(),
+                                Value::Text(s) => s.clone(),
                                 _ => {
                                     return Err(RuntimeError::TypeError {
                                         expected: "Text delimiter".to_string(),
@@ -3649,23 +3521,14 @@ impl TaskExecutor {
             env.bind(&param.node.name, val);
         }
 
-        // Set html_context if this task returns Html
-        let prev_html = self.html_context.load(Ordering::Relaxed);
-        if Self::returns_html_output(&decl.gives) {
-            self.html_context.store(true, Ordering::Relaxed);
-        }
-
-        let result = match &decl.body.node {
+        match &decl.body.node {
             TaskBody::Do(stmts) => match self.exec_stmts(stmts, &mut env).await {
                 Ok(val) => Ok(val),
                 Err(RuntimeError::GiveSignal(val, ..)) => Ok(val),
                 Err(e) => Err(e),
             },
             TaskBody::Is(expr) => self.eval_expr(expr, &mut env).await,
-        };
-
-        self.html_context.store(prev_html, Ordering::Relaxed);
-        result
+        }
     }
 
     async fn call_pure(
@@ -3681,20 +3544,11 @@ impl TaskExecutor {
                 .unwrap_or(ConfidentValue::deterministic(Value::Unit));
             env.bind(&param.node.name, val);
         }
-        // Set html_context if this pure function returns Html
-        let prev_html = self.html_context.load(Ordering::Relaxed);
-        if Self::returns_html_output(&decl.gives) {
-            self.html_context.store(true, Ordering::Relaxed);
-        }
         let result = match self.exec_stmts(&decl.body, &mut env).await {
             Ok(val) => val,
             Err(RuntimeError::GiveSignal(val, ..)) => val,
-            Err(e) => {
-                self.html_context.store(prev_html, Ordering::Relaxed);
-                return Err(e);
-            }
+            Err(e) => return Err(e),
         };
-        self.html_context.store(prev_html, Ordering::Relaxed);
         // Pure functions always return deterministic confidence
         Ok(ConfidentValue::deterministic(result.value))
     }
@@ -3930,7 +3784,7 @@ fn truthy(cv: &ConfidentValue) -> bool {
 fn truthy_val(val: &Value) -> bool {
     match val {
         Value::Bool(b) => *b,
-        Value::Text(s) | Value::Html(s) => !s.is_empty(),
+        Value::Text(s) => !s.is_empty(),
         Value::Number(n) => *n != 0.0,
         Value::Unit => false,
         Value::List(v) | Value::Array(v) => !v.is_empty(),
@@ -3941,9 +3795,6 @@ fn truthy_val(val: &Value) -> bool {
 fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Text(a), Value::Text(b)) => a == b,
-        (Value::Html(a), Value::Html(b)) => a == b,
-        // Text/Html cross-comparison: same string content means equal
-        (Value::Text(a), Value::Html(b)) | (Value::Html(a), Value::Text(b)) => a == b,
         (Value::Number(a), Value::Number(b)) => (a - b).abs() < f64::EPSILON,
         (Value::Bool(a), Value::Bool(b)) => a == b,
         (Value::Unit, Value::Unit) => true,
@@ -3963,11 +3814,8 @@ fn eval_binop(left: &Value, op: &BinOp, right: &Value) -> Result<Value, RuntimeE
             }
             Ok(Value::Number(a / b))
         }
-        // String concatenation (Text + Text → Text, Html + Html → Html, mixed → Text)
+        // String concatenation (Text + Text → Text)
         (Value::Text(a), BinOp::Add, Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
-        (Value::Html(a), BinOp::Add, Value::Html(b)) => Ok(Value::Html(format!("{}{}", a, b))),
-        (Value::Text(a), BinOp::Add, Value::Html(b)) => Ok(Value::Text(format!("{}{}", a, b))),
-        (Value::Html(a), BinOp::Add, Value::Text(b)) => Ok(Value::Text(format!("{}{}", a, b))),
         // Array concatenation (Array + Array → Array, List variants too)
         (Value::Array(a), BinOp::Add, Value::Array(b)) => {
             let mut result = a.clone();

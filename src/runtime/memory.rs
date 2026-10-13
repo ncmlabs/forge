@@ -116,7 +116,6 @@ fn default_for_type(ty: &TypeName) -> ConfidentValue {
         TypeName::Number => Value::Number(0.0),
         TypeName::Bool => Value::Bool(false),
         TypeName::Conversation => Value::List(vec![]),
-        TypeName::Html => Value::Text(String::new()),
         TypeName::Profile
         | TypeName::Request
         | TypeName::Response

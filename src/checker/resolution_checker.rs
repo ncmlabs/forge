@@ -3,6 +3,8 @@
 // E160: a plain call target that resolves to nothing.
 // E161: a constructor pattern that can never match the scrutinee.
 // E162: a tag pattern whose case differs from the known tag.
+// E163: `{!expr}` raw interpolation, removed in v0.3 (#485).
+// E164: the `Html` type, removed in v0.3 (#485).
 //
 // Scrutinees with unknown value sets are never flagged: the checker only
 // reasons about values it can prove statically (classify labels, all-literal
@@ -25,7 +27,6 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "Conversation",
     "Failure",
     "Headers",
-    "Html",
     "Intent",
     "Number",
     "Profile",
@@ -37,6 +38,12 @@ pub const BUILTIN_TYPES: &[&str] = &[
     "Summary",
     "Text",
 ];
+
+/// Type names removed from the language, with the help users need (#485).
+const REMOVED_TYPES: &[(&str, &str)] = &[(
+    "Html",
+    "the `Html` type was removed in v0.3: endpoints return `Text` (see CHANGELOG, #485)",
+)];
 
 /// Statically known values a scrutinee can hold.
 #[derive(Clone)]
@@ -117,7 +124,7 @@ impl Index {
 /// Run the resolution checker over every statement body in `program`.
 pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
     let index = Index::build(program);
-    let mut diagnostics = Vec::new();
+    let mut diagnostics = removed_types(program, file);
     for item in &program.items {
         match &item.node {
             TopLevel::Task(d) => {
@@ -337,11 +344,18 @@ impl Index {
 
     fn walk_expr(&self, expr: &Spanned<Expr>, file: &str, diagnostics: &mut Vec<Diagnostic>) {
         match &expr.node {
-            Expr::NumberLit(_) | Expr::BoolLit(_) | Expr::Ident(_) | Expr::TypeAccess(_, _) => {}
+            Expr::NumberLit(_) | Expr::BoolLit(_) | Expr::Ident(_) => {}
+            Expr::TypeAccess(type_name, _) => push_removed_type(type_name, file, diagnostics),
             Expr::Template(parts) => {
                 for part in parts {
-                    if let TemplatePart::Interp(e) | TemplatePart::RawInterp(e) = &part.node {
-                        self.expr(e, file, diagnostics);
+                    match &part.node {
+                        TemplatePart::Interp(e) => self.expr(e, file, diagnostics),
+                        TemplatePart::RawInterp(e) => {
+                            diagnostics.push(raw_interp_removed(&part.span, file));
+                            // Keep walking so nested problems still surface.
+                            self.expr(e, file, diagnostics);
+                        }
+                        TemplatePart::Text(_) => {}
                     }
                 }
             }
@@ -351,6 +365,7 @@ impl Index {
                 }
             }
             Expr::Constructor(c) => {
+                push_removed_type(&c.type_name, file, diagnostics);
                 for arg in &c.args {
                     self.expr(&arg.node.value, file, diagnostics);
                 }
@@ -549,6 +564,104 @@ fn literal_text(expr: &Spanned<Expr>) -> Option<String> {
         }
     }
     Some(text)
+}
+
+// ── Removed surfaces (#485) ─────────────────────────────────────
+
+/// E164 — the removed `Html` type in any declaration type slot. `Html` now
+/// parses as a custom type name, so it has to be rejected by name.
+fn removed_types(program: &Program, file: &str) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    for item in &program.items {
+        match &item.node {
+            TopLevel::Task(d) => {
+                removed_params(&d.needs, file, &mut diagnostics);
+                removed_output(&d.gives, file, &mut diagnostics);
+            }
+            TopLevel::Pure(d) => {
+                removed_params(&d.needs, file, &mut diagnostics);
+                removed_output(&d.gives, file, &mut diagnostics);
+            }
+            TopLevel::Endpoint(d) => {
+                removed_params(&d.params, file, &mut diagnostics);
+                removed_output(&d.return_type, file, &mut diagnostics);
+            }
+            TopLevel::Event(d) => removed_fields(&d.fields, file, &mut diagnostics),
+            TopLevel::TypeDef(d) => removed_fields(&d.fields, file, &mut diagnostics),
+            TopLevel::Agent(d) => {
+                removed_fields(&d.memory, file, &mut diagnostics);
+                for handler in &d.handlers {
+                    removed_params(&handler.node.params, file, &mut diagnostics);
+                    if let Some(payload) = &handler.node.payload_type {
+                        push_removed_type(payload, file, &mut diagnostics);
+                    }
+                }
+            }
+            TopLevel::Contract(d) => {
+                for method in &d.methods {
+                    removed_params(&method.node.params, file, &mut diagnostics);
+                    push_removed_type(&method.node.return_type, file, &mut diagnostics);
+                }
+            }
+            _ => {}
+        }
+    }
+    diagnostics
+}
+
+fn removed_params(params: &[Spanned<Param>], file: &str, out: &mut Vec<Diagnostic>) {
+    for param in params {
+        push_removed_type(&param.node.type_name, file, out);
+    }
+}
+
+fn removed_fields(fields: &[Spanned<FieldDef>], file: &str, out: &mut Vec<Diagnostic>) {
+    for field in fields {
+        push_removed_type(&field.node.type_name, file, out);
+    }
+}
+
+fn removed_output(output: &Option<Spanned<OutputType>>, file: &str, out: &mut Vec<Diagnostic>) {
+    if let Some(output) = output {
+        for ty in &output.node.types {
+            push_removed_type(ty, file, out);
+        }
+    }
+}
+
+fn push_removed_type(ty: &Spanned<TypeName>, file: &str, out: &mut Vec<Diagnostic>) {
+    if let Some((name, help)) = removed_type_name(&ty.node) {
+        out.push(
+            Diagnostic::error(
+                "E164",
+                file,
+                format!("unknown type `{name}`"),
+                ty.span.start..ty.span.end,
+                "this type is no longer part of the language",
+            )
+            .with_help(help),
+        );
+    }
+}
+
+fn removed_type_name(ty: &TypeName) -> Option<(&'static str, &'static str)> {
+    match ty {
+        TypeName::Custom(name) => REMOVED_TYPES.iter().copied().find(|(n, _)| n == name),
+        TypeName::Array(inner, _) => removed_type_name(inner),
+        _ => None,
+    }
+}
+
+/// E163 — `{!expr}` stayed in the grammar so it cannot silently parse as the
+/// negation `{ !expr }`, but it is no longer part of the language.
+fn raw_interp_removed(span: &Span, file: &str) -> Diagnostic {
+    Diagnostic::error(
+        "E163",
+        file,
+        "`{!expr}` raw interpolation was removed in v0.3 with the Html type; use `{expr}` (see CHANGELOG, #485)",
+        span.start..span.end,
+        "raw interpolation only existed to skip the Html auto-escaping",
+    )
 }
 
 // ── Diagnostics ─────────────────────────────────────────────────
@@ -929,6 +1042,62 @@ fn main
             "{:?}",
             ds[0].message
         );
+    }
+
+    // ── E163/E164 — surfaces removed in v0.3 (#485) ─────────────
+
+    #[test]
+    fn resolution_rejects_removed_raw_interpolation() {
+        let src = "fn main\n  name = \"world\"\n  say \"hello {!name}\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E163"], "{ds:?}");
+        assert_eq!(
+            ds[0].message,
+            "`{!expr}` raw interpolation was removed in v0.3 with the Html type; use `{expr}` (see CHANGELOG, #485)"
+        );
+        // The span covers the whole `{!name}`, not just the inner expression.
+        assert_eq!(&src[ds[0].span.start..ds[0].span.end], "{!name}");
+    }
+
+    #[test]
+    fn resolution_still_walks_the_raw_interpolation_expression() {
+        let src = "fn main\n  say \"{!judge(1)}\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E163", "E160"], "{ds:?}");
+    }
+
+    #[test]
+    fn resolution_rejects_the_removed_html_type() {
+        let src = "endpoint status() -> Html\n  give \"hi\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E164"], "{ds:?}");
+        assert_eq!(ds[0].message, "unknown type `Html`");
+        assert_eq!(
+            ds[0].help.as_deref(),
+            Some("the `Html` type was removed in v0.3: endpoints return `Text` (see CHANGELOG, #485)")
+        );
+    }
+
+    #[test]
+    fn resolution_rejects_the_removed_html_type_in_every_type_slot() {
+        // Parameter, field, handler payload, contract return and the array
+        // form all parse `Html` as a custom type name now.
+        let cases = [
+            "task t\n  needs doc: Html\n  gives Text\n  do\n    give \"x\"\n",
+            "type Page\n  body: Html\n",
+            "agent a\n  on ping(p: Html)\n    say \"x\"\n",
+            "contract api\n  can fetch(x: Text) -> Html\n",
+            "pure p\n  gives Html[]\n  do\n    give \"x\"\n",
+        ];
+        for src in cases {
+            assert_eq!(codes(src), vec!["E164"], "{src}");
+        }
+    }
+
+    #[test]
+    fn resolution_leaves_a_text_return_alone() {
+        let src = "endpoint status() -> Text\n  give \"hi\"\n";
+        assert_eq!(codes(src), Vec::<&str>::new(), "{:?}", diags(src));
     }
 
     #[test]

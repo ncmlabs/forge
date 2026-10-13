@@ -64,6 +64,12 @@ impl ResolveError {
                     // #505 — the clone-dev config loader left core in v0.3; a
                     // stale call site gets a pointer instead of a dead end.
                     Some("moved to ncmlabs/forge-clone-dev (a `clone_dev` skill) in v0.3".into())
+                } else if name.starts_with("html.") || name.starts_with("markdown.") {
+                    // #485 — the Html/Markdown capabilities left core in v0.3.
+                    Some(
+                        "removed in v0.3 with the Html type: return `Text` and build the markup yourself (see CHANGELOG, #485)"
+                            .into(),
+                    )
                 } else if available.is_empty() {
                     None
                 } else {
@@ -329,27 +335,6 @@ impl CapabilityRegistry {
             },
         );
 
-        caps.insert(
-            "html.layout".into(),
-            CapabilitySignature {
-                inputs: vec![ForgeType::Text, ForgeType::Html],
-                output: ForgeType::Html,
-            },
-        );
-        caps.insert(
-            "html.escape".into(),
-            CapabilitySignature {
-                inputs: vec![ForgeType::Text],
-                output: ForgeType::Text,
-            },
-        );
-        caps.insert(
-            "markdown.render".into(),
-            CapabilitySignature {
-                inputs: vec![ForgeType::Text],
-                output: ForgeType::Html,
-            },
-        );
         caps.insert(
             "asset".into(),
             CapabilitySignature {
@@ -863,6 +848,24 @@ mod tests {
         assert_eq!(diag.code, "E010");
         let help = diag.help.expect("E010 carries a help line");
         assert!(help.contains("forge-clone-dev"), "{help}");
+    }
+
+    #[test]
+    fn unknown_html_and_markdown_capabilities_point_at_the_changelog() {
+        // #485 — html.layout / html.escape / markdown.render left core with the
+        // Html type; the E010 diagnostic names the CHANGELOG entry.
+        let registry = CapabilityRegistry::builtin();
+        for name in ["html.layout", "html.escape", "markdown.render"] {
+            let err = ResolveError::UnknownCapability {
+                name: name.into(),
+                span_start: 0,
+                span_end: 1,
+            };
+            let diag = err.to_diagnostic("<test>", &registry);
+            assert_eq!(diag.code, "E010");
+            let help = diag.help.expect("E010 carries a help line");
+            assert!(help.contains("CHANGELOG, #485"), "{name}: {help}");
+        }
     }
 
     #[test]

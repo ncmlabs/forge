@@ -532,7 +532,6 @@ pub enum TypeName {
     Request,
     Response,
     Headers,
-    Html,
     AgentResult,
     Custom(String),
     /// Array type: `Text[9]` = Array(Text, Some(9)), `Player[]` = Array(Custom("Player"), None)
@@ -640,7 +639,8 @@ pub struct EnvEntry {
 pub enum TemplatePart {
     Text(String),
     Interp(Box<Spanned<Expr>>),
-    /// `{!expr}` — raw interpolation, skips HTML escaping in Html context.
+    /// `{!expr}` — removed in v0.3 (#485). Kept in the AST so the checker can
+    /// reject it instead of parsing `{!x}` as `{ !x }`.
     RawInterp(Box<Spanned<Expr>>),
 }
 

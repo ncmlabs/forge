@@ -257,7 +257,6 @@ fn type_label(t: &TypeName) -> String {
         TypeName::Text => "Text".into(),
         TypeName::Number => "Number".into(),
         TypeName::Bool => "Bool".into(),
-        TypeName::Html => "Html".into(),
         TypeName::Custom(s) => s.clone(),
         other => format!("{:?}", other),
     }
