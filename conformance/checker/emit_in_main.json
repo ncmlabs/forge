@@ -1,0 +1,14 @@
+{
+  "name": "emit_in_main_rejected",
+  "category": "checker",
+  "subcategory": "emit",
+  "description": "`emit` in `fn main` is rejected: there is no event bus there (#532)",
+  "input": "fn main\n  emit Kickoff(topic: \"hello\")\n",
+  "expected": {
+    "outcome": "compile_error",
+    "error_code": "E165",
+    "error_contains": [
+      "`emit` needs an agent: `fn main` has no event bus"
+    ]
+  }
+}

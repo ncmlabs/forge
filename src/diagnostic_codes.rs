@@ -20,7 +20,8 @@
 //! | E130–E139   | correlate checker     |
 //! | E140–E149   | webhook checker       |
 //! | E150–E159   | command gate checker  |
-//! | E160–E169   | resolution checker    |
+//! | E160–E164   | resolution checker    |
+//! | E165        | emit checker          |
 //!
 //! Warnings use the same range prefixed with `W` instead of `E`.
 
@@ -1581,6 +1582,23 @@ Right:
 endpoint page() -> Text
   give "<h1>Hello</h1>""#,
     },
+    CodeInfo {
+        code: "E165",
+        title: "emit outside an agent",
+        explain: r#"`emit` publishes to the system event bus, which only exists inside an agent handler or an endpoint. `fn main` has neither, so the statement can only fail at runtime.
+
+Wrong:
+fn main
+  emit Kickoff(topic: "hello")
+
+Right:
+event Kickoff
+  topic: Text
+
+agent starter
+  on request(topic: Text)
+    emit Kickoff(topic: topic)"#,
+    },
 ];
 
 /// Look up a diagnostic code. Returns `None` for unknown codes.
@@ -1655,6 +1673,7 @@ mod tests {
             include_str!("checker/boundary_checker.rs"),
             include_str!("checker/command_gate_checker.rs"),
             include_str!("checker/correlate_checker.rs"),
+            include_str!("checker/emit_checker.rs"),
             include_str!("checker/pure_checker.rs"),
             include_str!("checker/requires_checker.rs"),
             include_str!("checker/resolution_checker.rs"),

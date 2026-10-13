@@ -118,7 +118,7 @@ pure rate
     else
       give "low"
 ```
-**`event` / `subscribe` / `emit`** — never emit the event you subscribe to; declare a second event for the reply
+**`event` / `subscribe` / `emit`** — never emit the event you subscribe to; declare a second event for the reply, and never `emit` in `fn main` (E165: no event bus there — emit from an agent's `on` handler or an endpoint)
 ```forge
 event Mention
   thread: Text

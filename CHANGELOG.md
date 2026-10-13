@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `emit` in `fn main` is now a check error, `E165` (#532): the runtime has no
+  event bus there, so the program could only fail with `emit outside agent` at
+  run time. The new emit checker pass covers nested `if`/`else`, `for`, `when`
+  and `match` bodies plus a session's `on progress`/`on complete` `-> emit`
+  hook, and leaves agents, endpoints, tasks and flows alone; the help points at
+  an agent's `on` handler or an endpoint.
 - Installable `write-forge` agent skill for Claude Code and Codex (#482):
   `npx skills add ncmlabs/forge` installs `skills/write-forge/` — when to choose
   FORGE, the authoring loop (`forge init` → `forge check --json` → `forge
