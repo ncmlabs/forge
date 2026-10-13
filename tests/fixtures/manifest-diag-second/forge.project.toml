@@ -1,0 +1,8 @@
+[project]
+name = "manifest-diag-second"
+version = "0.1.0"
+description = "Fixture: a diagnostic in the second source must name that source (#519)"
+
+[build]
+entry = "a.forge"
+sources = ["b.forge"]

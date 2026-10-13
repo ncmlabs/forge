@@ -305,14 +305,25 @@ expect = ["unknown capability 'skill.ghost.boo'"]
 manifest = "tests/fixtures/skill-project/forge.project.toml"
 
 [[cases]]
-name = "check --manifest: cross-source lifecycle is a per-file error (#495)"
+name = "check --manifest: cross-source lifecycle resolves composed (#516)"
 paths = [
   "tests/fixtures/manifest-cross-state/main.forge",
   "tests/fixtures/manifest-cross-state/states.forge",
 ]
-check = "error"
-expect = ["unknown lifecycle `GreetingPhase`"]
+check = "ok"
+merge = true
 manifest = "tests/fixtures/manifest-cross-state/forge.project.toml"
+
+[[cases]]
+name = "check --manifest: diagnostic in the second source (#519)"
+paths = [
+  "tests/fixtures/manifest-diag-second/a.forge",
+  "tests/fixtures/manifest-diag-second/b.forge",
+]
+check = "error"
+expect = ["unknown lifecycle `Missing`"]
+merge = true
+manifest = "tests/fixtures/manifest-diag-second/forge.project.toml"
 
 [[cases]]
 name = "CLI json: command that sleeps, for the envelope duration (#479)"
