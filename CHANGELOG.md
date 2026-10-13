@@ -168,6 +168,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the checker and fails at runtime.
 - Showcase examples moved to ncmlabs/forge-examples (#488); test fixtures
   relocated to `tests/fixtures/`.
+- forge-sensei moved out of core to ncmlabs/forge-examples, pinned to v0.2.x
+  (#485 step 1). Its `.forge` programs stay here as test fixtures:
+  `workflows/forge-sensei/` is now `tests/fixtures/sensei/` and
+  `workflows/forge-sensei.forge` is now `tests/fixtures/sensei.forge`, so the
+  build, http-server, resilience, checker and parser suites keep their coverage.
+  Deleted with it: the served `workflows/forge-sensei/static/` assets,
+  `docs/forge-sensei.md`, the `scripts/*sensei*.sh` install/pretrain/assess
+  tooling (and `scripts/pretrain-toolkit.sh`, its curriculum), the
+  `sensei_live_tests` suite, and the CI "Install script E2E (Linux)" step.
+  No `src/` behavior changed; `html.*`, `markdown.*`, `[server.static_files]`
+  and `serve --watch` are untouched and are removed in later #485 steps.
 
 ### Fixed
 - Diagnostic text output pointed at the wrong line/column after non-ASCII

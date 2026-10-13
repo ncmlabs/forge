@@ -164,5 +164,5 @@ system forge_sensei_server
     sensei: forge_sensei
 
 # ── Usage ─────────────────────────────────────────────────────
-# Dev:    forge serve workflows/forge-sensei/server/web.forge --source workflows/forge-sensei/shared/types.forge --source workflows/forge-sensei/shared/events.forge --source workflows/forge-sensei/shared/states.forge --source workflows/forge-sensei/server/tasks.forge --source workflows/forge-sensei/server/flows.forge --source workflows/forge-sensei/server/agent.forge --watch
-# Build:  forge build workflows/forge-sensei/server -o bin/forge-sensei-server
+# Dev:    forge serve tests/fixtures/sensei/server/web.forge --source tests/fixtures/sensei/shared/types.forge --source tests/fixtures/sensei/shared/events.forge --source tests/fixtures/sensei/shared/states.forge --source tests/fixtures/sensei/server/tasks.forge --source tests/fixtures/sensei/server/flows.forge --source tests/fixtures/sensei/server/agent.forge --watch
+# Build:  forge build tests/fixtures/sensei/server -o bin/forge-sensei-server
