@@ -275,6 +275,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the CHANGELOG; return `Text` and build the markup in the program.
 
 ### Fixed
+- A `system` exited while agents spawned at runtime were still running (#546):
+  a `spawn` from inside an agent handler is fire-and-forget, and the run waited
+  only for the agents bound in the system, so a child was torn down mid-call —
+  its `say` never happened and its LLM calls were missing from the run summary.
+  Detached spawns are recorded in the shared `InstanceRegistry` (which the
+  children inherit, so descendants are covered) and `System::start` now waits
+  for them.
 - `forge run` (and `trace`, `test`, `run --manifest`) blocked on warnings, so a
   W080-only program exited 1 and human mode never said the run had been blocked
   (#547). Only errors block now: warnings are printed in human mode and listed

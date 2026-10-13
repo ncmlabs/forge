@@ -110,6 +110,10 @@ pub struct InstanceRegistry {
     by_id: HashMap<Uuid, InstanceInfo>,
     by_name: HashMap<String, Vec<Uuid>>,
     by_alias: HashMap<String, Uuid>,
+    /// Handles for agents spawned at runtime from inside an agent handler
+    /// (fire-and-forget, issue #546). A system run must not end while any of
+    /// these is still running, so the spawn site records the handle here.
+    detached: Vec<tokio::task::JoinHandle<()>>,
 }
 
 /// Thread-safe shared reference to the instance registry.
@@ -127,7 +131,24 @@ impl InstanceRegistry {
             by_id: HashMap::new(),
             by_name: HashMap::new(),
             by_alias: HashMap::new(),
+            detached: Vec::new(),
         }
+    }
+
+    /// Record a fire-and-forget spawn (issue #546) so the run can wait for it.
+    /// Finished handles are pruned first: only `System::start`'s wait loop calls
+    /// `detached_running`, so without this a long-lived server (`forge serve`,
+    /// one child per request) would grow the list for its whole life.
+    pub fn track_detached(&mut self, handle: tokio::task::JoinHandle<()>) {
+        self.detached.retain(|h| !h.is_finished());
+        self.detached.push(handle);
+    }
+
+    /// How many tracked detached spawns are still running. Finished handles
+    /// are dropped so the list does not grow for the life of the run.
+    pub fn detached_running(&mut self) -> usize {
+        self.detached.retain(|h| !h.is_finished());
+        self.detached.len()
     }
 
     /// Register a new agent instance with an optional alias. Returns the generated instance ID.
@@ -380,5 +401,26 @@ mod tests {
         reg.register("a", None);
         reg.unregister(&Uuid::new_v4());
         assert_eq!(reg.len(), 1);
+    }
+
+    /// #546 review: `track_detached` must not accumulate dead handles — a
+    /// server tracks one child per request and never runs a system wait loop.
+    #[tokio::test]
+    async fn track_detached_prunes_finished_handles() {
+        let mut reg = InstanceRegistry::new();
+
+        for _ in 0..3 {
+            let finished = tokio::spawn(async {});
+            while !finished.is_finished() {
+                tokio::task::yield_now().await;
+            }
+            reg.track_detached(finished);
+        }
+
+        let running = tokio::spawn(std::future::pending::<()>());
+        reg.track_detached(running);
+
+        assert_eq!(reg.detached.len(), 1);
+        assert_eq!(reg.detached_running(), 1);
     }
 }

@@ -7,7 +7,11 @@ use std::sync::Arc;
 
 use forge::ast::{Program, SystemDecl, TopLevel};
 use forge::config::SystemConfig;
+use forge::llm::{
+    CompletionRequest, CompletionResponse, LLMProvider, ProviderCapabilities, ProviderError,
+};
 use forge::runtime::system::SystemRuntime;
+use forge::tracer::Tracer;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -217,8 +221,126 @@ async fn system_spawns_agents_and_exits_cleanly() {
     assert!(result.is_ok(), "system start failed: {:?}", result);
 }
 
-// ── Warden Integration Tests ─────────────────────────────────────────────────
+// ── Runtime Spawn Tracking Tests (#546) ──────────────────────────────────────
 
+/// A system agent that `spawn`s a child from its `on start`; the child's
+/// `on start` reasons (slowly) and then says. Nothing in the system binds the
+/// child, so only detached-spawn tracking can keep the system alive for it.
+const RUNTIME_SPAWN_SYSTEM: &str = "\
+use
+  llm.reason
+
+agent worker
+  on start
+    result = reason \"worker boot\"
+    say \"worker up\"
+
+  if stuck for 3 turns
+    escalate to human
+
+agent parent
+  on start
+    spawn worker as \"w\"
+
+system boot
+  use
+    p: parent
+";
+
+/// Delay per call, comfortably longer than the system monitor's 50 ms exit
+/// poll so a child's `reason`/`say` cannot land inside the poll window by luck.
+const SLOW_MS: u64 = 150;
+
+/// Provider whose `complete` takes `SLOW_MS` — a MockProvider returns
+/// instantly, which would hide the race this test guards.
+struct SlowProvider {
+    name: String,
+    caps: ProviderCapabilities,
+}
+
+#[async_trait::async_trait]
+impl LLMProvider for SlowProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn capabilities(&self) -> &ProviderCapabilities {
+        &self.caps
+    }
+    async fn complete(&self, _req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
+        tokio::time::sleep(std::time::Duration::from_millis(SLOW_MS)).await;
+        Ok(CompletionResponse {
+            content: "slow response".to_string(),
+            tool_calls: Vec::new(),
+            tokens_in: 1,
+            tokens_out: 1,
+            latency_ms: SLOW_MS,
+            model_used: "slow-model".to_string(),
+            provider_name: self.name.clone(),
+            cost_usd: 0.0,
+        })
+    }
+}
+
+fn slow_providers() -> Arc<forge::llm::registry::ProviderRegistry> {
+    let mut registry = forge::llm::registry::ProviderRegistry::new("slow");
+    registry.register(
+        "slow",
+        Arc::new(SlowProvider {
+            name: "slow".to_string(),
+            caps: ProviderCapabilities::default(),
+        }),
+    );
+    Arc::new(registry)
+}
+
+/// #546: a `system` run must wait for agents spawned at runtime. The child here
+/// outlives the parent by `SLOW_MS`, so without the wait it is torn down mid-call
+/// and `worker up` never reaches the output. 20 runs: this must hold every time.
+#[tokio::test]
+async fn system_waits_for_agents_spawned_at_runtime() {
+    let (system_decl, program) = parse_system(RUNTIME_SPAWN_SYSTEM);
+    let providers = slow_providers();
+
+    for run in 0..20 {
+        // Fresh tracer per run: the assertion is about *this* run's output.
+        let tracer = Tracer::with_capture();
+        let runtime = SystemRuntime::new(
+            &system_decl,
+            &program,
+            providers.clone(),
+            Some(tracer.clone()),
+            None,
+        )
+        .unwrap();
+
+        runtime.start().await.expect("system start failed");
+
+        let log = tracer.captured_log();
+        let says: Vec<&str> = log
+            .iter()
+            .filter(|(event, _)| event == "say")
+            .filter_map(|(_, data)| data["text"].as_str())
+            .collect();
+        assert!(
+            says.contains(&"worker up"),
+            "run {}: spawned child's `say` missing from output; says={:?}",
+            run,
+            says
+        );
+
+        let llm_calls = log
+            .iter()
+            .filter(|(event, _)| event == "llm_response")
+            .count();
+        assert!(
+            llm_calls >= 1,
+            "run {}: the spawned child's reason call was not counted (0 LLM calls)",
+            run
+        );
+    }
+}
+
+// ── Warden Integration Tests ─────────────────────────────────────────────────
 #[test]
 fn system_discovers_wardens_for_managed_agents() {
     let (system_decl, program) = parse_system(WARDEN_SYSTEM);
