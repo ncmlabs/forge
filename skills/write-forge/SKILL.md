@@ -7,13 +7,10 @@ description: Writing, checking or running FORGE `.forge` programs — the author
 
 FORGE is a language for oracle-augmented computation: LLM calls are primitives, uncertainty is a
 compile-time type, and independent work runs in parallel. Deterministic logic lives in `pure`,
-stochastic logic in `task`, and agents are first-class with memory, lifecycle states, events and
-supervision.
+stochastic logic in `task`; agents are first-class with memory, lifecycle, events and supervision.
 
 Read [`forge-card.md`](forge-card.md) before writing code — it ships with this skill: the syntax
 that trips agents, one idiom per primitive, and the checker errors you will actually hit.
-`docs/forge-reference.md` in the FORGE repo is the full authority, and `grammar/forge.pest` wins
-any disagreement.
 
 ## When to choose FORGE
 
@@ -32,6 +29,18 @@ call, or when the task needs a library ecosystem FORGE does not have — reach f
 ## The authoring loop
 
 Run these in order. A program is not ready until it has been through all six.
+
+**0. Install — once per machine, before step 1**
+
+```bash
+cargo install --git https://github.com/ncmlabs/forge.git   # Rust 1.89+; puts `forge` on PATH
+forge --version                                            # proves the binary is installed
+```
+
+Without a `forge` on PATH every later step fails with `forge: command not found`.
+[`forge-card.md`](forge-card.md) and `forge explain <code>` are the offline references — they come
+with the tool, and `docs/forge-reference.md` lives in the FORGE repo, not in the project you are
+writing for.
 
 **1. Scaffold — `forge init`**
 
@@ -83,7 +92,7 @@ forge run --dry-run main.forge
 
 Prints the static execution plan — the cost table of every LLM operation, then the effect sites
 (`command`, `exec`, `http`, `file.write`, `session`, `spawn`) — and the line `nothing was executed`.
-Nothing runs, no provider is built. Read it as the cost and blast-radius review before step 6.
+Nothing runs, no provider is built: it is the cost and blast-radius review before step 6.
 
 **6. Run — `forge run --json`**
 
@@ -106,7 +115,7 @@ Semantic in both modes — `--json` never changes them.
 | `2` | warnings only — `check` (or `run --dry-run`) found warnings but no errors, and nothing else |
 
 `3` (partial), `10` (needs input) and `11` (async pending) are reserved. In a loop, treat `2` as
-"read `data.warnings`, then keep going"; treat `1` as "stop and fix".
+"read `data.warnings`, then keep going".
 
 ## The JSON envelope
 
@@ -120,7 +129,7 @@ Every in-scope command emits one document — `--json`, or `FORGE_OUTPUT=json` f
 | `context` | one sentence on what happened |
 | `next_steps` | the commands to run next (`forge explain <code>`) |
 | `warnings` | non-fatal findings; for `check` they are also in `data.diagnostics` |
-| `cost` | USD this command spent; `0.0` when it made no LLM call |
+| `cost` | USD this command spent; `0.0` when it made no LLM call — for `run --dry-run` and `forge cost` the estimate is `data.estimated_cost_usd` |
 | `error` | `null`, else `{type, code, message, suggestion}` |
 | `duration_ms` | wall-clock time |
 
@@ -143,7 +152,9 @@ total_tokens_in, total_tokens_out, estimated_cost_usd}`; `explain` → `{code, t
    line into a `task`; `pure` is deterministic and always confidence `1.0`.
 5. **`uncertain<T>` is handled by binding, then dispatching.** `reason`, `classify`, `search`,
    `recall`, `exec`, `command`, `session`, `file.read`, `toml.parse`, `json.parse` and every
-   `skill.*` call return an uncertain value, and taint survives assignment and field access. Never
-   `give` the raw result and never inline an oracle in `give` (that is the E020 error): bind it,
-   then `when result.sure -> ...` / `.unsure` / `else`, or `match`. Thresholds: `sure` ≥ 0.8,
-   `unsure` 0.5–0.8, `unreliable` < 0.5; override with `when result.sure(above: 0.9)`.
+   `skill.*` call return an uncertain value, and taint survives assignment and field access.
+   `give recall "{q}"` fails with **E021** (oracle result given without confidence dispatch);
+   `prior = recall "{q}"` then `give prior` fails with **E020** (`prior` may be uncertain and must
+   be dispatched). Bind it, then dispatch with `when result.sure -> ...` / `.unsure` / `else`, or
+   `match`. Thresholds: `sure` ≥ 0.8, `unsure` 0.5–0.8, `unreliable` < 0.5; override with
+   `when result.sure(above: 0.9)`.
