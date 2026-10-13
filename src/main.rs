@@ -25,11 +25,18 @@ type BuildResult = (
 #[derive(Parser)]
 #[command(
     name = "forge",
+    // Without this, clap takes the usage's program name from argv[0], so
+    // `forge --help` prints `Usage: forge.exe …` on Windows while our own
+    // `forge help` prints `forge` (tests/cli_schema_tests.rs).
+    bin_name = "forge",
     about = "FORGE — an agent-native programming language",
     long_about = "FORGE — an agent-native programming language\n\n\
         Compiles declarative task/flow/agent definitions into LLM-powered programs.\n\
         Configure providers in forge.config.toml or use FORGE_MOCK=1 for testing.",
     version,
+    // `forge help` is our own subcommand (#476) so it can grow `--json`;
+    // clap's built-in help subcommand would swallow the flag.
+    disable_help_subcommand = true,
     after_help = "\
 ENVIRONMENT VARIABLES:
   FORGE_CONFIG         Path to config file (default: ./forge.config.toml)
@@ -83,6 +90,14 @@ enum Command {
         /// List every registered code and its title
         #[arg(long)]
         list: bool,
+    },
+    /// Print the JSON Schema of a command's `--json` output (#476)
+    Schema {
+        /// Command whose envelope schema to print (e.g. check, run, wake)
+        command: Option<String>,
+        /// Print `{command: schema}` for every command with a JSON contract
+        #[arg(long, conflicts_with = "command")]
+        all: bool,
     },
     /// Execute a .forge program
     Run {
@@ -253,6 +268,12 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Print help, or the machine-readable command index with --json (#476)
+    Help {
+        /// Subcommand to print help for, as `forge help <command>`
+        #[arg(conflicts_with = "json")]
+        command: Vec<String>,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -308,6 +329,7 @@ impl Command {
             Command::Parse { .. } => "parse",
             Command::Check { .. } => "check",
             Command::Explain { .. } => "explain",
+            Command::Schema { .. } => "schema",
             Command::Run { .. } => "run",
             Command::Test { .. } => "test",
             Command::Trace { .. } => "trace",
@@ -324,6 +346,7 @@ impl Command {
             Command::Wake { .. } => "wake",
             Command::Store { .. } => "store",
             Command::Init { .. } => "init",
+            Command::Help { .. } => "help",
         }
     }
 }
@@ -420,6 +443,28 @@ fn argv_subcommand() -> Option<String> {
         .map(|command| command.get_name().to_string())
         .collect();
     std::env::args().skip(1).find(|arg| names.contains(arg))
+}
+
+/// A usage error raised by an introspection command whose argument names a
+/// command that has no JSON contract (`forge schema <command>`): exit 1, one
+/// envelope in JSON mode and stderr text otherwise (#476).
+fn introspection_usage_error(
+    out: &forge::cli_output::OutputMode,
+    command: &str,
+    message: String,
+    suggestion: String,
+) -> ! {
+    if out.json {
+        let env = forge::cli_output::Envelope::error(
+            command,
+            forge::cli_output::ErrorInfo::new("usage", message.clone()).with_suggestion(suggestion),
+            format!("{command}: {message}"),
+        );
+        out.done(&env);
+    }
+    eprintln!("Error: {message}");
+    eprintln!("suggestion: {suggestion}");
+    forge::cli_output::exit(forge::cli_output::ExitCode::Error)
 }
 
 /// Dispatch a parsed command to its implementation.
@@ -715,6 +760,26 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                     }
                 }
             }
+        }
+        Command::Schema { command, all } => {
+            let schema = match (command, all) {
+                (_, true) => forge::cli_schema::all(),
+                (Some(name), false) => match forge::cli_schema::envelope_for(&name) {
+                    Some(schema) => schema,
+                    None => introspection_usage_error(
+                        out,
+                        "schema",
+                        format!("unknown command '{name}'"),
+                        format!(
+                            "run `forge schema --all`; commands with a schema: {}",
+                            forge::cli_schema::commands().join(", ")
+                        ),
+                    ),
+                },
+                (None, false) => forge::cli_schema::envelope_only(),
+            };
+            println!("{}", serde_json::to_string_pretty(&schema)?);
+            forge::cli_output::exit(forge::cli_output::ExitCode::Success);
         }
         Command::Run {
             file,
@@ -1119,9 +1184,154 @@ async fn dispatch(command: Command, out: &forge::cli_output::OutputMode) -> anyh
                 format!("{verb} {}", dir.display()),
             ));
         }
+        Command::Help { command } => {
+            // `forge help --json` prints the index for the whole CLI. JSON mode
+            // with a command name is a usage error, exactly as `forge help
+            // --json <command>` is today: JSON mode is one envelope per
+            // command, and a help page is not an envelope. `--json` cannot
+            // reach this point with a name (clap rejects the conflict), but
+            // `FORGE_OUTPUT=json` can, and must not print text.
+            if out.json {
+                if command.is_empty() {
+                    println!("{}", serde_json::to_string_pretty(&help_index())?);
+                    forge::cli_output::exit(forge::cli_output::ExitCode::Success);
+                }
+                introspection_usage_error(
+                    out,
+                    "help",
+                    format!(
+                        "JSON mode (`--json` or FORGE_OUTPUT=json) cannot be combined with a command name ('{}')",
+                        command.join(" ")
+                    ),
+                    format!(
+                        "run `forge help --json` for the index, or `forge help {}` without JSON mode",
+                        command.join(" ")
+                    ),
+                );
+            }
+            print_help_for(&command);
+        }
     }
 
     Ok(())
+}
+
+/// `forge help --json`: the command index, built from clap's own definition
+/// (#476) so commands, flags and their required/value-taking shape cannot drift
+/// from the CLI. `json_supported` and the exit-code table are the only policy
+/// here, and both live with the schemas in [`forge::cli_schema`].
+///
+/// Nested subcommands (`wake register`, `store recover`) are listed as their
+/// own entries, named with a space, so every flag is reachable.
+fn help_index() -> serde_json::Value {
+    let cli = <Cli as CommandFactory>::command();
+    // clap keeps global flags on the root command and matches them at any
+    // depth, so `get_arguments()` never yields them for a subcommand. They are
+    // listed on every command anyway: that is where they are accepted.
+    let globals: Vec<serde_json::Value> = cli
+        .get_arguments()
+        .filter(|arg| arg.is_global_set())
+        .map(arg_json)
+        .collect();
+    let mut commands = Vec::new();
+    collect_commands(&cli, "", "", &globals, &mut commands);
+    serde_json::json!({
+        "commands": commands,
+        "exit_codes": forge::cli_schema::exit_codes(),
+        "env": forge::cli_schema::env_vars(),
+    })
+}
+
+fn collect_commands(
+    parent: &clap::Command,
+    prefix: &str,
+    top: &str,
+    globals: &[serde_json::Value],
+    out: &mut Vec<serde_json::Value>,
+) {
+    for subcommand in parent.get_subcommands() {
+        let name = if prefix.is_empty() {
+            subcommand.get_name().to_string()
+        } else {
+            format!("{prefix} {}", subcommand.get_name())
+        };
+        // Nested actions inherit the top-level command's JSON contract.
+        let top = if prefix.is_empty() {
+            name.as_str()
+        } else {
+            top
+        };
+        let mut args: Vec<serde_json::Value> = subcommand
+            .get_arguments()
+            // clap's auto-generated help/version flags are not part of the
+            // command's own surface.
+            .filter(|arg| !matches!(arg.get_id().as_str(), "help" | "version"))
+            .map(arg_json)
+            .collect();
+        args.extend(globals.iter().cloned());
+        out.push(serde_json::json!({
+            "name": name,
+            "about": subcommand.get_about().map(|a| a.to_string()),
+            "args": args,
+            "json_supported": forge::cli_schema::json_supported(top),
+        }));
+        collect_commands(subcommand, &name, top, globals, out);
+    }
+}
+
+fn arg_json(arg: &clap::Arg) -> serde_json::Value {
+    serde_json::json!({
+        "name": arg.get_long().unwrap_or(arg.get_id().as_str()),
+        "long": arg.get_long(),
+        "required": arg.is_required_set(),
+        "takes_value": arg.get_action().takes_values(),
+        "help": arg.get_help().map(|h| h.to_string()),
+    })
+}
+
+/// `forge help [COMMAND...]`: clap's long help, exactly as the built-in help
+/// subcommand printed it, then exit 0. An unknown name is a usage error.
+fn print_help_for(path: &[String]) -> ! {
+    let mut command = <Cli as CommandFactory>::command();
+    // clap propagates global flags into a subcommand while parsing; a cloned
+    // subcommand printed stand-alone would not show them.
+    let globals: Vec<clap::Arg> = command
+        .get_arguments()
+        .filter(|arg| arg.is_global_set())
+        .cloned()
+        .collect();
+    for name in path {
+        match command.find_subcommand(name).cloned() {
+            // A stand-alone clone is unbuilt, so the root's
+            // `disable_help_subcommand` has not reached it yet: clap would
+            // synthesise its auto `help` subcommand and the page would list a
+            // command that `forge <path> --help` does not have.
+            Some(subcommand) => command = subcommand.disable_help_subcommand(true),
+            None => usage_exit(command.error(
+                clap::error::ErrorKind::InvalidSubcommand,
+                format!("unrecognized subcommand '{name}'"),
+            )),
+        }
+    }
+    if !path.is_empty() {
+        // clap sets the bin name of a subcommand while parsing; stand-alone it
+        // would print `Usage: check ...` instead of `Usage: forge check ...`.
+        command = command
+            .bin_name(format!("forge {}", path.join(" ")))
+            .args(globals);
+    }
+    // clap's built-in help subcommand printed the long form only for commands
+    // that declare one (`Command::long_help_exists` is crate-private).
+    let use_long = command.get_long_about().is_some()
+        || command
+            .get_arguments()
+            .any(|arg| arg.get_long_help().is_some());
+    let _ = if use_long {
+        command.print_long_help()
+    } else {
+        command.print_help()
+    };
+    forge::cli_output::exit(forge::cli_output::ExitCode::Success)
 }
 
 /// Handle `forge wake <action>` — manages HMAC secrets for `WebhookDriver`

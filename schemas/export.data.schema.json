@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forge export data",
+  "description": "Payload of `forge export --json`: the agent's config and knowledge written as a `.forgepkg.json` package.",
+  "type": "object",
+  "required": ["agent", "layers", "output", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "agent": {
+      "description": "Name of the exported agent.",
+      "type": "string"
+    },
+    "layers": {
+      "description": "`--layers` split on commas, trimmed (`config`, `knowledge`, `memory`).",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "output": {
+      "description": "Package path: `--output`, or `<agent>.forgepkg.json` in the working directory.",
+      "type": "string"
+    },
+    "entries": {
+      "description": "Knowledge entries packed (0 when the `knowledge` layer was not requested).",
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
