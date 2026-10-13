@@ -438,10 +438,11 @@ fn check_refs_in_stmt(
             }
             for opt in &s.options {
                 match &opt.node {
-                    SpawnOption::ConfidenceCap(expr) | SpawnOption::MemoryInit(_, expr) => {
+                    SpawnOption::ConfidenceCap(expr)
+                    | SpawnOption::MemoryInit(_, expr)
+                    | SpawnOption::KnowledgeFilter(expr) => {
                         check_refs_in_expr(expr, boundary, registry, file, diagnostics);
                     }
-                    SpawnOption::KnowledgeFilter(_) => {}
                     SpawnOption::Isolate(iso) => {
                         check_refs_in_expr(&iso.branch, boundary, registry, file, diagnostics);
                     }
