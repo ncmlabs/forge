@@ -696,3 +696,41 @@ async fn crashing_agent_reports_a_warden_event() {
         "the restart must be counted as a warden event"
     );
 }
+
+// ── Start gate (#545) ───────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn spawn_after_the_start_gate_opened_does_not_wait() {
+    // A warden restart goes through the same `spawn_one` path as the initial
+    // spawn. Once the system's gate reads `true`, a fresh agent must run
+    // `on start` at once instead of waiting for an open that already happened.
+    let program = make_program(vec![TopLevel::Agent(Box::new(simple_agent("late")))]);
+    let tracer = forge::tracer::Tracer::with_capture();
+    let mut runtime = WardedRuntime::new(
+        test_warden("boss", vec!["late"], vec![], None),
+        &program,
+        mock_registry(),
+        Some(tracer.clone()),
+    );
+
+    let (gate_tx, gate_rx) = tokio::sync::watch::channel(true);
+    runtime.set_start_gate(gate_rx);
+
+    runtime.spawn_all().await.unwrap();
+
+    let said = || {
+        tracer
+            .captured_log()
+            .iter()
+            .any(|(name, v)| name == "say" && v["text"] == "running")
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline && !said() {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(
+        said(),
+        "agent spawned under an open gate never ran `on start`"
+    );
+    drop(gate_tx);
+}
