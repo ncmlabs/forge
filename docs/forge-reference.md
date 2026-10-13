@@ -2548,7 +2548,7 @@ Dispatching on a name that cannot exist is the same silent-failure class: the co
 
 | Code | Rule |
 |------|------|
-| `E160` | A plain call target that resolves to nothing: not a declared `task`/`pure`/`flow`/`pool`, not a runtime builtin (`asset`, `winning_lines`) and not an uppercase type-constructor name. `fn main` is the program entry point, not a call target — `main()` is an `E160` |
+| `E160` | A plain call target that resolves to nothing: not a declared `task`/`pure`/`flow`/`pool`, not a runtime builtin (`winning_lines`) and not an uppercase type-constructor name. `fn main` is the program entry point, not a call target — `main()` is an `E160` |
 | `E161` | A constructor pattern that can never match the scrutinee, **when the scrutinee's value set is statically known** |
 | `E162` | The same, but the pattern differs from a known tag only in case — emitted instead of `E161` |
 
@@ -2806,7 +2806,7 @@ retire "specialist_FORGE"
 
 ## 21. Skills, Built-In Capabilities, and Project Manifests
 
-FORGE source declares capabilities with `use`. Built-ins include LLM operations, web/data/html/markdown helpers, assets, command execution, and project skills.
+FORGE source declares capabilities with `use`. Built-ins include LLM operations, web/data/html/markdown helpers, command execution, and project skills.
 
 ```forge
 #! boundary: server
@@ -2828,7 +2828,6 @@ Built-in capability families:
 | Data | `data.store`, `data.get`, `data.list`, `data.delete`, `data.embed`, `data.search` |
 | HTML | `html.layout`, `html.escape` |
 | Markdown | `markdown.render` |
-| Assets | `asset` |
 | Command | `command.status`, `command.output`, `command.cancel` |
 | Files | `file.read` (server-only) |
 | Structured Data | `toml.parse`, `json.parse` |
@@ -2836,6 +2835,11 @@ Built-in capability families:
 | Environment | `env.get` |
 | Process | `proc.exit` |
 | Skills | `skill.<namespace>.<capability>(...)` |
+
+Removed in v0.3 (#485): the `asset()` helper and static file serving
+(`[server.static]`, `FORGE_STATIC_ROOT`) left core — serve assets from the app
+or a web server — and `forge serve --watch` hot reload went with them; run your
+own dev loop.
 
 `search "query"` is restricted to `#! boundary: server`.
 
@@ -3023,7 +3027,7 @@ When an example intentionally exercises a checker limitation, document the limit
 
 ## 26. Diagnostics and Error Codes
 
-Every diagnostic emitted by `forge check`, `forge run`, `forge build`, `forge serve` and the watcher carries a stable code (`Exxx` for errors, `Wxxx` for warnings). The full registry lives in `src/diagnostic_codes.rs`.
+Every diagnostic emitted by `forge check`, `forge run`, `forge build` and `forge serve` carries a stable code (`Exxx` for errors, `Wxxx` for warnings). The full registry lives in `src/diagnostic_codes.rs`.
 
 | Range | Source |
 |-------|--------|

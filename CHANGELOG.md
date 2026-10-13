@@ -155,6 +155,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dev-system tracks are deprecated (see roadmap).
 
 ### Removed
+- `forge serve --watch` hot reload (#485 step 3): hot reload belongs to the app,
+  not the language. The flag still parses
+  (hidden) and exits `1` with "`forge serve --watch` was removed in v0.3: hot
+  reload belongs to the app, not the language (see CHANGELOG, #485)";
+  `src/runtime/watcher.rs`, the `/__forge/reload` SSE endpoint and the `notify`
+  dependency are gone with it. Run your own dev loop around `forge serve`. The
+  Observer SSE stream (`/__forge/events`), `/__forge/inspect/*`, webhooks and
+  the wake service are unchanged.
+- Static file serving (#485 step 3): `[server.static]` and the
+  `FORGE_STATIC_ROOT` override are gone. A config that still carries the table
+  fails to load with "`[server.static]` was removed in v0.3: serve static files
+  from the app or a web server (see CHANGELOG, #485)" instead of silently
+  serving nothing; the root `static/` directory (CSS, JS, logo, demo page) is
+  deleted. Serve assets from the app, a static host or a reverse proxy — HTTP
+  `endpoint` routes, webhooks and introspection are untouched.
+- `asset()` (#485 step 3): the URL helper left core with static file serving.
+  A call to it is now an `E160` undeclared call whose help is "`asset()` was
+  removed in v0.3 with static file serving (see CHANGELOG, #485)". Build URLs
+  in the app, or inline the literal path.
 - Clone-dev left core (#505, part (c) of #487); it now lives in
   ncmlabs/forge-clone-dev. Deleted: `src/runtime/clone_dev_config.rs` and the
   `config.load_clone_dev(path)` built-in, the `$FORGE_CLONEDEV_CONFIG` startup
