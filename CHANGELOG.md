@@ -268,6 +268,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the CHANGELOG; return `Text` and build the markup in the program.
 
 ### Fixed
+- A manifest or multi-file project is now checked as one composed program
+  (#516): `check --manifest`, `run --manifest`, `forge build` and
+  `check --merge` run the checker once on the merged program, so a lifecycle
+  declared in `a.forge` and used in `b.forge` resolves instead of failing with
+  a false `E040` — and every diagnostic names the source file its span belongs
+  to, with that file's line and column (#519), instead of attributing merged
+  spans to the first source.
 - `run --dry-run --json` and `forge cost --json` reported the plan estimate in the
   envelope's `cost`, which is the USD **spent** by the command (#528). Both
   execute nothing, so `cost` is now `0.0`; the estimate stays in
