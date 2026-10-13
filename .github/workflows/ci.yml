@@ -69,7 +69,7 @@ jobs:
         run: FORGE_SERVICE_E2E=1 cargo test --locked --test startup_manager_tests
 
   msrv:
-    name: MSRV (1.90)
+    name: MSRV
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
