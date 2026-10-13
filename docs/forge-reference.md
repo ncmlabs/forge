@@ -1385,7 +1385,7 @@ Event names must start with an uppercase letter. Each field occupies its own lin
 
 ### Emitting Events
 
-Events are emitted from agent handlers using the `emit` statement with named arguments:
+Events are emitted from agent handlers and endpoints using the `emit` statement with named arguments. `emit` written in `fn main` is error `E165`: there is no event bus there. An `on start` handler emits while a `system` is still bringing agents up, so its event only reaches agents already subscribed when the handler runs.
 
 ```
 emit <EventName>(<field>: <expr>, <field>: <expr>)
@@ -2576,6 +2576,23 @@ Renaming `Buy` to `BUY` here is an `E162` (``pattern `BUY` never matches `"Buy"`
 
 **Limitation:** `classify` returns the model's text. The checker treats the declared label list as the value set, so a program whose model answers off-list is still a runtime honesty problem, not a compile-time one.
 
+### Emit Checks (E165)
+
+`emit` publishes to the system event bus, which only exists inside an agent handler or an endpoint. An `emit` statement in `fn main` — including one nested in an `if`/`else`, `for`, `when` or `match` body — is dead on arrival, so `forge check` rejects it instead of letting `forge run` fail with `emit outside agent`.
+
+| Code | Rule |
+|------|------|
+| `E165` | `emit` in `fn main`: there is no event bus there. Emit from an agent's `on` handler or from an endpoint. A `task` or `flow` is never flagged — a task called from an agent handler emits correctly at runtime |
+
+```forge
+event Kickoff
+  topic: Text
+
+agent starter
+  on request(topic: Text)
+    emit Kickoff(topic: topic)
+```
+
 ---
 
 ## 18. Command, Exec, and Process Handles
@@ -3043,7 +3060,8 @@ Every diagnostic emitted by `forge check`, `forge run`, `forge build` and `forge
 | `E130`–`E139` | correlate checker |
 | `E140`–`E149` | webhook checker |
 | `E150`–`E159` | command gate checker |
-| `E160`–`E169` | resolution checker (undeclared calls, impossible match patterns) |
+| `E160`–`E164` | resolution checker (undeclared calls, impossible match patterns) |
+| `E165` | emit checker (`emit` in `fn main`) |
 
 Warnings reuse the same range with a `W` prefix (for example `W070` is the "requires clause uses an LLM operation" warning).
 
