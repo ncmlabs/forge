@@ -252,6 +252,10 @@ fn parse_forge_type(name: &str) -> Result<ForgeType, String> {
         "Headers" => Ok(ForgeType::Headers),
         "Embedding" => Ok(ForgeType::Embedding),
         "Duration" => Ok(ForgeType::Duration),
+        "Html" => Err(
+            "the `Html` type was removed in v0.3: skill signatures use `Text` (see CHANGELOG, #485)"
+                .to_string(),
+        ),
         other => Ok(ForgeType::Named(other.to_string())),
     }
 }
@@ -358,5 +362,26 @@ Body.
             executor.result.as_ref().unwrap().json_path.as_deref(),
             Some("output")
         );
+    }
+
+    #[test]
+    fn reject_removed_html_type_in_capability_signature() {
+        // #485: `Html` is gone, so a skill signature must not smuggle it back
+        // in as a custom type name.
+        for signature in [
+            "inputs: [Text, Html]\n    output: Text",
+            "inputs: [Text]\n    output: Html",
+        ] {
+            let content = format!(
+                "---\nname: demo\ncapabilities:\n  - name: render\n    {signature}\n---\nBody.\n"
+            );
+            let (fm, _) = split_frontmatter(&content).unwrap();
+            let err = fm.parse_capabilities().unwrap_err();
+            assert_eq!(
+                err,
+                "the `Html` type was removed in v0.3: skill signatures use `Text` (see CHANGELOG, #485)",
+                "{content}"
+            );
+        }
     }
 }

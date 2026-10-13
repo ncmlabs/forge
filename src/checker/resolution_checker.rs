@@ -146,12 +146,14 @@ pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
                 for handler in &d.handlers {
                     index.stmts(&handler.node.body, file, &mut diagnostics);
                 }
+                index.decl_exprs(d, file, &mut diagnostics);
                 if let Some(stuck) = &d.stuck_policy {
                     index.stmts(&stuck.node.body, file, &mut diagnostics);
                 }
             }
             TopLevel::Endpoint(d) => index.stmts(&d.body, file, &mut diagnostics),
             TopLevel::FnMain(d) => index.stmts(&d.body, file, &mut diagnostics),
+            TopLevel::Import(d) => index.expr(&d.source, file, &mut diagnostics),
             TopLevel::States(d) => {
                 for t in &d.transitions {
                     if let Some(cond) = &t.node.condition {
@@ -164,13 +166,53 @@ pub fn check(program: &Program, file: &str) -> Vec<Diagnostic> {
                     index.expr(wire, file, &mut diagnostics);
                 }
             }
-            _ => {}
+            // No expression or type slots to walk; `removed_types` already
+            // covered the declaration type names.
+            TopLevel::Use(_)
+            | TopLevel::Pool(_)
+            | TopLevel::Warden(_)
+            | TopLevel::Contract(_)
+            | TopLevel::Event(_)
+            | TopLevel::TypeDef(_) => {}
         }
     }
     diagnostics
 }
 
 impl Index {
+    /// Declaration-level expressions that no statement body owns: knowledge
+    /// store paths and project ids, schedule prompts, subscribe filters and
+    /// handler `requires` guards. A `{!expr}` in any of them would otherwise
+    /// slip past E163 — and a schedule prompt would be dropped silently by
+    /// `extract_prompt_text` at wake time.
+    fn decl_exprs(&self, agent: &AgentDecl, file: &str, diagnostics: &mut Vec<Diagnostic>) {
+        if let Some(knowledge) = &agent.knowledge {
+            self.expr(&knowledge.node.store_path, file, diagnostics);
+            if let Some(project_id) = &knowledge.node.project_id {
+                self.expr(project_id, file, diagnostics);
+            }
+        }
+        for schedule in &agent.schedules {
+            if let Some(prompt) = &schedule.node.prompt {
+                self.expr(prompt, file, diagnostics);
+            }
+        }
+        for subscription in &agent.subscriptions {
+            if let Some(filter) = &subscription.node.filter {
+                self.expr(filter, file, diagnostics);
+            }
+        }
+        for handler in &agent.handlers {
+            for requires in &handler.node.requires {
+                self.expr(&requires.node.condition, file, diagnostics);
+                if let Some(on_fail) = &requires.node.on_fail {
+                    if let FailPolicy::Give(expr) = &on_fail.node {
+                        self.expr(expr, file, diagnostics);
+                    }
+                }
+            }
+        }
+    }
     fn stmts(&self, stmts: &[Spanned<Stmt>], file: &str, diagnostics: &mut Vec<Diagnostic>) {
         self.stmts_with(stmts, &mut HashMap::new(), file, diagnostics);
     }
@@ -586,6 +628,10 @@ fn removed_types(program: &Program, file: &str) -> Vec<Diagnostic> {
                 removed_params(&d.params, file, &mut diagnostics);
                 removed_output(&d.return_type, file, &mut diagnostics);
             }
+            TopLevel::Flow(d) => {
+                removed_params(&d.needs, file, &mut diagnostics);
+                removed_output(&d.gives, file, &mut diagnostics);
+            }
             TopLevel::Event(d) => removed_fields(&d.fields, file, &mut diagnostics),
             TopLevel::TypeDef(d) => removed_fields(&d.fields, file, &mut diagnostics),
             TopLevel::Agent(d) => {
@@ -603,7 +649,16 @@ fn removed_types(program: &Program, file: &str) -> Vec<Diagnostic> {
                     push_removed_type(&method.node.return_type, file, &mut diagnostics);
                 }
             }
-            _ => {}
+            // No `TypeName` slots: `use` paths, pool worker names, warden
+            // symbol names, system bindings, states transitions, `fn main`
+            // and import layers are all plain strings.
+            TopLevel::Use(_)
+            | TopLevel::Pool(_)
+            | TopLevel::Warden(_)
+            | TopLevel::System(_)
+            | TopLevel::States(_)
+            | TopLevel::FnMain(_)
+            | TopLevel::Import(_) => {}
         }
     }
     diagnostics
@@ -1088,9 +1143,46 @@ fn main
             "agent a\n  on ping(p: Html)\n    say \"x\"\n",
             "contract api\n  can fetch(x: Text) -> Html\n",
             "pure p\n  gives Html[]\n  do\n    give \"x\"\n",
+            "flow f\n  needs doc: Html\n  gives Text\n  stage s\n    give doc\n",
         ];
         for src in cases {
             assert_eq!(codes(src), vec!["E164"], "{src}");
+        }
+    }
+
+    #[test]
+    fn resolution_rejects_the_removed_html_type_in_a_flow() {
+        // #485 review: `flow` needs/gives were skipped by `removed_types`.
+        let src = "flow f\n  needs doc: Html\n  gives Text\n  stage s\n    give doc\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E164"], "{ds:?}");
+        assert_eq!(ds[0].message, "unknown type `Html`");
+    }
+
+    #[test]
+    fn resolution_rejects_raw_interpolation_in_a_schedule_prompt() {
+        // #485 review: a schedule prompt lives on the declaration, not in a
+        // statement body, so E163 used to miss it — and the wake service then
+        // dropped the raw part silently.
+        let src = "agent a\n  schedule heartbeat\n    when: every 6h\n    mode: spawn\n    prompt: \"hello {!x}\"\n  on start\n    say \"hi\"\n";
+        let ds = diags(src);
+        assert_eq!(codes(src), vec!["E163"], "{ds:?}");
+        assert_eq!(
+            ds[0].message,
+            "`{!expr}` raw interpolation was removed in v0.3 with the Html type; use `{expr}` (see CHANGELOG, #485)"
+        );
+    }
+
+    #[test]
+    fn resolution_rejects_raw_interpolation_in_knowledge_paths_and_filters() {
+        // The other declaration-level template slots.
+        let cases = [
+            "agent a\n  knowledge store: \"./kb/{!x}\"\n  on start\n    say \"hi\"\n",
+            "agent a\n  subscribe e2 where \"{!x}\"\n  on e\n    say \"hi\"\n",
+            "agent a\n  on e\n    requires \"{!x}\"\n    say \"hi\"\n",
+        ];
+        for src in cases {
+            assert_eq!(codes(src), vec!["E163"], "{src}");
         }
     }
 

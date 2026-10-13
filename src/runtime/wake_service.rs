@@ -455,11 +455,19 @@ impl WakeService {
     async fn dispatch_spawn(&self, reg: &ScheduleRegistration) -> usize {
         let event_name = reg.schedule.name.node.clone();
         let mut fields = std::collections::HashMap::new();
-        if let Some(prompt_text) = extract_prompt_text(reg.schedule.prompt.as_ref()) {
-            fields.insert(
-                "prompt".to_string(),
-                ConfidentValue::deterministic(Value::Text(prompt_text)),
-            );
+        match extract_prompt_text(reg.schedule.prompt.as_ref()) {
+            Ok(Some(prompt_text)) => {
+                fields.insert(
+                    "prompt".to_string(),
+                    ConfidentValue::deterministic(Value::Text(prompt_text)),
+                );
+            }
+            Ok(None) => {}
+            Err(err) => {
+                self.tracer
+                    .schedule_errored(&reg.agent, &reg.schedule.name.node, &err, 0);
+                return 0;
+            }
         }
         let payload = EventPayload {
             event_name,
@@ -586,25 +594,39 @@ fn precision_of(schedule: &ScheduleField) -> Option<Precision> {
 /// Extract the plain-text portion of a prompt expression. v1 only supports
 /// plain templates (no interpolation) because the scheduler has no agent
 /// context to resolve variables against; a future release can define what
-/// context a scheduled prompt sees.
-fn extract_prompt_text(prompt: Option<&crate::ast::Spanned<crate::ast::Expr>>) -> Option<String> {
+/// context a scheduled prompt sees. `{!expr}` is rejected by the checker
+/// (E163) and is reported here rather than silently dropped, so a program
+/// that slips past the checker still fails loudly — Principle I.
+fn extract_prompt_text(
+    prompt: Option<&crate::ast::Spanned<crate::ast::Expr>>,
+) -> Result<Option<String>, String> {
     use crate::ast::{Expr, TemplatePart};
-    let spanned = prompt?;
+    let Some(spanned) = prompt else {
+        return Ok(None);
+    };
     match &spanned.node {
         Expr::Template(parts) => {
             let mut out = String::new();
             for p in parts {
-                if let TemplatePart::Text(t) = &p.node {
-                    out.push_str(t);
+                match &p.node {
+                    TemplatePart::Text(t) => out.push_str(t),
+                    TemplatePart::RawInterp(_) => {
+                        return Err(
+                            "`{!expr}` raw interpolation was removed in v0.3 with the Html type; \
+                             use `{expr}` (see CHANGELOG, #485)"
+                                .to_string(),
+                        );
+                    }
+                    TemplatePart::Interp(_) => {}
                 }
             }
             if out.is_empty() {
-                None
+                Ok(None)
             } else {
-                Some(out)
+                Ok(Some(out))
             }
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
@@ -613,7 +635,7 @@ fn extract_prompt_text(prompt: Option<&crate::ast::Spanned<crate::ast::Expr>>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Span, Spanned};
+    use crate::ast::{Expr, Span, Spanned, TemplatePart};
     use crate::runtime::clock::MockClock;
     use crate::runtime::event_bus::EventBus;
     use crate::runtime::storage::ForgeStorage;
@@ -654,6 +676,40 @@ mod tests {
             precision: None,
             duplicates: Vec::new(),
         }
+    }
+
+    // ── Prompt extraction ───────────────────────────────────────
+
+    #[test]
+    fn prompt_text_drops_interpolation_but_rejects_raw_interpolation() {
+        // #485: `{!x}` must fail loudly instead of silently publishing an
+        // empty prompt. `{x}` stays unsupported (no resolver context) and is
+        // omitted, which is the documented v1 behaviour.
+        let template = |parts: Vec<TemplatePart>| {
+            sp(Expr::Template(
+                parts.into_iter().map(sp).collect::<Vec<_>>(),
+            ))
+        };
+        let plain = template(vec![TemplatePart::Text("hello".to_string())]);
+        assert_eq!(extract_prompt_text(Some(&plain)), Ok(Some("hello".into())));
+
+        let interp = template(vec![TemplatePart::Interp(Box::new(sp(Expr::Ident(
+            "x".to_string(),
+        ))))]);
+        assert_eq!(extract_prompt_text(Some(&interp)), Ok(None));
+
+        let raw = template(vec![
+            TemplatePart::Text("hello ".to_string()),
+            TemplatePart::RawInterp(Box::new(sp(Expr::Ident("x".to_string())))),
+        ]);
+        let err = extract_prompt_text(Some(&raw)).unwrap_err();
+        // Byte-identical to the checker's E163 message.
+        assert_eq!(
+            err,
+            "`{!expr}` raw interpolation was removed in v0.3 with the Html type; \
+             use `{expr}` (see CHANGELOG, #485)"
+        );
+        assert_eq!(extract_prompt_text(None), Ok(None));
     }
 
     // ── CronDriver unit tests ───────────────────────────────────

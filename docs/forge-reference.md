@@ -2542,15 +2542,17 @@ The `match` construct forces structural dispatch, which clears the taint on each
 
 Without this enforcement, an LLM hallucination could propagate silently through a program and be returned as authoritative output. By requiring explicit confidence dispatch, FORGE guarantees that every oracle result is acknowledged as uncertain before it can influence program output. This is a compile-time guarantee, not a runtime check.
 
-### Resolution Checks (E160–E162)
+### Resolution Checks (E160–E164)
 
-Dispatching on a name that cannot exist is the same silent-failure class: the code reads as if it works and never does. The resolution checker (`src/checker/resolution_checker.rs`) rejects the two shapes below.
+Dispatching on a name that cannot exist is the same silent-failure class: the code reads as if it works and never does. The resolution checker (`src/checker/resolution_checker.rs`) rejects the shapes below.
 
 | Code | Rule |
 |------|------|
 | `E160` | A plain call target that resolves to nothing: not a declared `task`/`pure`/`flow`/`pool`, not a runtime builtin (`asset`, `winning_lines`) and not an uppercase type-constructor name. `fn main` is the program entry point, not a call target — `main()` is an `E160` |
 | `E161` | A constructor pattern that can never match the scrutinee, **when the scrutinee's value set is statically known** |
 | `E162` | The same, but the pattern differs from a known tag only in case — emitted instead of `E161` |
+| `E163` | Raw interpolation `{!expr}`, removed in v0.3 with the `Html` type (see "Templates"). Checked in every expression slot, including declaration-level ones such as `schedule` prompts, `knowledge store`, `subscribe ... where` and `requires` |
+| `E164` | The `Html` type name, removed in v0.3 with the `Html` type. `Html` parses as a custom type name, so it is rejected by name in every type slot of a declaration — `needs`/`gives` (including `flow`), params, payloads, fields, contract returns and arrays |
 
 The scrutinee's value set is known in exactly three cases: it is bound from `classify ... into [labels]` (the value set is the labels), it is bound from a call to a `pure`/`task` whose every `give` is a Text literal, or it is bound from a call to a declared type name (the value set is that record's `_type`). Anything else — a parameter, an oracle result, a field — is not flagged, so legitimate tag matching keeps working.
 

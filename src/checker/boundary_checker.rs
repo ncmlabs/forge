@@ -12,8 +12,8 @@ use crate::diagnostic::Diagnostic;
 /// Built-in capability namespaces that are always valid and should not be
 /// treated as undefined variables or cross-boundary references.
 const BUILTIN_NAMESPACES: &[&str] = &[
-    "file", "web", "data", "llm", "html", "markdown", "env", "config", "text", "proc", "skill",
-    "pool", "command", "timer", "clock",
+    "file", "web", "data", "llm", "env", "config", "text", "proc", "skill", "pool", "command",
+    "timer", "clock",
 ];
 
 fn is_builtin_namespace(name: &str) -> bool {
