@@ -88,7 +88,7 @@ export default defineConfig({
     {
       command: 'cargo run -- serve tests/fixtures/observer/server.forge -s tests/fixtures/observer/shared.forge',
       cwd: '../../',
-      url: 'http://localhost:3002/static/index.html',
+      url: 'http://localhost:3002/__forge/inspect/agents',
       reuseExistingServer: true,
       timeout: 120_000,
     },
